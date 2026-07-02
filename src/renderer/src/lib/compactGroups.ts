@@ -37,6 +37,26 @@ function buildGroups<T>(metas: SongVersionMeta[], getItem: (songId: number) => T
     .filter(g => g.members.length > 0)
 }
 
+// Firing one request per song via a single Promise.all works fine for a
+// handful of groups, but once most of the catalog is grouped (as happened
+// here — thousands of unique song ids), the browser refuses that many
+// simultaneous requests outright (net::ERR_INSUFFICIENT_RESOURCES), so most
+// fetches fail silently and whole groups vanish for having no members left.
+// A small worker pool keeps only a bounded number in flight at once.
+async function mapWithConcurrency<T>(items: number[], limit: number, fn: (id: number) => Promise<T | null>): Promise<Map<number, T>> {
+  const out = new Map<number, T>()
+  let next = 0
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const id = items[next++]
+      const result = await fn(id)
+      if (result != null) out.set(id, result)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
 /** Every titled version group app-wide, with full song objects fetched for
  *  each member — for callers (the Tracker) that can't rely on their own
  *  song list to contain every group's members. */
@@ -44,10 +64,9 @@ export async function fetchAllCompactGroups(): Promise<CompactGroup<JWApiSong>[]
   if (!versionsEnabled) return []
   const metas = await getAllVersionGroups()
   const uniqueIds = [...new Set(metas.map(m => m.songId))]
-  const songMap = new Map<number, JWApiSong>()
-  await Promise.all(uniqueIds.map(id =>
-    apiFetch<JWApiSong>(`/songs/${id}/`).then(s => { songMap.set(id, s) }).catch(() => {})
-  ))
+  const songMap = await mapWithConcurrency(uniqueIds, 24, id =>
+    apiFetch<JWApiSong>(`/songs/${id}/`).catch(() => null)
+  )
   return buildGroups(metas, id => songMap.get(id))
 }
 
@@ -58,6 +77,16 @@ export async function groupItemsByVersion<T>(items: T[], getSongId: (item: T) =>
   const metaMap = await getVersionMetaForSongs(items.map(getSongId))
   const itemMap = new Map(items.map(item => [getSongId(item), item]))
   return buildGroups([...metaMap.values()], id => itemMap.get(id))
+}
+
+// Plain substring matching is apostrophe-sensitive — searching "wouldnt"
+// (as typed on most keyboards without hunting for a curly quote) wouldn't
+// match a title like "You Wouldn't Understand" otherwise. The server-side
+// searchall the normal list uses is presumably more lenient about this;
+// stripping every apostrophe variant from both sides before comparing gets
+// this filter to the same place without a full fuzzy-search rewrite.
+function stripApostrophes(s: string): string {
+  return s.replace(/['’‘]/g, '')
 }
 
 /** Client-side search filter for compact groups — both fetch strategies
@@ -71,12 +100,12 @@ export function filterCompactGroups<T>(
   query: string,
   getSearchText: (item: T) => string
 ): CompactGroup<T>[] {
-  const q = query.trim().toLowerCase()
+  const q = stripApostrophes(query.trim().toLowerCase())
   if (!q) return groups
   return groups
     .map(g => {
-      const groupMatches = g.title.toLowerCase().includes(q)
-      const members = groupMatches ? g.members : g.members.filter(m => getSearchText(m.item).toLowerCase().includes(q))
+      const groupMatches = stripApostrophes(g.title.toLowerCase()).includes(q)
+      const members = groupMatches ? g.members : g.members.filter(m => stripApostrophes(getSearchText(m.item).toLowerCase()).includes(q))
       return { ...g, members }
     })
     .filter(g => g.members.length > 0)
