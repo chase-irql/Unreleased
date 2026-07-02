@@ -906,8 +906,15 @@ export default function ApiTrackerView(): JSX.Element {
   // every group app-wide regardless), so the search query has to be applied
   // client-side afterward or typing while compact view is active would do
   // nothing.
+  // Mirrors as much of the normal list's server-side `searchall` field
+  // coverage as this client-side filter reasonably can — matching only
+  // title/artist here made legitimate searches (e.g. by producer) come up
+  // empty even though the normal (non-compact) list found them fine.
   const filteredCompactGroups = useMemo(
-    () => filterCompactGroups(compactGroups, debouncedSearch, s => `${s.track_titles?.join(' ') ?? ''} ${s.name} ${s.credited_artists ?? ''}`),
+    () => filterCompactGroups(compactGroups, debouncedSearch, s => [
+      s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
+      s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
+    ].filter(Boolean).join(' ')),
     [compactGroups, debouncedSearch]
   )
 

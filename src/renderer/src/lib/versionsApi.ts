@@ -115,18 +115,29 @@ export async function getVersionGroup(songId: number): Promise<SongVersionMeta[]
  *  Tracker's compact view — deliberately independent of whichever songs
  *  happen to be paginated into the Tracker at the time, since a group's
  *  members can easily span pages the Tracker hasn't loaded yet (or won't,
- *  under the current category/search filter). This is a small, one-shot
- *  query (only songs that are actually linked into a titled group come
- *  back), not tied to the Tracker's own song list at all. */
+ *  under the current category/search filter).
+ *
+ *  PostgREST silently caps unpaginated responses at 1000 rows — this table
+ *  grew well past that once most of the catalog got auto-grouped, so a
+ *  plain unpaginated fetch here was quietly dropping every group past
+ *  whichever song id happened to land on row 1000 (ordered by group_id),
+ *  with no error, just missing groups. Page through explicitly instead of
+ *  trusting a single response to contain everything. */
 export async function getAllVersionGroups(): Promise<SongVersionMeta[]> {
   if (!versionsEnabled) return []
+  const PAGE_SIZE = 1000
+  const rows: SongVersionRow[] = []
   try {
-    const rows = await supaFetch<SongVersionRow[]>(
-      `/song_versions?version_title=not.is.null&select=${ROW_FIELDS}&order=group_id.asc`
-    )
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page = await supaFetch<SongVersionRow[]>(
+        `/song_versions?version_title=not.is.null&select=${ROW_FIELDS}&order=group_id.asc&offset=${offset}&limit=${PAGE_SIZE}`
+      )
+      rows.push(...page)
+      if (page.length < PAGE_SIZE) break
+    }
     return rows.map(toMeta)
   } catch {
-    return []
+    return rows.map(toMeta)
   }
 }
 

@@ -587,15 +587,16 @@ export default function WrldView(): JSX.Element {
       )}
 
       {/* Fullscreen toggle. The Electron window-control buttons (minimize/
-          maximize/close) are a fixed 132px-wide bar pinned to the top-right
-          corner at all times (see WindowControls in App.tsx), and the global
-          Downloads trigger (see DownloadManager.tsx) sits immediately left of
-          those, another 36px wide — clear both, otherwise this button sits
-          underneath them (z-[10000] / z-[9990]). */}
+          maximize/close) and the global Downloads trigger (see
+          DownloadManager.tsx) share a 168px-wide, 28px-tall strip pinned to
+          the top-right corner (z-[10000] / z-[9990]) — rather than dodging
+          that whole strip sideways, this sits in the same right-aligned
+          column, just below it, so it reads as grouped with the close
+          button instead of floating off to the left. */}
       <button
         onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-        className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all top-2 md:top-3
-          ${isElectronApp ? 'right-[176px]' : 'right-12 md:right-3'}
+        className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all
+          ${isElectronApp ? 'top-9 right-2' : 'top-2 md:top-3 right-12 md:right-3'}
           bg-black/10 dark:bg-black/25 text-black/50 dark:text-white/50 hover:text-black/80 dark:hover:text-white/90 hover:bg-black/20 dark:hover:bg-black/50 backdrop-blur-sm`}
         title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       >
