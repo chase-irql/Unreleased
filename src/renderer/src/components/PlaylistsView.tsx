@@ -451,21 +451,32 @@ export default function PlaylistsView(): JSX.Element {
   const loadDetail = useCallback(async (id: number, shared = false) => {
     const gen = ++loadGen.current
     setLoadingDetail(true)
-    setCoverData(null)
-    setCoverLoading(true)
+    // A cached cover renders immediately (no null/spinner flash) instead of
+    // waiting on a network round trip for a playlist we've already opened.
+    const cached = userApi.peekPlaylistCover(id)
+    if (cached) {
+      setCoverImgError(false)
+      setCoverData({ cover_image: cached.cover_image, cover_image_url: cached.cover_image_url })
+      setCoverLoading(false)
+    } else {
+      setCoverData(null)
+      setCoverLoading(true)
+    }
     try {
       const result = shared ? await userApi.getPublicPlaylist(id) : await userApi.getPlaylist(id)
       if (gen !== loadGen.current) return
       setDetail(result)
       setLoadingDetail(false)
-      // Load cover separately so tracks render immediately
-      const coverFetch = shared ? userApi.getPublicPlaylistCover(id) : userApi.getPlaylistCover(id)
-      coverFetch.then(c => {
-        if (gen !== loadGen.current) return
-        setCoverImgError(false)
-        setCoverData({ cover_image: c.cover_image, cover_image_url: c.cover_image_url })
-        setCoverLoading(false)
-      }).catch(() => { if (gen === loadGen.current) setCoverLoading(false) })
+      if (!cached) {
+        // Load cover separately so tracks render immediately
+        const coverFetch = shared ? userApi.getPublicPlaylistCover(id) : userApi.getPlaylistCover(id)
+        coverFetch.then(c => {
+          if (gen !== loadGen.current) return
+          setCoverImgError(false)
+          setCoverData({ cover_image: c.cover_image, cover_image_url: c.cover_image_url })
+          setCoverLoading(false)
+        }).catch(() => { if (gen === loadGen.current) setCoverLoading(false) })
+      }
     } catch {
       if (gen === loadGen.current) setDetail(null)
     } finally {

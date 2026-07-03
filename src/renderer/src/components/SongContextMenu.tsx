@@ -110,11 +110,12 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
-  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
       setShowUserAuth: s.setShowUserAuth, setPendingEditorSongId: s.setPendingEditorSongId,
       setActiveView: s.setActiveView, playTrack: s.playTrack,
+      localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
     }))
   )
   const { track, songId } = state
@@ -122,6 +123,7 @@ export default function SongContextMenu({
   const [panel, setPanel] = useState<'main' | 'playlists' | 'zip'>('main')
   const [busyId, setBusyId] = useState<number | null>(null)
   const [doneId, setDoneId] = useState<number | null>(null)
+  const [localDoneId, setLocalDoneId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [addingToLib, setAddingToLib] = useState(false)
@@ -168,7 +170,18 @@ export default function SongContextMenu({
 
   const createAndAdd = async (): Promise<void> => {
     const name = newName.trim()
-    if (!name || songId == null) return
+    if (!name) return
+    if (isLocalOnly) {
+      createLocalPlaylist(name)
+      // createLocalPlaylist sets activeLocalPlaylistId synchronously (zustand
+      // set() applies immediately), so it's readable right after the call —
+      // that's the newly-created playlist's id, needed to add this track to it.
+      const newId = useStore.getState().activeLocalPlaylistId
+      if (newId) addToLocalPlaylist(newId, track.id)
+      onClose()
+      return
+    }
+    if (songId == null) return
     setBusyId(-1)
     try {
       const playlist = await userApi.createPlaylist(name)
@@ -201,7 +214,16 @@ export default function SongContextMenu({
   // A couple of callers use a -1 sentinel for "no real song" instead of null
   // (e.g. shared-playlist placeholder rows) — treat both as invalid.
   const hasValidSong = songId != null && songId > 0
-  const canAddToPlaylist = hasValidSong && !['recording_session', 'unsurfaced'].includes(track.genre)
+  const isUnplayable = ['recording_session', 'unsurfaced'].includes(track.genre)
+  // A local library file with no matching API song — it already lives on
+  // disk (so "Download" is meaningless) and can't join a server playlist,
+  // but it can join one of the device-local playlists instead.
+  const isLocalOnly = songId == null && track.id.startsWith('local-')
+  const canAddToPlaylist = !isUnplayable && (hasValidSong || isLocalOnly)
+  // Sessions/unsurfaced are treated as unplayable — don't offer Play / Play
+  // next / Add to queue for them (they'd never actually play). Local files
+  // (no category in genre) stay playable as long as they have a path.
+  const canQueue = !!track.path && !isUnplayable
 
   // Estimated clamp for the very first paint; corrected against the real
   // rendered size in the layout effect below. The estimate alone isn't enough
@@ -243,7 +265,27 @@ export default function SongContextMenu({
           >
             <ChevronDown size={12} className="rotate-90" /> Back
           </button>
-          {!account ? (
+          {isLocalOnly ? (
+            <div className="max-h-44 overflow-y-auto">
+              {localPlaylists.length === 0 && (
+                <p className="px-3 py-2 text-xs text-text-muted">No playlists yet.</p>
+              )}
+              {localPlaylists.map((p) => {
+                const alreadyIn = p.trackIds.includes(track.id)
+                return (
+                  <button
+                    key={p.id}
+                    onClick={(e) => { e.stopPropagation(); addToLocalPlaylist(p.id, track.id); setLocalDoneId(p.id) }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                  >
+                    <ListMusic size={13} className={`shrink-0 ${alreadyIn ? 'text-accent' : 'text-text-muted'}`} />
+                    <span className="flex-1 truncate text-xs">{p.name}</span>
+                    {(localDoneId === p.id || alreadyIn) && <Check size={12} className="text-accent shrink-0" />}
+                  </button>
+                )
+              })}
+            </div>
+          ) : !account ? (
             <div className="px-3 pb-2">
               <p className="text-xs text-text-muted mb-2">Log in to save to playlists.</p>
               <button
@@ -279,7 +321,7 @@ export default function SongContextMenu({
               })}
             </div>
           )}
-          {account && (
+          {(isLocalOnly || account) && (
             <div className="border-t border-[var(--border)] pt-1 px-2 pb-1">
               {creating ? (
                 <div className="flex gap-1">
@@ -334,13 +376,13 @@ export default function SongContextMenu({
         </>
       ) : (
         <>
-          {onPlay && <MenuItem icon={<ListEnd size={14} />} label="Play" onClick={() => { onPlay(); onClose() }} />}
-          {onPlayNext && <MenuItem icon={<ListEnd size={14} />} label="Play next" onClick={() => { onPlayNext(); onClose() }} />}
+          {onPlay && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play" onClick={() => { onPlay(); onClose() }} />}
+          {onPlayNext && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play next" onClick={() => { onPlayNext(); onClose() }} />}
           {hasValidSong && (
             <MenuItem icon={<Info size={14} />} label="Song info" onClick={() => { onInfo(); onClose() }} />
           )}
           {onSelect && <MenuItem icon={<CheckSquare2 size={14} />} label="Select" onClick={() => { onSelect(); onClose() }} />}
-          {onAddToQueue && track.path && (
+          {onAddToQueue && canQueue && (
             <MenuItem icon={<ListPlus size={14} />} label="Add to queue" onClick={() => { onAddToQueue(); onClose() }} />
           )}
           {canAddToPlaylist && (
@@ -378,7 +420,7 @@ export default function SongContextMenu({
               />
             </>
           )}
-          {track.path && (
+          {track.path && !isLocalOnly && (
             <>
               <Divider />
               <MenuItem icon={<Download size={14} />} label="Download" onClick={() => { downloadTrack(track); onClose() }} />

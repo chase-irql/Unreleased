@@ -1041,7 +1041,9 @@ export default function ApiTrackerView(): JSX.Element {
   }, [playlists, account, bulkEligibleSongs, showBulkPlaylists, bulkContextMenu?.showPlaylists])
 
   const bulkAddToQueue = (): void => {
-    selectedSongs.filter(s => s.path).forEach(s => addToQueue(songToTrack(s)))
+    // Skip unplayable songs (sessions/unsurfaced) — same rule as bulk playlist
+    // add and the single-song menu.
+    bulkEligibleSongs.filter(s => s.path).forEach(s => addToQueue(songToTrack(s)))
     exitSelectMode()
   }
 
