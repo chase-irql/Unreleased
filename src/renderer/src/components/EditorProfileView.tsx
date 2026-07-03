@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
@@ -287,6 +287,7 @@ export default function EditorProfileView(): JSX.Element {
   const [loadingProposals, setLoadingProposals] = useState(true)
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(true)
   const [filter, setFilter] = useState<FilterTab>('all')
+  const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
@@ -323,10 +324,23 @@ export default function EditorProfileView(): JSX.Element {
 
   const myEntry = leaderboard.find((e) => e.discord_username === account?.discord_username)
 
+  // Searchable text for a proposal: its title, change type, notes, song id,
+  // and any string/number values in the proposed data (name, artists, album,
+  // producers, etc.) so a query matches whatever the proposal actually edits.
+  const proposalSearchText = (p: SongEditProposal): string => {
+    const dataVals = Object.values(p.proposed_data ?? {})
+      .filter(v => typeof v === 'string' || typeof v === 'number')
+      .join(' ')
+    return [p.title, changeTypeLabel(p.change_type), p.editor_notes, p.song != null ? `song #${p.song}` : '', dataVals]
+      .filter(Boolean).join(' ').toLowerCase()
+  }
+
   const filteredProposals = useMemo(() => {
-    if (filter === 'all') return proposals
-    return proposals.filter(p => p.status === filter)
-  }, [proposals, filter])
+    const byStatus = filter === 'all' ? proposals : proposals.filter(p => p.status === filter)
+    const q = search.trim().toLowerCase()
+    if (!q) return byStatus
+    return byStatus.filter(p => proposalSearchText(p).includes(q))
+  }, [proposals, filter, search])
 
   const TABS: { key: FilterTab; label: string }[] = [
     { key: 'all',      label: 'All' },
@@ -424,6 +438,23 @@ export default function EditorProfileView(): JSX.Element {
               )}
             </div>
 
+            {/* Search */}
+            <div className="relative mb-3">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search proposals…"
+                className="w-full bg-surface-overlay text-text-primary text-xs pl-7 pr-7 py-2 rounded-lg outline-none border border-transparent focus:ring-1 ring-accent focus:border-accent/40 placeholder:text-text-muted"
+              />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+
             {/* Filter tabs */}
             <div className="flex gap-1">
               {TABS.map(({ key, label }) => {
@@ -458,7 +489,11 @@ export default function EditorProfileView(): JSX.Element {
             ) : filteredProposals.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 gap-2 text-text-muted opacity-50">
                 <FileEdit size={28} />
-                <p className="text-sm">{filter === 'all' ? 'No proposals yet' : `No ${filter} proposals`}</p>
+                <p className="text-sm">
+                  {search.trim()
+                    ? `No proposals match "${search.trim()}"`
+                    : filter === 'all' ? 'No proposals yet' : `No ${filter} proposals`}
+                </p>
               </div>
             ) : (
               <div className="space-y-1">

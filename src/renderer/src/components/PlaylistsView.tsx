@@ -276,6 +276,7 @@ export default function PlaylistsView(): JSX.Element {
   // action buttons next to Play/Shuffle).
   const [showHeroMenu, setShowHeroMenu] = useState(false)
   const heroMenuRef = useRef<HTMLDivElement>(null)
+  const heroBtnRef = useRef<HTMLButtonElement>(null)
 
   // Drag-to-reorder
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -1068,61 +1069,80 @@ export default function PlaylistsView(): JSX.Element {
                     rename, delete) lives behind one "⋯" menu instead of a row
                     of loose icon buttons. */}
                 {!isSharedView && detail && (
-                  <div className="relative" ref={heroMenuRef} onClick={e => e.stopPropagation()}>
+                  <div className="relative" ref={heroMenuRef}>
                     <button
-                      onClick={() => { setShowHeroMenu(v => !v); setShowAddAllMenu(false) }}
+                      ref={heroBtnRef}
+                      onClick={e => { e.stopPropagation(); setShowHeroMenu(v => !v); setShowAddAllMenu(false) }}
                       title="More"
                       className={`p-2.5 rounded-full text-sm transition-colors ${showHeroMenu ? 'text-white bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
                     >
                       <MoreHorizontal size={18} />
                     </button>
-                    {showHeroMenu && (
-                      <div className="absolute top-full mt-1 left-0 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px] z-50">
-                        <MenuItem
-                          icon={zipState === 'loading' ? Loader2 : Archive}
-                          label={zipState === 'error' ? 'Download failed' : zipState === 'done' ? 'Download started' : 'Download as ZIP'}
-                          disabled={zipState === 'loading' || tracks.length === 0}
-                          onClick={() => { handleZipDownload(tracks, detail.name ?? summary?.name ?? 'playlist') }}
-                        />
-                        <MenuItem
-                          icon={shareCopied ? Check : Link}
-                          label={shareCopied ? 'Link copied!' : 'Copy share link'}
-                          disabled={tracks.length === 0}
-                          onClick={() => { handleShare() }}
-                        />
-                        <MenuItem
-                          icon={detail.is_public ? Globe : Lock}
-                          label={detail.is_public ? 'Make private' : 'Make public'}
-                          disabled={togglingPublic}
-                          onClick={() => { handleTogglePublic() }}
-                        />
-                        {otherPlaylists.length > 0 && tracks.length > 0 && (
-                          <>
-                            <MenuItem
-                              icon={FolderInput}
-                              label="Add all to playlist"
-                              disabled={addingAll}
-                              trailing={<span className="text-text-muted text-xs">{showAddAllMenu ? '⌄' : '›'}</span>}
-                              onClick={() => setShowAddAllMenu(v => !v)}
-                            />
-                            {showAddAllMenu && (
-                              <div className="border-t border-b border-[var(--border)] max-h-40 overflow-y-auto">
-                                {otherPlaylists.map(p => (
-                                  <button key={p.id} onClick={async () => { setShowAddAllMenu(false); setShowHeroMenu(false); await handleAddAllTo(p.id, detail) }}
-                                    className="w-full text-left pl-9 pr-3.5 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors truncate">
-                                    {p.name}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                        <div className="border-t border-[var(--border)] my-1" />
-                        {!renaming && (
-                          <MenuItem icon={Pencil} label="Rename" onClick={() => { setShowHeroMenu(false); setRenameValue(detail.name); setRenaming(true) }} />
-                        )}
-                        <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { setShowHeroMenu(false); deleteSelected() }} />
-                      </div>
+                    {/* Portaled to <body> so the hero's overflow-hidden can't
+                        clip it, and height-clamped to the viewport so a long
+                        "Add all to playlist" list stays fully visible. */}
+                    {showHeroMenu && createPortal(
+                      <>
+                        <div className="fixed inset-0 z-[60]" onClick={() => { setShowHeroMenu(false); setShowAddAllMenu(false) }} />
+                        {(() => {
+                          const r = heroBtnRef.current?.getBoundingClientRect()
+                          const top = r ? r.bottom + 6 : 0
+                          const left = r ? Math.min(r.left, window.innerWidth - 218) : 0
+                          return (
+                            <div
+                              className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px] overflow-y-auto"
+                              style={{ top, left, maxHeight: window.innerHeight - top - 8 }}
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <MenuItem
+                                icon={zipState === 'loading' ? Loader2 : Archive}
+                                label={zipState === 'error' ? 'Download failed' : zipState === 'done' ? 'Download started' : 'Download as ZIP'}
+                                disabled={zipState === 'loading' || tracks.length === 0}
+                                onClick={() => { handleZipDownload(tracks, detail.name ?? summary?.name ?? 'playlist') }}
+                              />
+                              <MenuItem
+                                icon={shareCopied ? Check : Link}
+                                label={shareCopied ? 'Link copied!' : 'Copy share link'}
+                                disabled={tracks.length === 0}
+                                onClick={() => { handleShare() }}
+                              />
+                              <MenuItem
+                                icon={detail.is_public ? Globe : Lock}
+                                label={detail.is_public ? 'Make private' : 'Make public'}
+                                disabled={togglingPublic}
+                                onClick={() => { handleTogglePublic() }}
+                              />
+                              {otherPlaylists.length > 0 && tracks.length > 0 && (
+                                <>
+                                  <MenuItem
+                                    icon={FolderInput}
+                                    label="Add all to playlist"
+                                    disabled={addingAll}
+                                    trailing={<span className="text-text-muted text-xs">{showAddAllMenu ? '⌄' : '›'}</span>}
+                                    onClick={() => setShowAddAllMenu(v => !v)}
+                                  />
+                                  {showAddAllMenu && (
+                                    <div className="border-t border-b border-[var(--border)] max-h-40 overflow-y-auto">
+                                      {otherPlaylists.map(p => (
+                                        <button key={p.id} onClick={async () => { setShowAddAllMenu(false); setShowHeroMenu(false); await handleAddAllTo(p.id, detail) }}
+                                          className="w-full text-left pl-9 pr-3.5 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors truncate">
+                                          {p.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              <div className="border-t border-[var(--border)] my-1" />
+                              {!renaming && (
+                                <MenuItem icon={Pencil} label="Rename" onClick={() => { setShowHeroMenu(false); setRenameValue(detail.name); setRenaming(true) }} />
+                              )}
+                              <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { setShowHeroMenu(false); deleteSelected() }} />
+                            </div>
+                          )
+                        })()}
+                      </>,
+                      document.body
                     )}
                   </div>
                 )}

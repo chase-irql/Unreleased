@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, LayoutGrid, Info, ListPlus, PanelLeft,
@@ -333,7 +333,7 @@ function SongActions({
 }
 
 // ─── Song row (list mode) ─────────────────────────────────────────────────────
-function SongRow({
+const SongRow = memo(function SongRow({
   song, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
   selectMode, selected, onToggleSelect, versionLabel,
 }: {
@@ -462,7 +462,13 @@ function SongRow({
       )}
     </div>
   )
-}
+})
+// Memoized so toggling one selection only re-renders that row, not every
+// rendered row. This depends on all the callbacks passed in (onPlay, onInfo,
+// onContextMenu, onCategoryClick, onEraClick, onToggleSelect) being stable
+// (useCallback) — otherwise the default shallow prop compare never matches and
+// the memo is a no-op. Without it, compact view froze when selecting songs
+// across many expanded groups.
 
 // ─── Version title prompt (shown after linking, if the group has no title yet) ─
 function VersionTitlePromptModal({
@@ -651,7 +657,10 @@ export default function ApiTrackerView(): JSX.Element {
   const [titlePromptGroupId, setTitlePromptGroupId] = useState<number | null>(null)
   const [savingTitlePrompt, setSavingTitlePrompt] = useState(false)
 
-  const toggleSelect = (song: JWApiSong): void => {
+  // useCallback so SongRow's memo isn't defeated — a fresh identity here would
+  // re-render every row on each selection toggle (functional setState keeps it
+  // dependency-free and stable).
+  const toggleSelect = useCallback((song: JWApiSong): void => {
     setSelectMode(true)
     setSelected(prev => {
       const next = new Map(prev)
@@ -659,7 +668,7 @@ export default function ApiTrackerView(): JSX.Element {
       else next.set(song.id, song)
       return next
     })
-  }
+  }, [])
 
   const exitSelectMode = (): void => {
     setSelectMode(false)
@@ -686,10 +695,23 @@ export default function ApiTrackerView(): JSX.Element {
   const [compactView, setCompactView] = useState(false)
   const [compactGroups, setCompactGroups] = useState<CompactGroup<JWApiSong>[]>([])
   const [loadingCompact, setLoadingCompact] = useState(false)
-  // How compact-view groups are ordered. 'default' keeps the fetch order
-  // (group_id asc); the others sort by member count / title client-side.
-  type CompactSort = 'default' | 'versions-desc' | 'versions-asc' | 'title'
-  const [compactSort, setCompactSort] = useState<CompactSort>('default')
+  // How compact-view groups are ordered — driven by clicking the "Name" /
+  // "Versions" column headers (like the normal list's sortable headers), not
+  // a separate control. field null keeps the fetch order (group_id asc).
+  type CompactSortField = 'name' | 'versions'
+  const [compactSort, setCompactSort] = useState<{ field: CompactSortField | null; dir: 'asc' | 'desc' }>({ field: null, dir: 'asc' })
+
+  // Click cycles: first click sorts by that field (Versions starts most-first,
+  // Name starts A–Z), second click flips direction, third click clears back
+  // to default order — mirroring the flat list's SortBtn.
+  const handleCompactSort = (field: CompactSortField): void => {
+    const firstDir: 'asc' | 'desc' = field === 'versions' ? 'desc' : 'asc'
+    setCompactSort(prev => {
+      if (prev.field !== field) return { field, dir: firstDir }
+      if (prev.dir === firstDir) return { field, dir: firstDir === 'asc' ? 'desc' : 'asc' }
+      return { field: null, dir: 'asc' }
+    })
+  }
   const { expanded: expandedGroups, toggle: toggleGroupExpanded, clear: clearExpandedGroups } = useExpandedGroups()
 
   useEffect(() => {
@@ -919,13 +941,13 @@ export default function ApiTrackerView(): JSX.Element {
       s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
       s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
     ].filter(Boolean).join(' '))
-    if (compactSort === 'default') return filtered
+    if (!compactSort.field) return filtered
     // Copy before sorting — filterCompactGroups may return the input array.
     const sorted = [...filtered]
-    if (compactSort === 'title') {
-      sorted.sort((a, b) => a.title.localeCompare(b.title))
+    const dir = compactSort.dir === 'asc' ? 1 : -1
+    if (compactSort.field === 'name') {
+      sorted.sort((a, b) => a.title.localeCompare(b.title) * dir)
     } else {
-      const dir = compactSort === 'versions-asc' ? 1 : -1
       // Title tiebreak so equal-count groups keep a stable, readable order.
       sorted.sort((a, b) => (a.members.length - b.members.length) * dir || a.title.localeCompare(b.title))
     }
@@ -1154,20 +1176,6 @@ export default function ApiTrackerView(): JSX.Element {
               </button>
             )}
 
-            {compactView && (
-              <select
-                value={compactSort}
-                onChange={(e) => setCompactSort(e.target.value as CompactSort)}
-                className="bg-surface-overlay text-text-primary text-xs px-2.5 py-2.5 md:py-2 rounded-lg outline-none border border-transparent focus:ring-1 ring-accent focus:border-accent/40 cursor-pointer shrink-0"
-                title="Sort version groups"
-              >
-                <option value="default">Sort: Default</option>
-                <option value="versions-desc">Most versions</option>
-                <option value="versions-asc">Fewest versions</option>
-                <option value="title">Title (A–Z)</option>
-              </select>
-            )}
-
             {!compactView && (
               <div className="flex items-center bg-surface-overlay rounded-lg p-0.5 shrink-0 ml-auto">
                 <button
@@ -1280,6 +1288,32 @@ export default function ApiTrackerView(): JSX.Element {
                 </p>
               </div>
             ) : (
+              <>
+              {/* Sortable headers — click "Name" or "Versions" to sort (cycles
+                  asc → desc → default), aligned over CompactGroupRow's title
+                  and count. */}
+              <div className="hidden md:flex items-center gap-2.5 px-3 pb-1.5">
+                <span className="w-3.5 shrink-0" />
+                <span className="w-10 md:w-9 shrink-0" />
+                <button
+                  onClick={() => handleCompactSort('name')}
+                  className={`flex-1 flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'name' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+                >
+                  Name
+                  {compactSort.field === 'name'
+                    ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                    : <span className="w-2.5" />}
+                </button>
+                <button
+                  onClick={() => handleCompactSort('versions')}
+                  className={`flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'versions' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+                >
+                  Versions
+                  {compactSort.field === 'versions'
+                    ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                    : <span className="w-2.5" />}
+                </button>
+              </div>
               <div className="space-y-0.5">
                 {filteredCompactGroups.map((group) => (
                   <div key={group.groupId}>
@@ -1313,6 +1347,7 @@ export default function ApiTrackerView(): JSX.Element {
                   </div>
                 ))}
               </div>
+              </>
             ) : loading && sortedSongs.length === 0 ? (
               <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
                 <Loader2 size={18} className="animate-spin" />

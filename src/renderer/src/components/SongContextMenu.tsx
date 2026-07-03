@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
   ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic,
@@ -202,15 +202,32 @@ export default function SongContextMenu({
   // (e.g. shared-playlist placeholder rows) — treat both as invalid.
   const hasValidSong = songId != null && songId > 0
   const canAddToPlaylist = hasValidSong && !['recording_session', 'unsurfaced'].includes(track.genre)
+
+  // Estimated clamp for the very first paint; corrected against the real
+  // rendered size in the layout effect below. The estimate alone isn't enough
+  // because the menu's height varies a lot (extra items, long titles, the full
+  // playlists list), so near a screen edge the guess undershoots and the menu
+  // spills off-screen. Measuring the actual box fixes every case.
   const menuWidth = 208
   const menuHeight = panel !== 'main' ? 320 : 240
-  const top = Math.max(8, Math.min(state.y, window.innerHeight - menuHeight - 8))
-  const left = Math.max(8, Math.min(state.x, window.innerWidth - menuWidth - 8))
+  const [pos, setPos] = useState(() => ({
+    top: Math.max(8, Math.min(state.y, window.innerHeight - menuHeight - 8)),
+    left: Math.max(8, Math.min(state.x, window.innerWidth - menuWidth - 8)),
+  }))
+
+  useLayoutEffect(() => {
+    const el = menuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const top = Math.max(8, Math.min(state.y, window.innerHeight - rect.height - 8))
+    const left = Math.max(8, Math.min(state.x, window.innerWidth - rect.width - 8))
+    setPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [state.x, state.y, panel, zipCandidates])
 
   return (
     <div
       ref={menuRef}
-      style={{ position: 'fixed', zIndex: 9999, top, left }}
+      style={{ position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left }}
       className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
     >
       <div className="px-3 py-2 border-b border-[var(--border)] mb-1">
