@@ -13,12 +13,14 @@ export default function QueuePanel(): JSX.Element {
   const {
     queue, queueIndex, currentTrack, isPlaying, shuffle, queueFilter, queueLoadingMore,
     radioMode, radioNext,
-    setShowQueue, removeFromQueue, clearQueue, reorderQueue, playTrack, jumpToTrack,
+    setShowQueue, removeFromQueue, clearQueue, reorderQueue, playTrack, jumpToTrack, _loadMore,
   } = useStore()
 
   const [panelWidth, dragHandle] = useResizablePanel(300, 240, 480)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // How many upcoming rows to render — grows when the user clicks "+N more".
+  const [visibleCount, setVisibleCount] = useState(MAX_UPCOMING_SHOWN)
 
   useEffect(() => {
     const check = (): void => setIsMobile(window.innerWidth < 768)
@@ -51,6 +53,14 @@ export default function QueuePanel(): JSX.Element {
 
   const upcomingLabel = shuffle ? 'Shuffle' : 'Up Next'
   const hasMore = queueFilter?.hasMore
+
+  // Reveal another batch of already-loaded upcoming rows, and (when the queue
+  // is lazily loaded from the server) pull the next page in too so there's
+  // more to reveal on the following click.
+  const showMoreUpcoming = (): void => {
+    setVisibleCount(c => c + MAX_UPCOMING_SHOWN)
+    if (hasMore) _loadMore()
+  }
 
   return (
     <div
@@ -182,7 +192,7 @@ export default function QueuePanel(): JSX.Element {
                 )}
               </p>
 
-              {upcoming.slice(0, MAX_UPCOMING_SHOWN).map((track, i) => (
+              {upcoming.slice(0, visibleCount).map((track, i) => (
                 <div
                   key={`up-${track.id}-${queueIndex + 1 + i}`}
                   draggable
@@ -205,10 +215,13 @@ export default function QueuePanel(): JSX.Element {
                 </div>
               ))}
 
-              {upcoming.length > MAX_UPCOMING_SHOWN && (
-                <p className="text-text-muted text-xs text-center py-2 opacity-50">
-                  +{upcoming.length - MAX_UPCOMING_SHOWN}{hasMore ? '+' : ''} more
-                </p>
+              {upcoming.length > visibleCount && (
+                <button
+                  onClick={showMoreUpcoming}
+                  className="w-full text-text-muted hover:text-text-primary text-xs text-center py-2 rounded-lg hover:bg-surface-overlay transition-colors"
+                >
+                  +{upcoming.length - visibleCount}{hasMore ? '+' : ''} more
+                </button>
               )}
             </div>
           ) : !radioMode && currentTrack ? (

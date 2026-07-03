@@ -207,11 +207,33 @@ export async function getPlaylists(): Promise<PlaylistSummary[]> {
   return request(`${LIBRARY_BASE}/playlists/?omit_cover_image=true`, { method: 'GET' })
 }
 
+type PlaylistCoverEntry = { cover_image_url?: string | null; cover_image?: string | null; trackImages: string[] }
+
+// In-memory cache so re-opening a playlist (or re-rendering the playlists
+// grid after switching tabs) shows its cover instantly instead of re-hitting
+// the API every time — covers rarely change, so a session-lifetime cache is
+// safe as long as uploads/removals below keep it in sync.
+const playlistCoverCache = new Map<number, PlaylistCoverEntry>()
+
+export function invalidatePlaylistCoverCache(id: number): void {
+  playlistCoverCache.delete(id)
+}
+
+/** Synchronous cache read, so callers can render a cached cover immediately
+ *  (no loading flash) before deciding whether to also call getPlaylistCover. */
+export function peekPlaylistCover(id: number): PlaylistCoverEntry | undefined {
+  return playlistCoverCache.get(id)
+}
+
 /** Fetch just the cover fields (+ first 4 track image URLs) for a single playlist. */
-export async function getPlaylistCover(id: number): Promise<{ cover_image_url?: string | null; cover_image?: string | null; trackImages: string[] }> {
+export async function getPlaylistCover(id: number): Promise<PlaylistCoverEntry> {
+  const cached = playlistCoverCache.get(id)
+  if (cached) return cached
   const d = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/`)
   const trackImages = (d.items ?? []).slice(0, 4).map(it => buildImageUrl(it.song.image_url)).filter(Boolean) as string[]
-  return { cover_image_url: d.cover_image_url, cover_image: d.cover_image, trackImages }
+  const entry: PlaylistCoverEntry = { cover_image_url: d.cover_image_url, cover_image: d.cover_image, trackImages }
+  playlistCoverCache.set(id, entry)
+  return entry
 }
 
 export async function createPlaylist(
@@ -276,10 +298,14 @@ export async function getPublicPlaylist(id: number): Promise<PlaylistDetail> {
 }
 
 /** Fetch cover of a public playlist without authentication. */
-export async function getPublicPlaylistCover(id: number): Promise<{ cover_image_url?: string | null; cover_image?: string | null; trackImages: string[] }> {
+export async function getPublicPlaylistCover(id: number): Promise<PlaylistCoverEntry> {
+  const cached = playlistCoverCache.get(id)
+  if (cached) return cached
   const d = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/public/${id}/`)
   const trackImages = (d.items ?? []).slice(0, 4).map(it => buildImageUrl(it.song.image_url)).filter(Boolean) as string[]
-  return { cover_image_url: d.cover_image_url, cover_image: d.cover_image, trackImages }
+  const entry: PlaylistCoverEntry = { cover_image_url: d.cover_image_url, cover_image: d.cover_image, trackImages }
+  playlistCoverCache.set(id, entry)
+  return entry
 }
 
 export async function uploadPlaylistCover(id: number, file: File): Promise<PlaylistDetail> {
@@ -296,6 +322,11 @@ export async function uploadPlaylistCover(id: number, file: File): Promise<Playl
     method: 'PATCH',
     body: JSON.stringify({ cover_image: base64 }),
   })
+  playlistCoverCache.set(id, {
+    cover_image_url: result.cover_image_url,
+    cover_image: result.cover_image,
+    trackImages: playlistCoverCache.get(id)?.trackImages ?? [],
+  })
   return result
 }
 
@@ -304,6 +335,7 @@ export async function removePlaylistCover(id: number): Promise<void> {
     method: 'PATCH',
     body: JSON.stringify({ cover_image: '', cover_image_url: '' }),
   })
+  playlistCoverCache.set(id, { cover_image_url: null, cover_image: null, trackImages: playlistCoverCache.get(id)?.trackImages ?? [] })
 }
 
 export async function setPlaylistCoverBase64(id: number, b64: string): Promise<void> {

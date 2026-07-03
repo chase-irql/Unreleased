@@ -598,12 +598,19 @@ export default function WrldView(): JSX.Element {
           the top-right corner (z-[10000] / z-[9990]) — rather than dodging
           that whole strip sideways, this sits in the same right-aligned
           column, just below it, so it reads as grouped with the close
-          button instead of floating off to the left. */}
+          button instead of floating off to the left.
+
+          The top offset differs by fullscreen state: portaled fullscreen
+          renders straight to document.body (no ancestor offset), so it needs
+          the full top-9 to clear the fixed window-controls strip itself.
+          Non-fullscreen renders inside <main>, which already reserves a 28px
+          drag strip above the content (see App.tsx) — stacking top-9 on top
+          of that would push the button ~64px down, well past the corner. */}
       <button
         onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-        className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all
-          ${isElectronApp ? 'top-9 right-2' : 'top-2 md:top-3 right-12 md:right-3'}
-          bg-black/10 dark:bg-black/25 text-black/50 dark:text-white/50 hover:text-black/80 dark:hover:text-white/90 hover:bg-black/20 dark:hover:bg-black/50 backdrop-blur-sm`}
+        className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all border
+          ${isElectronApp ? (fullscreen ? 'top-9 right-2' : 'top-1 right-2') : 'top-2 md:top-3 right-12 md:right-3'}
+          bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm`}
         title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       >
         {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -619,7 +626,7 @@ export default function WrldView(): JSX.Element {
             ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
             : radioFmActive
             ? 'bg-white/10 text-white/50 backdrop-blur-sm'
-            : 'bg-black/10 dark:bg-black/25 text-black/50 dark:text-white/50 hover:text-black/80 dark:hover:text-white/90 hover:bg-black/20 dark:hover:bg-black/50 backdrop-blur-sm'}`}
+            : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
         title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
       >
         <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
@@ -951,29 +958,21 @@ export default function WrldView(): JSX.Element {
                 </div>
               </div>
 
-              {/* Queue — floats over the lower part of the interface instead
-                  of taking its own side column, matching Apple Music. This
-                  has to be a true overlay (not flow content): the column
-                  above is itself scrollable (overflow-y-auto, for short
-                  viewports), so a long queue sitting in normal flow would
-                  add to that column's total content height and could tip
-                  the whole thing into scrolling — dragging the album art
-                  and controls out of view along with it. */}
-              {showQueue && !radioFmActive && (
-                <div className="absolute inset-x-0 bottom-4 z-20 flex justify-center px-8 xl:px-12 pointer-events-none">
-                  <div className="w-full pointer-events-auto" style={{ maxWidth: 320 }}>
-                    <WrldQueuePanel variant="inline" onClose={() => setShowQueue(false)} />
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Divider — FM only */}
             {radioFmActive && <div className="w-px bg-white/10 shrink-0 my-10" />}
 
-            {/* Right column */}
+            {/* Right column — swaps to the queue when toggled (replacing
+                lyrics entirely, rather than floating a queue popup over the
+                left column) so it gets the full column's height instead of
+                a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-              {radioFmActive ? (
+              {showQueue && !radioFmActive ? (
+                <div className="flex-1 min-h-0 px-6 py-5">
+                  <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
+                </div>
+              ) : radioFmActive ? (
                 <>
                   <div className="flex items-center gap-1 px-6 pt-5 pb-3 shrink-0">
                     {(['radio', 'lyrics'] as const).map(tab => (
@@ -1231,8 +1230,9 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   onClose: () => void
   // 'inline' pops up directly under the interface column on desktop (the
   // Apple Music behavior this is modeled on); 'sheet' is a full-screen
-  // overlay, used on mobile where there's no side-by-side room for it.
-  variant: 'inline' | 'sheet'
+  // overlay, used on mobile where there's no side-by-side room for it;
+  // 'panel' fills the desktop right column in place of the lyrics view.
+  variant: 'inline' | 'sheet' | 'panel'
 }): JSX.Element {
   const { queue, queueIndex, currentTrack, isPlaying, shuffle, playTrack, removeFromQueue, clearQueue, reorderQueue } = useStore(useShallow(s => ({
     queue: s.queue,
@@ -1258,7 +1258,9 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   return (
     <div
       className={`relative flex flex-col overflow-hidden ${
-        variant === 'sheet' ? 'fixed inset-0 z-40' : 'w-full mt-2 rounded-2xl shadow-2xl'
+        variant === 'sheet' ? 'fixed inset-0 z-40'
+          : variant === 'panel' ? 'w-full h-full rounded-2xl shadow-2xl'
+          : 'w-full mt-2 rounded-2xl shadow-2xl'
       }`}
       style={variant === 'inline' ? { maxHeight: 300 } : undefined}
       onClick={(e) => e.stopPropagation()}
