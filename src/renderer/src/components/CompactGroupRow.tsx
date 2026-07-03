@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { ChevronUp, ChevronDown, Layers } from 'lucide-react'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { Track } from '../types'
@@ -23,7 +23,7 @@ export function useExpandedGroups(): { expanded: Set<number>; toggle: (groupId: 
  *  the shared title, and a member count. Expanding it is the caller's job
  *  (each view renders its own member rows below, since Tracker/Playlists
  *  have different row layouts). */
-export function CompactGroupRow({
+export const CompactGroupRow = memo(function CompactGroupRow({
   coverTrack, title, count, expanded, onToggle, onContextMenu,
 }: {
   coverTrack: Track
@@ -49,7 +49,18 @@ export function CompactGroupRow({
       <span className="text-text-muted text-xs shrink-0">{count} version{count === 1 ? '' : 's'}</span>
     </button>
   )
-}
+}, (prev, next) =>
+  // Compare by value, not reference — callers pass a freshly-built coverTrack
+  // and inline onToggle/onContextMenu closures every render, so without this
+  // every group header re-rendered whenever anything in the parent changed
+  // (e.g. toggling a selection), freezing large compact lists. The closures
+  // capture only stable state setters + this group's own id, so ignoring their
+  // identity is safe.
+  prev.coverTrack.id === next.coverTrack.id &&
+  prev.title === next.title &&
+  prev.count === next.count &&
+  prev.expanded === next.expanded
+)
 
 /** Empty-state icon for compact view — re-exported so callers don't need
  *  their own lucide-react import just for this one icon. */
