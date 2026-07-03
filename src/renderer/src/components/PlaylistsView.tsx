@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom'
 import {
   ListMusic, Play, Loader2, Plus, Trash2, Pencil, ArrowLeft,
   X, Check, Heart, Shuffle, Music2, Clock, GripVertical,
-  ListPlus, Download, Share2, Archive, Info, FolderInput, MoreHorizontal,
+  ListPlus, Download, Archive, Info, FolderInput, MoreHorizontal,
   Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, Layers,
+  CheckSquare2, Square,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -241,12 +242,12 @@ function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, addToQueue, setShowUserAuth, likedTrackIds, setActiveView, setPendingEditorSongId,
     localPlaylists, libraryTracks, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
-    pendingPlaylistId, setPendingPlaylistId } = useStore()
+    pendingPlaylistId, setPendingPlaylistId,
+    playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
+    playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId } = useStore()
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<PlaylistDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
 
@@ -259,10 +260,22 @@ export default function PlaylistsView(): JSX.Element {
   // Context menus
   const [trackMenu, setTrackMenu] = useState<SongContextMenuState | null>(null)
   const [cardMenu, setCardMenu] = useState<CardMenuState | null>(null)
+
+  // Multi-select of tracks within an open playlist — mirrors the Tracker's
+  // bulk-select (ApiTrackerView). Keyed by track.id (Track has a string id;
+  // the numeric songId is derived when needed for playlist/remove ops).
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedTracks, setSelectedTracks] = useState<Map<string, Track>>(new Map())
+  const [showBulkPlaylists, setShowBulkPlaylists] = useState(false)
+  const [bulkRemoving, setBulkRemoving] = useState(false)
   const [localRenaming, setLocalRenaming] = useState(false)
   const [localRenameVal, setLocalRenameVal] = useState('')
   const [showAddAllMenu, setShowAddAllMenu] = useState(false)
   const addAllMenuRef = useRef<HTMLDivElement>(null)
+  // The open-playlist hero's "⋯" menu (replaces the old cluster of loose
+  // action buttons next to Play/Shuffle).
+  const [showHeroMenu, setShowHeroMenu] = useState(false)
+  const heroMenuRef = useRef<HTMLDivElement>(null)
 
   // Drag-to-reorder
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -473,7 +486,25 @@ export default function PlaylistsView(): JSX.Element {
     setDescValue('')
     setCoverImgError(false)
     setCoverData(null)
+    setSelectMode(false)
+    setSelectedTracks(new Map())
+    setShowBulkPlaylists(false)
+    setShowHeroMenu(false)
+    setShowAddAllMenu(false)
   }, [selectedId])
+
+  // Deselecting the last track drops out of select mode on its own (same as
+  // the Tracker), so there's no separate "Cancel" needed — Escape works too.
+  useEffect(() => {
+    if (selectMode && selectedTracks.size === 0) setSelectMode(false)
+  }, [selectMode, selectedTracks])
+
+  useEffect(() => {
+    if (!selectMode) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { setSelectMode(false); setSelectedTracks(new Map()) } }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectMode])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -506,6 +537,65 @@ export default function PlaylistsView(): JSX.Element {
     try { await userApi.removeFromPlaylist(selectedId, songId); await refreshPlaylists() }
     catch { await loadDetail(selectedId) }
   }, [selectedId, loadDetail, refreshPlaylists])
+
+  // ── Multi-select bulk actions ─────────────────────────────────────────────
+  const toggleTrackSelect = useCallback((track: Track) => {
+    setSelectMode(true)
+    setSelectedTracks(prev => {
+      const next = new Map(prev)
+      if (next.has(track.id)) next.delete(track.id)
+      else next.set(track.id, track)
+      return next
+    })
+  }, [])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedTracks(new Map())
+    setShowBulkPlaylists(false)
+  }, [])
+
+  const selectedTrackList = useMemo(() => [...selectedTracks.values()], [selectedTracks])
+
+  const bulkAddToQueue = useCallback(() => {
+    selectedTrackList.filter(t => t.path).forEach(t => addToQueue(t))
+    exitSelectMode()
+  }, [selectedTrackList, addToQueue, exitSelectMode])
+
+  const bulkAddToPlaylist = useCallback(async (targetId: number) => {
+    const ids = selectedTrackList
+      .map(t => (t.id ? userApi.trackIdToSongId(t.id) : null))
+      .filter((id): id is number => id != null && id > 0)
+    if (!ids.length) return
+    setShowBulkPlaylists(false)
+    await Promise.all(ids.map(id => userApi.addToPlaylist(targetId, id).catch(() => {})))
+    const targetSet = membershipCache.current.get(targetId) ?? new Set<number>()
+    ids.forEach(id => targetSet.add(id))
+    membershipCache.current.set(targetId, targetSet)
+    await refreshPlaylists()
+    exitSelectMode()
+  }, [selectedTrackList, refreshPlaylists, exitSelectMode])
+
+  // Remove every selected track in one pass, then refresh once (rather than
+  // per-track like removeTrack) — otherwise a large selection fires a refresh
+  // storm. Optimistically drops them from the open detail first.
+  const bulkRemove = useCallback(async () => {
+    if (selectedId == null) return
+    const ids = selectedTrackList
+      .map(t => (t.id ? userApi.trackIdToSongId(t.id) : null))
+      .filter((id): id is number => id != null && id > 0)
+    if (!ids.length) return
+    setBulkRemoving(true)
+    const idSet = new Set(ids)
+    setDetail(prev => prev ? { ...prev, items: prev.items.filter(i => !idSet.has(i.song.id)) } : null)
+    ids.forEach(id => membershipCache.current.get(selectedId)?.delete(id))
+    try {
+      await Promise.all(ids.map(id => userApi.removeFromPlaylist(selectedId, id)))
+      await refreshPlaylists()
+    } catch { await loadDetail(selectedId) }
+    setBulkRemoving(false)
+    exitSelectMode()
+  }, [selectedId, selectedTrackList, refreshPlaylists, loadDetail, exitSelectMode])
 
   const handleSort = (field: SortField) => {
     setSort(prev => {
@@ -807,6 +897,8 @@ export default function PlaylistsView(): JSX.Element {
 
   if (selectedId != null) {
     const durLabel = totalDurationLabel(tracks)
+    // Extra leading checkbox column while selecting.
+    const gridCols = selectMode ? '20px 16px 28px 40px 1fr 56px 36px' : '16px 28px 40px 1fr 56px 36px'
 
     const playShuffle = () => {
       if (!tracks.length) return
@@ -815,7 +907,7 @@ export default function PlaylistsView(): JSX.Element {
     }
 
     return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false) }}>
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false); setShowHeroMenu(false) }}>
         {/* ── Hero (shown immediately using summary data) — the backdrop now
             extends behind the back button too, instead of leaving a plain
             theme-background strip above the gradient. Text in this section
@@ -951,41 +1043,9 @@ export default function PlaylistsView(): JSX.Element {
               <div className="flex items-center gap-2 flex-wrap">
                 {tracks.length > 0 && <HeroPlayButton onClick={() => playTrack(tracks[0], tracks)} />}
                 {tracks.length > 1 && <HeroShuffleButton onClick={playShuffle} />}
-                <button onClick={() => handleZipDownload(tracks, detail?.name ?? summary?.name ?? 'playlist')} disabled={zipState === 'loading' || tracks.length === 0}
-                  title={zipState === 'done' ? 'Download started!' : zipState === 'error' ? 'Failed' : 'Download all as ZIP'}
-                  className={`p-2.5 rounded-full text-sm transition-colors disabled:opacity-40 ${zipState === 'done' ? 'text-accent bg-accent/10' : zipState === 'error' ? 'text-red-400 bg-red-400/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
-                  {zipState === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <Archive size={16} />}
-                </button>
-                <button onClick={() => handleShare()} disabled={tracks.length === 0 || isSharedView}
-                  title={shareCopied ? 'Link copied!' : 'Copy share link'}
-                  className={`p-2.5 rounded-full text-sm transition-colors disabled:opacity-40 ${shareCopied ? 'text-accent bg-accent/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
-                  {shareCopied ? <Check size={16} /> : <Share2 size={16} />}
-                </button>
-                {!isSharedView && (
-                  <button onClick={handleTogglePublic} disabled={togglingPublic}
-                    title={detail?.is_public ? 'Public — click to make private' : 'Private — click to make public'}
-                    className={`p-2.5 rounded-full text-sm transition-colors disabled:opacity-40 ${detail?.is_public ? 'text-accent bg-accent/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
-                    {togglingPublic ? <Loader2 size={16} className="animate-spin" /> : detail?.is_public ? <Globe size={16} /> : <Lock size={16} />}
-                  </button>
-                )}
-                {!isSharedView && otherPlaylists.length > 0 && tracks.length > 0 && detail && (
-                  <div className="relative" ref={addAllMenuRef} onClick={e => e.stopPropagation()}>
-                    <button onClick={() => setShowAddAllMenu(v => !v)} title="Add all to playlist" disabled={addingAll}
-                      className={`p-2.5 rounded-full text-sm transition-colors disabled:opacity-40 ${addingAll ? 'text-accent' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
-                      {addingAll ? <Loader2 size={16} className="animate-spin" /> : <FolderInput size={16} />}
-                    </button>
-                    {showAddAllMenu && (
-                      <div className="absolute top-full mt-1 left-0 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[180px] z-50 max-h-60 overflow-y-auto">
-                        <p className="px-3.5 pt-1 pb-1.5 text-[10px] uppercase tracking-widest text-text-muted font-semibold">Add all tracks to…</p>
-                        {otherPlaylists.map(p => (
-                          <button key={p.id} onClick={async () => { setShowAddAllMenu(false); await handleAddAllTo(p.id, detail) }} className="w-full text-left px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors truncate">
-                            {p.name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+
+                {/* Shared (not-owned) playlists only get "Save to library" —
+                    the owner-only actions below don't apply. */}
                 {isSharedView && account && tracks.length > 0 && detail && (
                   <button
                     onClick={handleImportPlaylist}
@@ -1003,15 +1063,68 @@ export default function PlaylistsView(): JSX.Element {
                     {importState === 'loading' ? 'Saving…' : importState === 'done' ? 'Saved!' : importState === 'error' ? 'Failed' : 'Save to library'}
                   </button>
                 )}
-                {!isSharedView && !renaming && detail && (
-                  <button onClick={() => { setRenameValue(detail.name); setRenaming(true) }} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors">
-                    <Pencil size={15} />
-                  </button>
-                )}
-                {!isSharedView && (
-                  <button onClick={deleteSelected} className="p-2.5 rounded-full text-white/60 hover:text-red-400 hover:bg-red-500/10 text-sm transition-colors">
-                    <Trash2 size={15} />
-                  </button>
+
+                {/* Everything else (download, share, public/private, add-all,
+                    rename, delete) lives behind one "⋯" menu instead of a row
+                    of loose icon buttons. */}
+                {!isSharedView && detail && (
+                  <div className="relative" ref={heroMenuRef} onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => { setShowHeroMenu(v => !v); setShowAddAllMenu(false) }}
+                      title="More"
+                      className={`p-2.5 rounded-full text-sm transition-colors ${showHeroMenu ? 'text-white bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                    {showHeroMenu && (
+                      <div className="absolute top-full mt-1 left-0 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px] z-50">
+                        <MenuItem
+                          icon={zipState === 'loading' ? Loader2 : Archive}
+                          label={zipState === 'error' ? 'Download failed' : zipState === 'done' ? 'Download started' : 'Download as ZIP'}
+                          disabled={zipState === 'loading' || tracks.length === 0}
+                          onClick={() => { handleZipDownload(tracks, detail.name ?? summary?.name ?? 'playlist') }}
+                        />
+                        <MenuItem
+                          icon={shareCopied ? Check : Link}
+                          label={shareCopied ? 'Link copied!' : 'Copy share link'}
+                          disabled={tracks.length === 0}
+                          onClick={() => { handleShare() }}
+                        />
+                        <MenuItem
+                          icon={detail.is_public ? Globe : Lock}
+                          label={detail.is_public ? 'Make private' : 'Make public'}
+                          disabled={togglingPublic}
+                          onClick={() => { handleTogglePublic() }}
+                        />
+                        {otherPlaylists.length > 0 && tracks.length > 0 && (
+                          <>
+                            <MenuItem
+                              icon={FolderInput}
+                              label="Add all to playlist"
+                              disabled={addingAll}
+                              trailing={<span className="text-text-muted text-xs">{showAddAllMenu ? '⌄' : '›'}</span>}
+                              onClick={() => setShowAddAllMenu(v => !v)}
+                            />
+                            {showAddAllMenu && (
+                              <div className="border-t border-b border-[var(--border)] max-h-40 overflow-y-auto">
+                                {otherPlaylists.map(p => (
+                                  <button key={p.id} onClick={async () => { setShowAddAllMenu(false); setShowHeroMenu(false); await handleAddAllTo(p.id, detail) }}
+                                    className="w-full text-left pl-9 pr-3.5 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors truncate">
+                                    {p.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                        <div className="border-t border-[var(--border)] my-1" />
+                        {!renaming && (
+                          <MenuItem icon={Pencil} label="Rename" onClick={() => { setShowHeroMenu(false); setRenameValue(detail.name); setRenaming(true) }} />
+                        )}
+                        <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { setShowHeroMenu(false); deleteSelected() }} />
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1134,7 +1247,21 @@ export default function PlaylistsView(): JSX.Element {
             ) : (
               <>
             {/* Column headers */}
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '16px 28px 40px 1fr 56px 36px' }}>
+            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
+              {selectMode && (
+                <button
+                  onClick={() => {
+                    const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                    setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
+                  }}
+                  className="flex items-center justify-center text-text-muted hover:text-text-primary"
+                  title="Select all / none"
+                >
+                  {displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                    ? <CheckSquare2 size={15} className="text-accent" />
+                    : <Square size={15} className="opacity-50" />}
+                </button>
+              )}
               <span />
               <span className="text-center">#</span>
               <span />
@@ -1154,43 +1281,50 @@ export default function PlaylistsView(): JSX.Element {
               const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
               const isDragging = dragEnabled && dragIdx === originalIdx
               const isDropTarget = dragEnabled && dropIdx === displayIdx && dragIdx !== null && dragIdx !== displayIdx
+              const isSelected = selectedTracks.has(track.id)
 
               return (
                 <div
                   key={track.id}
-                  draggable={!isSharedView && dragEnabled}
-                  onDragStart={() => !isSharedView && dragEnabled && setDragIdx(originalIdx)}
-                  onDragOver={e => { if (!dragEnabled) return; e.preventDefault(); setDropIdx(displayIdx) }}
+                  draggable={!isSharedView && dragEnabled && !selectMode}
+                  onDragStart={() => !isSharedView && dragEnabled && !selectMode && setDragIdx(originalIdx)}
+                  onDragOver={e => { if (!dragEnabled || selectMode) return; e.preventDefault(); setDropIdx(displayIdx) }}
                   onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
-                  onDrop={() => dragEnabled && handleDrop(displayIdx)}
+                  onDrop={() => dragEnabled && !selectMode && handleDrop(displayIdx)}
+                  onClick={() => { if (selectMode) toggleTrackSelect(track) }}
                   onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
                   className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
-                    isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : 'hover:bg-surface-raised'
+                    isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
                   }`}
-                  style={{ gridTemplateColumns: '16px 28px 40px 1fr 56px 36px' }}
+                  style={{ gridTemplateColumns: gridCols }}
                 >
-                  <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
+                  {selectMode && (
+                    <span className="flex items-center justify-center shrink-0">
+                      {isSelected ? <CheckSquare2 size={16} className="text-accent" /> : <Square size={16} className="text-text-muted opacity-50" />}
+                    </span>
+                  )}
+                  <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled && !selectMode ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
                     <GripVertical size={14} />
                   </span>
                   <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{displayIdx + 1}</span>
-                  <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(track, displayTracks)}>
+                  <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
                     <Play size={14} fill="currentColor" />
                   </button>
                   <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} />
-                  <div className="min-w-0" onDoubleClick={() => playTrack(track, displayTracks)}>
+                  <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
                     <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
                     <p className="text-text-muted text-xs truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
                     {track.duration ? formatDuration(track.duration) : '--:--'}
                   </span>
-                  <div className="flex items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className={`flex items-center justify-end transition-opacity ${selectMode ? 'opacity-0 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
                     <button onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
                       className="p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors hidden md:flex" title="More options">
                       <MoreHorizontal size={13} />
                     </button>
                     {!isSharedView && (
-                      <button onClick={() => removeTrack(songId)} className="p-1.5 text-text-muted hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors" title="Remove">
+                      <button onClick={e => { e.stopPropagation(); removeTrack(songId) }} className="p-1.5 text-text-muted hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors" title="Remove">
                         <X size={13} />
                       </button>
                     )}
@@ -1212,8 +1346,86 @@ export default function PlaylistsView(): JSX.Element {
             onInfo={() => openSongInfo(trackMenu.songId as number)}
             onPlay={() => playTrack(trackMenu.track, displayTracks)}
             onAddToQueue={() => addToQueue(trackMenu.track)}
+            onSelect={() => toggleTrackSelect(trackMenu.track)}
             removeAction={!isSharedView ? { label: 'Remove from playlist', onClick: () => removeTrack(trackMenu.songId as number) } : undefined}
           />
+        )}
+
+        {/* ── Bulk selection action bar ── */}
+        {selectMode && (
+          <div className="sticky bottom-0 shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2 relative z-30" onClick={e => e.stopPropagation()}>
+            <span className="text-sm text-text-primary font-medium flex-1">
+              {selectedTracks.size} {selectedTracks.size === 1 ? 'track' : 'tracks'} selected
+            </span>
+            <button
+              onClick={() => setSelectedTracks(new Map(displayTracks.map(t => [t.id, t])))}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => setSelectedTracks(new Map())}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={bulkAddToQueue}
+              disabled={selectedTracks.size === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              <ListPlus size={13} /> Add to queue
+            </button>
+            {otherPlaylists.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowBulkPlaylists(v => !v)}
+                  disabled={selectedTracks.size === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+                >
+                  <Plus size={13} /> Add to playlist
+                </button>
+                {showBulkPlaylists && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowBulkPlaylists(false)} />
+                    <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
+                      <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                        Add to playlist
+                      </div>
+                      <div className="max-h-56 overflow-y-auto py-1">
+                        {otherPlaylists.map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => bulkAddToPlaylist(p.id)}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                          >
+                            <ListMusic size={14} className="shrink-0 text-text-muted" />
+                            <span className="flex-1 truncate">{p.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {!isSharedView && (
+              <button
+                onClick={bulkRemove}
+                disabled={selectedTracks.size === 0 || bulkRemoving}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-red-500/10 text-red-400 rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                {bulkRemoving ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Remove
+              </button>
+            )}
+            <button
+              onClick={exitSelectMode}
+              className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
+              title="Exit selection"
+            >
+              <X size={15} className="text-text-muted" />
+            </button>
+          </div>
         )}
 
         <SongInfoModal
@@ -1598,6 +1810,16 @@ export default function PlaylistsView(): JSX.Element {
                   const d = await userApi.getPlaylist(cardMenu.playlist.id)
                   d.items.forEach(i => addToQueue(userApi.liteSongToTrack(i.song)))
                   setCardMenu(null)
+                }}
+              />
+              <MenuItem
+                icon={Archive}
+                label="Download as ZIP"
+                onClick={async () => {
+                  const name = cardMenu.playlist.name
+                  const d = await userApi.getPlaylist(cardMenu.playlist.id)
+                  setCardMenu(null)
+                  handleZipDownload(d.items.map(i => userApi.liteSongToTrack(i.song)), name)
                 }}
               />
               <div className="border-t border-[var(--border)] my-1" />

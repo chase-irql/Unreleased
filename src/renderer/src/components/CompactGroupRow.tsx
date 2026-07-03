@@ -24,17 +24,21 @@ export function useExpandedGroups(): { expanded: Set<number>; toggle: (groupId: 
  *  (each view renders its own member rows below, since Tracker/Playlists
  *  have different row layouts). */
 export function CompactGroupRow({
-  coverTrack, title, count, expanded, onToggle,
+  coverTrack, title, count, expanded, onToggle, onContextMenu,
 }: {
   coverTrack: Track
   title: string
   count: number
   expanded: boolean
   onToggle: () => void
+  /** Right-click (or long-press) the whole group — e.g. to act on all its
+   *  versions at once. Left-click still expands/collapses. */
+  onContextMenu?: (e: React.MouseEvent) => void
 }): JSX.Element {
   return (
     <button
       onClick={onToggle}
+      onContextMenu={onContextMenu}
       className="w-full flex items-center gap-2.5 px-3 py-2.5 md:py-2 hover:bg-surface-overlay rounded-lg transition-colors text-left"
     >
       {expanded ? <ChevronUp size={14} className="text-text-muted shrink-0" /> : <ChevronDown size={14} className="text-text-muted shrink-0" />}

@@ -90,6 +90,14 @@ interface AppState {
   // round-trip (works whether PlaylistsView is already mounted or not).
   pendingPlaylistId: number | null
 
+  // Which playlist (API-backed or local) PlaylistsView currently has open —
+  // lives here rather than as local component state because App.tsx unmounts
+  // PlaylistsView whenever you switch to another tab, which would otherwise
+  // silently drop back to the playlist list every time you navigate away and
+  // back. Cleared by the "playlists:back" event (tapping the tab again).
+  playlistsSelectedId: number | null
+  playlistsSelectedLocalId: string | null
+
   // Editor
   pendingEditorSongId: number | null
   pendingEditProposal: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null
@@ -152,6 +160,8 @@ interface AppActions {
   logoutAccount: () => Promise<void>
   refreshPlaylists: () => Promise<void>
   setPendingPlaylistId: (id: number | null) => void
+  setPlaylistsSelectedId: (id: number | null) => void
+  setPlaylistsSelectedLocalId: (id: string | null) => void
 
   setPendingEditorSongId: (id: number | null) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
@@ -335,6 +345,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showUserAuth: false,
   pendingPlaylistId: null,
   setPendingPlaylistId: (id) => set({ pendingPlaylistId: id }),
+  playlistsSelectedId: null,
+  playlistsSelectedLocalId: null,
+  setPlaylistsSelectedId: (id) => set({ playlistsSelectedId: id }),
+  setPlaylistsSelectedLocalId: (id) => set({ playlistsSelectedLocalId: id }),
 
   setShowUserAuth: (showUserAuth) => set({ showUserAuth }),
 

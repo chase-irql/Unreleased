@@ -326,11 +326,20 @@ export default function Player(): JSX.Element {
   // element (or never finish a play() call) while the tab is hidden, with
   // no event firing to tell the app. Periodically nudge it back, and
   // recheck immediately when the tab regains focus.
+  //
+  // A locked screen can also suspend JS badly enough that the native
+  // 'ended' event dispatch for a track that finished never actually reaches
+  // our handler — audio.paused and audio.ended both end up true with
+  // playback just stuck there forever ("next song doesn't play"). Calling
+  // .play() on an already-ended element only replays it from 0, so that
+  // case needs to go through the real advance-to-next-track logic instead.
   useEffect(() => {
     const check = (): void => {
       if (!isPlaying) return
       const audio = getActive()
-      if (audio && audio.paused) audio.play().catch(() => {})
+      if (!audio) return
+      if (audio.ended) { onAudioEnded(audio); return }
+      if (audio.paused) audio.play().catch(() => {})
     }
     const id = setInterval(check, 8000)
     const onVisible = (): void => { if (document.visibilityState === 'visible') check() }
@@ -382,6 +391,17 @@ export default function Player(): JSX.Element {
     radioFmNowPlaying?.artist,
     radioFmMatchedSong?.imageUrl,
   ])
+
+  // Media Session playback state — mobile browsers (Android Chrome in
+  // particular) use this to decide whether the background media session is
+  // still "active" and worth keeping alive. Never setting it meant the OS
+  // could treat a locked-screen session as stale and tear it down mid-track,
+  // which silently stopped playback with no 'ended' event ever firing — so
+  // the queue never advanced to the next song.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [isPlaying])
 
   // Media Session action handlers — play/pause/skip
   useEffect(() => {
@@ -508,9 +528,12 @@ export default function Player(): JSX.Element {
     }
   }
 
-  const handleEnded = (e: React.SyntheticEvent<HTMLAudioElement>): void => {
-    const audio = e.currentTarget
+  const handleEnded = (e: React.SyntheticEvent<HTMLAudioElement>): void => onAudioEnded(e.currentTarget)
 
+  // Split out from the React event handler so the background watchdog below
+  // can invoke the exact same advance-to-next-track logic directly on the
+  // audio element, for when the real 'ended' event never reaches JS at all.
+  const onAudioEnded = (audio: HTMLAudioElement): void => {
     if (audio !== getActive()) {
       // Pre-loading slot ended (very short next track, or error)
       if (cfActive.current) cancelCF()

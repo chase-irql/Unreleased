@@ -58,7 +58,7 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Elem
       onClick={onClick}
       className={`relative w-10 h-5 rounded-full shrink-0 transition-colors ${on ? 'bg-accent' : 'bg-[var(--surface-overlay)]'}`}
     >
-      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-5' : 'left-0.5'}`} />
+      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
     </button>
   )
 }
@@ -344,13 +344,13 @@ export default function Settings(): JSX.Element {
                 )}
                 <Row icon={Zap} iconColor="#f59e0b" label="Playback speed">
                   <div className="flex items-center gap-2">
-                    <span className="text-text-muted text-xs tabular-nums w-8 text-right">{playbackSpeed.toFixed(2)}x</span>
                     <input
                       type="range" min={0.5} max={2} step={0.05}
                       value={playbackSpeed}
                       onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
                       className="w-24 accent-[var(--accent)]"
                     />
+                    <span className="text-text-muted text-xs tabular-nums w-10 text-right">{playbackSpeed.toFixed(2)}x</span>
                   </div>
                 </Row>
                 <Row
@@ -367,7 +367,7 @@ export default function Settings(): JSX.Element {
                         onChange={(e) => setCrossfade(true, parseInt(e.target.value))}
                         className="w-20 accent-[var(--accent)]"
                       />
-                      <span className="text-text-muted text-xs w-6">{crossfadeDuration}s</span>
+                      <span className="text-text-muted text-xs tabular-nums w-10 text-right">{crossfadeDuration}s</span>
                     </div>
                   )}
                 </Row>

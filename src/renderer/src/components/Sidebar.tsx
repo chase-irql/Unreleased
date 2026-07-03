@@ -3,6 +3,7 @@ import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn
 import logo from '../assets/logo.png'
 import { useStore } from '../store/useStore'
 import { ViewType } from '../types'
+import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
 
 const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
@@ -47,6 +48,8 @@ export default function Sidebar(): JSX.Element {
     setPendingPlaylistId(id)
     setActiveView('playlists')
   }
+
+  const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
     { icon: <SearchCode size={18} />, label: 'Tracker', view: 'api-tracker' },
@@ -118,6 +121,7 @@ export default function Sidebar(): JSX.Element {
                   <button
                     key={pl.id}
                     onClick={() => openPlaylist(pl.id)}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPlaylistMenu({ playlist: pl, x: e.clientX, y: e.clientY }) }}
                     title={pl.name}
                     className="flex items-center w-full py-1.5 px-2 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors truncate"
                   >
@@ -199,6 +203,10 @@ export default function Sidebar(): JSX.Element {
           {showExpanded && <span>Collapse</span>}
         </button>
       </div>
+
+      {playlistMenu && (
+        <PlaylistContextMenu state={playlistMenu} onClose={() => setPlaylistMenu(null)} />
+      )}
     </aside>
   )
 }

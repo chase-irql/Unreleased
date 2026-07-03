@@ -63,6 +63,12 @@ export default function WrldView(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef    = useRef<HTMLDivElement>(null)
   const [artError, setArtError] = useState(false)
+
+  // Remember the volume before muting so unmuting restores it, instead of
+  // jumping to a hardcoded level (mirrors the Player bar's toggleMute).
+  const prevVolumeRef = useRef(volume || 0.8)
+  useEffect(() => { if (volume > 0) prevVolumeRef.current = volume }, [volume])
+  const toggleMute = (): void => setVolume(volume === 0 ? (prevVolumeRef.current || 0.8) : 0)
   const [fmTab, setFmTab] = useState<'radio' | 'lyrics'>('radio')
   // Fullscreen renders the page through a portal (covers the sidebar/other
   // chrome) AND requests real OS/browser-level fullscreen — the portal alone
@@ -743,7 +749,7 @@ export default function WrldView(): JSX.Element {
               )}
               <div className="flex items-center gap-2.5">
                 <button
-                  onClick={() => setVolume(volume === 0 ? 0.5 : 0)}
+                  onClick={toggleMute}
                   className="shrink-0 transition-opacity hover:opacity-70"
                   style={{ color: txtTer }}
                 >
@@ -906,7 +912,7 @@ export default function WrldView(): JSX.Element {
                 {/* Volume row */}
                 <div className="flex items-center gap-2.5">
                   <button
-                    onClick={() => setVolume(volume === 0 ? 0.5 : 0)}
+                    onClick={toggleMute}
                     className="shrink-0 transition-opacity hover:opacity-70"
                     style={{ color: txtTer }}
                   >
@@ -1149,6 +1155,11 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
     <div className="relative shrink-0">
       <button
         ref={btnRef}
+        // Stop the mousedown from reaching SongContextMenu's document-level
+        // outside-click listener — otherwise clicking this button while the
+        // menu is open closes it (mousedown) and then reopens it (click),
+        // so it never appears to toggle shut.
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen(v => !v)}
         title="More options"
         className="p-1.5 rounded-full transition-colors hover:bg-white/10"
