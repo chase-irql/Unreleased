@@ -686,6 +686,10 @@ export default function ApiTrackerView(): JSX.Element {
   const [compactView, setCompactView] = useState(false)
   const [compactGroups, setCompactGroups] = useState<CompactGroup<JWApiSong>[]>([])
   const [loadingCompact, setLoadingCompact] = useState(false)
+  // How compact-view groups are ordered. 'default' keeps the fetch order
+  // (group_id asc); the others sort by member count / title client-side.
+  type CompactSort = 'default' | 'versions-desc' | 'versions-asc' | 'title'
+  const [compactSort, setCompactSort] = useState<CompactSort>('default')
   const { expanded: expandedGroups, toggle: toggleGroupExpanded, clear: clearExpandedGroups } = useExpandedGroups()
 
   useEffect(() => {
@@ -910,13 +914,23 @@ export default function ApiTrackerView(): JSX.Element {
   // coverage as this client-side filter reasonably can — matching only
   // title/artist here made legitimate searches (e.g. by producer) come up
   // empty even though the normal (non-compact) list found them fine.
-  const filteredCompactGroups = useMemo(
-    () => filterCompactGroups(compactGroups, debouncedSearch, s => [
+  const filteredCompactGroups = useMemo(() => {
+    const filtered = filterCompactGroups(compactGroups, debouncedSearch, s => [
       s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
       s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
-    ].filter(Boolean).join(' ')),
-    [compactGroups, debouncedSearch]
-  )
+    ].filter(Boolean).join(' '))
+    if (compactSort === 'default') return filtered
+    // Copy before sorting — filterCompactGroups may return the input array.
+    const sorted = [...filtered]
+    if (compactSort === 'title') {
+      sorted.sort((a, b) => a.title.localeCompare(b.title))
+    } else {
+      const dir = compactSort === 'versions-asc' ? 1 : -1
+      // Title tiebreak so equal-count groups keep a stable, readable order.
+      sorted.sort((a, b) => (a.members.length - b.members.length) * dir || a.title.localeCompare(b.title))
+    }
+    return sorted
+  }, [compactGroups, debouncedSearch, compactSort])
 
   const handlePlay = useCallback((song: JWApiSong) => {
     const track = songToTrack(song)
@@ -949,6 +963,17 @@ export default function ApiTrackerView(): JSX.Element {
     }
     setContextMenu({ song, x: e.clientX, y: e.clientY })
   }, [selectMode])
+
+  // Right-clicking a compact-view group ("folder") acts on all its versions
+  // at once — selects every member and opens the bulk menu (Add to queue /
+  // playlist, Download ZIP, Link versions), the same menu you'd get from
+  // multi-selecting those songs by hand.
+  const handleGroupContextMenu = useCallback((group: CompactGroup<JWApiSong>, e: React.MouseEvent): void => {
+    e.preventDefault()
+    setSelected(new Map(group.members.map(m => [m.item.id, m.item])))
+    setSelectMode(true)
+    setBulkContextMenu({ x: e.clientX, y: e.clientY, showPlaylists: false })
+  }, [])
 
   // ESC exits select mode
   useEffect(() => {
@@ -1129,6 +1154,20 @@ export default function ApiTrackerView(): JSX.Element {
               </button>
             )}
 
+            {compactView && (
+              <select
+                value={compactSort}
+                onChange={(e) => setCompactSort(e.target.value as CompactSort)}
+                className="bg-surface-overlay text-text-primary text-xs px-2.5 py-2.5 md:py-2 rounded-lg outline-none border border-transparent focus:ring-1 ring-accent focus:border-accent/40 cursor-pointer shrink-0"
+                title="Sort version groups"
+              >
+                <option value="default">Sort: Default</option>
+                <option value="versions-desc">Most versions</option>
+                <option value="versions-asc">Fewest versions</option>
+                <option value="title">Title (A–Z)</option>
+              </select>
+            )}
+
             {!compactView && (
               <div className="flex items-center bg-surface-overlay rounded-lg p-0.5 shrink-0 ml-auto">
                 <button
@@ -1191,8 +1230,10 @@ export default function ApiTrackerView(): JSX.Element {
         )}
 
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Column headers */}
-          {(viewMode === 'list' || compactView) && (
+          {/* Column headers — hidden in compact view: these sort the flat song
+              list (handleSort), which has no effect on the grouped compact
+              rows and just misleads. Compact view sorts via its own dropdown. */}
+          {viewMode === 'list' && !compactView && (
             <div className="hidden md:block px-5 pb-1 shrink-0">
               {(() => {
                 const SortBtn = ({ field, label, className }: { field: OrderField; label: string; className?: string }): JSX.Element => {
@@ -1248,6 +1289,7 @@ export default function ApiTrackerView(): JSX.Element {
                       count={group.members.length}
                       expanded={expandedGroups.has(group.groupId)}
                       onToggle={() => toggleGroupExpanded(group.groupId)}
+                      onContextMenu={(e) => handleGroupContextMenu(group, e)}
                     />
                     {expandedGroups.has(group.groupId) && (
                       <div className="ml-4 pl-4 border-l border-[var(--border)] space-y-0.5">

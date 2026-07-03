@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Music2, Pencil } from 'lucide-react'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
@@ -113,7 +114,11 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
     }
   }
 
-  return (
+  // Portal to <body> so the overlay is never trapped inside a caller with a
+  // CSS transform/animation/overflow (e.g. NowPlaying's slide-in panel) — a
+  // transformed ancestor becomes the containing block for position: fixed,
+  // which would otherwise render this "modal" clipped inside that panel.
+  return createPortal(
     <div
       ref={overlayRef}
       className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
@@ -306,6 +311,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
 
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
