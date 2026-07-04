@@ -1058,7 +1058,7 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="max-h-full px-6 py-5">
+                <div className="max-h-full w-full max-w-[380px] mx-auto px-6 py-5">
                   <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
                 </div>
               ) : radioFmActive ? (
@@ -1600,6 +1600,7 @@ const LyricsPanel = memo(function LyricsPanel({
   const viewportRef = useRef<HTMLDivElement>(null)
   const linesRef    = useRef<HTMLDivElement>(null)
   const activeRef   = useRef<HTMLDivElement>(null)
+  const lyricsOffset = useStore(s => s.lyricsOffset)
 
   // Driven by requestAnimationFrame against the LIVE audio.currentTime rather
   // than the Zustand-stored value (which only updates on the native
@@ -1616,7 +1617,7 @@ const LyricsPanel = memo(function LyricsPanel({
     }
     let raf = 0
     const tick = (): void => {
-      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime())
+      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
       if (idx !== lineIdxRef.current) {
         lineIdxRef.current = idx
         setCurrentLineIdx(idx)
@@ -1625,7 +1626,7 @@ const LyricsPanel = memo(function LyricsPanel({
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isSynced, syncedLines])
+  }, [isSynced, syncedLines, lyricsOffset])
 
   // Center the active line by translating the whole lyric column rather than
   // using native `scrollIntoView({behavior:'smooth'})`. Native smooth-scroll

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
   X, Moon, Sun, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getToken } from '../lib/userApi'
@@ -83,6 +83,7 @@ export default function Settings(): JSX.Element {
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     playbackSpeed, setPlaybackSpeed,
+    lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
@@ -351,6 +352,36 @@ export default function Settings(): JSX.Element {
                       className="w-24 accent-[var(--accent)]"
                     />
                     <span className="text-text-muted text-xs tabular-nums w-10 text-right">{playbackSpeed.toFixed(2)}x</span>
+                  </div>
+                </Row>
+                <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync" sub="Nudge synced lyrics earlier or later">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.5) * 10) / 10)}
+                      title="Shift lyrics earlier"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                    >
+                      <Minus size={13} />
+                    </button>
+                    <span className="text-text-muted text-xs tabular-nums w-12 text-center">
+                      {lyricsOffset > 0 ? '+' : ''}{lyricsOffset.toFixed(1)}s
+                    </span>
+                    <button
+                      onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.5) * 10) / 10)}
+                      title="Shift lyrics later"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                    >
+                      <Plus size={13} />
+                    </button>
+                    {lyricsOffset !== 0 && (
+                      <button
+                        onClick={() => setLyricsOffset(0)}
+                        title="Reset to 0"
+                        className="text-text-muted hover:text-text-primary text-xs transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
                   </div>
                 </Row>
                 <Row

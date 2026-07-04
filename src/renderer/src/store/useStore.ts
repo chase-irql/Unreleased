@@ -44,6 +44,10 @@ interface AppState {
   currentTrackFull: FullTrack | null
   volume: number
   playbackSpeed: number
+  // Seconds added to the lookup time when matching synced (LRC) lyric lines —
+  // positive shifts lyrics later (delays them), negative shifts them earlier,
+  // compensating for lyric files that aren't quite in step with the audio.
+  lyricsOffset: number
 
   // UI
   activeView: ViewType
@@ -125,6 +129,7 @@ interface AppActions {
   setCurrentTrackFull: (full: FullTrack | null | ((prev: FullTrack | null) => FullTrack | null)) => void
   setVolume: (vol: number) => void
   setPlaybackSpeed: (speed: number) => void
+  setLyricsOffset: (offset: number) => void
 
   setActiveView: (view: ViewType) => void
   setShowNowPlaying: (show: boolean) => void
@@ -216,6 +221,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   currentTrackFull: null,
   volume: ls.get<number>('volume') ?? 0.8,
   playbackSpeed: ls.get<number>('playbackSpeed') ?? 1,
+  lyricsOffset: ls.get<number>('lyricsOffset') ?? 0,
 
   setCurrentTrackFull: (full) => {
     if (typeof full === 'function') {
@@ -226,6 +232,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setVolume: (volume) => { set({ volume }); ls.set('volume', volume) },
   setPlaybackSpeed: (speed) => { set({ playbackSpeed: speed }); ls.set('playbackSpeed', speed) },
+  setLyricsOffset: (offset) => { set({ lyricsOffset: offset }); ls.set('lyricsOffset', offset) },
 
   // ── UI ────────────────────────────────────────────────────────────────────
   activeView: 'api-tracker',
