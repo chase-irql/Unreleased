@@ -58,7 +58,10 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Elem
       onClick={onClick}
       className={`relative w-10 h-5 rounded-full shrink-0 transition-colors ${on ? 'bg-accent' : 'bg-[var(--surface-overlay)]'}`}
     >
-      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      {/* No shadow here — its default downward offset (0 1px 3px) adds visual
+          weight under the knob, making it read as sitting slightly high even
+          though it's geometrically centered (2px top/bottom either way). */}
+      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
     </button>
   )
 }
@@ -357,7 +360,7 @@ export default function Settings(): JSX.Element {
                 <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync" sub="Nudge synced lyrics earlier or later">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.5) * 10) / 10)}
+                      onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.1) * 10) / 10)}
                       title="Shift lyrics earlier"
                       className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
                     >
@@ -367,7 +370,7 @@ export default function Settings(): JSX.Element {
                       {lyricsOffset > 0 ? '+' : ''}{lyricsOffset.toFixed(1)}s
                     </span>
                     <button
-                      onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.5) * 10) / 10)}
+                      onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.1) * 10) / 10)}
                       title="Shift lyrics later"
                       className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
                     >

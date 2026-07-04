@@ -633,24 +633,18 @@ export default function WrldView(): JSX.Element {
         <div className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
 
-      {/* Fullscreen toggle. The Electron window-control buttons (minimize/
-          maximize/close) and the global Downloads trigger (see
-          DownloadManager.tsx) share a 168px-wide, 28px-tall strip pinned to
-          the top-right corner (z-[10000] / z-[9990]) — rather than dodging
-          that whole strip sideways, this sits in the same right-aligned
-          column, just below it, so it reads as grouped with the close
-          button instead of floating off to the left.
-
-          The top offset differs by fullscreen state: portaled fullscreen
-          renders straight to document.body (no ancestor offset), so it needs
-          the full top-9 to clear the fixed window-controls strip itself.
-          Non-fullscreen renders inside <main>, which already reserves a 28px
-          drag strip above the content (see App.tsx) — stacking top-9 on top
-          of that would push the button ~64px down, well past the corner. */}
+      {/* Fullscreen toggle, right at the corner. The Electron window-control
+          buttons (minimize/maximize/close) sit in the same corner normally,
+          but App.tsx hides them while wrldFullscreen is active (see
+          setWrldFullscreen above) so there's nothing left to dodge — this can
+          sit flush at top-1 in both states instead of pushing down to clear
+          a strip that's no longer there. The Downloads trigger
+          (DownloadManager.tsx) is further left (right: 132px) and never
+          overlaps this button's right-2 position. */}
       <button
         onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
         className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all border
-          ${isElectronApp ? (fullscreen ? 'top-9 right-2' : 'top-1 right-2') : 'top-2 md:top-3 right-12 md:right-3'}
+          ${isElectronApp ? 'top-1 right-2' : 'top-2 md:top-3 right-12 md:right-3'}
           bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm`}
         title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       >
@@ -1058,8 +1052,10 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="max-h-full w-full max-w-[380px] mx-auto px-6 py-5">
-                  <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
+                <div className="h-full flex items-center justify-center px-6 py-5">
+                  <div className="w-full max-w-[420px] h-full max-h-[80%]">
+                    <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
+                  </div>
                 </div>
               ) : radioFmActive ? (
                 <>
