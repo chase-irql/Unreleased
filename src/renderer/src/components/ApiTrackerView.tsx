@@ -172,11 +172,15 @@ interface BulkContextMenuState {
 // would give it a new function identity every render, causing React to
 // unmount/remount every menu item button (and flicker any :hover state) on
 // each re-render rather than just updating it.
-function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }): JSX.Element {
+function MenuItem({ icon, label, onClick, disabled, title }: {
+  icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; title?: string
+}): JSX.Element {
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+      disabled={disabled}
+      title={title}
+      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-secondary"
     >
       {icon}
       {label}
@@ -198,6 +202,7 @@ function BulkContextMenu({
   canLinkVersions,
   onLinkVersions,
   canAddToPlaylist,
+  canAddToQueue,
   excludedCount,
   contained,
 }: {
@@ -216,6 +221,10 @@ function BulkContextMenu({
   /** False when every selected song is a session/unsurfaced (playlists
    *  don't support those) — hides "Add to playlist" entirely. */
   canAddToPlaylist: boolean
+  /** False when no selected song is both eligible and has a path — same
+   *  rule bulkAddToQueue itself applies, surfaced here instead of letting
+   *  the action silently no-op. */
+  canAddToQueue: boolean
   /** How many selected songs are session/unsurfaced and get skipped. */
   excludedCount: number
   /** Playlist ids that already contain every eligible selected song. */
@@ -298,7 +307,13 @@ function BulkContextMenu({
         </>
       ) : (
         <>
-          <MenuItem icon={<ListPlus size={14} />} label="Add to queue" onClick={onAddToQueue} />
+          <MenuItem
+            icon={<ListPlus size={14} />}
+            label="Add to queue"
+            onClick={onAddToQueue}
+            disabled={!canAddToQueue}
+            title={!canAddToQueue ? "Sessions/unsurfaced songs can't be queued" : undefined}
+          />
           {canAddToPlaylist && (
             <MenuItem icon={<Plus size={14} />} label="Add to playlist" onClick={onTogglePlaylists} />
           )}
@@ -1027,6 +1042,10 @@ export default function ApiTrackerView(): JSX.Element {
     [selectedSongs]
   )
   const canBulkAddToPlaylist = bulkEligibleSongs.length > 0
+  // Mirrors bulkAddToQueue's own filter (eligible category + has a path) —
+  // without this, selecting only sessions/unsurfaced left "Add to queue"
+  // enabled and clickable even though it would silently add nothing.
+  const canBulkAddToQueue = bulkEligibleSongs.some(s => s.path)
 
   // Which playlists already contain *every* eligible selected song — shown
   // as a checkmark so re-adding to a playlist the whole selection is
@@ -1451,7 +1470,8 @@ export default function ApiTrackerView(): JSX.Element {
           </button>
           <button
             onClick={bulkAddToQueue}
-            disabled={selected.size === 0}
+            disabled={selected.size === 0 || !canBulkAddToQueue}
+            title={!canBulkAddToQueue && selected.size > 0 ? "Sessions/unsurfaced songs can't be queued" : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
           >
             <ListPlus size={13} /> Add to queue
@@ -1595,6 +1615,7 @@ export default function ApiTrackerView(): JSX.Element {
           canLinkVersions={versionsEnabled && canEdit && selected.size >= 2}
           onLinkVersions={() => { bulkLinkVersions(); setBulkContextMenu(null) }}
           canAddToPlaylist={canBulkAddToPlaylist}
+          canAddToQueue={canBulkAddToQueue}
           excludedCount={selectedSongs.length - bulkEligibleSongs.length}
           contained={bulkContained}
         />
