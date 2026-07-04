@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore } from '../store/useStore'
 import { ViewType } from '../types'
@@ -183,6 +183,19 @@ export default function Sidebar(): JSX.Element {
             <ShieldCheck size={18} />
             {showExpanded && <span>Admin</span>}
           </button>
+        )}
+        {/* Only on the web build — Electron users already have the app. */}
+        {!isElectron && (
+          <a
+            href="https://github.com/leanwrldd/unreleased/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            title={collapsed ? 'Download desktop app' : undefined}
+            className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+          >
+            <Download size={18} />
+            {showExpanded && <span>Download app</span>}
+          </a>
         )}
         <button
           onClick={() => setShowSettings(true)}

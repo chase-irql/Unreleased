@@ -5,9 +5,10 @@ import { useStore } from '../store/useStore'
 import { seekAudio, getAudioCurrentTime } from './Player'
 
 export default function LyricsDisplay(): JSX.Element {
-  const { currentTrackFull, account } = useStore(useShallow(s => ({
+  const { currentTrackFull, account, lyricsOffset } = useStore(useShallow(s => ({
     currentTrackFull: s.currentTrackFull,
     account: s.account,
+    lyricsOffset: s.lyricsOffset,
   })))
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -39,7 +40,7 @@ export default function LyricsDisplay(): JSX.Element {
     }
     let raf = 0
     const tick = (): void => {
-      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime())
+      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
       if (idx !== lineIdxRef.current) {
         lineIdxRef.current = idx
         setCurrentLineIdx(idx)
@@ -48,7 +49,7 @@ export default function LyricsDisplay(): JSX.Element {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isSynced, syncedLines])
+  }, [isSynced, syncedLines, lyricsOffset])
 
   useEffect(() => {
     if (activeRef.current && containerRef.current) {
