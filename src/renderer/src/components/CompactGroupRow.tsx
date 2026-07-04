@@ -25,6 +25,7 @@ export function useExpandedGroups(): { expanded: Set<number>; toggle: (groupId: 
  *  have different row layouts). */
 export const CompactGroupRow = memo(function CompactGroupRow({
   coverTrack, title, count, expanded, onToggle, onContextMenu,
+  categoryLabel, categoryClassName,
 }: {
   coverTrack: Track
   title: string
@@ -34,6 +35,11 @@ export const CompactGroupRow = memo(function CompactGroupRow({
   /** Right-click (or long-press) the whole group — e.g. to act on all its
    *  versions at once. Left-click still expands/collapses. */
   onContextMenu?: (e: React.MouseEvent) => void
+  /** Optional category badge for the group as a whole (the Tracker's compact
+   *  view only — Playlists doesn't pass these, so the badge is omitted
+   *  there). */
+  categoryLabel?: string
+  categoryClassName?: string
 }): JSX.Element {
   return (
     <button
@@ -46,6 +52,11 @@ export const CompactGroupRow = memo(function CompactGroupRow({
         <AlbumArtThumbnail track={coverTrack} size={36} shimmer={false} />
       </div>
       <span className="flex-1 min-w-0 text-text-primary text-sm font-medium truncate">{title}</span>
+      {categoryLabel && (
+        <span className={`hidden md:block text-xs px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ${categoryClassName ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
+          {categoryLabel}
+        </span>
+      )}
       <span className="text-text-muted text-xs shrink-0">{count} version{count === 1 ? '' : 's'}</span>
     </button>
   )
@@ -59,7 +70,9 @@ export const CompactGroupRow = memo(function CompactGroupRow({
   prev.coverTrack.id === next.coverTrack.id &&
   prev.title === next.title &&
   prev.count === next.count &&
-  prev.expanded === next.expanded
+  prev.expanded === next.expanded &&
+  prev.categoryLabel === next.categoryLabel &&
+  prev.categoryClassName === next.categoryClassName
 )
 
 /** Empty-state icon for compact view — re-exported so callers don't need

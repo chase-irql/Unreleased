@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2 } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, formatDuration } from '../lib/lyrics'
@@ -31,6 +31,7 @@ export default function WrldView(): JSX.Element {
     shuffle, repeat, toggleShuffle, toggleRepeat,
     nextTrack, prevTrack,
     showQueue, setShowQueue,
+    audioOutput, setAudioOutput,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -58,6 +59,8 @@ export default function WrldView(): JSX.Element {
     prevTrack: s.prevTrack,
     showQueue: s.showQueue,
     setShowQueue: s.setShowQueue,
+    audioOutput: s.audioOutput,
+    setAudioOutput: s.setAudioOutput,
   })))
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -69,6 +72,34 @@ export default function WrldView(): JSX.Element {
   const prevVolumeRef = useRef(volume || 0.8)
   useEffect(() => { if (volume > 0) prevVolumeRef.current = volume }, [volume])
   const toggleMute = (): void => setVolume(volume === 0 ? (prevVolumeRef.current || 0.8) : 0)
+
+  // Audio output device picker — mirrors the Player bar's (the bottom bar is
+  // hidden on this page, so WRLD needs its own copy of this control instead
+  // of inheriting it for free).
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([])
+  const [showOutputPicker, setShowOutputPicker] = useState(false)
+  const outputBtnRef = useRef<HTMLButtonElement>(null)
+  const [pickerPos, setPickerPos] = useState({ bottom: 0, right: 0 })
+
+  useEffect(() => {
+    const enumerate = async (): Promise<void> => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        setOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
+      } catch { /* ignore */ }
+    }
+    enumerate()
+    navigator.mediaDevices.addEventListener('devicechange', enumerate)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate)
+  }, [])
+
+  const openOutputPicker = (): void => {
+    if (!outputBtnRef.current) return
+    const r = outputBtnRef.current.getBoundingClientRect()
+    setPickerPos({ bottom: window.innerHeight - r.top + 8, right: window.innerWidth - r.right })
+    setShowOutputPicker((v) => !v)
+  }
+
   const [fmTab, setFmTab] = useState<'radio' | 'lyrics'>('radio')
   // Fullscreen renders the page through a portal (covers the sidebar/other
   // chrome) AND requests real OS/browser-level fullscreen — the portal alone
@@ -121,6 +152,16 @@ export default function WrldView(): JSX.Element {
     if (isElectronApp) elFullscreen?.setFullscreen?.(false)
     else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
   }, [])
+
+  // Mirror fullscreen into the global store so App.tsx can hide the
+  // frameless-window title bar controls (minimize/maximize/close) — they'd
+  // otherwise float over this immersive view regardless of how fullscreen
+  // was entered/exited (button, F11, Escape, or unmount).
+  const setWrldFullscreen = useStore(s => s.setWrldFullscreen)
+  useEffect(() => {
+    setWrldFullscreen(fullscreen)
+    return () => setWrldFullscreen(false)
+  }, [fullscreen, setWrldFullscreen])
 
   const [suggestQuery, setSuggestQuery]     = useState('')
   const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
@@ -955,10 +996,58 @@ export default function WrldView(): JSX.Element {
                       {Math.round(volume * 100)}%
                     </span>
                   </div>
+                  {outputDevices.length > 1 && (
+                    <button
+                      ref={outputBtnRef}
+                      onClick={openOutputPicker}
+                      title="Audio output"
+                      className="shrink-0 transition-opacity hover:opacity-70"
+                      style={{ color: audioOutput ? 'var(--accent)' : txtTer }}
+                    >
+                      <Volume2 size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
 
             </div>
+
+            {/* Output device popover — portaled so it isn't clipped by the
+                (overflow-hidden) column it's anchored to. */}
+            {showOutputPicker && createPortal(
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowOutputPicker(false)} />
+                <div
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl py-1.5 min-w-[220px]"
+                  style={{ bottom: pickerPos.bottom, right: pickerPos.right }}
+                >
+                  <p className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Audio Output</p>
+                  <button
+                    onClick={() => { setAudioOutput(''); setShowOutputPicker(false) }}
+                    className="flex items-center gap-3 w-full px-4 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors"
+                  >
+                    <span className="w-4 h-4 flex items-center justify-center shrink-0">
+                      {audioOutput === '' && <Check size={12} className="text-accent" />}
+                    </span>
+                    System default
+                  </button>
+                  {outputDevices.map((d) => (
+                    <button
+                      key={d.deviceId}
+                      onClick={() => { setAudioOutput(d.deviceId); setShowOutputPicker(false) }}
+                      className="flex items-center gap-3 w-full px-4 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors"
+                    >
+                      <span className="w-4 h-4 flex items-center justify-center shrink-0">
+                        {audioOutput === d.deviceId && <Check size={12} className="text-accent" />}
+                      </span>
+                      <span className="truncate">{d.label || `Output ${d.deviceId.slice(0, 8)}`}</span>
+                    </button>
+                  ))}
+                </div>
+              </>,
+              document.body
+            )}
 
             {/* Divider — FM only */}
             {radioFmActive && <div className="w-px bg-white/10 shrink-0 my-10" />}
@@ -969,7 +1058,7 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="flex-1 min-h-0 px-6 py-5">
+                <div className="max-h-full px-6 py-5">
                   <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
                 </div>
               ) : radioFmActive ? (

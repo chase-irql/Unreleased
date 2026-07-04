@@ -50,6 +50,10 @@ interface AppState {
   showNowPlaying: boolean
   showSettings: boolean
   showQueue: boolean
+  // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
+  // is active — lets App.tsx hide the frameless-window title bar controls,
+  // which would otherwise float over the immersive view.
+  wrldFullscreen: boolean
   radioFmActive: boolean
   radioFmIsLive: boolean | null  // null = unknown (not yet checked)
   radioFmNowPlaying: import('../lib/radioLive').RadioTrack | null
@@ -133,6 +137,7 @@ interface AppActions {
   setRadioFmMatchedSong: (song: { imageUrl: string | null; lyrics: string | null; syncedLyrics: string | null } | null) => void
   setShowSettings: (show: boolean) => void
   setShowQueue: (show: boolean) => void
+  setWrldFullscreen: (fullscreen: boolean) => void
   setViewMode: (mode: 'list' | 'grid') => void
   setTheme: (theme: 'dark' | 'light') => void
   setSearchQuery: (q: string) => void
@@ -227,6 +232,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showNowPlaying: false,
   showSettings: false,
   showQueue: false,
+  wrldFullscreen: false,
   radioFmActive: false,
   radioFmIsLive: null,
   radioFmNowPlaying: null,
@@ -262,6 +268,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
   setShowSettings: (showSettings) => set({ showSettings }),
   setShowQueue: (showQueue) => set({ showQueue }),
+  setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setViewMode: (viewMode) => { set({ viewMode }); ls.set('viewMode', viewMode) },
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
   setSearchQuery: (searchQuery) => set({ searchQuery }),

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Folder, Music2, ChevronRight, ArrowLeft, Home, Play, Loader2,
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
@@ -174,6 +174,20 @@ export default function ApiFilesView(): JSX.Element {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ entry: JWApiFileEntry; x: number; y: number } | null>(null)
+  // Clamped against the actual rendered size (not a static guess) — the
+  // menu's height varies with the entry type and canEdit, so a fixed guess
+  // undershoots near the screen edges and spills the menu off-screen.
+  // useLayoutEffect runs before paint, so there's no visible flash at (0,0).
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const [ctxMenuPos, setCtxMenuPos] = useState({ left: 0, top: 0 })
+  useLayoutEffect(() => {
+    const el = ctxMenuRef.current
+    if (!el || !ctxMenu) return
+    const rect = el.getBoundingClientRect()
+    const top = Math.max(8, Math.min(ctxMenu.y, window.innerHeight - rect.height - 8))
+    const left = Math.max(8, Math.min(ctxMenu.x, window.innerWidth - rect.width - 8))
+    setCtxMenuPos({ top, left })
+  }, [ctxMenu])
 
   // Search — recursive across the whole file tree via /files/browse/'s
   // `search` param (same endpoint findSessionZips uses), not scoped to the
@@ -1089,8 +1103,9 @@ export default function ApiFilesView(): JSX.Element {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setCtxMenu(null)} />
           <div
+            ref={ctxMenuRef}
             className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[180px]"
-            style={{ left: Math.min(ctxMenu.x, window.innerWidth - 200), top: Math.min(ctxMenu.y, window.innerHeight - 300) }}
+            style={{ left: ctxMenuPos.left, top: ctxMenuPos.top }}
             onClick={e => e.stopPropagation()}
           >
             {getMediaType(ctxMenu.entry.name) === 'audio' && (
