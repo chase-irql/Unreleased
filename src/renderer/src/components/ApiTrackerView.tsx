@@ -33,6 +33,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   recording_session: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
 }
 
+// A compact-view group bundles several versions of one song, each of which
+// can sit in a different category — the group as a whole is labeled by
+// whichever category ranks highest here (a released version anywhere in the
+// group makes the whole group "Released", even if other versions are
+// unreleased/session/unsurfaced; same logic cascades down the list).
+const GROUP_CATEGORY_PRIORITY: Category[] = ['released', 'unreleased', 'recording_session', 'unsurfaced']
+function groupCategory(members: { item: JWApiSong }[]): Category {
+  const present = new Set(members.map(m => m.item.category as Category))
+  return GROUP_CATEGORY_PRIORITY.find(c => present.has(c)) ?? 'unsurfaced'
+}
+
 const PAGE_SIZE = 50
 const LS_TRACKER_VIEW = 'api-tracker:viewMode'
 const LS_TRACKER_SIDEBAR = 'api-tracker:showSidebar'
@@ -1317,7 +1328,9 @@ export default function ApiTrackerView(): JSX.Element {
                 </button>
               </div>
               <div className="space-y-0.5">
-                {filteredCompactGroups.map((group) => (
+                {filteredCompactGroups.map((group) => {
+                  const cat = groupCategory(group.members)
+                  return (
                   <div key={group.groupId}>
                     <CompactGroupRow
                       coverTrack={songToTrack(group.members[0].item)}
@@ -1326,6 +1339,8 @@ export default function ApiTrackerView(): JSX.Element {
                       expanded={expandedGroups.has(group.groupId)}
                       onToggle={() => toggleGroupExpanded(group.groupId)}
                       onContextMenu={(e) => handleGroupContextMenu(group, e)}
+                      categoryLabel={CATEGORY_LABELS[cat] ?? cat}
+                      categoryClassName={CATEGORY_COLORS[cat]}
                     />
                     {expandedGroups.has(group.groupId) && (
                       <div className="ml-4 pl-4 border-l border-[var(--border)] space-y-0.5">
@@ -1347,7 +1362,8 @@ export default function ApiTrackerView(): JSX.Element {
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
               </>
             ) : loading && sortedSongs.length === 0 ? (

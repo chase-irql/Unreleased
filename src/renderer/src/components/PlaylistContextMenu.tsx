@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Play, Shuffle, ListEnd, Archive, Link, Globe, Lock, Pencil, Trash2, FolderInput, Loader2, Check,
@@ -150,10 +150,15 @@ export default function PlaylistContextMenu({ state, onClose }: {
     await refreshPlaylists()
   }
 
-  // Keep the menu on-screen near the cursor.
+  // Keep the menu on-screen near the cursor. The 220x340 figures are just the
+  // first-paint estimate — the layout effect below re-clamps against the
+  // actual rendered size, since content here grows a lot (renaming, the
+  // "Add all to playlist" submenu) after the initial guess.
   const MENU_W = 220
-  const left = Math.min(state.x, window.innerWidth - MENU_W - 8)
-  const top = Math.min(state.y, window.innerHeight - 340)
+  const [pos, setPos] = useState(() => ({
+    left: Math.max(8, Math.min(state.x, window.innerWidth - MENU_W - 8)),
+    top: Math.max(8, Math.min(state.y, window.innerHeight - 340 - 8)),
+  }))
 
   // Close on Escape.
   const ref = useRef<HTMLDivElement>(null)
@@ -163,13 +168,22 @@ export default function PlaylistContextMenu({ state, onClose }: {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const top = Math.max(8, Math.min(state.y, window.innerHeight - rect.height - 8))
+    const left = Math.max(8, Math.min(state.x, window.innerWidth - rect.width - 8))
+    setPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [state.x, state.y, renaming, showPlaylists])
+
   return createPortal(
     <>
       <div className="fixed inset-0 z-[60]" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
       <div
         ref={ref}
         className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-        style={{ left, top }}
+        style={{ left: pos.left, top: pos.top }}
         onClick={e => e.stopPropagation()}
       >
         {renaming ? (
