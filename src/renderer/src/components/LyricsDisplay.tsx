@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Download } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { parseLrc, getCurrentLineIndex, isLrcFormat } from '../lib/lyrics'
+import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
 import { useStore } from '../store/useStore'
 import { seekAudio, getAudioCurrentTime } from './Player'
 
@@ -57,7 +59,44 @@ export default function LyricsDisplay(): JSX.Element {
     }
   }, [currentLineIdx])
 
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (!menuPos) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setMenuPos(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuPos])
+
   const isEditor = account?.is_editor || account?.is_administrator
+
+  // Right-click → "Download synced lyrics" — only offered for LRC-format
+  // lyrics (the .lrc file needs the timestamps; plain unsynced text has
+  // nothing worth exporting in that format).
+  const handleContextMenu = (e: React.MouseEvent): void => {
+    if (!isSynced || !rawLyrics) return
+    e.preventDefault()
+    setMenuPos({ x: e.clientX, y: e.clientY })
+  }
+  const downloadMenu = menuPos && rawLyrics && createPortal(
+    <>
+      <div className="fixed inset-0 z-40" onClick={() => setMenuPos(null)} onContextMenu={(e) => { e.preventDefault(); setMenuPos(null) }} />
+      <div
+        className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[200px]"
+        style={{ top: menuPos.y, left: menuPos.x }}
+      >
+        <button
+          onClick={() => {
+            downloadSyncedLyrics(currentTrackFull?.title ?? 'lyrics', currentTrackFull?.artist ?? '', rawLyrics)
+            setMenuPos(null)
+          }}
+          className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-left text-text-primary hover:bg-surface-overlay transition-colors"
+        >
+          <Download size={14} className="text-text-muted" /> Download synced lyrics
+        </button>
+      </div>
+    </>,
+    document.body
+  )
 
   if (!rawLyrics) {
     return (
@@ -77,6 +116,7 @@ export default function LyricsDisplay(): JSX.Element {
     return (
       <div
         ref={containerRef}
+        onContextMenu={handleContextMenu}
         className="h-full overflow-y-auto py-16 px-8 space-y-4"
         style={{ scrollbarWidth: 'none' } as React.CSSProperties}
       >
@@ -109,6 +149,7 @@ export default function LyricsDisplay(): JSX.Element {
           )
         })}
         <div className="h-32" />
+        {downloadMenu}
       </div>
     )
   }

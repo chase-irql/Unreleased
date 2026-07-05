@@ -52,11 +52,11 @@ export default function Sidebar(): JSX.Element {
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
+    { icon: <img src={logo} alt="WRLD" className="w-[22px] h-[22px] object-contain" />, label: 'WRLD', view: 'wrld' },
     { icon: <SearchCode size={18} />, label: 'Tracker', view: 'api-tracker' },
     { icon: <HardDrive size={18} />, label: 'Files', view: 'api-files' },
     ...(isElectron ? [{ icon: <Library size={18} />, label: 'Library', view: 'library' as const }] : []),
     { icon: <ListMusic size={18} />, label: 'Playlists', view: 'playlists' },
-    { icon: <img src={logo} alt="WRLD" className="w-[22px] h-[22px] object-contain" />, label: 'WRLD', view: 'wrld' },
   ]
 
   return (

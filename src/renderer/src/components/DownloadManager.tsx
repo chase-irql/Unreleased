@@ -3,7 +3,7 @@ import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen,
 import { useStore, DownloadItem } from '../store/useStore'
 
 export default function DownloadManager(): JSX.Element | null {
-  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus } = useStore()
+  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStore()
   const el = (window as any).electron
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -53,6 +53,10 @@ export default function DownloadManager(): JSX.Element | null {
   }, [showDownloadManager])
 
   if (!el) return null
+  // WRLD's immersive fullscreen hides the window-control buttons this
+  // trigger is anchored next to (see App.tsx / WrldView.tsx) — with no
+  // corner reference left, it just floats awkwardly, so hide it too.
+  if (wrldFullscreen) return null
 
   const active = downloads.filter((d) => d.state === 'downloading').length
   const hasDownloads = downloads.length > 0
