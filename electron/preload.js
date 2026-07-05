@@ -44,6 +44,18 @@ contextBridge.exposeInMainWorld('electron', {
   loadLocalPlaylists: ()          => ipcRenderer.invoke('load-local-playlists'),
   saveLocalPlaylists: (playlists) => ipcRenderer.invoke('save-local-playlists', playlists),
 
+  // Offline playlist sync
+  offlineGetLibrary:    ()                        => ipcRenderer.invoke('offline-get-library'),
+  offlineDownloadTrack: (payload)                  => ipcRenderer.invoke('offline-download-track', payload),
+  offlineRemoveTrack:   (id)                       => ipcRenderer.invoke('offline-remove-track', id),
+  offlineSetPlaylist:   (key, songIds, name)        => ipcRenderer.invoke('offline-set-playlist', key, songIds, name),
+  offlineRemovePlaylist: (key)                     => ipcRenderer.invoke('offline-remove-playlist', key),
+  onOfflineDownloadProgress: (cb) => {
+    const fn = (_, d) => cb(d)
+    ipcRenderer.on('offline-download-progress', fn)
+    return () => ipcRenderer.removeListener('offline-download-progress', fn)
+  },
+
   // WrldData (albums JSON)
   loadWrldData: ()       => ipcRenderer.invoke('load-wrlddata'),
   saveWrldData: (data)   => ipcRenderer.invoke('save-wrlddata', data),

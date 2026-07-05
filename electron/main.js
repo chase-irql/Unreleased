@@ -2,6 +2,7 @@
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
+const https = require('https')
 const discordRpc = require('./discordRpc')
 
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
@@ -33,6 +34,31 @@ function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
   fs.appendFileSync(logFile, line)
   if (isDev) console.log(...args)
+}
+
+// ── Shared file download helper (used by force-update + offline library) ──────
+function downloadFile(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    function doGet(u) {
+      const opts = new URL(u)
+      https.get({ hostname: opts.hostname, path: opts.pathname + opts.search, headers: { 'User-Agent': 'Unreleased-App' } }, (res) => {
+        if (res.statusCode === 302 || res.statusCode === 301) return doGet(res.headers.location)
+        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`))
+        const total = parseInt(res.headers['content-length'] || '0', 10)
+        let received = 0
+        const out = fs.createWriteStream(dest)
+        res.on('data', chunk => {
+          received += chunk.length
+          if (onProgress) onProgress(total > 0 ? Math.round(received / total * 100) : 0, received, total)
+        })
+        res.pipe(out)
+        out.on('finish', resolve)
+        out.on('error', reject)
+        res.on('error', reject)
+      }).on('error', reject)
+    }
+    doGet(url)
+  })
 }
 
 // ── Auto-updater setup ────────────────────────────────────────────────────────
@@ -159,29 +185,6 @@ ipcMain.handle('force-update', async () => {
         res.on('data', d => data += d)
         res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(e) } })
       }).on('error', reject)
-    })
-  }
-
-  function downloadFile(url, dest, onProgress) {
-    return new Promise((resolve, reject) => {
-      function doGet(u) {
-        const opts = new URL(u)
-        https.get({ hostname: opts.hostname, path: opts.pathname + opts.search, headers: { 'User-Agent': 'Unreleased-App' } }, (res) => {
-          if (res.statusCode === 302 || res.statusCode === 301) return doGet(res.headers.location)
-          const total = parseInt(res.headers['content-length'] || '0', 10)
-          let received = 0
-          const out = fs.createWriteStream(dest)
-          res.on('data', chunk => {
-            received += chunk.length
-            if (total > 0) onProgress(Math.round(received / total * 100))
-          })
-          res.pipe(out)
-          out.on('finish', resolve)
-          out.on('error', reject)
-          res.on('error', reject)
-        }).on('error', reject)
-      }
-      doGet(url)
     })
   }
 
@@ -326,6 +329,97 @@ ipcMain.handle('load-library-data', () => loadLibraryData())
 ipcMain.handle('save-library-data', (_, data) => { saveLibraryData(data); return true })
 ipcMain.handle('load-local-playlists', () => loadLocalPlaylists())
 ipcMain.handle('save-local-playlists', (_, playlists) => { saveLocalPlaylists(playlists); return true })
+
+// ── IPC: offline playlist sync (download API songs for offline playback) ─────
+//
+// tracks: keyed by track id ("jw-{songId}") — the audio file plus enough of
+// the song's own metadata (title, lyrics, art...) to play fully offline.
+// playlists: keyed by "api-{playlistId}" — just the list of track ids that
+// playlist wants kept offline, so removing a playlist can tell whether a
+// track is still needed by some other synced playlist before deleting it.
+const offlineLibraryPath = path.join(app.getPath('userData'), 'offline-library.json')
+const offlineAudioDir = path.join(app.getPath('userData'), 'offline-audio')
+
+function loadOfflineLibrary() {
+  try {
+    const data = JSON.parse(fs.readFileSync(offlineLibraryPath, 'utf-8'))
+    return { tracks: data.tracks || {}, playlists: data.playlists || {} }
+  } catch { return { tracks: {}, playlists: {} } }
+}
+function saveOfflineLibrary(data) {
+  try { fs.writeFileSync(offlineLibraryPath, JSON.stringify(data)) } catch(e) { log('saveOfflineLibrary error:', e.message) }
+}
+
+ipcMain.handle('offline-get-library', () => loadOfflineLibrary())
+
+ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: songPath, meta }) => {
+  const lib = loadOfflineLibrary()
+  const existing = lib.tracks[id]
+  const localPath = path.join(offlineAudioDir, `${id}.${ext || 'mp3'}`)
+
+  // Audio unchanged and still on disk — just refresh the display metadata
+  // (title/lyrics/art may have been edited without the file itself moving).
+  if (existing && existing.path === songPath && fs.existsSync(existing.localPath)) {
+    lib.tracks[id] = { ...existing, ...meta, path: songPath }
+    saveOfflineLibrary(lib)
+    return { localPath: existing.localPath, skipped: true }
+  }
+
+  try { fs.mkdirSync(offlineAudioDir, { recursive: true }) } catch {}
+  try {
+    await downloadFile(url, localPath, (percent) => {
+      mainWindow?.webContents.send('offline-download-progress', { id, percent })
+    })
+  } catch (e) {
+    return { error: 'Download failed: ' + e.message }
+  }
+
+  lib.tracks[id] = { ...meta, path: songPath, localPath, ext: ext || 'mp3', downloadedAt: Date.now() }
+  saveOfflineLibrary(lib)
+  return { localPath }
+})
+
+ipcMain.handle('offline-remove-track', (_, id) => {
+  const lib = loadOfflineLibrary()
+  const entry = lib.tracks[id]
+  if (entry) {
+    try { fs.unlinkSync(entry.localPath) } catch {}
+    delete lib.tracks[id]
+    saveOfflineLibrary(lib)
+  }
+  return true
+})
+
+ipcMain.handle('offline-set-playlist', (_, key, songIds, name) => {
+  const lib = loadOfflineLibrary()
+  lib.playlists[key] = { songIds, name, updatedAt: Date.now() }
+  // Prune any previously-offline track that's no longer referenced by ANY
+  // synced playlist (song was removed from the playlist, or the playlist's
+  // song list shrank on resync).
+  const stillReferenced = new Set(Object.values(lib.playlists).flatMap(p => p.songIds))
+  for (const trackId of Object.keys(lib.tracks)) {
+    if (!stillReferenced.has(trackId)) {
+      try { fs.unlinkSync(lib.tracks[trackId].localPath) } catch {}
+      delete lib.tracks[trackId]
+    }
+  }
+  saveOfflineLibrary(lib)
+  return true
+})
+
+ipcMain.handle('offline-remove-playlist', (_, key) => {
+  const lib = loadOfflineLibrary()
+  delete lib.playlists[key]
+  const stillReferenced = new Set(Object.values(lib.playlists).flatMap(p => p.songIds))
+  for (const trackId of Object.keys(lib.tracks)) {
+    if (!stillReferenced.has(trackId)) {
+      try { fs.unlinkSync(lib.tracks[trackId].localPath) } catch {}
+      delete lib.tracks[trackId]
+    }
+  }
+  saveOfflineLibrary(lib)
+  return true
+})
 
 ipcMain.handle('scan-library', async (_, folders) => {
   let mm

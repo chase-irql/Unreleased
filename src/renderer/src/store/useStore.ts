@@ -1,7 +1,9 @@
 ﻿import { create } from 'zustand'
-import { ViewType, SortField, SortDir, Cols, FullTrack, LibraryTrack, LocalPlaylist } from '../types'
+import { ViewType, SortField, SortDir, Cols, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
+import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration } from '../lib/juicewrldApi'
+import type { JWApiSong } from '../lib/juicewrldApi'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 
 type ColumnConfig = Cols
@@ -119,6 +121,12 @@ interface AppState {
   localPlaylists: LocalPlaylist[]
   activeLocalPlaylistId: string | null
 
+  // Offline playlist sync (Electron only) — API-backed playlists downloaded
+  // for offline playback, kept in sync with the API's song metadata.
+  offlineTracks: Record<string, OfflineTrackMeta>
+  offlinePlaylists: Record<string, OfflinePlaylistEntry>
+  offlineSync: Record<string, { state: 'syncing' | 'done' | 'error'; current: number; total: number }>
+
   // Downloads (Electron only)
   downloads: DownloadItem[]
   showDownloadManager: boolean
@@ -196,6 +204,11 @@ interface AppActions {
   reorderLocalPlaylist: (playlistId: string, trackIds: string[]) => void
   setActiveLocalPlaylistId: (id: string | null) => void
   loadLibrary: () => Promise<void>
+
+  loadOfflineLibrary: () => Promise<void>
+  downloadPlaylistOffline: (key: string, name: string, songIds: number[]) => Promise<void>
+  removePlaylistOffline: (key: string) => Promise<void>
+  syncOfflinePlaylists: () => Promise<void>
 
   addDownload: (item: DownloadItem) => void
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void
@@ -453,6 +466,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   localPlaylists: [],
   activeLocalPlaylistId: null,
 
+  // ── Offline playlist sync ────────────────────────────────────────────────
+  offlineTracks: {},
+  offlinePlaylists: {},
+  offlineSync: {},
+
   setLibraryTracks: (libraryTracks) => set({ libraryTracks }),
   updateLibraryTrack: (id, updates) => set((s) => {
     const newLib = s.libraryTracks.map((t) => t.id === id ? { ...t, ...updates } : t)
@@ -567,6 +585,93 @@ export const useStore = create<AppStore>((set, get, store) => ({
       if (libData?.tracks) set({ libraryTracks: libData.tracks })
       if (playlists) set({ localPlaylists: playlists })
     } catch(e) { console.error('loadLibrary error:', e) }
+  },
+
+  // ── Offline playlist sync ────────────────────────────────────────────────
+  loadOfflineLibrary: async () => {
+    const el = (window as any).electron
+    if (!el) return
+    try {
+      const lib = await el.offlineGetLibrary()
+      set({ offlineTracks: lib.tracks || {}, offlinePlaylists: lib.playlists || {} })
+    } catch (e) { console.error('loadOfflineLibrary error:', e) }
+  },
+
+  downloadPlaylistOffline: async (key, name, songIds) => {
+    const el = (window as any).electron
+    if (!el) return
+    set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total: songIds.length } } }))
+
+    const trackIds: string[] = []
+    let hadError = false
+    for (let i = 0; i < songIds.length; i++) {
+      const songId = songIds[i]
+      const id = `jw-${songId}`
+      trackIds.push(id)
+      try {
+        const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+        const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
+        const meta = {
+          title: song.track_titles?.[0] || song.name,
+          artist: song.credited_artists || 'Juice WRLD',
+          album: song.era?.name || '',
+          imageUrl: buildImageUrl(song.image_url) ?? null,
+          lyrics: song.lyrics || null,
+          syncedLyrics: song.synced_lyrics || null,
+          duration: parseDuration(song.length),
+        }
+        const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
+        if (result?.error) throw new Error(result.error)
+        set((s) => ({
+          offlineTracks: {
+            ...s.offlineTracks,
+            [id]: { ...meta, path: song.path, localPath: result.localPath, ext, downloadedAt: Date.now() },
+          },
+        }))
+      } catch (e) {
+        hadError = true
+        console.error('offline download failed for song', songId, e)
+      }
+      set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: i + 1, total: songIds.length } } }))
+    }
+
+    try {
+      await el.offlineSetPlaylist(key, trackIds, name)
+      set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: trackIds, name, updatedAt: Date.now() } } }))
+    } catch (e) { console.error('offlineSetPlaylist error:', e) }
+
+    set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: songIds.length, total: songIds.length } } }))
+    // Refresh from disk truth — pruning may have dropped tracks shared with
+    // another playlist that's no longer synced.
+    get().loadOfflineLibrary()
+  },
+
+  removePlaylistOffline: async (key) => {
+    const el = (window as any).electron
+    if (!el) return
+    try { await el.offlineRemovePlaylist(key) } catch (e) { console.error('offlineRemovePlaylist error:', e) }
+    set((s) => {
+      const next = { ...s.offlinePlaylists }
+      delete next[key]
+      const nextSync = { ...s.offlineSync }
+      delete nextSync[key]
+      return { offlinePlaylists: next, offlineSync: nextSync }
+    })
+    get().loadOfflineLibrary()
+  },
+
+  syncOfflinePlaylists: async () => {
+    const keys = Object.keys(get().offlinePlaylists)
+    for (const key of keys) {
+      const match = key.match(/^api-(\d+)$/)
+      if (!match) continue
+      try {
+        const detail = await userApi.getPlaylist(Number(match[1]))
+        await get().downloadPlaylistOffline(key, detail.name, detail.items.map((i) => i.song.id))
+      } catch {
+        // Offline, deleted, or no longer accessible — keep the existing cache as-is.
+      }
+    }
   },
 
   // ── Downloads ─────────────────────────────────────────────────────────────
