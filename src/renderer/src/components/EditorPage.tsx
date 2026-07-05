@@ -106,8 +106,8 @@ function SelectRow({ label, value, original, onChange, options, placeholder }: {
           value={value} onChange={e => onChange(e.target.value)}
           className="flex-1 bg-transparent text-sm text-text-primary focus:outline-none appearance-none cursor-pointer min-w-0 border-b border-[var(--border)] pb-px"
         >
-          <option value="">{placeholder || '—'}</option>
-          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          <option value="" style={{ color: '#111', backgroundColor: '#fff' }}>{placeholder || '—'}</option>
+          {options.map(o => <option key={o.value} value={o.value} style={{ color: '#111', backgroundColor: '#fff' }}>{o.label}</option>)}
         </select>
         {changed && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-accent/80" />}
       </div>

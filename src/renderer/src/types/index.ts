@@ -80,6 +80,29 @@ export interface PlaylistFolder {
   parentId?: string
 }
 
+// ─── Offline playlist sync (Electron only) ─────────────────────────────────
+// A downloaded API song, kept fully playable without network — the audio
+// file plus a snapshot of the song's own metadata at download time.
+export interface OfflineTrackMeta {
+  path: string                // API song.path — changing this means the audio itself changed
+  title: string
+  artist: string
+  album: string
+  imageUrl: string | null
+  lyrics: string | null
+  syncedLyrics: string | null
+  duration: number
+  localPath: string
+  ext: string
+  downloadedAt: number
+}
+
+export interface OfflinePlaylistEntry {
+  songIds: string[]           // track ids, e.g. "jw-123"
+  name: string
+  updatedAt: number
+}
+
 export interface SyncedLyricLine {
   time: number // seconds
   text: string

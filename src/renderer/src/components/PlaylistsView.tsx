@@ -244,7 +244,8 @@ export default function PlaylistsView(): JSX.Element {
     localPlaylists, libraryTracks, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
-    playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId } = useStore()
+    playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
+    offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore()
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -706,6 +707,20 @@ export default function PlaylistsView(): JSX.Element {
     setTimeout(() => setZipState('idle'), 3000)
   }, [zipState])
 
+  const offlineKey = selectedId != null ? `api-${selectedId}` : null
+  const offlineEntry = offlineKey ? offlinePlaylists[offlineKey] : undefined
+  const offlineSyncState = offlineKey ? offlineSync[offlineKey] : undefined
+  const isOffline = !!offlineEntry
+
+  const handleToggleOffline = useCallback(async () => {
+    if (!offlineKey || !detail) return
+    if (isOffline) {
+      await removePlaylistOffline(offlineKey)
+    } else {
+      await downloadPlaylistOffline(offlineKey, detail.name, detail.items.map((i) => i.song.id))
+    }
+  }, [offlineKey, isOffline, detail, downloadPlaylistOffline, removePlaylistOffline])
+
   const handleTogglePublic = useCallback(async () => {
     if (!selectedId || !detail) return
     setTogglingPublic(true)
@@ -1111,6 +1126,17 @@ export default function PlaylistsView(): JSX.Element {
                                 disabled={zipState === 'loading' || tracks.length === 0}
                                 onClick={() => { handleZipDownload(tracks, detail.name ?? summary?.name ?? 'playlist') }}
                               />
+                              {!!(window as any).electron && (
+                                <MenuItem
+                                  icon={offlineSyncState?.state === 'syncing' ? Loader2 : Download}
+                                  label={
+                                    offlineSyncState?.state === 'syncing' ? `Downloading… ${offlineSyncState.current}/${offlineSyncState.total}`
+                                      : isOffline ? 'Remove offline download' : 'Download for offline'
+                                  }
+                                  disabled={offlineSyncState?.state === 'syncing' || tracks.length === 0}
+                                  onClick={() => { handleToggleOffline() }}
+                                />
+                              )}
                               <MenuItem
                                 icon={shareCopied ? Check : Link}
                                 label={shareCopied ? 'Link copied!' : 'Copy share link'}

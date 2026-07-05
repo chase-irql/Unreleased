@@ -82,7 +82,7 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen } = useStore()
+  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists } = useStore()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -125,6 +125,21 @@ export default function App(): JSX.Element {
     }
     loadAccount()
   }, [loadAccount, completeDiscordLogin])
+
+  // Load the offline-downloaded playlist cache, then refresh it against the
+  // live API in the background — keeps downloaded songs' metadata/audio in
+  // sync without blocking anything on the network round-trip. Re-run on
+  // window focus (catches "edited on the site, alt-tabbed back") and on an
+  // interval as a fallback for long-lived sessions, since the app doesn't
+  // otherwise learn about API-side edits while it's already running.
+  useEffect(() => {
+    if (!(window as any).electron) return
+    loadOfflineLibrary().then(() => syncOfflinePlaylists())
+    const onFocus = (): void => { syncOfflinePlaylists() }
+    window.addEventListener('focus', onFocus)
+    const interval = setInterval(() => syncOfflinePlaylists(), 15 * 60 * 1000)
+    return () => { window.removeEventListener('focus', onFocus); clearInterval(interval) }
+  }, [loadOfflineLibrary, syncOfflinePlaylists])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')

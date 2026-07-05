@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Play, Shuffle, ListEnd, Archive, Link, Globe, Lock, Pencil, Trash2, FolderInput, Loader2, Check,
+  Play, Shuffle, ListEnd, Archive, Link, Globe, Lock, Pencil, Trash2, FolderInput, Loader2, Check, Download,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -48,11 +48,13 @@ export default function PlaylistContextMenu({ state, onClose }: {
   state: PlaylistContextMenuState
   onClose: () => void
 }): JSX.Element {
-  const { playlists, playTrack, addToQueue, refreshPlaylists, setPendingPlaylistId, setActiveView } = useStore(
+  const { playlists, playTrack, addToQueue, refreshPlaylists, setPendingPlaylistId, setActiveView, offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore(
     useShallow(s => ({
       playlists: s.playlists, playTrack: s.playTrack, addToQueue: s.addToQueue,
       refreshPlaylists: s.refreshPlaylists, setPendingPlaylistId: s.setPendingPlaylistId,
       setActiveView: s.setActiveView,
+      offlinePlaylists: s.offlinePlaylists, offlineSync: s.offlineSync,
+      downloadPlaylistOffline: s.downloadPlaylistOffline, removePlaylistOffline: s.removePlaylistOffline,
     }))
   )
 
@@ -105,6 +107,20 @@ export default function PlaylistContextMenu({ state, onClose }: {
       setZipState('done')
     } catch { setZipState('error') }
     setTimeout(() => setZipState('idle'), 2500)
+  }
+
+  const offlineKey = `api-${playlist.id}`
+  const offlineEntry = offlinePlaylists[offlineKey]
+  const offlineSyncState = offlineSync[offlineKey]
+  const isOffline = !!offlineEntry
+
+  const toggleOffline = async (): Promise<void> => {
+    if (isOffline) {
+      await removePlaylistOffline(offlineKey)
+    } else {
+      const d = await userApi.getPlaylist(playlist.id)
+      await downloadPlaylistOffline(offlineKey, d.name, d.items.map(i => i.song.id))
+    }
   }
 
   const copyShare = async (): Promise<void> => {
@@ -208,6 +224,17 @@ export default function PlaylistContextMenu({ state, onClose }: {
               disabled={zipState === 'loading'}
               onClick={downloadZip}
             />
+            {!!(window as any).electron && (
+              <MenuItem
+                icon={offlineSyncState?.state === 'syncing' ? Loader2 : Download}
+                label={
+                  offlineSyncState?.state === 'syncing' ? `Downloading… ${offlineSyncState.current}/${offlineSyncState.total}`
+                    : isOffline ? 'Remove offline download' : 'Download for offline'
+                }
+                disabled={offlineSyncState?.state === 'syncing'}
+                onClick={toggleOffline}
+              />
+            )}
             <div className="border-t border-[var(--border)] my-1" />
             <MenuItem icon={shareCopied ? Check : Link} label={shareCopied ? 'Link copied!' : 'Copy share link'} onClick={copyShare} />
             <MenuItem icon={playlist.is_public ? Globe : Lock} label={playlist.is_public ? 'Make private' : 'Make public'} disabled={busy} onClick={togglePublic} />

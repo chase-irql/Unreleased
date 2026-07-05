@@ -30,6 +30,14 @@ import MetadataEditor from './MetadataEditor'
 import SongContextMenu from './SongContextMenu'
 import { LibraryTrack } from '../types'
 
+// Downloaded-for-offline audio always wins over streaming — same track id,
+// just playing from local disk instead of the API.
+function resolvePlaybackUrl(track: { id: string; streamUrl?: string; path: string }): string {
+  const offline = useStore.getState().offlineTracks[track.id]
+  if (offline) return `file:///${offline.localPath.replace(/\\/g, '/')}`
+  return track.streamUrl ?? `file:///${track.path.replace(/\\/g, '/')}`
+}
+
 let _seek: ((t: number) => void) | null = null
 let _getAudioDuration: (() => number) | null = null
 let _getAudioCurrentTime: (() => number) | null = null
@@ -197,7 +205,7 @@ export default function Player(): JSX.Element {
     }
     const nextTrackData = queue[nextIdx]
     if (!nextTrackData) return
-    const url = nextTrackData.streamUrl ?? `file:///${nextTrackData.path.replace(/\\/g, '/')}`
+    const url = resolvePlaybackUrl(nextTrackData)
     const na = getNext()
     if (!na || na.src === url) return
     na.src = url
@@ -251,6 +259,13 @@ export default function Player(): JSX.Element {
       if (cached) {
         setCurrentTrackFull({ ...synthetic, lyrics: cached.lyrics, syncedLyrics: cached.syncedLyrics })
       } else {
+        // Show the offline-downloaded snapshot immediately (if any) so a
+        // synced/downloaded song doesn't sit blank waiting on the network —
+        // the live fetch below overwrites it with fresh data when it succeeds.
+        const offlineMeta = useStore.getState().offlineTracks[currentTrack.id]
+        if (offlineMeta) {
+          setCurrentTrackFull({ ...synthetic, albumArt: offlineMeta.imageUrl ?? synthetic.albumArt, lyrics: offlineMeta.lyrics, syncedLyrics: offlineMeta.syncedLyrics })
+        }
         apiFetch<JWApiSong>(`/songs/${songId}/`)
           .then((song) => {
             const syncedLyrics = song.synced_lyrics || null
@@ -259,7 +274,7 @@ export default function Player(): JSX.Element {
             if (isStale()) return
             setCurrentTrackFull({ ...synthetic, lyrics, syncedLyrics })
           })
-          .catch(() => {/* no lyrics — that's fine */})
+          .catch(() => {/* no network — offline snapshot (if any) already applied above */})
       }
     } else {
       // Local track — load lyrics + cover art from IPC
@@ -297,7 +312,7 @@ export default function Player(): JSX.Element {
     }
 
     cancelCF()
-    const fileUrl = currentTrack.streamUrl ?? `file:///${currentTrack.path.replace(/\\/g, '/')}`
+    const fileUrl = resolvePlaybackUrl(currentTrack)
     audio.src = fileUrl
     audio.volume = volumeRef.current
     audio.playbackRate = playbackSpeed
@@ -491,7 +506,7 @@ export default function Player(): JSX.Element {
           cfIsRadio.current = isRadio
           cfTargetIdx.current = nextIdx
 
-          const url = nextTrackData.streamUrl ?? `file:///${nextTrackData.path.replace(/\\/g, '/')}`
+          const url = resolvePlaybackUrl(nextTrackData)
           // Only reassign src if not already preloaded
           if (na.src !== url) na.src = url
           na.volume = 0
