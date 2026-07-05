@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { parseLrc, getCurrentLineIndex, isLrcFormat, formatDuration } from '../lib/lyrics'
+import { parseLrc, getCurrentLineIndex, isLrcFormat, formatDuration, downloadSyncedLyrics } from '../lib/lyrics'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
 import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
+import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import SongInfoModal from './SongInfoModal'
@@ -231,6 +232,47 @@ export default function WrldView(): JSX.Element {
     : (buildImageUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl ?? null) ?? null)
 
   useEffect(() => { setArtError(false) }, [artSrc])
+
+  // Sibling versions of the currently playing song (v1/v2/TV Mix/etc, linked
+  // via the Supabase song_versions table — see versionsApi.ts), shown as
+  // small bookmark tabs peeking out of the cover art's right edge.
+  const [songVersions, setSongVersions] = useState<{ songId: number; label: string | null }[]>([])
+  // Collapsed, these merge into a single small notch — hovering anywhere on
+  // it fans all of them out at once, rather than each tab reacting to its
+  // own hover independently.
+  const [bookmarksHovered, setBookmarksHovered] = useState(false)
+  useEffect(() => {
+    if (radioFmActive || !currentTrack?.id) { setSongVersions([]); return }
+    const numericId = parseInt(currentTrack.id.replace('jw-', ''), 10)
+    if (isNaN(numericId)) { setSongVersions([]); return }
+    let cancelled = false
+    getVersionGroup(numericId).then(async metas => {
+      if (cancelled) return
+      // A version linked in the Supabase table isn't necessarily playable —
+      // recording-session songs (and some unsurfaced ones) have no `path`,
+      // same gate used for bulk queue/playlist adds elsewhere in the app.
+      const withPaths = await Promise.all(metas.map(async m => {
+        try {
+          const song = await apiFetch<JWApiSong>(`/songs/${m.songId}/`)
+          return song.path ? m : null
+        } catch { return null }
+      }))
+      if (cancelled) return
+      setSongVersions(
+        withPaths
+          .filter((m): m is NonNullable<typeof m> => !!m)
+          .map(m => ({ songId: m.songId, label: m.version ?? m.versionTitle }))
+      )
+    })
+    return () => { cancelled = true }
+  }, [currentTrack?.id, radioFmActive])
+
+  const handlePlayVersion = async (songId: number): Promise<void> => {
+    try {
+      const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+      playTrack(songToTrack(song))
+    } catch {}
+  }
 
   useEffect(() => {
     if (!artSrc || artError) {
@@ -633,22 +675,29 @@ export default function WrldView(): JSX.Element {
         <div className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
 
-      {/* Fullscreen toggle, right at the corner. The Electron window-control
-          buttons (minimize/maximize/close) sit in the same corner normally,
-          but App.tsx hides them while wrldFullscreen is active (see
-          setWrldFullscreen above) so there's nothing left to dodge — this can
-          sit flush at top-1 in both states instead of pushing down to clear
-          a strip that's no longer there. The Downloads trigger
-          (DownloadManager.tsx) is further left (right: 132px) and never
-          overlaps this button's right-2 position. */}
+      {/* Fullscreen toggle. App.tsx only hides the Electron window-control
+          buttons (minimize/maximize/close, 132px wide, rendered `fixed
+          top-0 right-0`) once wrldFullscreen is true — which mirrors
+          `fullscreen` below, so it's only true *after* this button has
+          already been clicked to enter fullscreen. Before that, those
+          controls are still showing in the same corner, so this button
+          needs its own `fixed` positioning (not `absolute` within this
+          view's container, which sits at a different vertical offset and
+          was throwing the two out of alignment), sitting directly under
+          the close button (right-2 lines up with close's own center)
+          rather than off to the side of minimize. Once fullscreen is
+          entered the controls disappear and this can sit flush at the
+          corner instead. */}
       <button
         onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-        className={`absolute z-30 flex items-center justify-center w-8 h-8 rounded-full transition-all border
-          ${isElectronApp ? 'top-1 right-2' : 'top-2 md:top-3 right-12 md:right-3'}
+        className={`z-30 flex items-center justify-center rounded-full transition-all border
+          ${isElectronApp
+            ? (fullscreen ? 'fixed top-1 right-2 w-8 h-8' : 'fixed top-9 right-2 w-7 h-7')
+            : 'absolute top-2 md:top-3 right-12 md:right-3 w-8 h-8'}
           bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm`}
         title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       >
-        {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
       </button>
 
       {/* 999 FM toggle */}
@@ -849,12 +898,65 @@ export default function WrldView(): JSX.Element {
             {/* Left column — Apple Music style. A true 50/50 split with the
                 lyrics column, not a narrow fixed-width sidebar next to a huge
                 mostly-empty lyrics pane. */}
-            <div className="relative flex flex-col items-center justify-center shrink-0 px-8 xl:px-12 gap-5 overflow-y-auto"
+            {/* overflow-x-hidden is required here, not just tidy: per the CSS
+                overflow spec, when one axis is 'auto' the other's computed
+                value is promoted from 'visible' to 'auto' too — so without
+                this, a bookmark tab expanding past this column's edge on
+                hover was making the browser grow a horizontal scrollbar,
+                which shifted the whole column up by its height. */}
+            <div className="relative flex flex-col items-center justify-center shrink-0 px-8 xl:px-12 gap-5 overflow-y-auto overflow-x-hidden"
               style={{ width: '50%', minWidth: 320 }}>
 
               {/* Album art */}
-              <div className="w-full" style={{ maxWidth: 320 }}>
+              <div className="relative w-full" style={{ maxWidth: 320 }}>
                 <ArtBox mobile={false} />
+                {!radioFmActive && songVersions.length > 0 && (
+                  <div
+                    className="wrld-bookmarks absolute right-full flex flex-col items-end z-20 overflow-y-auto"
+                    onMouseEnter={() => setBookmarksHovered(true)}
+                    onMouseLeave={() => setBookmarksHovered(false)}
+                    style={{
+                      scrollbarWidth: 'none',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      maxHeight: 'calc(100% - 16px)',
+                      gap: bookmarksHovered ? 8 : 0,
+                      padding: bookmarksHovered ? '8px 0' : 0,
+                      // Fades the edges instead of hard-clipping mid-tab —
+                      // without this, whichever tab landed on the scroll
+                      // boundary got chopped in half, which read as broken
+                      // rather than "there's more, scroll".
+                      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 14px), transparent 100%)',
+                      maskImage: 'linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 14px), transparent 100%)',
+                    } as React.CSSProperties}
+                  >
+                    <style>{`.wrld-bookmarks::-webkit-scrollbar { display: none; }`}</style>
+                    {songVersions.map((v, i) => {
+                      const labelText = v.label ?? `Version ${i + 1}`
+                      // Sized to the label instead of a fixed width — a
+                      // short "v1" popping out to the same 150px as a full
+                      // version title looked absurdly long for no reason.
+                      const expandedWidth = Math.min(150, Math.max(46, labelText.length * 6.5 + 28))
+                      return (
+                        <button
+                          key={v.songId}
+                          onClick={() => handlePlayVersion(v.songId)}
+                          title={labelText}
+                          className={`h-6 shrink-0 flex items-center justify-end overflow-hidden transition-all duration-200 ease-out bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 ${
+                            bookmarksHovered
+                              ? 'rounded-l-full shadow-lg opacity-100 border border-white/40 dark:border-white/15'
+                              : 'rounded-l-full opacity-60 border border-transparent'
+                          }`}
+                          style={{ width: bookmarksHovered ? `${expandedWidth}px` : '5px' }}
+                        >
+                          <span className={`pl-3.5 pr-2 text-[10px] font-semibold text-white whitespace-nowrap transition-opacity duration-150 ${bookmarksHovered ? 'opacity-100' : 'opacity-0'}`}>
+                            {labelText}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Title + artist */}
@@ -1052,8 +1154,8 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="h-full flex items-center justify-center px-6 py-5">
-                  <div className="w-full max-w-[420px] h-full max-h-[80%]">
+                <div className="h-full flex items-center justify-center px-3 py-3">
+                  <div className="w-full max-w-[420px] h-full max-h-[92%]">
                     <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
                   </div>
                 </div>
@@ -1690,6 +1792,42 @@ const LyricsPanel = memo(function LyricsPanel({
     setTranslateY(active.offsetTop + active.offsetHeight / 2 - vpHalf)
   }, [currentLineIdx, vpHalf])
 
+  // Right-click → "Download synced lyrics" — only offered for LRC-format
+  // lyrics (the .lrc file needs the timestamps; plain unsynced text has
+  // nothing worth exporting in that format).
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (!menuPos) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setMenuPos(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuPos])
+  const handleContextMenu = (e: React.MouseEvent): void => {
+    if (!isSynced || !rawLyrics) return
+    e.preventDefault()
+    setMenuPos({ x: e.clientX, y: e.clientY })
+  }
+  const downloadMenu = menuPos && rawLyrics && createPortal(
+    <>
+      <div className="fixed inset-0 z-40" onClick={() => setMenuPos(null)} onContextMenu={(e) => { e.preventDefault(); setMenuPos(null) }} />
+      <div
+        className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[200px]"
+        style={{ top: menuPos.y, left: menuPos.x }}
+      >
+        <button
+          onClick={() => {
+            downloadSyncedLyrics(currentTrack?.title ?? 'lyrics', currentTrack?.artist ?? '', rawLyrics)
+            setMenuPos(null)
+          }}
+          className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-left text-text-primary hover:bg-surface-overlay transition-colors"
+        >
+          <Download size={14} className="text-text-muted" /> Download synced lyrics
+        </button>
+      </div>
+    </>,
+    document.body
+  )
+
   if (!rawLyrics) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8">
@@ -1724,6 +1862,7 @@ const LyricsPanel = memo(function LyricsPanel({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onContextMenu={handleContextMenu}
       >
         <div
           ref={linesRef}
@@ -1805,6 +1944,7 @@ const LyricsPanel = memo(function LyricsPanel({
             Resume
           </button>
         )}
+        {downloadMenu}
       </div>
     )
   }

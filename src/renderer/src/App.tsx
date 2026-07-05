@@ -147,10 +147,10 @@ export default function App(): JSX.Element {
       {isElectron && !wrldFullscreen && <WindowControls />}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-hidden flex flex-col">
+        <main className="flex-1 overflow-hidden flex flex-col relative">
           {isElectron && (
             <div
-              className="shrink-0 h-7 select-none mr-[132px]"
+              className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]"
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             />
           )}
