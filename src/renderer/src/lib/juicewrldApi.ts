@@ -43,6 +43,7 @@ export interface JWApiSong {
   synced_lyrics: string | null
   leak_type: string | null
   date_leaked: string | null
+  album?: string | null
 }
 
 export interface JWApiPaginatedResponse {
@@ -177,7 +178,7 @@ export function songToTrack(song: JWApiSong): Track {
     imageUrl,
     title,
     artist: song.credited_artists || 'Juice WRLD',
-    album: song.era?.name || '',
+    album: song.album || song.era?.name || '',
     albumArtist: 'Juice WRLD',
     year: null,
     trackNumber: null,

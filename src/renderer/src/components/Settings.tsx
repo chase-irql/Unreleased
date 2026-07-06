@@ -77,6 +77,7 @@ interface AppSettings {
   minimizeToTray: boolean
   startupView: string
   discordRpcEnabled: boolean
+  offlineLibraryPath: string
 }
 
 export default function Settings(): JSX.Element {
@@ -114,7 +115,10 @@ export default function Settings(): JSX.Element {
     minimizeToTray: false,
     startupView: 'api-tracker',
     discordRpcEnabled: true,
+    offlineLibraryPath: '',
   })
+  const [movingOfflinePath, setMovingOfflinePath] = useState(false)
+  const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
 
   const [tab, setTab] = useState<Tab>('appearance')
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
@@ -168,6 +172,22 @@ export default function Settings(): JSX.Element {
     if (!el) return
     const picked = await el.pickFolder()
     if (picked) setSetting('downloadPath', picked)
+  }
+
+  const pickOfflineFolder = async () => {
+    if (!el) return
+    const picked = await el.pickFolder()
+    if (!picked || picked === appSettings.offlineLibraryPath) return
+    setMovingOfflinePath(true)
+    setOfflinePathError(null)
+    try {
+      const result = await el.offlineSetLibraryPath(picked)
+      if (result?.error) { setOfflinePathError(result.error); return }
+      setAppSettings((prev) => ({ ...prev, offlineLibraryPath: result.path }))
+      if (result?.failedCount) setOfflinePathError(`${result.failedCount} file(s) couldn't be moved and will re-download on next sync`)
+    } finally {
+      setMovingOfflinePath(false)
+    }
   }
 
   const toggleSleepTimer = (): void => {
@@ -505,6 +525,30 @@ export default function Settings(): JSX.Element {
                       Change
                     </button>
                   </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)]">
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#7c3aed' }}>
+                      <FolderOpen size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <span className="text-text-primary text-sm">Offline songs folder</span>
+                  </div>
+                  <div className="flex items-center gap-2 pl-[34px]">
+                    <span className="flex-1 text-text-muted text-xs truncate bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]" title={appSettings.offlineLibraryPath}>
+                      {appSettings.offlineLibraryPath || 'Default app data folder'}
+                    </span>
+                    <button
+                      onClick={pickOfflineFolder}
+                      disabled={movingOfflinePath}
+                      className="shrink-0 px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {movingOfflinePath && <Loader2 size={12} className="animate-spin" />}
+                      {movingOfflinePath ? 'Moving…' : 'Change'}
+                    </button>
+                  </div>
+                  {offlinePathError && (
+                    <p className="text-red-400 text-[10px] mt-1.5 pl-[34px]">{offlinePathError}</p>
+                  )}
                 </div>
                 <Row icon={Monitor} iconColor="#6b7280" label="Start on">
                   <select

@@ -30,7 +30,7 @@ const ls = {
 export interface DownloadItem {
   id: string
   filename: string
-  type: 'file' | 'zip' | 'update'
+  type: 'file' | 'zip' | 'update' | 'playlist'
   state: 'downloading' | 'done' | 'error' | 'cancelled'
   percent: number
   received?: number
@@ -600,7 +600,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
   downloadPlaylistOffline: async (key, name, songIds) => {
     const el = (window as any).electron
     if (!el) return
+    const downloadId = `playlist-${key}`
     set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total: songIds.length } } }))
+    if (get().downloads.some((d) => d.id === downloadId)) {
+      get().updateDownload(downloadId, { filename: name, state: 'downloading', percent: 0, received: 0, total: songIds.length, error: undefined })
+    } else {
+      get().addDownload({ id: downloadId, filename: name, type: 'playlist', state: 'downloading', percent: 0, received: 0, total: songIds.length })
+    }
+    get().setShowDownloadManager(true)
 
     const trackIds: string[] = []
     let hadError = false
@@ -614,7 +621,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         const meta = {
           title: song.track_titles?.[0] || song.name,
           artist: song.credited_artists || 'Juice WRLD',
-          album: song.era?.name || '',
+          album: song.album || song.era?.name || '',
           imageUrl: buildImageUrl(song.image_url) ?? null,
           lyrics: song.lyrics || null,
           syncedLyrics: song.synced_lyrics || null,
@@ -633,6 +640,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         console.error('offline download failed for song', songId, e)
       }
       set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: i + 1, total: songIds.length } } }))
+      get().updateDownload(downloadId, { received: i + 1, percent: Math.round(((i + 1) / songIds.length) * 100) })
     }
 
     try {
@@ -641,6 +649,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     } catch (e) { console.error('offlineSetPlaylist error:', e) }
 
     set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: songIds.length, total: songIds.length } } }))
+    get().updateDownload(downloadId, { state: hadError ? 'error' : 'done', percent: 100, error: hadError ? 'Some tracks failed to download' : undefined })
     // Refresh from disk truth — pruning may have dropped tracks shared with
     // another playlist that's no longer synced.
     get().loadOfflineLibrary()

@@ -18,6 +18,7 @@ let appSettings = {
   minimizeToTray: false,
   startupView: 'api-tracker',
   discordRpcEnabled: true,
+  offlineLibraryPath: path.join(app.getPath('userData'), 'offline-audio'),
 }
 try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
@@ -337,17 +338,17 @@ ipcMain.handle('save-local-playlists', (_, playlists) => { saveLocalPlaylists(pl
 // playlists: keyed by "api-{playlistId}" — just the list of track ids that
 // playlist wants kept offline, so removing a playlist can tell whether a
 // track is still needed by some other synced playlist before deleting it.
-const offlineLibraryPath = path.join(app.getPath('userData'), 'offline-library.json')
-const offlineAudioDir = path.join(app.getPath('userData'), 'offline-audio')
+const offlineLibraryDataPath = path.join(app.getPath('userData'), 'offline-library.json')
+function getOfflineAudioDir() { return appSettings.offlineLibraryPath }
 
 function loadOfflineLibrary() {
   try {
-    const data = JSON.parse(fs.readFileSync(offlineLibraryPath, 'utf-8'))
+    const data = JSON.parse(fs.readFileSync(offlineLibraryDataPath, 'utf-8'))
     return { tracks: data.tracks || {}, playlists: data.playlists || {} }
   } catch { return { tracks: {}, playlists: {} } }
 }
 function saveOfflineLibrary(data) {
-  try { fs.writeFileSync(offlineLibraryPath, JSON.stringify(data)) } catch(e) { log('saveOfflineLibrary error:', e.message) }
+  try { fs.writeFileSync(offlineLibraryDataPath, JSON.stringify(data)) } catch(e) { log('saveOfflineLibrary error:', e.message) }
 }
 
 ipcMain.handle('offline-get-library', () => loadOfflineLibrary())
@@ -355,7 +356,7 @@ ipcMain.handle('offline-get-library', () => loadOfflineLibrary())
 ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: songPath, meta }) => {
   const lib = loadOfflineLibrary()
   const existing = lib.tracks[id]
-  const localPath = path.join(offlineAudioDir, `${id}.${ext || 'mp3'}`)
+  const localPath = path.join(getOfflineAudioDir(), `${id}.${ext || 'mp3'}`)
 
   // Audio unchanged and still on disk — just refresh the display metadata
   // (title/lyrics/art may have been edited without the file itself moving).
@@ -365,7 +366,7 @@ ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: son
     return { localPath: existing.localPath, skipped: true }
   }
 
-  try { fs.mkdirSync(offlineAudioDir, { recursive: true }) } catch {}
+  try { fs.mkdirSync(getOfflineAudioDir(), { recursive: true }) } catch {}
   try {
     await downloadFile(url, localPath, (percent) => {
       mainWindow?.webContents.send('offline-download-progress', { id, percent })
@@ -419,6 +420,46 @@ ipcMain.handle('offline-remove-playlist', (_, key) => {
   }
   saveOfflineLibrary(lib)
   return true
+})
+
+// Moves every downloaded offline audio file from the old folder into the new
+// one and repoints the library's localPath entries, so switching folders
+// doesn't orphan (or silently re-download) what's already been saved.
+ipcMain.handle('offline-set-library-path', async (_, newPath) => {
+  const oldPath = getOfflineAudioDir()
+  if (!newPath || newPath === oldPath) return { path: oldPath }
+
+  try { fs.mkdirSync(newPath, { recursive: true }) } catch (e) {
+    return { error: 'Could not create folder: ' + e.message }
+  }
+
+  const lib = loadOfflineLibrary()
+  const failed = []
+  for (const trackId of Object.keys(lib.tracks)) {
+    const track = lib.tracks[trackId]
+    const oldFile = track.localPath
+    if (!oldFile || !fs.existsSync(oldFile)) continue
+    const newFile = path.join(newPath, path.basename(oldFile))
+    try {
+      fs.renameSync(oldFile, newFile)
+      track.localPath = newFile
+    } catch (e) {
+      // Cross-device moves can fail with EXDEV — fall back to copy + delete.
+      try {
+        fs.copyFileSync(oldFile, newFile)
+        fs.unlinkSync(oldFile)
+        track.localPath = newFile
+      } catch (e2) {
+        failed.push(trackId)
+      }
+    }
+  }
+  saveOfflineLibrary(lib)
+
+  appSettings.offlineLibraryPath = newPath
+  saveSettings()
+
+  return failed.length ? { path: newPath, failedCount: failed.length } : { path: newPath }
 })
 
 ipcMain.handle('scan-library', async (_, folders) => {

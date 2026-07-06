@@ -253,7 +253,7 @@ export default function EditorPage(): JSX.Element {
     return {
       name:                   s.track_titles?.[0] || s.name,
       credited_artists:       s.credited_artists || '',
-      album:                  s.era?.name || '',
+      album:                  s.album ?? s.era?.name ?? '',
       category:               s.category || '',
       era_id:                 s.era?.id ?? '',
       producers:              s.producers || '',
@@ -279,7 +279,7 @@ export default function EditorPage(): JSX.Element {
   const populate = useCallback((s: JWApiSong): void => {
     setName(s.track_titles?.[0] || s.name)
     setArtists(s.credited_artists || '')
-    setAlbum(s.era?.name || '')
+    setAlbum(s.album ?? s.era?.name ?? '')
     setCat(s.category || '')
     setEraId(s.era?.id ? String(s.era.id) : '')
     setProd(s.producers || '')

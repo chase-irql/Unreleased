@@ -245,7 +245,7 @@ export default function PlaylistsView(): JSX.Element {
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
-    offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore()
+    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStore()
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -1369,7 +1369,14 @@ export default function PlaylistsView(): JSX.Element {
                   </button>
                   <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} />
                   <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
-                    <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
+                    <p className="text-text-primary text-sm font-medium truncate flex items-center gap-1.5">
+                      <span className="truncate">{track.title}</span>
+                      {!!track.id && offlineTracks[track.id] && (
+                        <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
+                          <HardDrive size={11} />
+                        </span>
+                      )}
+                    </p>
                     <p className="text-text-muted text-xs truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
