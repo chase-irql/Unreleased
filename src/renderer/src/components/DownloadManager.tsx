@@ -127,9 +127,11 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
   const isError = item.state === 'error' || item.state === 'cancelled'
   const isActive = item.state === 'downloading'
 
-  const sizeLabel = item.total && item.total > 0
-    ? `${fmtBytes(item.received ?? 0)} / ${fmtBytes(item.total)}`
-    : item.received ? fmtBytes(item.received) : null
+  const sizeLabel = item.type === 'playlist'
+    ? (item.total ? `${item.received ?? 0} / ${item.total} tracks` : null)
+    : item.total && item.total > 0
+      ? `${fmtBytes(item.received ?? 0)} / ${fmtBytes(item.total)}`
+      : item.received ? fmtBytes(item.received) : null
 
   return (
     <div className="px-3 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors">

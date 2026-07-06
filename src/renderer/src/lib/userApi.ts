@@ -28,6 +28,7 @@ export interface ApiSongLite {
   category: string
   image_url: string | null
   era: { id: number; name: string } | null
+  album?: string | null
 }
 
 export interface FavoriteEntry {
@@ -134,7 +135,7 @@ export function liteSongToTrack(song: ApiSongLite): Track {
     imageUrl: buildImageUrl(song.image_url),
     title,
     artist: song.credited_artists || 'Juice WRLD',
-    album: song.era?.name || '',
+    album: song.album || song.era?.name || '',
     albumArtist: 'Juice WRLD',
     year: null,
     trackNumber: null,
@@ -496,6 +497,19 @@ export async function updateProposal(id: number, payload: {
 
 export async function withdrawProposal(id: number): Promise<void> {
   return request(`${ACCOUNT_BASE}/editor/proposals/${id}/`, { method: 'DELETE' })
+}
+
+// Withdraws a proposal and immediately re-creates it with the same data —
+// useful when a pending proposal is stuck/stale and needs a fresh review cycle.
+export async function resubmitProposal(p: SongEditProposal): Promise<SongEditProposal> {
+  await withdrawProposal(p.id)
+  return createProposal({
+    song: p.song,
+    change_type: p.change_type,
+    title: p.title,
+    proposed_data: p.proposed_data,
+    editor_notes: p.editor_notes,
+  })
 }
 
 export async function getLeaderboard(): Promise<Array<{

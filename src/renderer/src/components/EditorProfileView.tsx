@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
+import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
 
 const CATEGORIES = [
@@ -290,6 +290,7 @@ export default function EditorProfileView(): JSX.Element {
   const [filter, setFilter] = useState<FilterTab>('all')
   const [search, setSearch] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [resubmittingId, setResubmittingId] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [showAddSong, setShowAddSong] = useState(false)
@@ -301,6 +302,15 @@ export default function EditorProfileView(): JSX.Element {
       setProposals(prev => prev.filter(p => p.id !== id))
     } catch (e) { console.error('withdraw failed:', e) }
     finally { setDeletingId(null) }
+  }
+
+  const handleResubmit = async (p: SongEditProposal): Promise<void> => {
+    setResubmittingId(p.id)
+    try {
+      const fresh = await resubmitProposal(p)
+      setProposals(prev => [fresh, ...prev.filter(x => x.id !== p.id)])
+    } catch (e) { console.error('resubmit failed:', e) }
+    finally { setResubmittingId(null) }
   }
 
   const handleEdit = (p: SongEditProposal): void => {
@@ -528,8 +538,19 @@ export default function EditorProfileView(): JSX.Element {
                               <Pencil size={12} />
                             </button>
                             <button
+                              onClick={() => handleResubmit(p)}
+                              disabled={resubmittingId === p.id || deletingId === p.id}
+                              className="p-1.5 rounded-lg text-text-muted hover:text-accent hover:bg-accent/10 transition-all disabled:opacity-40"
+                              title="Resubmit proposal (withdraws and re-submits fresh)"
+                            >
+                              {resubmittingId === p.id
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : <RefreshCw size={12} />
+                              }
+                            </button>
+                            <button
                               onClick={() => handleDelete(p.id)}
-                              disabled={deletingId === p.id}
+                              disabled={deletingId === p.id || resubmittingId === p.id}
                               className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
                               title="Withdraw proposal"
                             >
