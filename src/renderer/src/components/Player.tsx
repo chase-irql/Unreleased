@@ -466,9 +466,14 @@ export default function Player(): JSX.Element {
     const audio = e.currentTarget
     if (audio !== getActive()) return  // ignore pre-loading slot's events
 
-    if (!audio.duration) return
     setCurrentTime(audio.currentTime)
-    setProgress(audio.currentTime / audio.duration)
+    // audio.duration reads as Infinity for streamed audio until the server's
+    // sent enough to know the real length (no Content-Length / chunked
+    // response) — dividing by that kept progress pinned at 0 the whole song,
+    // so fall back to the track's own known duration when audio.duration
+    // isn't a finite number yet.
+    const dur = isFinite(audio.duration) ? audio.duration : (currentTrack?.duration || 0)
+    if (dur > 0) setProgress(audio.currentTime / dur)
 
     // Sleep timer
     if (sleepTimerEnd && Date.now() >= sleepTimerEnd) {
@@ -482,8 +487,8 @@ export default function Player(): JSX.Element {
     // still fire right after the user pauses (it was already in flight),
     // so without this guard a crossfade — and the next song's playback —
     // could kick off even though playback was just paused.
-    if (crossfadeEnabled && crossfadeDuration > 0 && !cfActive.current && useStore.getState().isPlaying) {
-      const remaining = audio.duration - audio.currentTime
+    if (crossfadeEnabled && crossfadeDuration > 0 && !cfActive.current && useStore.getState().isPlaying && dur > 0) {
+      const remaining = dur - audio.currentTime
 
       if (remaining > 0 && remaining <= crossfadeDuration) {
         // In radio mode use radioNext; otherwise compute from queue. Compute

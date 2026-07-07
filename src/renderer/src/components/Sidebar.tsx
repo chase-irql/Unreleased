@@ -82,7 +82,7 @@ export default function Sidebar(): JSX.Element {
       )}
 
       {/* Nav items */}
-      <nav className={`space-y-1 flex-1 ${collapsed ? 'px-2' : 'px-3'}`}>
+      <nav className="space-y-1 flex-1 px-3">
         {items.map(({ icon, label, view }) => (
           <div key={view}>
             <div
@@ -101,7 +101,7 @@ export default function Sidebar(): JSX.Element {
                   }
                 }}
                 title={collapsed ? label : undefined}
-                className={`flex items-center flex-1 min-w-0 py-2 ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+                className="flex items-center flex-1 min-w-0 py-2 gap-3 px-0"
               >
                 {icon}
                 {showExpanded && <span className="flex-1 text-left truncate">{label}</span>}
