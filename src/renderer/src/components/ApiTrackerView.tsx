@@ -203,7 +203,6 @@ function BulkContextMenu({
   onLinkVersions,
   canAddToPlaylist,
   canAddToQueue,
-  excludedCount,
   contained,
 }: {
   state: BulkContextMenuState
@@ -218,15 +217,12 @@ function BulkContextMenu({
   onLogin: () => void
   canLinkVersions: boolean
   onLinkVersions: () => void
-  /** False when every selected song is a session/unsurfaced (playlists
-   *  don't support those) — hides "Add to playlist" entirely. */
+  /** False when any selected song is a session/unsurfaced (playlists don't
+   *  support those) — hides "Add to playlist" entirely rather than silently
+   *  adding only the eligible ones. */
   canAddToPlaylist: boolean
-  /** False when no selected song is both eligible and has a path — same
-   *  rule bulkAddToQueue itself applies, surfaced here instead of letting
-   *  the action silently no-op. */
+  /** False unless every selected song is both eligible and has a path. */
   canAddToQueue: boolean
-  /** How many selected songs are session/unsurfaced and get skipped. */
-  excludedCount: number
   /** Playlist ids that already contain every eligible selected song. */
   contained: Set<number>
 }): JSX.Element {
@@ -268,11 +264,6 @@ function BulkContextMenu({
           >
             <ChevronDown size={12} className="rotate-90" /> Back
           </button>
-          {excludedCount > 0 && (
-            <p className="px-3 pb-1.5 text-[11px] text-text-muted">
-              {excludedCount} session/unsurfaced song{excludedCount === 1 ? '' : 's'} excluded
-            </p>
-          )}
           {!account ? (
             <div className="px-3 pb-2">
               <p className="text-xs text-text-muted mb-2">Log in to save to playlists.</p>
@@ -1033,19 +1024,19 @@ export default function ApiTrackerView(): JSX.Element {
   }, [selectMode])
 
   const selectedSongs = useMemo(() => [...selected.values()], [selected])
-  // Sessions/unsurfaced songs can't go in playlists — same rule the
-  // single-song menu already enforces (see canAddToPlaylist in
-  // SongContextMenu.tsx). "Add to playlist" should reflect that instead of
-  // silently dropping them during the actual add.
+  // Sessions/unsurfaced songs can't go in playlists or the queue — same rule
+  // the single-song menu already enforces (see canAddToPlaylist/canQueue in
+  // SongContextMenu.tsx). If even one selected song is unplayable, both bulk
+  // actions are disabled entirely rather than silently dropping it — a
+  // partial add on a selection the user made as one unit is surprising.
   const bulkEligibleSongs = useMemo(
     () => selectedSongs.filter(s => !['recording_session', 'unsurfaced'].includes(s.category)),
     [selectedSongs]
   )
-  const canBulkAddToPlaylist = bulkEligibleSongs.length > 0
-  // Mirrors bulkAddToQueue's own filter (eligible category + has a path) —
-  // without this, selecting only sessions/unsurfaced left "Add to queue"
-  // enabled and clickable even though it would silently add nothing.
-  const canBulkAddToQueue = bulkEligibleSongs.some(s => s.path)
+  const canBulkAddToPlaylist = selectedSongs.length > 0 && bulkEligibleSongs.length === selectedSongs.length
+  const canBulkAddToQueue = selectedSongs.length > 0
+    && bulkEligibleSongs.length === selectedSongs.length
+    && bulkEligibleSongs.every(s => s.path)
 
   // Which playlists already contain *every* eligible selected song — shown
   // as a checkmark so re-adding to a playlist the whole selection is
@@ -1056,7 +1047,7 @@ export default function ApiTrackerView(): JSX.Element {
       setBulkContained(new Set())
       return
     }
-    const ids = bulkEligibleSongs.map(s => s.id)
+    const ids = selectedSongs.map(s => s.id)
     Promise.all(
       playlists.map(p =>
         userApi.getPlaylist(p.id)
@@ -1068,17 +1059,19 @@ export default function ApiTrackerView(): JSX.Element {
       )
     ).then(results => setBulkContained(new Set(results.filter(r => r.allIn).map(r => r.id))))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlists, account, bulkEligibleSongs, showBulkPlaylists, bulkContextMenu?.showPlaylists])
+  }, [playlists, account, selectedSongs, showBulkPlaylists, bulkContextMenu?.showPlaylists])
 
   const bulkAddToQueue = (): void => {
-    // Skip unplayable songs (sessions/unsurfaced) — same rule as bulk playlist
-    // add and the single-song menu.
-    bulkEligibleSongs.filter(s => s.path).forEach(s => addToQueue(songToTrack(s)))
+    // Only reachable when canBulkAddToQueue is true, i.e. every selected
+    // song is eligible and playable.
+    selectedSongs.forEach(s => addToQueue(songToTrack(s)))
     exitSelectMode()
   }
 
   const bulkAddToPlaylist = async (playlistId: number): Promise<void> => {
-    await Promise.all(bulkEligibleSongs.map(s => userApi.addToPlaylist(playlistId, s.id).catch(() => {})))
+    // Only reachable when canBulkAddToPlaylist is true, i.e. every selected
+    // song is eligible.
+    await Promise.all(selectedSongs.map(s => userApi.addToPlaylist(playlistId, s.id).catch(() => {})))
     await refreshPlaylists()
     exitSelectMode()
   }
@@ -1471,7 +1464,7 @@ export default function ApiTrackerView(): JSX.Element {
           <button
             onClick={bulkAddToQueue}
             disabled={selected.size === 0 || !canBulkAddToQueue}
-            title={!canBulkAddToQueue && selected.size > 0 ? "Sessions/unsurfaced songs can't be queued" : undefined}
+            title={!canBulkAddToQueue && selected.size > 0 ? "Can't queue while a session/unsurfaced song is selected" : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
           >
             <ListPlus size={13} /> Add to queue
@@ -1480,7 +1473,7 @@ export default function ApiTrackerView(): JSX.Element {
             <button
               onClick={() => setShowBulkPlaylists(v => !v)}
               disabled={selected.size === 0 || !canBulkAddToPlaylist}
-              title={!canBulkAddToPlaylist ? "Sessions/unsurfaced songs can't be added to playlists" : undefined}
+              title={!canBulkAddToPlaylist && selected.size > 0 ? "Can't add to playlist while a session/unsurfaced song is selected" : undefined}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
             >
               <Plus size={13} /> Add to playlist
@@ -1491,11 +1484,6 @@ export default function ApiTrackerView(): JSX.Element {
                 <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
                   <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
                     Add to playlist
-                    {bulkEligibleSongs.length !== selectedSongs.length && (
-                      <span className="block normal-case tracking-normal font-normal text-text-muted/80 mt-0.5">
-                        {selectedSongs.length - bulkEligibleSongs.length} session/unsurfaced song{selectedSongs.length - bulkEligibleSongs.length === 1 ? '' : 's'} excluded
-                      </span>
-                    )}
                   </div>
                   {!account ? (
                     <div className="p-3">
@@ -1616,7 +1604,6 @@ export default function ApiTrackerView(): JSX.Element {
           onLinkVersions={() => { bulkLinkVersions(); setBulkContextMenu(null) }}
           canAddToPlaylist={canBulkAddToPlaylist}
           canAddToQueue={canBulkAddToQueue}
-          excludedCount={selectedSongs.length - bulkEligibleSongs.length}
           contained={bulkContained}
         />
       )}

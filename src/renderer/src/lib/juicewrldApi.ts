@@ -188,41 +188,6 @@ export function songToTrack(song: JWApiSong): Track {
   }
 }
 
-// ─── Radio: build a queue of random songs ─────────────────────────────────────
-
-const RADIO_QUEUE_SIZE = 14
-
-export async function buildRandomQueue(): Promise<JWApiSong[]> {
-  const PLAYABLE = ['released', 'unreleased'] as const
-  const countResults = await Promise.all(
-    PLAYABLE.map((cat) => apiFetch<JWApiPaginatedResponse>('/songs/', { category: cat, page_size: 1 }))
-  )
-  const totals = countResults.map((r) => r.count)
-
-  const fetches: Promise<JWApiSong | null>[] = []
-  for (let i = 0; i < RADIO_QUEUE_SIZE; i++) {
-    const catIdx = Math.floor(Math.random() * PLAYABLE.length)
-    const category = PLAYABLE[catIdx]
-    const total = totals[catIdx]
-    if (total === 0) continue
-    const offset = Math.floor(Math.random() * total)
-    fetches.push(
-      apiFetch<JWApiPaginatedResponse>('/songs/', { category, page_size: 1, offset })
-        .then((r) => r.results[0] ?? null)
-        .catch(() => null)
-    )
-  }
-
-  const results = await Promise.all(fetches)
-  const songs = results.filter((s): s is JWApiSong => !!s && !!s.path)
-  // Fisher-Yates shuffle
-  for (let i = songs.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [songs[i], songs[j]] = [songs[j], songs[i]]
-  }
-  return songs
-}
-
 // ─── Category display ─────────────────────────────────────────────────────────
 
 export const CATEGORY_LABELS: Record<string, string> = {

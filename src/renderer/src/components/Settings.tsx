@@ -417,7 +417,7 @@ export default function Settings(): JSX.Element {
                   icon={Zap}
                   iconColor="#7c3aed"
                   label="Crossfade"
-                  labelExtra={<div className="ml-2 translate-y-px"><Toggle on={crossfadeEnabled} onClick={() => setCrossfade(!crossfadeEnabled, crossfadeDuration)} /></div>}
+                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={crossfadeEnabled} onClick={() => setCrossfade(!crossfadeEnabled, crossfadeDuration)} /></div>}
                 >
                   {crossfadeEnabled && (
                     <div className="flex items-center gap-2">

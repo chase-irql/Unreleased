@@ -50,16 +50,6 @@ export function getCurrentLineIndex(lines: SyncedLyricLine[], currentTime: numbe
 }
 
 /**
- * Format seconds as mm:ss.xx for LRC
- */
-export function formatLrcTime(seconds: number): string {
-  const min = Math.floor(seconds / 60)
-  const sec = Math.floor(seconds % 60)
-  const ms = Math.round((seconds % 1) * 100)
-  return `[${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ms).padStart(2, '0')}]`
-}
-
-/**
  * Format duration in mm:ss
  */
 export function formatDuration(seconds: number): string {

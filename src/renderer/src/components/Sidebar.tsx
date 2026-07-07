@@ -83,7 +83,7 @@ export default function Sidebar(): JSX.Element {
       </div>
 
       {/* Nav items */}
-      <nav className="space-y-1 flex-1 px-3">
+      <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto px-3">
         {items.map(({ icon, label, view }) => (
           <div key={view}>
             <div
