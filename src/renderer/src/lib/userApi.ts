@@ -1,6 +1,8 @@
 import { Track } from '../types'
 import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration } from './juicewrldApi'
 import type { JWApiSong } from './juicewrldApi'
+import { apiRequest, cacheDelete } from './apiClient'
+import { cacheSet } from './apiCache'
 
 const ACCOUNT_BASE = `${JWAPI_BASE}/accounts`
 const LIBRARY_BASE = `${JWAPI_BASE}/library`
@@ -88,31 +90,21 @@ export function clearToken(): void {
   } catch {}
 }
 
-async function parseError(res: Response): Promise<string> {
-  try {
-    const body = await res.json()
-    if (typeof body === 'string') return body
-    if (body.detail) return String(body.detail)
-    const firstKey = Object.keys(body)[0]
-    if (firstKey) {
-      const val = body[firstKey]
-      return Array.isArray(val) ? String(val[0]) : String(val)
-    }
-  } catch {}
-  return `Request failed (${res.status})`
-}
-
-async function request<T>(url: string, options: RequestInit = {}, auth = true): Promise<T> {
+// `cacheKey` opts a GET call into the offline fallback cache — pass it only
+// for idempotent reads whose staleness is acceptable (playlists, favorites,
+// profile). Mutations don't pass one, so they always hit the network and
+// fail loudly if offline rather than silently no-op against stale data.
+async function request<T>(url: string, options: RequestInit = {}, auth = true, cacheKey?: string): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (auth) {
     const token = getToken()
     if (token) headers['Authorization'] = `Token ${token}`
   }
-  const res = await fetch(url, { ...options, headers: { ...headers, ...(options.headers as Record<string, string>) } })
-  if (!res.ok) throw new Error(await parseError(res))
-  if (res.status === 204) return undefined as T
-  const text = await res.text()
-  return (text ? JSON.parse(text) : undefined) as T
+  return apiRequest<T>(url, {
+    ...options,
+    headers: { ...headers, ...(options.headers as Record<string, string>) },
+    cacheKey,
+  })
 }
 
 export function liteSongToTrack(song: ApiSongLite): Track {
@@ -174,11 +166,13 @@ export async function logout(): Promise<void> {
 }
 
 export async function getMe(): Promise<AccountUser> {
-  return request(`${ACCOUNT_BASE}/account/me/`, { method: 'GET' })
+  const url = `${ACCOUNT_BASE}/account/me/`
+  return request(url, { method: 'GET' }, true, url)
 }
 
 export async function getFavorites(): Promise<FavoriteEntry[]> {
-  return request(`${LIBRARY_BASE}/favorites/`, { method: 'GET' })
+  const url = `${LIBRARY_BASE}/favorites/`
+  return request(url, { method: 'GET' }, true, url)
 }
 
 export async function addFavorite(songId: number): Promise<FavoriteEntry> {
@@ -193,7 +187,8 @@ export async function removeFavorite(songId: number): Promise<void> {
 }
 
 export async function getPlaylists(): Promise<PlaylistSummary[]> {
-  return request(`${LIBRARY_BASE}/playlists/?omit_cover_image=true`, { method: 'GET' })
+  const url = `${LIBRARY_BASE}/playlists/?omit_cover_image=true`
+  return request(url, { method: 'GET' }, true, url)
 }
 
 type PlaylistCoverEntry = { cover_image_url?: string | null; cover_image?: string | null; trackImages: string[] }
@@ -271,9 +266,14 @@ export function peekPlaylistDetail(id: number): PlaylistDetail | undefined {
   return playlistDetailCache.get(id)
 }
 
+// Cache key for a playlist's persisted detail response — kept in sync with
+// mutations below so offline reads never show a stale-past-the-last-edit copy.
+const playlistDetailUrl = (id: number): string => `${LIBRARY_BASE}/playlists/${id}/?omit_cover_image=true`
+
 // Single request — tracks + cover in one response
 export async function getPlaylist(id: number): Promise<PlaylistDetail> {
-  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/?omit_cover_image=true`)
+  const url = playlistDetailUrl(id)
+  const result = await request<PlaylistDetail>(url, {}, true, url)
   playlistDetailCache.set(id, result)
   return result
 }
@@ -284,6 +284,7 @@ export async function renamePlaylist(id: number, name: string): Promise<Playlist
     body: JSON.stringify({ name }),
   })
   playlistDetailCache.set(id, result)
+  cacheSet(playlistDetailUrl(id), result)
   return result
 }
 
@@ -293,12 +294,14 @@ export async function updatePlaylist(id: number, data: { name?: string; descript
     body: JSON.stringify(data),
   })
   playlistDetailCache.set(id, result)
+  cacheSet(playlistDetailUrl(id), result)
   return result
 }
 
 /** Fetch a public playlist without authentication. */
 export async function getPublicPlaylist(id: number): Promise<PlaylistDetail> {
-  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/public/${id}/`)
+  const url = `${LIBRARY_BASE}/playlists/public/${id}/`
+  const result = await request<PlaylistDetail>(url, {}, false, url)
   playlistDetailCache.set(id, result)
   return result
 }
@@ -361,6 +364,7 @@ export async function reorderPlaylist(id: number, songIds: number[]): Promise<Pl
     body: JSON.stringify({ order: songIds }),
   })
   playlistDetailCache.set(id, result)
+  cacheSet(playlistDetailUrl(id), result)
   return result
 }
 
@@ -368,6 +372,7 @@ export async function deletePlaylist(id: number): Promise<void> {
   await request(`${LIBRARY_BASE}/playlists/${id}/`, { method: 'DELETE' })
   playlistDetailCache.delete(id)
   playlistCoverCache.delete(id)
+  cacheDelete(playlistDetailUrl(id))
 }
 
 export async function addToPlaylist(id: number, songId: number): Promise<PlaylistDetail> {
@@ -376,13 +381,18 @@ export async function addToPlaylist(id: number, songId: number): Promise<Playlis
     body: JSON.stringify({ song_id: songId }),
   })
   playlistDetailCache.set(id, result)
+  cacheSet(playlistDetailUrl(id), result)
   return result
 }
 
 export async function removeFromPlaylist(id: number, songId: number): Promise<void> {
   await request(`${LIBRARY_BASE}/playlists/${id}/items/${songId}/`, { method: 'DELETE' })
   const cached = playlistDetailCache.get(id)
-  if (cached) playlistDetailCache.set(id, { ...cached, items: cached.items.filter(it => it.song.id !== songId) })
+  if (cached) {
+    const updated = { ...cached, items: cached.items.filter(it => it.song.id !== songId) }
+    playlistDetailCache.set(id, updated)
+    cacheSet(playlistDetailUrl(id), updated)
+  }
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
