@@ -212,11 +212,6 @@ export async function getOwnVersionMeta(songId: number): Promise<SongVersionMeta
   }
 }
 
-/** Removes a song from its version group (leaves siblings grouped together). */
-export async function unlinkSongVersion(songId: number): Promise<void> {
-  await supaFetch(`/song_versions?song_id=eq.${songId}`, { method: 'DELETE' })
-}
-
 /** Sets this song's own version label (e.g. "v1", "TV Mix") — distinct per
  *  song within a group, unlike the shared version title below. If the song
  *  isn't linked to anything yet, this creates a standalone one-song group

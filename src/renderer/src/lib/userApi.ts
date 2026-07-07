@@ -115,17 +115,6 @@ async function request<T>(url: string, options: RequestInit = {}, auth = true): 
   return (text ? JSON.parse(text) : undefined) as T
 }
 
-/** Fetch a full song object — sends auth token without Content-Type to avoid CORS preflight. */
-export async function fetchSong(songId: number): Promise<JWApiSong> {
-  const headers: Record<string, string> = {}
-  const token = getToken()
-  if (token) headers['Authorization'] = `Token ${token}`
-  const res = await fetch(`${JWAPI_BASE}/songs/${songId}/`, { headers })
-  if (!res.ok) throw new Error(`Song fetch failed (${res.status})`)
-  return res.json()
-}
-
-
 export function liteSongToTrack(song: ApiSongLite): Track {
   const title = song.track_titles?.[0] || song.name
   return {
@@ -150,7 +139,6 @@ export function trackIdToSongId(trackId: string): number | null {
   return match ? Number(match[1]) : null
 }
 
-export const DISCORD_STATE_KEY = 'unreleased:discordState'
 
 export function discordRedirectUri(): string {
   // In Electron (file:// protocol) always use the production callback URL,
@@ -216,10 +204,6 @@ type PlaylistCoverEntry = { cover_image_url?: string | null; cover_image?: strin
 // safe as long as uploads/removals below keep it in sync.
 const playlistCoverCache = new Map<number, PlaylistCoverEntry>()
 
-export function invalidatePlaylistCoverCache(id: number): void {
-  playlistCoverCache.delete(id)
-}
-
 /** Synchronous cache read, so callers can render a cached cover immediately
  *  (no loading flash) before deciding whether to also call getPlaylistCover. */
 export function peekPlaylistCover(id: number): PlaylistCoverEntry | undefined {
@@ -281,10 +265,6 @@ export async function compressImageFile(file: File, maxDim = 400, maxKB = 200): 
 // cached, then quietly refetch) so a peek is never stale for long; mutations
 // below also update/clear the entry so edits aren't lost behind the cache.
 const playlistDetailCache = new Map<number, PlaylistDetail>()
-
-export function invalidatePlaylistDetailCache(id: number): void {
-  playlistDetailCache.delete(id)
-}
 
 /** Synchronous cache read for instant render before/instead of a network fetch. */
 export function peekPlaylistDetail(id: number): PlaylistDetail | undefined {
@@ -559,18 +539,6 @@ export async function getLeaderboard(): Promise<Array<{
   badges: EditorBadgeAward[]
 }>> {
   return request(`${ACCOUNT_BASE}/editor/leaderboard/`, { method: 'GET' })
-}
-
-export async function getBadgeCatalog(): Promise<Array<{
-  slug: string
-  name: string
-  description: string
-  icon: string
-  category: string
-  threshold: number | null
-  is_manual: boolean
-}>> {
-  return request(`${ACCOUNT_BASE}/badges/`, { method: 'GET' })
 }
 
 

@@ -4,7 +4,11 @@ const path = require('path')
 const fs = require('fs')
 const https = require('https')
 const { pathToFileURL } = require('url')
+const { Readable } = require('stream')
 const discordRpc = require('./discordRpc')
+
+// Response() only accepts web ReadableStreams, not Node streams
+const webStreamFromNode = (stream) => Readable.toWeb(stream)
 
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
 
@@ -816,13 +820,52 @@ app.whenReady().then(() => {
     try {
       const filePath = new URL(request.url).searchParams.get('p')
       if (!filePath) return new Response('Missing path', { status: 400 })
-      // Forward the Range header so seeking actually works — without it every
-      // seek re-fetches the whole file from byte 0 instead of the requested
-      // offset, and the <audio> element ends up treating the track as
-      // effectively non-seekable even though `stream: true` is set above.
-      const range = request.headers.get('range')
-      const headers = range ? { Range: range } : undefined
-      return net.fetch(pathToFileURL(filePath).href, { headers })
+
+      // Serve Range requests ourselves: net.fetch on a file:// URL ignores the
+      // Range header entirely, so every seek got the whole file back as a 200
+      // and Chromium restarted playback from 0. A real 206 + Content-Range is
+      // what makes the <audio> element treat the track as seekable.
+      const stat = fs.statSync(filePath)
+      const size = stat.size
+      const mimeByExt = {
+        '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.wav': 'audio/wav',
+        '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.aac': 'audio/aac',
+        '.opus': 'audio/ogg', '.wma': 'audio/x-ms-wma', '.aiff': 'audio/aiff',
+        '.aif': 'audio/aiff', '.caf': 'audio/x-caf',
+        '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+        '.m4v': 'video/mp4', '.mkv': 'video/x-matroska',
+      }
+      const mime = mimeByExt[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+
+      const rangeHeader = request.headers.get('range')
+      const match = rangeHeader && /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+      if (match && (match[1] || match[2])) {
+        const start = match[1] ? parseInt(match[1], 10) : size - parseInt(match[2], 10)
+        const end = match[1] && match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1
+        if (start >= size || start < 0 || start > end) {
+          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } })
+        }
+        const stream = fs.createReadStream(filePath, { start, end })
+        return new Response(webStreamFromNode(stream), {
+          status: 206,
+          headers: {
+            'Content-Type': mime,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(end - start + 1),
+            'Content-Range': `bytes ${start}-${end}/${size}`,
+          },
+        })
+      }
+
+      const stream = fs.createReadStream(filePath)
+      return new Response(webStreamFromNode(stream), {
+        status: 200,
+        headers: {
+          'Content-Type': mime,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(size),
+        },
+      })
     } catch (e) {
       return new Response('Error: ' + e.message, { status: 500 })
     }

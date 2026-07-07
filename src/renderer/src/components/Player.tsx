@@ -680,15 +680,20 @@ export default function Player(): JSX.Element {
     setSeekDrag(val)
     // Update display time without touching audio
     const audio = getActive()
-    if (audio?.duration) setCurrentTime(val * audio.duration)
+    // `audio.duration` can be Infinity (streamed audio with no known length
+    // yet) — that's still truthy, so a bare `if (audio?.duration)` let it
+    // through and multiplied it into the seek target below.
+    const dur = audio && isFinite(audio.duration) ? audio.duration : (currentTrack?.duration || 0)
+    if (dur > 0) setCurrentTime(val * dur)
   }
 
   const handleSeekCommit = (e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>): void => {
     if (seekDrag === null) return
     const audio = getActive()
-    if (audio?.duration) {
+    const dur = audio && isFinite(audio.duration) ? audio.duration : (currentTrack?.duration || 0)
+    if (audio && dur > 0) {
       cancelCF()
-      const time = seekDrag * audio.duration
+      const time = seekDrag * dur
       audio.currentTime = time
       audio.volume = volumeRef.current
       audio.playbackRate = playbackSpeed
