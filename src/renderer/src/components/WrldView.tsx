@@ -1154,8 +1154,8 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="h-full flex items-center justify-center px-3 py-3">
-                  <div className="w-full max-w-[420px] h-full max-h-[92%]">
+                <div className="h-full flex items-center justify-center">
+                  <div className="w-[65%] max-w-[420px] min-w-[260px] h-[75%]">
                     <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
                   </div>
                 </div>

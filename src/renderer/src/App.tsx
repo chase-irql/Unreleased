@@ -43,6 +43,7 @@ import QueuePanel from './components/QueuePanel'
 import Settings from './components/Settings'
 import DownloadManager from './components/DownloadManager'
 import LibraryTab from './components/LibraryTab'
+import LocalEditorPage from './components/LocalEditorPage'
 import ErrorBoundary from './components/ErrorBoundary'
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -82,7 +83,7 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists } = useStore()
+  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary } = useStore()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -141,6 +142,20 @@ export default function App(): JSX.Element {
     return () => { window.removeEventListener('focus', onFocus); clearInterval(interval) }
   }, [loadOfflineLibrary, syncOfflinePlaylists])
 
+  // "Auto-refresh changed files" (Settings → Library) — opt-in background
+  // rescan so tags edited in an external tool (Mp3tag, etc.) show up without
+  // an explicit "Scan Now". scanLibrary skips re-parsing anything whose
+  // size/mtime hasn't changed, so this stays cheap even on a large library.
+  useEffect(() => {
+    if (!(window as any).electron) return
+    if (!libraryAutoRefresh || libraryFolders.length === 0) return
+    loadLibrary().then(() => scanLibrary())
+    const onFocus = (): void => { scanLibrary() }
+    window.addEventListener('focus', onFocus)
+    const interval = setInterval(() => scanLibrary(), 15 * 60 * 1000)
+    return () => { window.removeEventListener('focus', onFocus); clearInterval(interval) }
+  }, [libraryAutoRefresh, libraryFolders, loadLibrary, scanLibrary])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
@@ -183,6 +198,7 @@ export default function App(): JSX.Element {
               : activeView === 'docs' ? <DocsPage />
               : activeView === 'wrld' ? <WrldView />
               : activeView === 'library' ? <LibraryTab />
+              : activeView === 'local-editor' ? <LocalEditorPage />
 : activeView === 'albums-admin' ? <AlbumsAdminView />
               : activeView === 'not-found' ? <NotFoundView />
               : <ApiTrackerView />}

@@ -61,23 +61,25 @@ export default function Sidebar(): JSX.Element {
 
   return (
     <aside
-      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 border-r border-[var(--border)] transition-all duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
+      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 border-r border-[var(--border)] transition-[width] duration-200 will-change-[width] ${collapsed ? 'w-16' : 'w-60'}`}
     >
       {isElectron && (
         <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
-      {/* Logo */}
-      <div className={`pt-5 pb-4 flex flex-col items-center gap-1 shrink-0 ${collapsed ? 'px-2' : 'px-5'}`}>
-        <img src={logo} alt="unreleased" className={`object-contain transition-all ${collapsed ? 'h-8 w-8' : 'h-32 w-auto'}`} />
-        {showExpanded && (
-          <span
-            className="text-text-primary text-sm uppercase select-none"
-            style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 300, letterSpacing: '0.35em' }}
-          >
-            unreleased
-          </span>
-        )}
-      </div>
+      {/* Logo — hidden when collapsed (redundant with the WRLD tab icon) */}
+      {!collapsed && (
+        <div className="pt-5 pb-4 flex flex-col items-center gap-1 shrink-0 px-5">
+          <img src={logo} alt="unreleased" className="object-contain h-32 w-auto" />
+          {showExpanded && (
+            <span
+              className="text-text-primary text-sm uppercase select-none"
+              style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 300, letterSpacing: '0.35em' }}
+            >
+              unreleased
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Nav items */}
       <nav className={`space-y-1 flex-1 ${collapsed ? 'px-2' : 'px-3'}`}>
@@ -116,7 +118,7 @@ export default function Sidebar(): JSX.Element {
             </div>
 
             {view === 'playlists' && showExpanded && playlistsExpanded && playlists.length > 0 && (
-              <div className="mt-0.5 ml-[26px] space-y-0.5 border-l border-[var(--border)] pl-2">
+              <div className="mt-0.5 ml-[26px] space-y-0.5 border-l border-[var(--border)] pl-2 max-h-64 overflow-y-auto">
                 {playlists.map((pl) => (
                   <button
                     key={pl.id}
@@ -135,13 +137,13 @@ export default function Sidebar(): JSX.Element {
       </nav>
 
       {/* Bottom section */}
-      <div className={`pb-4 space-y-1 ${collapsed ? 'px-2' : 'px-3'}`}>
+      <div className="pb-4 space-y-1 px-2">
         {account ? (
-          <div className={`flex items-center py-2 rounded text-sm ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}>
+          <div className="flex items-center gap-3 py-2 rounded text-sm px-3">
             <button
               onClick={() => setActiveView('editor-profile')}
               title={collapsed ? (account.display_name || account.discord_username) : undefined}
-              className={`flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity ${collapsed ? 'justify-center' : ''}`}
+              className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
             >
               {account.discord_avatar ? (
                 <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
@@ -164,9 +166,9 @@ export default function Sidebar(): JSX.Element {
           <button
             onClick={() => setShowUserAuth(true)}
             title={collapsed ? 'Log in' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
-            <LogIn size={18} />
+            <span className="w-6 h-6 flex items-center justify-center shrink-0"><LogIn size={18} /></span>
             {showExpanded && <span>Log in</span>}
           </button>
         )}
@@ -174,13 +176,13 @@ export default function Sidebar(): JSX.Element {
           <button
             onClick={() => setActiveView('admin')}
             title={collapsed ? 'Admin' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${
+            className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 px-3 ${
               activeView === 'admin'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
             }`}
           >
-            <ShieldCheck size={18} />
+            <span className="w-6 h-6 flex items-center justify-center shrink-0"><ShieldCheck size={18} /></span>
             {showExpanded && <span>Admin</span>}
           </button>
         )}
@@ -191,18 +193,18 @@ export default function Sidebar(): JSX.Element {
             target="_blank"
             rel="noopener noreferrer"
             title={collapsed ? 'Download desktop app' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
-            <Download size={18} />
+            <span className="w-6 h-6 flex items-center justify-center shrink-0"><Download size={18} /></span>
             {showExpanded && <span>Download app</span>}
           </a>
         )}
         <button
           onClick={() => setShowSettings(true)}
           title={collapsed ? 'Settings' : undefined}
-          className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+          className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
-          <Settings size={18} />
+          <span className="w-6 h-6 flex items-center justify-center shrink-0"><Settings size={18} /></span>
           {showExpanded && <span>Settings</span>}
         </button>
 
@@ -210,9 +212,9 @@ export default function Sidebar(): JSX.Element {
         <button
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+          className="flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
-          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          <span className="w-6 h-6 flex items-center justify-center shrink-0">{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</span>
           {showExpanded && <span>Collapse</span>}
         </button>
       </div>

@@ -54,7 +54,7 @@ function diff(before: Record<string, unknown>, after: Record<string, unknown>): 
 }
 
 /* ── Section header ─────────────────────────────────────────────────────────── */
-function SectionLabel({ label }: { label: string }): JSX.Element {
+export function SectionLabel({ label }: { label: string }): JSX.Element {
   return (
     <div className="flex items-center gap-2.5 px-4 pt-5 pb-1.5">
       <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted opacity-55 shrink-0 select-none">{label}</span>
@@ -64,7 +64,7 @@ function SectionLabel({ label }: { label: string }): JSX.Element {
 }
 
 /* ── Two-column field row ───────────────────────────────────────────────────── */
-function FieldRow({ label, value, original, onChange, placeholder, mono = false }: {
+export function FieldRow({ label, value, original, onChange, placeholder, mono = false }: {
   label: string; value: string; original: string
   onChange: (v: string) => void; placeholder?: string; mono?: boolean
 }): JSX.Element {
@@ -116,7 +116,7 @@ function SelectRow({ label, value, original, onChange, options, placeholder }: {
 }
 
 /* ── Textarea row ───────────────────────────────────────────────────────────── */
-function TextareaRow({ label, value, original, onChange, rows = 3, placeholder, mono = false }: {
+export function TextareaRow({ label, value, original, onChange, rows = 3, placeholder, mono = false }: {
   label: string; value: string; original: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
 }): JSX.Element {
@@ -403,6 +403,16 @@ export default function EditorPage(): JSX.Element {
     const id = userApi.trackIdToSongId(currentTrack.id)
     if (id) loadSong(id)
   }, [isEditor, song, currentTrack, pendingEditorSongId, isNewSongDraft, pendingEditProposal, loadSong])
+
+  // Landing here with nothing to edit (no song playing, no pending proposal/
+  // draft) used to show a static "No song selected" placeholder — send editors
+  // to My Proposals instead, which is actually useful to land on. Runs after
+  // the prefill effect above so `loading` is already true if a currently-
+  // playing track's song is still being fetched.
+  useEffect(() => {
+    if (!isEditor || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal) return
+    setActiveView('editor-profile')
+  }, [isEditor, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, setActiveView])
 
   useEffect(() => {
     if (!pendingEditProposal || !isEditor) return

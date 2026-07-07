@@ -16,7 +16,7 @@ import {
   JWApiPaginatedResponse,
   JWAPI_BASE,
 } from '../lib/juicewrldApi'
-import { getFileExt, getMediaType } from '../lib/fileTypes'
+import { getFileExt, getMediaType, toFileUrl } from '../lib/fileTypes'
 import { Track } from '../types'
 import MediaLightbox, { LightboxItem } from './MediaLightbox'
 import SongInfoModal from './SongInfoModal'
@@ -69,7 +69,7 @@ function fileToTrack(entry: JWApiFileEntry): Track {
 
 function localFileToTrack(entry: { name: string; path: string; size: number | null }): Track {
   const title = entry.name.replace(/\.[^.]+$/, '')
-  const fileUrl = 'file:///' + entry.path.replace(/\\/g, '/')
+  const fileUrl = toFileUrl(entry.path)
   return {
     id: `local-${entry.path}`,
     path: entry.path,
@@ -251,7 +251,7 @@ export default function ApiFilesView(): JSX.Element {
       return e.type === 'file' && (mt === 'image' || mt === 'video')
     })
     const items: LightboxItem[] = mediaEntries.map(e => ({
-      url: 'file:///' + e.path.replace(/\\/g, '/'),
+      url: toFileUrl(e.path),
       type: getMediaType(e.name) as 'image' | 'video',
       name: e.name,
     }))

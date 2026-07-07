@@ -4,7 +4,7 @@ import {
   ListMusic, Play, Loader2, Plus, Trash2, Pencil, ArrowLeft,
   X, Check, Heart, Shuffle, Music2, Clock, GripVertical,
   ListPlus, Download, Archive, Info, FolderInput, MoreHorizontal,
-  Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, Layers,
+  Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, CircleArrowDown, Layers,
   CheckSquare2, Square,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -13,6 +13,7 @@ import type { PlaylistDetail, PlaylistSummary } from '../lib/userApi'
 import { Track, LocalPlaylist, LibraryTrack } from '../types'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl } from '../lib/juicewrldApi'
+import { toFileUrl } from '../lib/fileTypes'
 import { formatDuration } from '../lib/lyrics'
 import LikedSongsView from './LikedSongsView'
 import { AlbumArtThumb } from './LibraryTab'
@@ -198,7 +199,7 @@ function libTrackToTrack(t: LibraryTrack): Track {
   return {
     id: t.id,
     path: t.filePath,
-    streamUrl: 'file:///' + t.filePath.replace(/\\/g, '/'),
+    streamUrl: toFileUrl(t.filePath),
     imageUrl: t.albumArt || '',
     title: t.title,
     artist: t.artist,
@@ -1274,7 +1275,7 @@ export default function PlaylistsView(): JSX.Element {
                                     {track.title}
                                     {meta.version && <span className="text-text-muted"> ({meta.version})</span>}
                                   </p>
-                                  <p className="text-text-muted text-xs truncate">{track.artist}</p>
+                                  <p className="text-text-muted text-xs truncate">{track.album || track.artist}</p>
                                 </div>
                                 <button
                                   onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
@@ -1369,15 +1370,15 @@ export default function PlaylistsView(): JSX.Element {
                   </button>
                   <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} />
                   <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
-                    <p className="text-text-primary text-sm font-medium truncate flex items-center gap-1.5">
-                      <span className="truncate">{track.title}</span>
+                    <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
+                    <p className="text-text-muted text-xs truncate flex items-center gap-1">
                       {!!track.id && offlineTracks[track.id] && (
                         <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
-                          <HardDrive size={11} />
+                          <CircleArrowDown size={11} fill="currentColor" />
                         </span>
                       )}
+                      <span className="truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</span>
                     </p>
-                    <p className="text-text-muted text-xs truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
                     {track.duration ? formatDuration(track.duration) : '--:--'}

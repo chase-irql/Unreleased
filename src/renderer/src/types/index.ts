@@ -11,7 +11,7 @@ export interface Track {
   genre: string
   hasAlbumArt: boolean
   // API-sourced tracks
-  streamUrl?: string  // if set, Player streams this URL instead of file:///
+  streamUrl?: string  // if set, Player streams this URL instead of the local `path` (via toFileUrl)
   imageUrl?: string   // if set, AlbumArtThumbnail uses this instead of getAlbumArt IPC
 }
 
@@ -108,7 +108,7 @@ export interface SyncedLyricLine {
   text: string
 }
 
-export type ViewType = 'api-tracker' | 'api-files' | 'api-categories' | 'editor' | 'admin' | 'liked' | 'playlists' | 'shared-playlist' | 'editor-profile' | 'docs' | 'wrld' | 'library' | 'albums-admin' | 'not-found'
+export type ViewType = 'api-tracker' | 'api-files' | 'api-categories' | 'editor' | 'local-editor' | 'admin' | 'liked' | 'playlists' | 'shared-playlist' | 'editor-profile' | 'docs' | 'wrld' | 'library' | 'albums-admin' | 'not-found'
 
 export type SortField = 'default' | 'title' | 'artist' | 'album' | 'year' | 'genre' | 'duration'
 export type SortDir = 'asc' | 'desc'

@@ -17,8 +17,13 @@ export function getMediaType(name: string): FileMediaType {
   return 'other'
 }
 
-/** Convert an OS-native absolute path to a file:// URL usable in <img>/<video> src */
+// Dev mode serves the renderer from http://localhost:3018 (see the
+// electron:dev script), and Chromium refuses to load `file://` media from a
+// non-file-origin page ("Not allowed to load local resource"). Routing
+// through the app's `local-media://` custom protocol (registered in
+// electron/main.js) sidesteps that in both dev and the packaged file:// build.
 export function toFileUrl(absPath: string): string {
-  const posix = absPath.replace(/\\/g, '/')
-  return posix.startsWith('/') ? `file://${posix}` : `file:///${posix}`
+  const url = new URL('local-media://play/')
+  url.searchParams.set('p', absPath)
+  return url.toString()
 }
