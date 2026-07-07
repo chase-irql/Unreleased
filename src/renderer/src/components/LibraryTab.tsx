@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { LibraryTrack, LocalPlaylist } from '../types'
+import { toFileUrl } from '../lib/fileTypes'
 import MetadataEditor from './MetadataEditor'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 
@@ -32,7 +33,7 @@ function libraryTrackToQueueTrack(t: LibraryTrack) {
   return {
     id: t.id,
     path: t.filePath,
-    streamUrl: 'file:///' + t.filePath.replace(/\\/g, '/'),
+    streamUrl: toFileUrl(t.filePath),
     imageUrl: t.albumArt || '',
     title: t.title,
     artist: t.artist,

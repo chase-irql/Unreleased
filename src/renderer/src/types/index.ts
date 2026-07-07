@@ -11,7 +11,7 @@ export interface Track {
   genre: string
   hasAlbumArt: boolean
   // API-sourced tracks
-  streamUrl?: string  // if set, Player streams this URL instead of file:///
+  streamUrl?: string  // if set, Player streams this URL instead of the local `path` (via toFileUrl)
   imageUrl?: string   // if set, AlbumArtThumbnail uses this instead of getAlbumArt IPC
 }
 

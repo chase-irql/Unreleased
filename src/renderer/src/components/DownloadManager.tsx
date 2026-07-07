@@ -6,22 +6,39 @@ export default function DownloadManager(): JSX.Element | null {
   const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStore()
   const el = (window as any).electron
   const panelRef = useRef<HTMLDivElement>(null)
+  // Per-download last-sample (bytes, timestamp) used to derive a live
+  // bytes/sec speed reading from the raw received-byte progress events.
+  const speedSamples = useRef<Record<string, { bytes: number; time: number }>>({})
 
   useEffect(() => {
     if (!el) return
     const offStarted = el.onDownloadStarted((d: { filename: string; savePath: string; total: number }) => {
-      addDownload({ id: `file-${d.filename}-${Date.now()}`, filename: d.filename, type: 'file', state: 'downloading', percent: 0, total: d.total, savePath: d.savePath })
+      const id = `file-${d.filename}-${Date.now()}`
+      addDownload({ id, filename: d.filename, type: 'file', state: 'downloading', percent: 0, total: d.total, savePath: d.savePath })
+      speedSamples.current[id] = { bytes: 0, time: Date.now() }
       setShowDownloadManager(true)
     })
     const offProgress = el.onDownloadProgress((d: { filename: string; received: number; total: number; percent: number }) => {
       const { downloads: cur } = useStore.getState()
       const match = [...cur].reverse().find((x) => x.filename === d.filename && x.state === 'downloading')
-      if (match) updateDownload(match.id, { percent: d.percent, received: d.received, total: d.total })
+      if (!match) return
+      const sample = speedSamples.current[match.id] ?? { bytes: 0, time: Date.now() }
+      const now = Date.now()
+      const dt = (now - sample.time) / 1000
+      let speedBps: number | undefined
+      if (dt >= 0.4) {
+        speedBps = Math.max(0, (d.received - sample.bytes) / dt)
+        speedSamples.current[match.id] = { bytes: d.received, time: now }
+      }
+      updateDownload(match.id, { percent: d.percent, received: d.received, total: d.total, bytesReceived: d.received, ...(speedBps !== undefined ? { speedBps } : {}) })
     })
     const offDone = el.onDownloadDone((d: { filename: string; state: string; savePath: string }) => {
       const { downloads: cur } = useStore.getState()
       const match = [...cur].reverse().find((x) => x.filename === d.filename && x.state === 'downloading')
-      if (match) updateDownload(match.id, { state: d.state === 'completed' ? 'done' : d.state === 'cancelled' ? 'cancelled' : 'error', percent: d.state === 'completed' ? 100 : match.percent, savePath: d.savePath })
+      if (match) {
+        updateDownload(match.id, { state: d.state === 'completed' ? 'done' : d.state === 'cancelled' ? 'cancelled' : 'error', percent: d.state === 'completed' ? 100 : match.percent, savePath: d.savePath, speedBps: undefined })
+        delete speedSamples.current[match.id]
+      }
     })
     const offUpdate = el.onUpdateStatus((d: { type: string; version?: string; percent?: number; message?: string }) => {
       setUpdateStatus(d)
@@ -128,10 +145,15 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
   const isActive = item.state === 'downloading'
 
   const sizeLabel = item.type === 'playlist'
-    ? (item.total ? `${item.received ?? 0} / ${item.total} tracks` : null)
+    ? [
+        item.total ? `${item.received ?? 0} / ${item.total} tracks` : null,
+        item.bytesReceived ? fmtBytes(item.bytesReceived) : null,
+      ].filter(Boolean).join(' · ') || null
     : item.total && item.total > 0
       ? `${fmtBytes(item.received ?? 0)} / ${fmtBytes(item.total)}`
       : item.received ? fmtBytes(item.received) : null
+
+  const speedLabel = isActive && item.speedBps ? `${fmtBytes(item.speedBps)}/s` : null
 
   return (
     <div className="px-3 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors">
@@ -144,7 +166,11 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-[var(--text-primary)] text-xs truncate leading-snug" title={item.filename}>{item.filename}</p>
-          {isActive && sizeLabel && <p className="text-[var(--text-muted)] text-[10px] mt-0.5">{sizeLabel}</p>}
+          {isActive && (sizeLabel || speedLabel) && (
+            <p className="text-[var(--text-muted)] text-[10px] mt-0.5">
+              {sizeLabel}{sizeLabel && speedLabel ? ' · ' : ''}{speedLabel}
+            </p>
+          )}
           {isDone && item.savePath && <p className="text-[var(--text-muted)] text-[10px] mt-0.5 truncate" title={item.savePath}>{item.savePath.split(/[/\\]/).pop()}</p>}
           {isError && item.error && <p className="text-red-400 text-[10px] mt-0.5 truncate">{item.error}</p>}
           {isActive && (

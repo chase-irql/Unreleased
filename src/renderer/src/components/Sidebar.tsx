@@ -52,11 +52,11 @@ export default function Sidebar(): JSX.Element {
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
-    { icon: <img src={logo} alt="WRLD" className="w-[22px] h-[22px] object-contain" />, label: 'WRLD', view: 'wrld' },
-    { icon: <SearchCode size={18} />, label: 'Tracker', view: 'api-tracker' },
-    { icon: <HardDrive size={18} />, label: 'Files', view: 'api-files' },
-    ...(isElectron ? [{ icon: <Library size={18} />, label: 'Library', view: 'library' as const }] : []),
-    { icon: <ListMusic size={18} />, label: 'Playlists', view: 'playlists' },
+    { icon: <img src={logo} alt="WRLD" className="w-[22px] h-[22px] object-contain shrink-0" />, label: 'WRLD', view: 'wrld' },
+    { icon: <SearchCode size={18} className="shrink-0" />, label: 'Tracker', view: 'api-tracker' },
+    { icon: <HardDrive size={18} className="shrink-0" />, label: 'Files', view: 'api-files' },
+    ...(isElectron ? [{ icon: <Library size={18} className="shrink-0" />, label: 'Library', view: 'library' as const }] : []),
+    { icon: <ListMusic size={18} className="shrink-0" />, label: 'Playlists', view: 'playlists' },
   ]
 
   return (
@@ -67,8 +67,12 @@ export default function Sidebar(): JSX.Element {
         <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
       {/* Logo */}
-      <div className={`pt-5 pb-4 flex flex-col items-center gap-1 shrink-0 ${collapsed ? 'px-2' : 'px-5'}`}>
-        <img src={logo} alt="unreleased" className={`object-contain transition-all ${collapsed ? 'h-8 w-8' : 'h-32 w-auto'}`} />
+      <div
+        className={`flex flex-col items-center gap-1 shrink-0 px-5 overflow-hidden transition-all duration-200 ${
+          collapsed ? 'h-0 pt-0 pb-0 opacity-0' : 'h-[168px] pt-5 pb-4 opacity-100'
+        }`}
+      >
+        <img src={logo} alt="unreleased" className="object-contain h-32 w-auto shrink-0" />
         {showExpanded && (
           <span
             className="text-text-primary text-sm uppercase select-none"
@@ -80,7 +84,7 @@ export default function Sidebar(): JSX.Element {
       </div>
 
       {/* Nav items */}
-      <nav className={`space-y-1 flex-1 ${collapsed ? 'px-2' : 'px-3'}`}>
+      <nav className="space-y-1 flex-1 px-3">
         {items.map(({ icon, label, view }) => (
           <div key={view}>
             <div
@@ -99,7 +103,7 @@ export default function Sidebar(): JSX.Element {
                   }
                 }}
                 title={collapsed ? label : undefined}
-                className={`flex items-center flex-1 min-w-0 py-2 ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+                className="flex items-center flex-1 min-w-0 py-2 gap-3 px-3"
               >
                 {icon}
                 {showExpanded && <span className="flex-1 text-left truncate">{label}</span>}
@@ -135,13 +139,13 @@ export default function Sidebar(): JSX.Element {
       </nav>
 
       {/* Bottom section */}
-      <div className={`pb-4 space-y-1 ${collapsed ? 'px-2' : 'px-3'}`}>
+      <div className="pb-4 space-y-1 px-3">
         {account ? (
-          <div className={`flex items-center py-2 rounded text-sm ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}>
+          <div className="flex items-center gap-3 py-2 rounded text-sm px-3">
             <button
               onClick={() => setActiveView('editor-profile')}
               title={collapsed ? (account.display_name || account.discord_username) : undefined}
-              className={`flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity ${collapsed ? 'justify-center' : ''}`}
+              className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
             >
               {account.discord_avatar ? (
                 <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
@@ -164,9 +168,9 @@ export default function Sidebar(): JSX.Element {
           <button
             onClick={() => setShowUserAuth(true)}
             title={collapsed ? 'Log in' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
-            <LogIn size={18} />
+            <LogIn size={18} className="shrink-0" />
             {showExpanded && <span>Log in</span>}
           </button>
         )}
@@ -174,13 +178,13 @@ export default function Sidebar(): JSX.Element {
           <button
             onClick={() => setActiveView('admin')}
             title={collapsed ? 'Admin' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${
+            className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 px-3 ${
               activeView === 'admin'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
             }`}
           >
-            <ShieldCheck size={18} />
+            <ShieldCheck size={18} className="shrink-0" />
             {showExpanded && <span>Admin</span>}
           </button>
         )}
@@ -191,18 +195,18 @@ export default function Sidebar(): JSX.Element {
             target="_blank"
             rel="noopener noreferrer"
             title={collapsed ? 'Download desktop app' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
-            <Download size={18} />
+            <Download size={18} className="shrink-0" />
             {showExpanded && <span>Download app</span>}
           </a>
         )}
         <button
           onClick={() => setShowSettings(true)}
           title={collapsed ? 'Settings' : undefined}
-          className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+          className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
-          <Settings size={18} />
+          <Settings size={18} className="shrink-0" />
           {showExpanded && <span>Settings</span>}
         </button>
 
@@ -210,9 +214,9 @@ export default function Sidebar(): JSX.Element {
         <button
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className={`flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+          className="flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
-          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          {collapsed ? <ChevronRight size={18} className="shrink-0" /> : <ChevronLeft size={18} className="shrink-0" />}
           {showExpanded && <span>Collapse</span>}
         </button>
       </div>

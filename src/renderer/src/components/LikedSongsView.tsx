@@ -3,6 +3,7 @@ import { Heart, Play, Loader2, MoreHorizontal } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import { Track, LibraryTrack } from '../types'
+import { toFileUrl } from '../lib/fileTypes'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import SongInfoModal from './SongInfoModal'
@@ -12,7 +13,7 @@ function libraryTrackToTrack(t: LibraryTrack): Track {
   return {
     id: t.id,
     path: t.filePath,
-    streamUrl: 'file:///' + t.filePath.replace(/\\/g, '/'),
+    streamUrl: toFileUrl(t.filePath),
     imageUrl: t.albumArt || '',
     title: t.title,
     artist: t.artist,

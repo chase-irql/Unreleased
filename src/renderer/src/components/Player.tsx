@@ -24,6 +24,7 @@ import { useStore } from '../store/useStore'
 import { formatDuration } from '../lib/lyrics'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
+import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
 import MetadataEditor from './MetadataEditor'
@@ -34,8 +35,8 @@ import { LibraryTrack } from '../types'
 // just playing from local disk instead of the API.
 function resolvePlaybackUrl(track: { id: string; streamUrl?: string; path: string }): string {
   const offline = useStore.getState().offlineTracks[track.id]
-  if (offline) return `file:///${offline.localPath.replace(/\\/g, '/')}`
-  return track.streamUrl ?? `file:///${track.path.replace(/\\/g, '/')}`
+  if (offline) return toFileUrl(offline.localPath)
+  return track.streamUrl ?? toFileUrl(track.path)
 }
 
 let _seek: ((t: number) => void) | null = null

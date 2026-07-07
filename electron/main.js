@@ -1,14 +1,25 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
+const { pathToFileURL } = require('url')
 const discordRpc = require('./discordRpc')
 
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
 
 app.setAppUserModelId('Unreleased')
 Menu.setApplicationMenu(null)
+
+// Dev mode loads the renderer from http://localhost:3018 (see electron:dev
+// script), and Chromium blocks <audio>/<img>/<video> loading a `file://`
+// resource from a non-file-origin page ("Not allowed to load local resource").
+// A custom scheme sidesteps that restriction in both dev and the packaged
+// (file://) build, and — with `stream: true` below — still supports Range
+// requests so audio/video seeking works.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'local-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } },
+])
 
 // ── Settings persistence ──────────────────────────────────────────────────────
 const settingsPath = path.join(app.getPath('userData'), 'app-settings.json')
@@ -363,13 +374,15 @@ ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: son
   if (existing && existing.path === songPath && fs.existsSync(existing.localPath)) {
     lib.tracks[id] = { ...existing, ...meta, path: songPath }
     saveOfflineLibrary(lib)
-    return { localPath: existing.localPath, skipped: true }
+    let size = 0
+    try { size = fs.statSync(existing.localPath).size } catch {}
+    return { localPath: existing.localPath, skipped: true, size }
   }
 
   try { fs.mkdirSync(getOfflineAudioDir(), { recursive: true }) } catch {}
   try {
-    await downloadFile(url, localPath, (percent) => {
-      mainWindow?.webContents.send('offline-download-progress', { id, percent })
+    await downloadFile(url, localPath, (percent, received, total) => {
+      mainWindow?.webContents.send('offline-download-progress', { id, percent, received, total })
     })
   } catch (e) {
     return { error: 'Download failed: ' + e.message }
@@ -377,7 +390,9 @@ ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: son
 
   lib.tracks[id] = { ...meta, path: songPath, localPath, ext: ext || 'mp3', downloadedAt: Date.now() }
   saveOfflineLibrary(lib)
-  return { localPath }
+  let size = 0
+  try { size = fs.statSync(localPath).size } catch {}
+  return { localPath, size }
 })
 
 ipcMain.handle('offline-remove-track', (_, id) => {
@@ -781,6 +796,16 @@ ipcMain.handle('select-image-file', async () => {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  protocol.handle('local-media', (request) => {
+    try {
+      const filePath = new URL(request.url).searchParams.get('p')
+      if (!filePath) return new Response('Missing path', { status: 400 })
+      return net.fetch(pathToFileURL(filePath).href)
+    } catch (e) {
+      return new Response('Error: ' + e.message, { status: 500 })
+    }
+  })
+
   createWindow()
   createTray()
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
