@@ -1,4 +1,5 @@
 import { Track } from '../types'
+import { apiRequest } from './apiClient'
 
 export const JWAPI_BASE = 'https://juicewrldapi.com/juicewrld'
 
@@ -93,9 +94,12 @@ export async function apiFetch<T>(
   for (const [k, v] of Object.entries(params)) {
     if (v != null) url.searchParams.set(k, String(v))
   }
-  const res = await fetch(url.toString(), { cache: 'no-store' })
-  if (!res.ok) throw new Error(`JW API error ${res.status}`)
-  return res.json() as Promise<T>
+  const cacheKey = url.toString()
+  return apiRequest<T>(cacheKey, {
+    cache: 'no-store',
+    cacheKey,
+    parseError: async (res) => `JW API error ${res.status}`,
+  })
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
