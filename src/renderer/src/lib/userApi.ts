@@ -274,28 +274,53 @@ export async function compressImageFile(file: File, maxDim = 400, maxKB = 200): 
   })
 }
 
+// In-memory cache of full playlist detail (tracks + metadata), keyed by id.
+// Session-lifetime, same rationale as playlistCoverCache: reopening a
+// playlist you've already viewed shows tracks instantly instead of a fresh
+// network round trip every time. Callers do stale-while-revalidate (render
+// cached, then quietly refetch) so a peek is never stale for long; mutations
+// below also update/clear the entry so edits aren't lost behind the cache.
+const playlistDetailCache = new Map<number, PlaylistDetail>()
+
+export function invalidatePlaylistDetailCache(id: number): void {
+  playlistDetailCache.delete(id)
+}
+
+/** Synchronous cache read for instant render before/instead of a network fetch. */
+export function peekPlaylistDetail(id: number): PlaylistDetail | undefined {
+  return playlistDetailCache.get(id)
+}
+
 // Single request — tracks + cover in one response
 export async function getPlaylist(id: number): Promise<PlaylistDetail> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/?omit_cover_image=true`)
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/?omit_cover_image=true`)
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 export async function renamePlaylist(id: number, name: string): Promise<PlaylistDetail> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/`, {
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify({ name }),
   })
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 export async function updatePlaylist(id: number, data: { name?: string; description?: string; is_public?: boolean }): Promise<PlaylistDetail> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/`, {
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify(data),
   })
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 /** Fetch a public playlist without authentication. */
 export async function getPublicPlaylist(id: number): Promise<PlaylistDetail> {
-  return request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/public/${id}/`)
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/public/${id}/`)
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 /** Fetch cover of a public playlist without authentication. */
@@ -328,6 +353,8 @@ export async function uploadPlaylistCover(id: number, file: File): Promise<Playl
     cover_image: result.cover_image,
     trackImages: playlistCoverCache.get(id)?.trackImages ?? [],
   })
+  const cachedDetail = playlistDetailCache.get(id)
+  if (cachedDetail) playlistDetailCache.set(id, { ...cachedDetail, cover_image_url: result.cover_image_url, cover_image: result.cover_image })
   return result
 }
 
@@ -337,6 +364,8 @@ export async function removePlaylistCover(id: number): Promise<void> {
     body: JSON.stringify({ cover_image: '', cover_image_url: '' }),
   })
   playlistCoverCache.set(id, { cover_image_url: null, cover_image: null, trackImages: playlistCoverCache.get(id)?.trackImages ?? [] })
+  const cachedDetail = playlistDetailCache.get(id)
+  if (cachedDetail) playlistDetailCache.set(id, { ...cachedDetail, cover_image_url: null, cover_image: null })
 }
 
 export async function setPlaylistCoverBase64(id: number, b64: string): Promise<void> {
@@ -347,25 +376,33 @@ export async function setPlaylistCoverBase64(id: number, b64: string): Promise<v
 }
 
 export async function reorderPlaylist(id: number, songIds: number[]): Promise<PlaylistDetail> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/`, {
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify({ order: songIds }),
   })
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 export async function deletePlaylist(id: number): Promise<void> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/`, { method: 'DELETE' })
+  await request(`${LIBRARY_BASE}/playlists/${id}/`, { method: 'DELETE' })
+  playlistDetailCache.delete(id)
+  playlistCoverCache.delete(id)
 }
 
 export async function addToPlaylist(id: number, songId: number): Promise<PlaylistDetail> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/items/`, {
+  const result = await request<PlaylistDetail>(`${LIBRARY_BASE}/playlists/${id}/items/`, {
     method: 'POST',
     body: JSON.stringify({ song_id: songId }),
   })
+  playlistDetailCache.set(id, result)
+  return result
 }
 
 export async function removeFromPlaylist(id: number, songId: number): Promise<void> {
-  return request(`${LIBRARY_BASE}/playlists/${id}/items/${songId}/`, { method: 'DELETE' })
+  await request(`${LIBRARY_BASE}/playlists/${id}/items/${songId}/`, { method: 'DELETE' })
+  const cached = playlistDetailCache.get(id)
+  if (cached) playlistDetailCache.set(id, { ...cached, items: cached.items.filter(it => it.song.id !== songId) })
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
