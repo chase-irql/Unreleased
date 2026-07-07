@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Library
   loadLibraryData:    ()              => ipcRenderer.invoke('load-library-data'),
   saveLibraryData:    (data)          => ipcRenderer.invoke('save-library-data', data),
-  scanLibrary:        (folders)       => ipcRenderer.invoke('scan-library', folders),
+  scanLibrary:        (folders, previousTracks) => ipcRenderer.invoke('scan-library', folders, previousTracks),
   readAlbumArt:       (filePath, maxSize) => ipcRenderer.invoke('read-album-art', filePath, maxSize),
   readTrackMetadata:  (filePath)      => ipcRenderer.invoke('read-track-metadata', filePath),
   writeTrackMetadata: (filePath, meta) => ipcRenderer.invoke('write-track-metadata', filePath, meta),

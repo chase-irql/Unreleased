@@ -1275,7 +1275,7 @@ export default function PlaylistsView(): JSX.Element {
                                     {track.title}
                                     {meta.version && <span className="text-text-muted"> ({meta.version})</span>}
                                   </p>
-                                  <p className="text-text-muted text-xs truncate">{track.artist}</p>
+                                  <p className="text-text-muted text-xs truncate">{track.album || track.artist}</p>
                                 </div>
                                 <button
                                   onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
@@ -1374,7 +1374,7 @@ export default function PlaylistsView(): JSX.Element {
                     <p className="text-text-muted text-xs truncate flex items-center gap-1">
                       {!!track.id && offlineTracks[track.id] && (
                         <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
-                          <CircleArrowDown size={11} />
+                          <CircleArrowDown size={11} fill="currentColor" />
                         </span>
                       )}
                       <span className="truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</span>

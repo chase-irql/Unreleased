@@ -27,7 +27,6 @@ import { trackIdToSongId } from '../lib/userApi'
 import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
-import MetadataEditor from './MetadataEditor'
 import SongContextMenu from './SongContextMenu'
 import { LibraryTrack } from '../types'
 
@@ -105,7 +104,6 @@ export default function Player(): JSX.Element {
   const { radioMode, radioNext } = useStore()
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStore()
   const { libraryTracks } = useStore()
-  const [editingLocalTrack, setEditingLocalTrack] = useState<LibraryTrack | null>(null)
 
 
   // FM elapsed time — ticks locally between WS updates
@@ -707,7 +705,8 @@ export default function Player(): JSX.Element {
   }
 
   const isMuted = volume === 0
-  const duration = getActive()?.duration || currentTrack?.duration || 0
+  const activeDuration = getActive()?.duration
+  const duration = (activeDuration && isFinite(activeDuration) ? activeDuration : 0) || currentTrack?.duration || 0
 
   const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
   const cycleSpeed = (): void => {
@@ -953,7 +952,7 @@ export default function Player(): JSX.Element {
                       onPlayNext={() => playNext(currentTrack)}
                       onEditLocalMetadata={currentSongId == null && currentTrack.id.startsWith('local-') ? () => {
                         const lt = libraryTracks.find(t => t.id === currentTrack.id)
-                        if (lt) setEditingLocalTrack(lt)
+                        if (lt) { useStore.getState().setPendingLocalEditTrack(lt); setActiveView('local-editor') }
                       } : undefined}
                     />
                   )}
@@ -1103,10 +1102,6 @@ export default function Player(): JSX.Element {
               setActiveView('editor')
             } : undefined}
           />
-        )}
-
-        {editingLocalTrack && (
-          <MetadataEditor track={editingLocalTrack} onClose={() => setEditingLocalTrack(null)} onSaved={(t) => { setEditingLocalTrack(null) }} />
         )}
 
         {/* Output device popover */}

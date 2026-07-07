@@ -1,22 +1,32 @@
-﻿import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
-  Music, Play, Shuffle, Search, Plus, MoreHorizontal, Edit2, Trash2, X,
-  ChevronLeft, ListMusic, LayoutGrid, List,
-  FolderOpen, Clock, Loader2, Check, GripVertical, ChevronDown, ChevronUp,
+  Music, Play, Pause, Shuffle, Search, MoreHorizontal,
+  ChevronLeft, LayoutGrid, List, Sparkles, User,
+  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { LibraryTrack, LocalPlaylist } from '../types'
+import { LibraryTrack } from '../types'
 import { toFileUrl } from '../lib/fileTypes'
-import MetadataEditor from './MetadataEditor'
+import * as userApi from '../lib/userApi'
+import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 
-// Row geometry for windowed lists/grids (kept in sync with the markup below).
-const SONG_ROW_H = 52      // height of one SongRow incl. its padding
-const ALBUM_GAP = 20       // grid gap-5 / p-5 padding, in px
-const ALBUM_MIN_COL = 160  // grid minmax min column width
-const ALBUM_TEXT_H = 64    // fixed album-card text block + image margin, in px
+/* ══════════════════════════════════════════════════════════════════════════════
+   Library — Apple Music glass rebuild.
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+   Layout: an in-view frosted "browse rail" on the left (Library sections +
+   user playlists) drives a contextual main pane. Album grids and the song
+   list are windowed so a multi-thousand-track library stays light.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+// Windowing geometry — kept in sync with the row/card markup below.
+const SONG_ROW_H = 56       // one SongRow incl. padding
+const GRID_PAD = 20         // grid outer padding, px
+const GRID_GAP = 20         // gap between cards, px
+const CARD_MIN = 150        // min card column width, px
+const CARD_TEXT_H = 60      // fixed text block beneath square art, px
+
+// ─── helpers ────────────────────────────────────────────────────────────────
 
 function fmtDur(s: number): string {
   if (!s || isNaN(s)) return '--:--'
@@ -24,12 +34,13 @@ function fmtDur(s: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-function fmtBytes(b: number): string {
-  if (b < 1048576) return `${(b / 1024).toFixed(0)} KB`
-  return `${(b / 1048576).toFixed(1)} MB`
+function fmtTotal(s: number): string {
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60)
+  if (h) return `${h} hr ${m} min`
+  return `${m} min`
 }
 
-function libraryTrackToQueueTrack(t: LibraryTrack) {
+function toQueueTrack(t: LibraryTrack) {
   return {
     id: t.id,
     path: t.filePath,
@@ -47,550 +58,272 @@ function libraryTrackToQueueTrack(t: LibraryTrack) {
   }
 }
 
-// ─── Album Art thumbnail ──────────────────────────────────────────────────────
+const byTrackNo = (a: LibraryTrack, b: LibraryTrack) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
+const shuffled = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random() - 0.5)
 
-export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?: number }): JSX.Element {
+// ─── album / artist models ───────────────────────────────────────────────────
+
+interface Album {
+  key: string
+  name: string
+  artist: string
+  year: number | null
+  addedAt: number
+  tracks: LibraryTrack[]
+  coverTrack: LibraryTrack
+}
+
+interface Artist {
+  name: string
+  tracks: LibraryTrack[]
+  albums: number
+  coverTrack: LibraryTrack
+}
+
+// ─── lazy album-art loading hook ──────────────────────────────────────────────
+// A track carries `albumArt: undefined` until its cover has been read off disk.
+// This kicks off that read once and lets the store fan the result out to every
+// component showing the same track.
+
+function useTrackArt(track: LibraryTrack): string | null | undefined {
   const el = (window as any).electron
   const { updateLibraryTrack } = useStore()
-  const [art, setArt] = useState<string | null>(track.albumArt ?? null)
-
-  // Sync art when store updates the track (e.g. after lazy load by another instance)
-  useEffect(() => {
-    if (track.albumArt) setArt(track.albumArt)
-  }, [track.albumArt])
-
   useEffect(() => {
     if (!el || track.albumArt !== undefined) return
-    el.readAlbumArt(track.filePath).then((a: string | null) => {
-      updateLibraryTrack(track.id, { albumArt: a ?? null })
-      if (a) setArt(a)
-    })
-  }, [track.id])
+    el.readAlbumArt(track.filePath).then((a: string | null) =>
+      updateLibraryTrack(track.id, { albumArt: a ?? null }),
+    )
+  }, [track.id, track.albumArt])
+  return track.albumArt
+}
 
-  if (art) return <img src={art} alt="" className="w-full h-full object-cover" style={{ width: size, height: size }} />
+/** Small square thumbnail. Exported — PlaylistsView reuses it. */
+export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?: number }): JSX.Element {
+  const art = useTrackArt(track)
+  if (art) return <img src={art} alt="" className="object-cover" style={{ width: size, height: size }} />
   return (
-    <div className="flex items-center justify-center bg-[var(--surface-overlay)] text-[var(--text-muted)]" style={{ width: size, height: size }}>
+    <div className="flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]" style={{ width: size, height: size }}>
       <Music size={size * 0.4} />
     </div>
   )
 }
 
-// ─── Sidebar: Local Playlists ─────────────────────────────────────────────────
+// ─── ambient backdrop ─────────────────────────────────────────────────────────
+// Oversized, blurred copy of the cover art bleeding behind a header, faded into
+// the page — the signature "the room takes the album's color" Apple Music effect.
 
-function PlaylistsSidebar({ onSelect, activeId }: {
-  onSelect: (id: string | null) => void
-  activeId: string | null
-}): JSX.Element {
-  const { localPlaylists, createLocalPlaylist, deleteLocalPlaylist, renameLocalPlaylist, libraryTracks } = useStore()
-  const [newName, setNewName] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [renameVal, setRenameVal] = useState('')
-  const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const renameRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { if (creating) inputRef.current?.focus() }, [creating])
-  useEffect(() => { if (renaming) renameRef.current?.focus() }, [renaming])
-
-  const handleCreate = () => {
-    if (!newName.trim()) { setCreating(false); return }
-    createLocalPlaylist(newName.trim())
-    setNewName(''); setCreating(false)
-  }
-
-  const startRename = (pl: LocalPlaylist) => {
-    setRenameVal(pl.name); setRenaming(pl.id); setMenuOpen(null)
-  }
-
-  const commitRename = () => {
-    if (renaming && renameVal.trim()) renameLocalPlaylist(renaming, renameVal.trim())
-    setRenaming(null)
-  }
-
-  const handleDelete = (id: string) => {
-    deleteLocalPlaylist(id)
-    if (activeId === id) onSelect(null)
-    setMenuOpen(null)
-  }
-
+function Ambient({ art, round = false }: { art?: string | null; round?: boolean }): JSX.Element {
   return (
-    <div className="w-56 shrink-0 border-r border-[var(--border)] flex flex-col">
-      <div className="px-3 pt-4 pb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Playlists</span>
-        <button
-          onClick={() => { setCreating(true); setMenuOpen(null) }}
-          className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
-          title="New playlist"
-        >
-          <Plus size={14} />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5">
-        {/* All tracks */}
-        <button
-          onClick={() => onSelect(null)}
-          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
-            activeId === null ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-overlay)] hover:text-[var(--text-primary)]'
-          }`}
-        >
-          <ListMusic size={14} className="shrink-0" />
-          <span className="truncate">All Tracks</span>
-          <span className="ml-auto text-[10px] text-[var(--text-muted)]">{libraryTracks.length}</span>
-        </button>
-
-        {/* Playlists */}
-        {localPlaylists.map((pl) => (
-          <div key={pl.id} className="relative">
-            {renaming === pl.id ? (
-              <input
-                ref={renameRef}
-                value={renameVal}
-                onChange={e => setRenameVal(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null) }}
-                className="w-full px-2 py-1.5 rounded-lg text-sm bg-[var(--surface-overlay)] border border-[var(--accent)] text-[var(--text-primary)] outline-none"
-              />
-            ) : (
-              <button
-                onClick={() => onSelect(pl.id)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors group ${
-                  activeId === pl.id ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-overlay)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                <ListMusic size={14} className="shrink-0" />
-                <span className="truncate flex-1 text-left">{pl.name}</span>
-                <span className="text-[10px] text-[var(--text-muted)] group-hover:hidden">{pl.trackIds.length}</span>
-                <button
-                  onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === pl.id ? null : pl.id) }}
-                  className="hidden group-hover:flex p-0.5 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                >
-                  <MoreHorizontal size={12} />
-                </button>
-              </button>
-            )}
-            {menuOpen === pl.id && (
-              <div className="absolute right-0 top-full mt-0.5 z-50 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl py-1 w-36">
-                <button onClick={() => startRename(pl)} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]">
-                  <Edit2 size={11} /> Rename
-                </button>
-                <button onClick={() => handleDelete(pl.id)} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-[var(--surface-overlay)]">
-                  <Trash2 size={11} /> Delete
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* New playlist input */}
-        {creating && (
-          <input
-            ref={inputRef}
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onBlur={handleCreate}
-            onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') { setCreating(false); setNewName('') } }}
-            placeholder="Playlist name"
-            className="w-full px-2 py-1.5 rounded-lg text-sm bg-[var(--surface-overlay)] border border-[var(--accent)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-          />
-        )}
-      </div>
+    <div className="absolute inset-x-0 top-0 h-[360px] overflow-hidden pointer-events-none -z-0">
+      {art ? (
+        <div
+          className={`ambient-art absolute inset-0 blur-3xl ${round ? 'opacity-50' : 'opacity-60'}`}
+          style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+        />
+      ) : (
+        <div className="absolute inset-0 opacity-40" style={{ background: 'radial-gradient(120% 80% at 25% 0%, rgba(var(--accent-rgb),0.32), transparent 60%)' }} />
+      )}
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, transparent, var(--surface) 92%)' }} />
     </div>
   )
 }
 
-// ─── Album grid ───────────────────────────────────────────────────────────────
+// ─── song row ─────────────────────────────────────────────────────────────────
 
-interface Album {
-  name: string
-  artist: string
-  year: number | null
-  tracks: LibraryTrack[]
-  coverTrack: LibraryTrack
-}
-
-function AlbumCard({ album, onPlay, onOpen }: { album: Album; onPlay: () => void; onOpen: () => void }): JSX.Element {
-  const [hovered, setHovered] = useState(false)
-  const el = (window as any).electron
-  const { updateLibraryTrack } = useStore()
-
-  useEffect(() => {
-    if (!el || album.coverTrack.albumArt !== undefined) return
-    el.readAlbumArt(album.coverTrack.filePath).then((a: string | null) => {
-      updateLibraryTrack(album.coverTrack.id, { albumArt: a ?? null })
-    })
-  }, [album.coverTrack.id])
-
-  const art = album.coverTrack.albumArt
-
-  return (
-    <div
-      className="group cursor-pointer"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={onOpen}
-    >
-      <div className="relative rounded-xl overflow-hidden bg-[var(--surface-overlay)] aspect-square mb-2.5 shadow-lg">
-        {art === undefined
-          ? <div className="w-full h-full bg-[var(--surface-raised)] animate-pulse" />
-          : art
-          ? <img src={art} alt={album.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
-          : <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]"><Music size={40} /></div>
-        }
-        {/* Play overlay */}
-        <div className={`absolute inset-0 bg-black/40 flex items-end p-3 transition-opacity duration-200 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
-          <button
-            onClick={e => { e.stopPropagation(); onPlay() }}
-            className="ml-auto w-10 h-10 rounded-full bg-[var(--accent)] flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
-          >
-            <Play size={16} fill="white" className="text-white ml-0.5" />
-          </button>
-        </div>
-      </div>
-      {/* Fixed height keeps the virtualized row stride deterministic (ALBUM_TEXT_H) */}
-      <div className="h-[54px] overflow-hidden">
-        <p className="text-[var(--text-primary)] text-sm font-medium truncate leading-5">{album.name}</p>
-        <p className="text-[var(--text-muted)] text-xs truncate leading-4">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
-        <p className="text-[var(--text-muted)] text-[11px] leading-4">{album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}</p>
-      </div>
-    </div>
-  )
-}
-
-// ─── Song row ─────────────────────────────────────────────────────────────────
-
-function SongRow({ track, index, queue, onEdit, onAddToPlaylist, showAlbum = true, draggable = false, onDragStart, onDragOver, onDrop }: {
+function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, onDragStart, onDragOver, onDrop }: {
   track: LibraryTrack
   index: number
   queue: LibraryTrack[]
-  onEdit: (t: LibraryTrack) => void
-  onAddToPlaylist: (t: LibraryTrack) => void
+  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
   showAlbum?: boolean
   draggable?: boolean
   onDragStart?: () => void
   onDragOver?: (e: React.DragEvent) => void
   onDrop?: () => void
 }): JSX.Element {
-  const { playTrack } = useStore()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const el = (window as any).electron
+  const { playTrack, currentTrack, isPlaying, setIsPlaying } = useStore()
+  const [hover, setHover] = useState(false)
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const handler = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [menuOpen])
+  const isCurrent = currentTrack?.id === track.id
 
-  const handlePlay = () => {
-    const qTracks = queue.map(libraryTrackToQueueTrack)
-    const thisTrack = libraryTrackToQueueTrack(track)
-    playTrack(thisTrack, qTracks)
+  const play = () => {
+    if (isCurrent) { setIsPlaying(!isPlaying); return }
+    playTrack(toQueueTrack(track), queue.map(toQueueTrack))
   }
 
-
   return (
-    <div>
+    <div className="px-1.5">
       <div
-        className={`group flex items-center gap-3 px-4 py-2 hover:bg-[var(--surface-overlay)] rounded-lg transition-colors cursor-pointer ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onDoubleClick={handlePlay}
-        onContextMenu={e => { e.preventDefault(); setMenuOpen(v => !v) }}
+        className={`group flex items-center gap-3 pl-3 pr-2 py-2 rounded-xl transition-colors cursor-pointer ${
+          isCurrent ? 'glass-strong glass-edge' : 'hover:bg-[var(--glass-hover)]'
+        } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onDoubleClick={play}
+        onContextMenu={e => { e.preventDefault(); onContext(track, queue, e.clientX, e.clientY) }}
         draggable={draggable}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        {draggable && (
-          <GripVertical size={14} className="text-[var(--text-muted)] opacity-0 group-hover:opacity-100 shrink-0" />
-        )}
-        {/* Index / play button */}
+        {draggable && <GripVertical size={14} className="text-[var(--text-muted)] opacity-0 group-hover:opacity-100 shrink-0 -ml-1" />}
         <div className="w-5 shrink-0 flex items-center justify-center">
-          {hovered
-            ? <button onClick={handlePlay}><Play size={13} fill="currentColor" className="text-[var(--text-primary)]" /></button>
-            : <span className="text-[var(--text-muted)] text-xs">{index + 1}</span>
-          }
+          {hover || isCurrent
+            ? <button onClick={play}>
+                {isCurrent && isPlaying
+                  ? <Pause size={13} fill="currentColor" className="text-[var(--accent)]" />
+                  : <Play size={13} fill="currentColor" className={isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'} />}
+              </button>
+            : <span className="text-[var(--text-muted)] text-xs tabular-nums">{index + 1}</span>}
         </div>
-        {/* Art */}
-        <div className="w-9 h-9 rounded overflow-hidden shrink-0">
-          <AlbumArtThumb track={track} size={36} />
+        <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 ring-1 ring-[var(--glass-border)] shadow-sm">
+          <AlbumArtThumb track={track} size={40} />
         </div>
-        {/* Info */}
         <div className="flex-1 min-w-0">
-          <p className="text-[var(--text-primary)] text-sm truncate">{track.title}</p>
+          <p className={`text-sm truncate ${isCurrent ? 'text-[var(--accent)] font-medium' : 'text-[var(--text-primary)]'}`}>{track.title}</p>
           <p className="text-[var(--text-muted)] text-xs truncate">{track.artist || 'Unknown Artist'}</p>
         </div>
-        {showAlbum && (
-          <span className="text-[var(--text-muted)] text-xs truncate max-w-[160px] hidden lg:block">{track.album}</span>
-        )}
-        <span className="text-[var(--text-muted)] text-xs shrink-0">{fmtDur(track.duration)}</span>
-        {/* Menu */}
-        <div className="relative shrink-0" ref={menuRef}>
-          <button
-            onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
-            className="p-1 rounded opacity-0 group-hover:opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            <MoreHorizontal size={14} />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-50 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-xl py-1 w-44">
-              <button onClick={() => { handlePlay(); setMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]">
-                <Play size={12} /> Play now
-              </button>
-              <button onClick={() => { onEdit(track); setMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]">
-                <Edit2 size={12} /> Edit info
-              </button>
-              <button onClick={() => { onAddToPlaylist(track); setMenuOpen(false) }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]">
-                <ListMusic size={12} /> Add to playlist
-              </button>
-            </div>
-          )}
-        </div>
+        {showAlbum && <span className="text-[var(--text-muted)] text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
+        <span className="text-[var(--text-muted)] text-xs shrink-0 tabular-nums">{fmtDur(track.duration)}</span>
+        <button
+          onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(track, queue, r.right, r.bottom) }}
+          className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--glass-hover)] transition-all"
+        >
+          <MoreHorizontal size={15} />
+        </button>
       </div>
     </div>
   )
 }
 
-// ─── Add to Playlist picker ───────────────────────────────────────────────────
+// ─── album card ───────────────────────────────────────────────────────────────
 
-function AddToPlaylistPicker({ track, onClose }: { track: LibraryTrack; onClose: () => void }): JSX.Element {
-  const { localPlaylists, addToLocalPlaylist, createLocalPlaylist } = useStore()
-  const [newName, setNewName] = useState('')
-  const [added, setAdded] = useState<string | null>(null)
-
-  const add = (playlistId: string) => {
-    addToLocalPlaylist(playlistId, track.id)
-    setAdded(playlistId)
-    setTimeout(onClose, 800)
-  }
-
+function AlbumCard({ album, onOpen, onPlay }: { album: Album; onOpen: () => void; onPlay: () => void }): JSX.Element {
+  const [hover, setHover] = useState(false)
+  const art = useTrackArt(album.coverTrack)
   return (
-    <div className="fixed inset-0 z-[600] flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-      <div className="relative w-72 bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-          <h3 className="text-[var(--text-primary)] font-semibold text-sm">Add to Playlist</h3>
-          <button onClick={onClose} className="p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)]"><X size={14} /></button>
-        </div>
-        <div className="max-h-64 overflow-y-auto py-1">
-          {localPlaylists.length === 0 && (
-            <p className="text-[var(--text-muted)] text-xs text-center py-4">No playlists yet</p>
-          )}
-          {localPlaylists.map(pl => (
-            <button key={pl.id} onClick={() => add(pl.id)} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors">
-              <ListMusic size={14} className="text-[var(--text-muted)]" />
-              <span className="text-[var(--text-primary)] text-sm flex-1 text-left truncate">{pl.name}</span>
-              {added === pl.id && <Check size={13} className="text-emerald-400" />}
-            </button>
-          ))}
-        </div>
-        <div className="px-4 py-3 border-t border-[var(--border)]">
-          <div className="flex gap-2">
-            <input
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { createLocalPlaylist(newName.trim()); setNewName('') } }}
-              placeholder="New playlist name…"
-              className="flex-1 bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg text-sm px-3 py-1.5 text-[var(--text-primary)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--text-muted)]"
-            />
-            <button
-              onClick={() => { if (newName.trim()) { createLocalPlaylist(newName.trim()); setNewName('') } }}
-              className="px-3 py-1.5 bg-[var(--accent)] text-white text-sm rounded-lg hover:bg-[var(--accent-hover)]"
-            >
-              <Plus size={14} />
+    <div className="group cursor-pointer select-none" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onClick={onOpen}>
+      <div className="relative aspect-square mb-3 transition-transform duration-300 ease-out group-hover:-translate-y-1">
+        {art && (
+          <div className="absolute -inset-1 rounded-[20px] opacity-0 group-hover:opacity-70 blur-xl transition-opacity duration-300"
+            style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+        )}
+        <div className="relative rounded-[16px] overflow-hidden aspect-square shadow-[0_8px_28px_-8px_var(--glass-shadow)] ring-1 ring-[var(--glass-border)]">
+          {art === undefined
+            ? <div className="w-full h-full art-shimmer" />
+            : art
+            ? <img src={art} alt={album.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+            : <div className="w-full h-full flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]"><Music size={40} /></div>}
+          <div className={`absolute inset-0 flex items-end p-3 transition-opacity duration-200 ${hover ? 'opacity-100' : 'opacity-0'}`}
+            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.45), transparent 55%)' }}>
+            <button onClick={e => { e.stopPropagation(); onPlay() }}
+              className="ml-auto w-11 h-11 rounded-full glass-strong glass-edge flex items-center justify-center text-[var(--text-primary)] hover:scale-110 active:scale-95 transition-transform">
+              <Play size={16} fill="currentColor" className="ml-0.5" />
             </button>
           </div>
         </div>
       </div>
+      <div style={{ height: CARD_TEXT_H }} className="overflow-hidden px-0.5">
+        <p className="text-[var(--text-primary)] text-sm font-semibold truncate leading-5">{album.name}</p>
+        <p className="text-[var(--text-secondary)] text-xs truncate leading-4">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
+        <p className="text-[var(--text-muted)] text-[11px] leading-4">{album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}</p>
+      </div>
     </div>
   )
 }
 
-// ─── Album detail view ────────────────────────────────────────────────────────
+// ─── artist card (circular) ───────────────────────────────────────────────────
 
-function AlbumDetail({ album, onBack, onEdit, onAddToPlaylist }: {
-  album: Album; onBack: () => void; onEdit: (t: LibraryTrack) => void; onAddToPlaylist: (t: LibraryTrack) => void
+function ArtistCard({ artist, onOpen }: { artist: Artist; onOpen: () => void }): JSX.Element {
+  const art = useTrackArt(artist.coverTrack)
+  return (
+    <button onClick={onOpen} className="group flex flex-col items-center gap-3 select-none">
+      <div className="relative w-full aspect-square transition-transform duration-300 group-hover:-translate-y-1">
+        {art && <div className="absolute -inset-1 rounded-full opacity-0 group-hover:opacity-60 blur-xl transition-opacity duration-300"
+          style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
+        <div className="relative w-full h-full rounded-full overflow-hidden ring-1 ring-[var(--glass-border)] shadow-[0_8px_28px_-8px_var(--glass-shadow)]">
+          {art === undefined
+            ? <div className="w-full h-full art-shimmer" />
+            : art
+            ? <img src={art} alt={artist.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+            : <div className="w-full h-full flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]"><User size={40} /></div>}
+        </div>
+      </div>
+      <div className="text-center px-1 w-full">
+        <p className="text-[var(--text-primary)] text-sm font-semibold truncate">{artist.name}</p>
+        <p className="text-[var(--text-muted)] text-[11px]">{artist.tracks.length} {artist.tracks.length === 1 ? 'song' : 'songs'}</p>
+      </div>
+    </button>
+  )
+}
+
+// ─── virtualized card grid (albums & artists) ─────────────────────────────────
+
+function CardGrid({ count, render, circular = false }: {
+  count: number
+  render: (i: number) => JSX.Element
+  circular?: boolean
 }): JSX.Element {
-  const { playTrack } = useStore()
-  const el = (window as any).electron
-  const { updateLibraryTrack } = useStore()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [cols, setCols] = useState(1)
+  const [colW, setColW] = useState(CARD_MIN)
 
   useEffect(() => {
-    if (!el || album.coverTrack.albumArt !== undefined) return
-    el.readAlbumArt(album.coverTrack.filePath).then((a: string | null) => {
-      updateLibraryTrack(album.coverTrack.id, { albumArt: a ?? null })
-    })
-  }, [album.coverTrack.id])
+    const el = scrollRef.current
+    if (!el) return
+    const compute = () => {
+      const w = el.clientWidth - GRID_PAD * 2
+      const c = Math.max(1, Math.floor((w + GRID_GAP) / (CARD_MIN + GRID_GAP)))
+      setCols(c)
+      setColW((w - (c - 1) * GRID_GAP) / c)
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
-  const art = album.coverTrack.albumArt
-
-  const totalDur = album.tracks.reduce((s, t) => s + t.duration, 0)
-  const sortedTracks = [...album.tracks].sort((a, b) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999))
-
-  const playAll = () => {
-    const q = sortedTracks.map(libraryTrackToQueueTrack)
-    if (q.length) playTrack(q[0], q)
-  }
-
-  const shuffle = () => {
-    const q = [...sortedTracks].sort(() => Math.random() - 0.5).map(libraryTrackToQueueTrack)
-    if (q.length) playTrack(q[0], q)
-  }
+  const textH = circular ? 52 : CARD_TEXT_H
+  const rowStride = colW + textH + 12 /* mb-3 */ + GRID_GAP
+  const rows = Math.ceil(count / cols)
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows, rowStride)
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      {/* Header */}
-      <div className="flex items-end gap-6 p-6 pb-4">
-        <button onClick={onBack} className="absolute top-4 left-4 p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] transition-colors">
-          <ChevronLeft size={18} />
-        </button>
-        <div className="w-44 h-44 rounded-2xl overflow-hidden shadow-2xl shrink-0 bg-[var(--surface-overlay)] flex items-center justify-center">
-          {art === undefined
-            ? <div className="w-full h-full bg-[var(--surface-raised)] animate-pulse" />
-            : art
-            ? <img src={art} alt={album.name} className="w-full h-full object-cover" />
-            : <Music size={48} className="text-[var(--text-muted)]" />}
-        </div>
-        <div className="pb-1">
-          <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">Album</p>
-          <h1 className="text-[var(--text-primary)] text-3xl font-bold mb-1">{album.name}</h1>
-          <p className="text-[var(--text-muted)] text-sm">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
-          <p className="text-[var(--text-muted)] text-xs mt-1">{album.tracks.length} songs · {fmtDur(totalDur)}</p>
-        </div>
-      </div>
-      {/* Controls */}
-      <div className="flex items-center gap-3 px-6 pb-4">
-        <button onClick={playAll} className="flex items-center gap-2 px-5 py-2 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-colors shadow-lg">
-          <Play size={16} fill="white" className="ml-0.5" /> Play
-        </button>
-        <button onClick={shuffle} className="flex items-center gap-2 px-5 py-2 bg-[var(--surface-overlay)] text-[var(--text-primary)] rounded-full text-sm font-semibold hover:bg-[var(--surface-raised)] transition-colors border border-[var(--border)]">
-          <Shuffle size={16} /> Shuffle
-        </button>
-      </div>
-      {/* Tracks */}
-      <div className="px-2 pb-6">
-        {sortedTracks.map((t, i) => (
-          <SongRow key={t.id} track={t} index={i} queue={sortedTracks} onEdit={onEdit} onAddToPlaylist={onAddToPlaylist} showAlbum={false} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ─── Playlist detail view ─────────────────────────────────────────────────────
-
-function PlaylistDetail({ playlist, onEdit, onAddToPlaylist }: {
-  playlist: LocalPlaylist; onEdit: (t: LibraryTrack) => void; onAddToPlaylist: (t: LibraryTrack) => void
-}): JSX.Element {
-  const { libraryTracks, playTrack, reorderLocalPlaylist, removeFromLocalPlaylist } = useStore()
-  const tracks = playlist.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter(Boolean) as LibraryTrack[]
-  const dragRef = useRef<number | null>(null)
-
-  const playAll = () => {
-    const q = tracks.map(libraryTrackToQueueTrack)
-    if (q.length) playTrack(q[0], q)
-  }
-
-  const handleDragStart = (i: number) => { dragRef.current = i }
-  const handleDrop = (i: number) => {
-    if (dragRef.current === null || dragRef.current === i) return
-    const from = dragRef.current
-    const newOrder = [...playlist.trackIds]
-    const [moved] = newOrder.splice(from, 1)
-    newOrder.splice(i, 0, moved)
-    reorderLocalPlaylist(playlist.id, newOrder)
-    dragRef.current = null
-  }
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="flex items-center gap-4 p-6 pb-4">
-        <div className="w-32 h-32 rounded-xl bg-[var(--surface-overlay)] border border-[var(--border)] flex items-center justify-center shrink-0 shadow-xl">
-          <ListMusic size={40} className="text-[var(--text-muted)]" />
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">Playlist</p>
-          <h1 className="text-[var(--text-primary)] text-3xl font-bold">{playlist.name}</h1>
-          <p className="text-[var(--text-muted)] text-xs mt-1">{tracks.length} songs</p>
-        </div>
-      </div>
-      {tracks.length > 0 && (
-        <div className="flex items-center gap-3 px-6 pb-4">
-          <button onClick={playAll} className="flex items-center gap-2 px-5 py-2 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-colors shadow-lg">
-            <Play size={16} fill="white" className="ml-0.5" /> Play
-          </button>
-        </div>
-      )}
-      {tracks.length === 0 ? (
-        <p className="text-[var(--text-muted)] text-sm text-center py-16">This playlist is empty.<br />Add tracks from the library.</p>
+    <div ref={scrollRef} className="flex-1 overflow-y-auto relative view-enter" style={{ padding: GRID_PAD }}>
+      {count === 0 ? (
+        <p className="text-[var(--text-muted)] text-sm text-center py-16">Nothing here yet</p>
       ) : (
-        <div className="px-2 pb-6">
-          {tracks.map((t, i) => (
-            <div key={t.id} className="relative group/row">
-              <SongRow
-                track={t} index={i} queue={tracks} onEdit={onEdit} onAddToPlaylist={onAddToPlaylist}
-                showAlbum draggable
-                onDragStart={() => handleDragStart(i)}
-                onDragOver={e => e.preventDefault()}
-                onDrop={() => handleDrop(i)}
-              />
-              <button
-                onClick={() => removeFromLocalPlaylist(playlist.id, t.id)}
-                className="absolute right-8 top-1/2 -translate-y-1/2 p-1 rounded text-red-400/70 hover:text-red-400 opacity-0 group-hover/row:opacity-100 transition-opacity"
-                title="Remove from playlist"
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
-          ))}
+        <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+          {Array.from({ length: end - start }, (_, r) => {
+            const row = start + r
+            return (
+              <div key={row} style={{
+                position: 'absolute', top: row * rowStride, left: 0, right: 0,
+                display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: GRID_GAP,
+              }}>
+                {Array.from({ length: Math.min(cols, count - row * cols) }, (_, c) => render(row * cols + c))}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
+// ─── virtualized song list ────────────────────────────────────────────────────
 
-function EmptyState({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
-      <div className="w-20 h-20 rounded-full bg-[var(--surface-overlay)] flex items-center justify-center">
-        <Music size={36} className="text-[var(--text-muted)]" />
-      </div>
-      <div>
-        <h2 className="text-[var(--text-primary)] text-xl font-semibold mb-1">Your library is empty</h2>
-        <p className="text-[var(--text-muted)] text-sm max-w-xs">Add folders in Settings → Library Folders, then scan to import your music.</p>
-      </div>
-      <button
-        onClick={onOpenSettings}
-        className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-colors shadow-lg"
-      >
-        <FolderOpen size={15} /> Add Folders
-      </button>
-    </div>
-  )
-}
-
-// ─── Virtualized song list ────────────────────────────────────────────────────
-// Only rows in (or near) the viewport are mounted, so a multi-thousand-track
-// library doesn't create thousands of rows and decoded album-art bitmaps at once.
-
-function VirtualSongList({ tracks, header, onEdit, onAddToPlaylist }: {
+function SongList({ tracks, header, onContext }: {
   tracks: LibraryTrack[]
-  header: JSX.Element
-  onEdit: (t: LibraryTrack) => void
-  onAddToPlaylist: (t: LibraryTrack) => void
+  header?: JSX.Element
+  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, SONG_ROW_H)
-
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto py-2 px-2 relative">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 relative view-enter">
       {header}
       {tracks.length === 0 ? (
         <p className="text-[var(--text-muted)] text-sm text-center py-16">No songs found</p>
@@ -600,7 +333,7 @@ function VirtualSongList({ tracks, header, onEdit, onAddToPlaylist }: {
             const index = start + i
             return (
               <div key={t.id} style={{ position: 'absolute', top: index * SONG_ROW_H, left: 0, right: 0, height: SONG_ROW_H }}>
-                <SongRow track={t} index={index} queue={tracks} onEdit={onEdit} onAddToPlaylist={onAddToPlaylist} />
+                <SongRow track={t} index={index} queue={tracks} onContext={onContext} />
               </div>
             )
           })}
@@ -610,220 +343,313 @@ function VirtualSongList({ tracks, header, onEdit, onAddToPlaylist }: {
   )
 }
 
-// ─── Virtualized album grid ───────────────────────────────────────────────────
+// ─── detail: album ────────────────────────────────────────────────────────────
 
-function VirtualAlbumGrid({ albums, onOpen, onPlayAlbum }: {
-  albums: Album[]
-  onOpen: (a: Album) => void
-  onPlayAlbum: (a: Album) => void
+function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPlay, onShuffle, fallbackIcon }: {
+  art?: string | null
+  eyebrow: string
+  title: string
+  subtitle: string
+  meta: string
+  round?: boolean
+  onBack?: () => void
+  onPlay: () => void
+  onShuffle?: () => void
+  fallbackIcon: JSX.Element
 }): JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const [cols, setCols] = useState(1)
-  const [colW, setColW] = useState(ALBUM_MIN_COL)
+  return (
+    <>
+      <Ambient art={art} round={round} />
+      <div className="relative flex items-end flex-wrap gap-5 p-6 pt-14 pb-5">
+        {onBack && (
+          <button onClick={onBack} className="absolute top-8 left-4 w-9 h-9 flex items-center justify-center rounded-full glass-soft glass-edge text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors z-10">
+            <ChevronLeft size={18} />
+          </button>
+        )}
+        <div className={`w-40 h-40 overflow-hidden shadow-[0_20px_50px_-12px_var(--glass-shadow)] ring-1 ring-[var(--glass-border-strong)] shrink-0 bg-[var(--glass-bg-soft)] flex items-center justify-center ${round ? 'rounded-full' : 'rounded-[18px]'}`}>
+          {art === undefined ? <div className="w-full h-full art-shimmer" />
+            : art ? <img src={art} alt={title} className="w-full h-full object-cover" />
+            : fallbackIcon}
+        </div>
+        <div className="pb-2 min-w-0 flex-1">
+          <p className="text-[11px] font-semibold text-[var(--accent)] uppercase tracking-[0.16em] mb-2">{eyebrow}</p>
+          <h1 className="text-[var(--text-primary)] text-3xl font-bold tracking-tight mb-2 drop-shadow-sm truncate">{title}</h1>
+          <p className="text-[var(--text-secondary)] text-base font-medium truncate">{subtitle}</p>
+          <p className="text-[var(--text-muted)] text-xs mt-1.5">{meta}</p>
+        </div>
+      </div>
+      <div className="relative flex items-center gap-3 px-6 pb-5">
+        <button onClick={onPlay} className="flex items-center gap-2 px-6 py-2.5 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-all shadow-lg hover:shadow-[0_8px_24px_-6px_rgba(var(--accent-rgb),0.6)] active:scale-95">
+          <Play size={16} fill="white" className="ml-0.5" /> Play
+        </button>
+        {onShuffle && (
+          <button onClick={onShuffle} className="flex items-center gap-2 px-6 py-2.5 glass-strong glass-edge text-[var(--text-primary)] rounded-full text-sm font-semibold hover:bg-[var(--glass-hover)] transition-all active:scale-95">
+            <Shuffle size={16} /> Shuffle
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
 
-  // Measure available width → column count + column width (mirrors the prior
-  // `repeat(auto-fill, minmax(160px, 1fr))` behavior) so the row stride is exact.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const compute = (): void => {
-      const w = el.clientWidth - ALBUM_GAP * 2 // p-5 left + right
-      const c = Math.max(1, Math.floor((w + ALBUM_GAP) / (ALBUM_MIN_COL + ALBUM_GAP)))
-      setCols(c)
-      setColW((w - (c - 1) * ALBUM_GAP) / c)
-    }
-    compute()
-    const ro = new ResizeObserver(compute)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+function AlbumDetail({ album, onBack, onContext }: {
+  album: Album; onBack: () => void; onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
+}): JSX.Element {
+  const { playTrack } = useStore()
+  const art = useTrackArt(album.coverTrack)
+  const tracks = useMemo(() => [...album.tracks].sort(byTrackNo), [album])
+  const total = tracks.reduce((s, t) => s + t.duration, 0)
+  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playTrack(q[0], q) }
+  return (
+    <div className="flex-1 overflow-y-auto relative view-enter">
+      <DetailHeader
+        art={art} eyebrow="Album" title={album.name}
+        subtitle={`${album.artist}${album.year ? ` · ${album.year}` : ''}`}
+        meta={`${tracks.length} songs · ${fmtTotal(total)}`}
+        onBack={onBack} onPlay={() => play(tracks)} onShuffle={() => play(shuffled(tracks))}
+        fallbackIcon={<Music size={48} className="text-[var(--text-muted)]" />}
+      />
+      <div className="relative px-3 pb-8">
+        {tracks.map((t, i) => <SongRow key={t.id} track={t} index={i} queue={tracks} onContext={onContext} showAlbum={false} />)}
+      </div>
+    </div>
+  )
+}
 
-  const rowStride = colW + ALBUM_TEXT_H + ALBUM_GAP
-  const numRows = Math.ceil(albums.length / cols)
-  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, numRows, rowStride)
+// ─── detail: artist ───────────────────────────────────────────────────────────
+
+function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
+  artist: Artist
+  albums: Album[]
+  onBack: () => void
+  onOpenAlbum: (a: Album) => void
+  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
+}): JSX.Element {
+  const { playTrack } = useStore()
+  const art = useTrackArt(artist.coverTrack)
+  const allTracks = useMemo(() => [...artist.tracks].sort((a, b) => a.title.localeCompare(b.title)), [artist])
+  const total = artist.tracks.reduce((s, t) => s + t.duration, 0)
+  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playTrack(q[0], q) }
+  return (
+    <div className="flex-1 overflow-y-auto relative view-enter">
+      <DetailHeader
+        art={art} round eyebrow="Artist" title={artist.name}
+        subtitle={`${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`}
+        meta={`${artist.tracks.length} songs · ${fmtTotal(total)}`}
+        onBack={onBack} onPlay={() => play(allTracks)} onShuffle={() => play(shuffled(allTracks))}
+        fallbackIcon={<User size={48} className="text-[var(--text-muted)]" />}
+      />
+      {albums.length > 0 && (
+        <div className="relative px-6 pb-2">
+          <h2 className="text-[var(--text-primary)] text-lg font-bold mb-3">Albums</h2>
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))' }}>
+            {albums.map(a => <AlbumCard key={a.key} album={a} onOpen={() => onOpenAlbum(a)} onPlay={() => play([...a.tracks].sort(byTrackNo))} />)}
+          </div>
+        </div>
+      )}
+      <div className="relative px-6 pt-4 pb-2">
+        <h2 className="text-[var(--text-primary)] text-lg font-bold">Songs</h2>
+      </div>
+      <div className="relative px-3 pb-8">
+        {allTracks.slice(0, 60).map((t, i) => <SongRow key={t.id} track={t} index={i} queue={allTracks} onContext={onContext} />)}
+      </div>
+    </div>
+  )
+}
+
+// ─── empty state ──────────────────────────────────────────────────────────────
+
+function EmptyState({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
+      <div className="w-24 h-24 rounded-[28px] glass-strong glass-edge flex items-center justify-center">
+        <Music size={40} className="text-[var(--text-secondary)]" />
+      </div>
+      <div>
+        <h2 className="text-[var(--text-primary)] text-2xl font-bold tracking-tight mb-1.5">Your library is empty</h2>
+        <p className="text-[var(--text-muted)] text-sm max-w-xs">Add folders in Settings → Library Folders, then scan to import your music.</p>
+      </div>
+      <button onClick={onOpenSettings} className="flex items-center gap-2 px-6 py-2.5 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-all shadow-lg active:scale-95">
+        <FolderOpen size={15} /> Add Folders
+      </button>
+    </div>
+  )
+}
+
+// ─── browse rail ──────────────────────────────────────────────────────────────
+
+type LibKey = 'recent' | 'artists' | 'albums' | 'songs'
+type Nav = { kind: 'lib'; key: LibKey }
+
+const LIB_SECTIONS: { key: LibKey; label: string; icon: JSX.Element }[] = [
+  { key: 'recent', label: 'Recently Added', icon: <Sparkles size={15} /> },
+  { key: 'artists', label: 'Artists', icon: <User size={15} /> },
+  { key: 'albums', label: 'Albums', icon: <LayoutGrid size={15} /> },
+  { key: 'songs', label: 'Songs', icon: <List size={15} /> },
+]
+
+function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => void; songCount: number }): JSX.Element {
+  const row = (active: boolean) =>
+    `w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200 ${
+      active ? 'glass-strong glass-edge text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)] hover:bg-[var(--glass-hover)] hover:text-[var(--text-primary)]'
+    }`
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto p-5 relative">
-      {albums.length === 0 ? (
-        <p className="text-[var(--text-muted)] text-sm text-center py-16">No albums found</p>
-      ) : (
-        <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
-          {Array.from({ length: end - start }, (_, r) => {
-            const rowIndex = start + r
-            const rowAlbums = albums.slice(rowIndex * cols, rowIndex * cols + cols)
-            return (
-              <div
-                key={rowIndex}
-                style={{
-                  position: 'absolute', top: rowIndex * rowStride, left: 0, right: 0,
-                  display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: ALBUM_GAP,
-                }}
-              >
-                {rowAlbums.map((alb) => (
-                  <AlbumCard
-                    key={`${alb.name}__${alb.artist}`}
-                    album={alb}
-                    onPlay={() => onPlayAlbum(alb)}
-                    onOpen={() => onOpen(alb)}
-                  />
-                ))}
-              </div>
-            )
-          })}
-        </div>
-      )}
+    <div className="w-52 shrink-0 flex flex-col glass border-r border-[var(--glass-border)] overflow-y-auto">
+      <div className="px-5 pt-9 pb-3">
+        <h1 className="text-[var(--text-primary)] text-2xl font-bold tracking-tight">Library</h1>
+      </div>
+
+      <div className="px-2.5 space-y-1">
+        {LIB_SECTIONS.map(s => (
+          <button key={s.key} onClick={() => onNav({ kind: 'lib', key: s.key })} className={row(nav.kind === 'lib' && nav.key === s.key)}>
+            <span className="opacity-80 shrink-0">{s.icon}</span>
+            <span className="truncate">{s.label}</span>
+            {s.key === 'songs' && <span className="ml-auto text-[10px] text-[var(--text-muted)]">{songCount}</span>}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
 
-// ─── Main LibraryTab ──────────────────────────────────────────────────────────
-
-type LibView = 'albums' | 'songs'
+// ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const {
-    libraryTracks, libraryScanning,
-    scanLibrary, libraryFolders, loadLibrary,
-    setShowSettings, playTrack,
-  } = useStore()
-  const isElectron = !!(window as any).electron
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playNext, addToQueue, account, setActiveView, setPendingLocalEditTrack } = useStore()
 
-  const [libView, setLibViewRaw] = useState<LibView>(() => (localStorage.getItem('library:view') as LibView) || 'albums')
-  const setLibView = (v: LibView): void => { setLibViewRaw(v); localStorage.setItem('library:view', v) }
+  const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
+  const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
   const [searchQ, setSearchQ] = useState('')
-  const [editingTrack, setEditingTrack] = useState<LibraryTrack | null>(null)
-  const [addToPlaylistTrack, setAddToPlaylistTrack] = useState<LibraryTrack | null>(null)
-  const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null)
-  const [sortField, setSortField] = useState<'title' | 'artist' | 'album' | 'duration' | null>(null)
+  // Shared song context menu (same one the Tracker/Playlists/Player use). The
+  // queue captured at open-time drives its Play/Play-next/Add-to-queue actions.
+  const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
+  const [sortField, setSortField] = useState<'title' | 'album' | 'duration' | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
-  const toggleSort = (field: 'title' | 'artist' | 'album' | 'duration') => {
-    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortField(field); setSortDir('asc') }
+
+  const openCtx = (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => setCtx({ track, queue, x, y })
+
+  const navTo = (n: Nav) => {
+    setNav(n); setDrill(null)
+    if (n.kind === 'lib') localStorage.setItem('library:view', n.key)
+  }
+  const toggleSort = (f: 'title' | 'album' | 'duration') => {
+    if (sortField === f) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(f); setSortDir('asc') }
   }
 
-  // Load persisted library on mount
   useEffect(() => { loadLibrary() }, [])
+  // Reset drill/search when the underlying library empties out
+  useEffect(() => { setDrill(null) }, [nav])
 
-  // Build albums map
+  // ── derived collections ──
   const albums = useMemo<Album[]>(() => {
     const map = new Map<string, Album>()
     for (const t of libraryTracks) {
       const key = `${t.album || 'Unknown Album'}__${t.albumArtist || t.artist || 'Unknown Artist'}`
-      if (!map.has(key)) {
-        map.set(key, { name: t.album || 'Unknown Album', artist: t.albumArtist || t.artist || 'Unknown Artist', year: t.year, tracks: [], coverTrack: t })
-      }
-      const alb = map.get(key)!
-      alb.tracks.push(t)
-      if (t.trackNumber === 1 || !alb.coverTrack.hasAlbumArt && t.hasAlbumArt) alb.coverTrack = t
+      let a = map.get(key)
+      if (!a) { a = { key, name: t.album || 'Unknown Album', artist: t.albumArtist || t.artist || 'Unknown Artist', year: t.year, addedAt: 0, tracks: [], coverTrack: t }; map.set(key, a) }
+      a.tracks.push(t)
+      a.addedAt = Math.max(a.addedAt, t.addedAt || 0)
+      if (t.trackNumber === 1 || (!a.coverTrack.hasAlbumArt && t.hasAlbumArt)) a.coverTrack = t
     }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+    return [...map.values()]
   }, [libraryTracks])
 
-  // Filtered tracks/albums
-  const filteredTracks = useMemo(() => {
-    if (!searchQ) return libraryTracks
-    const q = searchQ.toLowerCase()
-    return libraryTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q))
-  }, [libraryTracks, searchQ])
+  const artists = useMemo<Artist[]>(() => {
+    const map = new Map<string, Artist>()
+    const albumSets = new Map<string, Set<string>>()
+    for (const t of libraryTracks) {
+      const name = t.albumArtist || t.artist || 'Unknown Artist'
+      let a = map.get(name)
+      if (!a) { a = { name, tracks: [], albums: 0, coverTrack: t }; map.set(name, a); albumSets.set(name, new Set()) }
+      a.tracks.push(t)
+      albumSets.get(name)!.add(t.album || 'Unknown Album')
+      if (!a.coverTrack.hasAlbumArt && t.hasAlbumArt) a.coverTrack = t
+    }
+    for (const [name, a] of map) a.albums = albumSets.get(name)!.size
+    return [...map.values()].sort((x, y) => x.name.localeCompare(y.name))
+  }, [libraryTracks])
 
-  const filteredAlbums = useMemo(() => {
-    if (!searchQ) return albums
-    const q = searchQ.toLowerCase()
-    return albums.filter(a => a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q))
-  }, [albums, searchQ])
+  const q = searchQ.trim().toLowerCase()
 
-  const sortedTracks = useMemo(() => {
-    if (!sortField) return filteredTracks
-    return [...filteredTracks].sort((a, b) => {
-      let av: string | number = '', bv: string | number = ''
-      if (sortField === 'title') { av = a.title.toLowerCase(); bv = b.title.toLowerCase() }
-      else if (sortField === 'artist') { av = (a.artist || '').toLowerCase(); bv = (b.artist || '').toLowerCase() }
-      else if (sortField === 'album') { av = (a.album || '').toLowerCase(); bv = (b.album || '').toLowerCase() }
-      else { av = a.duration; bv = b.duration }
-      return sortDir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av > bv ? -1 : av < bv ? 1 : 0)
-    })
-  }, [filteredTracks, sortField, sortDir])
+  const albumsSorted = useMemo(() => {
+    const base = nav.kind === 'lib' && nav.key === 'recent'
+      ? [...albums].sort((a, b) => b.addedAt - a.addedAt)
+      : [...albums].sort((a, b) => a.name.localeCompare(b.name))
+    if (!q) return base
+    return base.filter(a => a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q))
+  }, [albums, nav, q])
 
+  const artistsFiltered = useMemo(() => q ? artists.filter(a => a.name.toLowerCase().includes(q)) : artists, [artists, q])
 
-  const playAll = () => {
-    if (!sortedTracks.length) return
-    const q = sortedTracks.map(libraryTrackToQueueTrack)
-    playTrack(q[0], q)
-  }
+  const songs = useMemo(() => {
+    let list = q ? libraryTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : libraryTracks
+    if (sortField) {
+      list = [...list].sort((a, b) => {
+        let av: string | number, bv: string | number
+        if (sortField === 'title') { av = a.title.toLowerCase(); bv = b.title.toLowerCase() }
+        else if (sortField === 'album') { av = (a.album || '').toLowerCase(); bv = (b.album || '').toLowerCase() }
+        else { av = a.duration; bv = b.duration }
+        return sortDir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av > bv ? -1 : av < bv ? 1 : 0)
+      })
+    }
+    return list
+  }, [libraryTracks, q, sortField, sortDir])
 
-  const shuffle = () => {
-    if (!sortedTracks.length) return
-    const q = [...sortedTracks].sort(() => Math.random() - 0.5).map(libraryTrackToQueueTrack)
-    playTrack(q[0], q)
-  }
+  const drillArtist = drill?.kind === 'artist' ? artists.find(a => a.name === drill.name) : undefined
+  const drillArtistAlbums = drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : []
+
+  const playAll = (list: LibraryTrack[], rnd = false) => { const q2 = (rnd ? shuffled(list) : list).map(toQueueTrack); if (q2.length) playTrack(q2[0], q2) }
+  const playAlbum = (a: Album) => playAll([...a.tracks].sort(byTrackNo))
 
   const showEmpty = libraryTracks.length === 0 && !libraryScanning
+  const showToolbar = !drill && nav.kind === 'lib'
+
+  const title = drill?.kind === 'album' ? drill.album.name
+    : drill?.kind === 'artist' ? drill.name
+    : LIB_SECTIONS.find(s => s.key === nav.key)?.label ?? 'Library'
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-[var(--bg)]">
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Toolbar */}
-        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {selectedAlbum && (
-            <button onClick={() => setSelectedAlbum(null)} className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] transition-colors">
-              <ChevronLeft size={16} />
-            </button>
-          )}
+    <div className="flex-1 flex overflow-hidden bg-[var(--surface)] relative">
+      <BrowseRail nav={nav} onNav={navTo} songCount={libraryTracks.length} />
 
-          {!selectedAlbum && (
-            <>
-              <div className="flex items-center gap-1 bg-[var(--surface-overlay)] rounded-lg p-0.5">
-                <button onClick={() => setLibView('albums')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${libView === 'albums' ? 'bg-[var(--surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}>
-                  <LayoutGrid size={13} /> Albums
-                </button>
-                <button onClick={() => setLibView('songs')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${libView === 'songs' ? 'bg-[var(--surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}>
-                  <List size={13} /> Songs
-                </button>
-              </div>
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        {/* top ambient wash for grid/list views */}
+        {showToolbar && (
+          <div className="absolute inset-x-0 top-0 h-64 pointer-events-none -z-0"
+            style={{ background: 'radial-gradient(110% 70% at 30% -10%, rgba(var(--accent-rgb),0.12), transparent 65%)' }} />
+        )}
 
-              {/* Search */}
-              <div className="relative flex-1 max-w-xs">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-                <input
-                  value={searchQ}
-                  onChange={e => setSearchQ(e.target.value)}
-                  placeholder="Search library…"
-                  className="w-full pl-8 pr-3 py-1.5 bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 ml-auto">
-                {libraryTracks.length > 0 && (
-                  <>
-                    <button onClick={playAll} className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--accent)] text-white rounded-lg text-xs font-medium hover:bg-[var(--accent-hover)] transition-colors">
-                      <Play size={12} fill="white" /> Play
-                    </button>
-                    <button onClick={shuffle} className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--surface-overlay)] text-[var(--text-muted)] border border-[var(--border)] rounded-lg text-xs font-medium hover:text-[var(--text-primary)] transition-colors">
-                      <Shuffle size={12} /> Shuffle
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={() => scanLibrary()}
-                  disabled={libraryScanning || libraryFolders.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--surface-overlay)] border border-[var(--border)] text-[var(--text-muted)] rounded-lg text-xs font-medium hover:text-[var(--text-primary)] transition-colors disabled:opacity-40"
-                  title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}
-                >
-                  {libraryScanning ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-                  {libraryScanning ? 'Scanning…' : 'Scan'}
-                </button>
-              </div>
-            </>
-          )}
-
-          {selectedAlbum && (
-            <h2 className="text-[var(--text-primary)] font-semibold text-base">
-              {selectedAlbum.name}
-            </h2>
-          )}
-        </div>
+        {/* Toolbar (grid/list sections only; detail views carry their own header) */}
+        {showToolbar && !showEmpty && !libraryScanning && (
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 pl-6 pr-4 pt-9 pb-3 glass border-b border-[var(--glass-border)] z-10" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <h2 className="text-[var(--text-primary)] text-xl font-bold tracking-tight shrink-0">{title}</h2>
+            <div className="relative flex-1 min-w-[120px] max-w-xs ml-2">
+              <Search size={13} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+              <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search library…"
+                className="w-full pl-9 pr-3 py-2 glass-soft rounded-full text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 transition-all" />
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              {libraryTracks.length > 0 && (
+                <>
+                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-4 py-2 bg-[var(--accent)] text-white rounded-full text-xs font-semibold hover:bg-[var(--accent-hover)] transition-all active:scale-95">
+                    <Play size={12} fill="white" /> Play
+                  </button>
+                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-4 py-2 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all active:scale-95">
+                    <Shuffle size={12} /> Shuffle
+                  </button>
+                </>
+              )}
+              <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
+                className="flex items-center gap-1.5 px-4 py-2 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all disabled:opacity-40 active:scale-95"
+                title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}>
+                {libraryScanning ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+                {libraryScanning ? 'Scanning…' : 'Scan'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Content */}
         {showEmpty ? (
@@ -833,46 +659,55 @@ export default function LibraryTab(): JSX.Element {
             <Loader2 size={32} className="animate-spin text-[var(--accent)]" />
             <p className="text-[var(--text-muted)] text-sm">Scanning your library…</p>
           </div>
-        ) : selectedAlbum ? (
-          <AlbumDetail album={selectedAlbum} onBack={() => setSelectedAlbum(null)} onEdit={setEditingTrack} onAddToPlaylist={setAddToPlaylistTrack} />
-        ) : libView === 'albums' ? (
-          <VirtualAlbumGrid
-            albums={filteredAlbums}
-            onOpen={setSelectedAlbum}
-            onPlayAlbum={(alb) => {
-              const q = [...alb.tracks].sort((a, b) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)).map(libraryTrackToQueueTrack)
-              playTrack(q[0], q)
-            }}
-          />
-        ) : (
-          <VirtualSongList
-            tracks={sortedTracks}
-            onEdit={setEditingTrack}
-            onAddToPlaylist={setAddToPlaylistTrack}
+        ) : drill?.kind === 'album' ? (
+          <AlbumDetail album={drill.album} onBack={() => setDrill(null)} onContext={openCtx} />
+        ) : drill?.kind === 'artist' && drillArtist ? (
+          <ArtistDetail artist={drillArtist} albums={drillArtistAlbums} onBack={() => setDrill(null)}
+            onOpenAlbum={a => setDrill({ kind: 'album', album: a })} onContext={openCtx} />
+        ) : nav.kind === 'lib' && nav.key === 'artists' ? (
+          <CardGrid circular count={artistsFiltered.length} render={i => {
+            const a = artistsFiltered[i]
+            return <ArtistCard key={a.name} artist={a} onOpen={() => setDrill({ kind: 'artist', name: a.name })} />
+          }} />
+        ) : nav.kind === 'lib' && nav.key === 'songs' ? (
+          <SongList tracks={songs} onContext={openCtx}
             header={
-              /* Header row — click to sort */
-              <div className="flex items-center gap-3 px-4 py-1 mb-1">
+              <div className="flex items-center gap-3 px-4 py-1.5 mb-1">
                 <div className="w-5 text-[10px] text-[var(--text-muted)] uppercase tracking-wider text-center">#</div>
-                <div className="w-9 shrink-0" />
-                <button onClick={() => toggleSort('title')} className="flex-1 flex items-center gap-1 text-[10px] text-[var(--text-muted)] uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+                <div className="w-10 shrink-0" />
+                <button onClick={() => toggleSort('title')} className="flex-1 flex items-center gap-1 text-[10px] text-[var(--text-muted)] uppercase tracking-[0.12em] hover:text-[var(--text-primary)] transition-colors">
                   Title {sortField === 'title' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-                <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[160px] text-[10px] text-[var(--text-muted)] uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+                <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[180px] text-[10px] text-[var(--text-muted)] uppercase tracking-[0.12em] hover:text-[var(--text-primary)] transition-colors">
                   Album {sortField === 'album' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
                 <button onClick={() => toggleSort('duration')} className="flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors shrink-0">
                   <Clock size={11} /> {sortField === 'duration' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-                <div className="w-5" />
+                <div className="w-7" />
               </div>
-            }
-          />
+            } />
+        ) : (
+          /* albums + recently added */
+          <CardGrid count={albumsSorted.length} render={i => {
+            const a = albumsSorted[i]
+            return <AlbumCard key={a.key} album={a} onOpen={() => setDrill({ kind: 'album', album: a })} onPlay={() => playAlbum(a)} />
+          }} />
         )}
       </div>
 
-      {/* Modals */}
-      {editingTrack && <MetadataEditor track={editingTrack} onClose={() => setEditingTrack(null)} />}
-      {addToPlaylistTrack && <AddToPlaylistPicker track={addToPlaylistTrack} onClose={() => setAddToPlaylistTrack(null)} />}
+      {ctx && (
+        <SongContextMenu
+          state={{ track: toQueueTrack(ctx.track), songId: userApi.trackIdToSongId(ctx.track.id), x: ctx.x, y: ctx.y } as SongContextMenuState}
+          onClose={() => setCtx(null)}
+          canEdit={!!account?.is_editor}
+          onInfo={() => {}}
+          onPlay={() => playTrack(toQueueTrack(ctx.track), ctx.queue.map(toQueueTrack))}
+          onPlayNext={() => playNext(toQueueTrack(ctx.track))}
+          onAddToQueue={() => addToQueue(toQueueTrack(ctx.track))}
+          onEditLocalMetadata={() => { setPendingLocalEditTrack(ctx.track); setActiveView('local-editor') }}
+        />
+      )}
     </div>
   )
 }

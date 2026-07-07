@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3018
+    },
+    {
+      "name": "preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "3019", "--strictPort", "--host"],
+      "port": 3019
     }
   ]
 }

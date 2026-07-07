@@ -96,6 +96,7 @@ export default function Settings(): JSX.Element {
     sleepTimerEnd, setSleepTimer,
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
+    libraryAutoRefresh, setLibraryAutoRefresh,
   } = useStore()
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -500,6 +501,13 @@ export default function Settings(): JSX.Element {
                     Last scanned: {new Date(libraryLastScanned).toLocaleString()} · {libraryTracks.length} tracks
                   </p>
                 )}
+                <div className="flex items-center justify-between py-3 mt-2 border-t border-[var(--border)]">
+                  <div>
+                    <span className="text-text-primary text-sm block">Auto-refresh changed files</span>
+                    <span className="text-text-muted text-xs">Reload tags automatically when a file changes on disk (e.g. edited externally)</span>
+                  </div>
+                  <Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} />
+                </div>
               </div>
             )}
 

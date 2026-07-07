@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
-  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic,
+  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -110,12 +110,13 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
-  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
       setShowUserAuth: s.setShowUserAuth, setPendingEditorSongId: s.setPendingEditorSongId,
       setActiveView: s.setActiveView, playTrack: s.playTrack,
       localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
+      offlineTracks: s.offlineTracks, removeOfflineTrack: s.removeOfflineTrack, downloadTrackOffline: s.downloadTrackOffline,
     }))
   )
   const { track, songId } = state
@@ -131,6 +132,7 @@ export default function SongContextMenu({
   const [contained, setContained] = useState<Set<number>>(new Set())
   const [zipLoading, setZipLoading] = useState(false)
   const [zipCandidates, setZipCandidates] = useState<JWApiFileEntry[] | null>(null)
+  const [downloadingOffline, setDownloadingOffline] = useState(false)
   const el = (window as any).electron
 
   useEffect(() => {
@@ -439,6 +441,25 @@ export default function SongContextMenu({
                       if (!result.error) setAddedToLib(true)
                     } finally { setAddingToLib(false) }
                   }}
+                />
+              )}
+              {el && hasValidSong && !offlineTracks[track.id] && (
+                <MenuItem
+                  icon={downloadingOffline ? <Loader2 size={14} className="animate-spin" /> : <CircleArrowDown size={14} />}
+                  label={downloadingOffline ? 'Downloading…' : 'Download offline'}
+                  onClick={async () => {
+                    if (downloadingOffline || songId == null) return
+                    setDownloadingOffline(true)
+                    try { await downloadTrackOffline(songId) } finally { setDownloadingOffline(false) }
+                  }}
+                />
+              )}
+              {!!offlineTracks[track.id] && (
+                <MenuItem
+                  icon={<CircleArrowDown size={14} fill="currentColor" />}
+                  label="Remove download"
+                  destructive
+                  onClick={() => { removeOfflineTrack(track.id); onClose() }}
                 />
               )}
             </>

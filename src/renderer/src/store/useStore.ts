@@ -8,6 +8,15 @@ import { createQueueSlice, QueueSlice } from './queueSlice'
 
 type ColumnConfig = Cols
 
+// Key used to track songs downloaded individually (song context menu →
+// "Download offline"), rather than through a synced playlist. It's just
+// another entry in `offlinePlaylists`/main's `lib.playlists`, so a song
+// downloaded this way survives the same-name pruning that offline-set-playlist
+// runs after every real playlist sync — without this, an individually-
+// downloaded track would look "unreferenced" the next time any playlist
+// resyncs and get deleted out from under the user.
+const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
+
 // Lightweight localStorage persistence helper
 const ls = {
   get: <T>(key: string): T | null => {
@@ -117,6 +126,8 @@ interface AppState {
   // Editor
   pendingEditorSongId: number | null
   pendingEditProposal: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null
+  // Local-file metadata editor — the track being edited on the 'local-editor' view
+  pendingLocalEditTrack: LibraryTrack | null
 
 
   // Library (Electron only)
@@ -124,6 +135,10 @@ interface AppState {
   libraryFolders: string[]
   libraryScanning: boolean
   libraryLastScanned: number | null
+  // When enabled, periodically re-checks library files against their cached
+  // size/mtime and reloads tags for any that changed on disk (e.g. edited in
+  // an external tag editor) without a full manual "Scan Now".
+  libraryAutoRefresh: boolean
   localPlaylists: LocalPlaylist[]
   activeLocalPlaylistId: string | null
 
@@ -189,6 +204,7 @@ interface AppActions {
 
   setPendingEditorSongId: (id: number | null) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
+  setPendingLocalEditTrack: (track: LibraryTrack | null) => void
 
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
@@ -198,6 +214,7 @@ interface AppActions {
   removeLibraryFolder: (folder: string) => void
   setLibraryScanning: (scanning: boolean) => void
   setLibraryLastScanned: (ts: number | null) => void
+  setLibraryAutoRefresh: (enabled: boolean) => void
   scanLibrary: () => Promise<void>
 
   setLocalPlaylists: (playlists: LocalPlaylist[]) => void
@@ -214,6 +231,8 @@ interface AppActions {
   loadOfflineLibrary: () => Promise<void>
   downloadPlaylistOffline: (key: string, name: string, songIds: number[], opts?: { silent?: boolean }) => Promise<void>
   removePlaylistOffline: (key: string) => Promise<void>
+  downloadTrackOffline: (songId: number) => Promise<void>
+  removeOfflineTrack: (trackId: string) => Promise<void>
   syncOfflinePlaylists: () => Promise<void>
 
   addDownload: (item: DownloadItem) => void
@@ -460,8 +479,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // ── Editor ────────────────────────────────────────────────────────────────
   pendingEditorSongId: null,
   pendingEditProposal: null,
+  pendingLocalEditTrack: null,
   setPendingEditorSongId: (pendingEditorSongId) => set({ pendingEditorSongId }),
   setPendingEditProposal: (pendingEditProposal) => set({ pendingEditProposal }),
+  setPendingLocalEditTrack: (pendingLocalEditTrack) => set({ pendingLocalEditTrack }),
 
 
   // ── Library ───────────────────────────────────────────────────────────────
@@ -469,6 +490,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   libraryFolders: ls.get<string[]>('libraryFolders') ?? [],
   libraryScanning: false,
   libraryLastScanned: ls.get<number>('libraryLastScanned') ?? null,
+  // Off by default — periodic disk scans of a large library aren't free, so
+  // this is opt-in rather than always re-checking every file's mtime/size.
+  libraryAutoRefresh: ls.get<boolean>('libraryAutoRefresh') ?? false,
   localPlaylists: [],
   activeLocalPlaylistId: null,
 
@@ -513,15 +537,23 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ libraryLastScanned: ts })
     ls.set('libraryLastScanned', ts)
   },
+  setLibraryAutoRefresh: (enabled) => {
+    set({ libraryAutoRefresh: enabled })
+    ls.set('libraryAutoRefresh', enabled)
+  },
 
   scanLibrary: async () => {
     const el = (window as any).electron
     if (!el) return
-    const { libraryFolders } = get()
+    const { libraryFolders, libraryTracks } = get()
     if (libraryFolders.length === 0) return
     set({ libraryScanning: true })
     try {
-      const result = await el.scanLibrary(libraryFolders)
+      // Passing the previous scan's tracks lets the main process skip
+      // re-parsing tags for files whose size/mtime haven't changed — makes
+      // this cheap enough to run automatically (see libraryAutoRefresh)
+      // instead of only on an explicit "Scan Now" click.
+      const result = await el.scanLibrary(libraryFolders, libraryTracks)
       if (result.error) { console.error('Scan error:', result.error); return }
       const now = Date.now()
       set({ libraryTracks: result.tracks, libraryLastScanned: now })
@@ -717,6 +749,64 @@ export const useStore = create<AppStore>((set, get, store) => ({
       return { offlinePlaylists: next, offlineSync: nextSync }
     })
     get().loadOfflineLibrary()
+  },
+
+  downloadTrackOffline: async (songId) => {
+    const el = (window as any).electron
+    if (!el) return
+    const key = INDIVIDUAL_DOWNLOADS_KEY
+    const id = `jw-${songId}`
+    try {
+      const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+      const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
+      const meta = {
+        title: song.track_titles?.[0] || song.name,
+        artist: song.credited_artists || 'Juice WRLD',
+        album: song.album || song.era?.name || '',
+        imageUrl: buildImageUrl(song.image_url) ?? null,
+        lyrics: song.lyrics || null,
+        syncedLyrics: song.synced_lyrics || null,
+        duration: parseDuration(song.length),
+      }
+      const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
+      if (result?.error) throw new Error(result.error)
+      set((s) => ({
+        offlineTracks: {
+          ...s.offlineTracks,
+          [id]: { ...meta, path: song.path, localPath: result.localPath, ext, downloadedAt: Date.now() },
+        },
+      }))
+      const existingIds = get().offlinePlaylists[key]?.songIds ?? []
+      const nextIds = existingIds.includes(id) ? existingIds : [...existingIds, id]
+      await el.offlineSetPlaylist(key, nextIds, 'Downloaded songs')
+      set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: nextIds, name: 'Downloaded songs', updatedAt: Date.now() } } }))
+    } catch (e) {
+      console.error('downloadTrackOffline error:', e)
+    }
+  },
+
+  // Deletes a single track's downloaded audio (e.g. from a song's context
+  // menu), independent of any playlist it belongs to. If the song is still
+  // part of a synced offline playlist, the next background resync will just
+  // re-download it — this only clears the local copy, not playlist membership.
+  removeOfflineTrack: async (trackId) => {
+    const el = (window as any).electron
+    if (!el) return
+    try { await el.offlineRemoveTrack(trackId) } catch (e) { console.error('offlineRemoveTrack error:', e) }
+    set((s) => {
+      const next = { ...s.offlineTracks }
+      delete next[trackId]
+      return { offlineTracks: next }
+    })
+    // If it was only tracked via the individual-downloads bucket (not a real
+    // synced playlist), drop it from there too so it doesn't linger forever.
+    const key = INDIVIDUAL_DOWNLOADS_KEY
+    const entry = get().offlinePlaylists[key]
+    if (entry?.songIds.includes(trackId)) {
+      const nextIds = entry.songIds.filter((t) => t !== trackId)
+      try { await el.offlineSetPlaylist(key, nextIds, entry.name) } catch (e) { console.error('offlineSetPlaylist error:', e) }
+      set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { ...entry, songIds: nextIds, updatedAt: Date.now() } } }))
+    }
   },
 
   syncOfflinePlaylists: async () => {

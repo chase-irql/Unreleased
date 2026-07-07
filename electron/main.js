@@ -477,9 +477,15 @@ ipcMain.handle('offline-set-library-path', async (_, newPath) => {
   return failed.length ? { path: newPath, failedCount: failed.length } : { path: newPath }
 })
 
-ipcMain.handle('scan-library', async (_, folders) => {
+ipcMain.handle('scan-library', async (_, folders, previousTracks) => {
   let mm
   try { mm = require('music-metadata') } catch(e) { return { error: 'music-metadata not installed: ' + e.message, tracks: [] } }
+
+  // Keyed by file path so an unchanged file (same size + mtime as last scan)
+  // can be reused as-is instead of re-parsing its tags — makes it cheap
+  // enough to re-run automatically (see "Auto-refresh changed files" setting)
+  // without reparsing an entire library just to pick up a couple of edits.
+  const prevByPath = new Map((previousTracks || []).map((t) => [t.filePath, t]))
 
   const tracks = []
   const errors = []
@@ -495,6 +501,16 @@ ipcMain.handle('scan-library', async (_, folders) => {
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase()
         if (!AUDIO_EXTS.has(ext)) continue
+        const prev = prevByPath.get(fullPath)
+        if (prev) {
+          try {
+            const stat = fs.statSync(fullPath)
+            if (prev.fileSize === stat.size && prev.lastModified === stat.mtimeMs) {
+              tracks.push(prev)
+              continue
+            }
+          } catch {}
+        }
         try {
           const metadata = await mm.parseFile(fullPath, { duration: true, skipCovers: true })
           const common = metadata.common
