@@ -816,7 +816,13 @@ app.whenReady().then(() => {
     try {
       const filePath = new URL(request.url).searchParams.get('p')
       if (!filePath) return new Response('Missing path', { status: 400 })
-      return net.fetch(pathToFileURL(filePath).href)
+      // Forward the Range header so seeking actually works — without it every
+      // seek re-fetches the whole file from byte 0 instead of the requested
+      // offset, and the <audio> element ends up treating the track as
+      // effectively non-seekable even though `stream: true` is set above.
+      const range = request.headers.get('range')
+      const headers = range ? { Range: range } : undefined
+      return net.fetch(pathToFileURL(filePath).href, { headers })
     } catch (e) {
       return new Response('Error: ' + e.message, { status: 500 })
     }
