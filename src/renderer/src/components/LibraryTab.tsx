@@ -12,11 +12,10 @@ import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   Library — Apple Music glass rebuild.
-
-   Layout: an in-view frosted "browse rail" on the left (Library sections +
-   user playlists) drives a contextual main pane. Album grids and the song
-   list are windowed so a multi-thousand-track library stays light.
+   Library — local-file browser styled like the rest of the app (solid surfaces,
+   standard tokens). An in-view rail on the left (Library sections) drives a
+   contextual main pane. Album grids and the song list are windowed so a
+   multi-thousand-track library stays light.
    ══════════════════════════════════════════════════════════════════════════════ */
 
 // Windowing geometry — kept in sync with the row/card markup below.
@@ -102,28 +101,8 @@ export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?
   const art = useTrackArt(track)
   if (art) return <img src={art} alt="" className="object-cover" style={{ width: size, height: size }} />
   return (
-    <div className="flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]" style={{ width: size, height: size }}>
+    <div className="flex items-center justify-center bg-surface-overlay text-text-muted" style={{ width: size, height: size }}>
       <Music size={size * 0.4} />
-    </div>
-  )
-}
-
-// ─── ambient backdrop ─────────────────────────────────────────────────────────
-// Oversized, blurred copy of the cover art bleeding behind a header, faded into
-// the page — the signature "the room takes the album's color" Apple Music effect.
-
-function Ambient({ art, round = false }: { art?: string | null; round?: boolean }): JSX.Element {
-  return (
-    <div className="absolute inset-x-0 top-0 h-[360px] overflow-hidden pointer-events-none -z-0">
-      {art ? (
-        <div
-          className={`ambient-art absolute inset-0 blur-3xl ${round ? 'opacity-50' : 'opacity-60'}`}
-          style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
-        />
-      ) : (
-        <div className="absolute inset-0 opacity-40" style={{ background: 'radial-gradient(120% 80% at 25% 0%, rgba(var(--accent-rgb),0.32), transparent 60%)' }} />
-      )}
-      <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, transparent, var(--surface) 92%)' }} />
     </div>
   )
 }
@@ -154,8 +133,8 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
   return (
     <div className="px-1.5">
       <div
-        className={`group flex items-center gap-3 pl-3 pr-2 py-2 rounded-xl transition-colors cursor-pointer ${
-          isCurrent ? 'glass-strong glass-edge' : 'hover:bg-[var(--glass-hover)]'
+        className={`group flex items-center gap-3 pl-3 pr-2 py-2 rounded-lg transition-colors cursor-pointer ${
+          isCurrent ? 'bg-surface-raised' : 'hover:bg-surface-raised'
         } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
@@ -166,28 +145,28 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        {draggable && <GripVertical size={14} className="text-[var(--text-muted)] opacity-0 group-hover:opacity-100 shrink-0 -ml-1" />}
+        {draggable && <GripVertical size={14} className="text-text-muted opacity-0 group-hover:opacity-100 shrink-0 -ml-1" />}
         <div className="w-5 shrink-0 flex items-center justify-center">
           {hover || isCurrent
             ? <button onClick={play}>
                 {isCurrent && isPlaying
-                  ? <Pause size={13} fill="currentColor" className="text-[var(--accent)]" />
-                  : <Play size={13} fill="currentColor" className={isCurrent ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'} />}
+                  ? <Pause size={13} fill="currentColor" className="text-accent" />
+                  : <Play size={13} fill="currentColor" className={isCurrent ? 'text-accent' : 'text-text-primary'} />}
               </button>
-            : <span className="text-[var(--text-muted)] text-xs tabular-nums">{index + 1}</span>}
+            : <span className="text-text-muted text-xs tabular-nums">{index + 1}</span>}
         </div>
-        <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 ring-1 ring-[var(--glass-border)] shadow-sm">
+        <div className="w-10 h-10 rounded overflow-hidden shrink-0 bg-surface-overlay">
           <AlbumArtThumb track={track} size={40} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm truncate ${isCurrent ? 'text-[var(--accent)] font-medium' : 'text-[var(--text-primary)]'}`}>{track.title}</p>
-          <p className="text-[var(--text-muted)] text-xs truncate">{track.artist || 'Unknown Artist'}</p>
+          <p className={`text-sm truncate ${isCurrent ? 'text-accent font-medium' : 'text-text-primary'}`}>{track.title}</p>
+          <p className="text-text-muted text-xs truncate">{track.artist || 'Unknown Artist'}</p>
         </div>
-        {showAlbum && <span className="text-[var(--text-muted)] text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
-        <span className="text-[var(--text-muted)] text-xs shrink-0 tabular-nums">{fmtDur(track.duration)}</span>
+        {showAlbum && <span className="text-text-muted text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
+        <span className="text-text-muted text-xs shrink-0 tabular-nums">{fmtDur(track.duration)}</span>
         <button
           onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(track, queue, r.right, r.bottom) }}
-          className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--glass-hover)] transition-all"
+          className="w-7 h-7 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-all"
         >
           <MoreHorizontal size={15} />
         </button>
@@ -203,30 +182,26 @@ function AlbumCard({ album, onOpen, onPlay }: { album: Album; onOpen: () => void
   const art = useTrackArt(album.coverTrack)
   return (
     <div className="group cursor-pointer select-none" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onClick={onOpen}>
-      <div className="relative aspect-square mb-3 transition-transform duration-300 ease-out group-hover:-translate-y-1">
-        {art && (
-          <div className="absolute -inset-1 rounded-[20px] opacity-0 group-hover:opacity-70 blur-xl transition-opacity duration-300"
-            style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-        )}
-        <div className="relative rounded-[16px] overflow-hidden aspect-square shadow-[0_8px_28px_-8px_var(--glass-shadow)] ring-1 ring-[var(--glass-border)]">
+      <div className="relative aspect-square mb-3">
+        <div className="relative rounded-lg overflow-hidden aspect-square bg-surface-overlay border border-[var(--border)] shadow-sm">
           {art === undefined
             ? <div className="w-full h-full art-shimmer" />
             : art
-            ? <img src={art} alt={album.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-            : <div className="w-full h-full flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]"><Music size={40} /></div>}
+            ? <img src={art} alt={album.name} className="w-full h-full object-cover" />
+            : <div className="w-full h-full flex items-center justify-center text-text-muted"><Music size={40} /></div>}
           <div className={`absolute inset-0 flex items-end p-3 transition-opacity duration-200 ${hover ? 'opacity-100' : 'opacity-0'}`}
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.45), transparent 55%)' }}>
             <button onClick={e => { e.stopPropagation(); onPlay() }}
-              className="ml-auto w-11 h-11 rounded-full glass-strong glass-edge flex items-center justify-center text-[var(--text-primary)] hover:scale-110 active:scale-95 transition-transform">
+              className="ml-auto w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center shadow-lg hover:bg-accent-hover transition-colors">
               <Play size={16} fill="currentColor" className="ml-0.5" />
             </button>
           </div>
         </div>
       </div>
       <div style={{ height: CARD_TEXT_H }} className="overflow-hidden px-0.5">
-        <p className="text-[var(--text-primary)] text-sm font-semibold truncate leading-5">{album.name}</p>
-        <p className="text-[var(--text-secondary)] text-xs truncate leading-4">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
-        <p className="text-[var(--text-muted)] text-[11px] leading-4">{album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}</p>
+        <p className="text-text-primary text-sm font-medium truncate leading-5">{album.name}</p>
+        <p className="text-text-secondary text-xs truncate leading-4">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
+        <p className="text-text-muted text-[11px] leading-4">{album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}</p>
       </div>
     </div>
   )
@@ -238,20 +213,18 @@ function ArtistCard({ artist, onOpen }: { artist: Artist; onOpen: () => void }):
   const art = useTrackArt(artist.coverTrack)
   return (
     <button onClick={onOpen} className="group flex flex-col items-center gap-3 select-none">
-      <div className="relative w-full aspect-square transition-transform duration-300 group-hover:-translate-y-1">
-        {art && <div className="absolute -inset-1 rounded-full opacity-0 group-hover:opacity-60 blur-xl transition-opacity duration-300"
-          style={{ backgroundImage: `url(${art})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
-        <div className="relative w-full h-full rounded-full overflow-hidden ring-1 ring-[var(--glass-border)] shadow-[0_8px_28px_-8px_var(--glass-shadow)]">
+      <div className="relative w-full aspect-square">
+        <div className="relative w-full h-full rounded-full overflow-hidden bg-surface-overlay border border-[var(--border)] shadow-sm">
           {art === undefined
             ? <div className="w-full h-full art-shimmer" />
             : art
-            ? <img src={art} alt={artist.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-            : <div className="w-full h-full flex items-center justify-center bg-[var(--glass-bg-soft)] text-[var(--text-muted)]"><User size={40} /></div>}
+            ? <img src={art} alt={artist.name} className="w-full h-full object-cover" />
+            : <div className="w-full h-full flex items-center justify-center text-text-muted"><User size={40} /></div>}
         </div>
       </div>
       <div className="text-center px-1 w-full">
-        <p className="text-[var(--text-primary)] text-sm font-semibold truncate">{artist.name}</p>
-        <p className="text-[var(--text-muted)] text-[11px]">{artist.tracks.length} {artist.tracks.length === 1 ? 'song' : 'songs'}</p>
+        <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
+        <p className="text-text-muted text-[11px]">{artist.tracks.length} {artist.tracks.length === 1 ? 'song' : 'songs'}</p>
       </div>
     </button>
   )
@@ -290,9 +263,9 @@ function CardGrid({ count, render, circular = false }: {
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows, rowStride)
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto relative view-enter" style={{ padding: GRID_PAD }}>
+    <div ref={scrollRef} className="flex-1 overflow-y-auto view-enter" style={{ padding: GRID_PAD }}>
       {count === 0 ? (
-        <p className="text-[var(--text-muted)] text-sm text-center py-16">Nothing here yet</p>
+        <p className="text-text-muted text-sm text-center py-16">Nothing here yet</p>
       ) : (
         <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
           {Array.from({ length: end - start }, (_, r) => {
@@ -323,10 +296,10 @@ function SongList({ tracks, header, onContext }: {
   const contentRef = useRef<HTMLDivElement>(null)
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, SONG_ROW_H)
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 relative view-enter">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 view-enter">
       {header}
       {tracks.length === 0 ? (
-        <p className="text-[var(--text-muted)] text-sm text-center py-16">No songs found</p>
+        <p className="text-text-muted text-sm text-center py-16">No songs found</p>
       ) : (
         <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
           {tracks.slice(start, end).map((t, i) => {
@@ -343,7 +316,7 @@ function SongList({ tracks, header, onContext }: {
   )
 }
 
-// ─── detail: album ────────────────────────────────────────────────────────────
+// ─── detail header (shared by album & artist) ──────────────────────────────────
 
 function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPlay, onShuffle, fallbackIcon }: {
   art?: string | null
@@ -359,31 +332,30 @@ function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPl
 }): JSX.Element {
   return (
     <>
-      <Ambient art={art} round={round} />
-      <div className="relative flex items-end flex-wrap gap-5 p-6 pt-14 pb-5">
+      <div className="flex items-end gap-5 p-6 pb-4">
         {onBack && (
-          <button onClick={onBack} className="absolute top-8 left-4 w-9 h-9 flex items-center justify-center rounded-full glass-soft glass-edge text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors z-10">
+          <button onClick={onBack} className="absolute top-3 left-3 w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
             <ChevronLeft size={18} />
           </button>
         )}
-        <div className={`w-40 h-40 overflow-hidden shadow-[0_20px_50px_-12px_var(--glass-shadow)] ring-1 ring-[var(--glass-border-strong)] shrink-0 bg-[var(--glass-bg-soft)] flex items-center justify-center ${round ? 'rounded-full' : 'rounded-[18px]'}`}>
+        <div className={`w-40 h-40 overflow-hidden shrink-0 bg-surface-overlay border border-[var(--border)] shadow-lg flex items-center justify-center ${round ? 'rounded-full' : 'rounded-xl'}`}>
           {art === undefined ? <div className="w-full h-full art-shimmer" />
             : art ? <img src={art} alt={title} className="w-full h-full object-cover" />
             : fallbackIcon}
         </div>
-        <div className="pb-2 min-w-0 flex-1">
-          <p className="text-[11px] font-semibold text-[var(--accent)] uppercase tracking-[0.16em] mb-2">{eyebrow}</p>
-          <h1 className="text-[var(--text-primary)] text-3xl font-bold tracking-tight mb-2 drop-shadow-sm truncate">{title}</h1>
-          <p className="text-[var(--text-secondary)] text-base font-medium truncate">{subtitle}</p>
-          <p className="text-[var(--text-muted)] text-xs mt-1.5">{meta}</p>
+        <div className="pb-1 min-w-0 flex-1">
+          <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-1">{eyebrow}</p>
+          <h1 className="text-text-primary text-3xl font-bold mb-1 truncate">{title}</h1>
+          <p className="text-text-secondary text-sm truncate">{subtitle}</p>
+          <p className="text-text-muted text-xs mt-1">{meta}</p>
         </div>
       </div>
-      <div className="relative flex items-center gap-3 px-6 pb-5">
-        <button onClick={onPlay} className="flex items-center gap-2 px-6 py-2.5 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-all shadow-lg hover:shadow-[0_8px_24px_-6px_rgba(var(--accent-rgb),0.6)] active:scale-95">
-          <Play size={16} fill="white" className="ml-0.5" /> Play
+      <div className="flex items-center gap-3 px-6 pb-4">
+        <button onClick={onPlay} className="flex items-center gap-2 px-5 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
+          <Play size={16} fill="currentColor" className="ml-0.5" /> Play
         </button>
         {onShuffle && (
-          <button onClick={onShuffle} className="flex items-center gap-2 px-6 py-2.5 glass-strong glass-edge text-[var(--text-primary)] rounded-full text-sm font-semibold hover:bg-[var(--glass-hover)] transition-all active:scale-95">
+          <button onClick={onShuffle} className="flex items-center gap-2 px-5 py-2 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-highest transition-colors">
             <Shuffle size={16} /> Shuffle
           </button>
         )}
@@ -391,6 +363,8 @@ function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPl
     </>
   )
 }
+
+// ─── detail: album ────────────────────────────────────────────────────────────
 
 function AlbumDetail({ album, onBack, onContext }: {
   album: Album; onBack: () => void; onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
@@ -407,9 +381,9 @@ function AlbumDetail({ album, onBack, onContext }: {
         subtitle={`${album.artist}${album.year ? ` · ${album.year}` : ''}`}
         meta={`${tracks.length} songs · ${fmtTotal(total)}`}
         onBack={onBack} onPlay={() => play(tracks)} onShuffle={() => play(shuffled(tracks))}
-        fallbackIcon={<Music size={48} className="text-[var(--text-muted)]" />}
+        fallbackIcon={<Music size={48} className="text-text-muted" />}
       />
-      <div className="relative px-3 pb-8">
+      <div className="px-3 pb-8">
         {tracks.map((t, i) => <SongRow key={t.id} track={t} index={i} queue={tracks} onContext={onContext} showAlbum={false} />)}
       </div>
     </div>
@@ -437,20 +411,20 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
         subtitle={`${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`}
         meta={`${artist.tracks.length} songs · ${fmtTotal(total)}`}
         onBack={onBack} onPlay={() => play(allTracks)} onShuffle={() => play(shuffled(allTracks))}
-        fallbackIcon={<User size={48} className="text-[var(--text-muted)]" />}
+        fallbackIcon={<User size={48} className="text-text-muted" />}
       />
       {albums.length > 0 && (
-        <div className="relative px-6 pb-2">
-          <h2 className="text-[var(--text-primary)] text-lg font-bold mb-3">Albums</h2>
+        <div className="px-6 pb-2">
+          <h2 className="text-text-primary text-lg font-bold mb-3">Albums</h2>
           <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))' }}>
             {albums.map(a => <AlbumCard key={a.key} album={a} onOpen={() => onOpenAlbum(a)} onPlay={() => play([...a.tracks].sort(byTrackNo))} />)}
           </div>
         </div>
       )}
-      <div className="relative px-6 pt-4 pb-2">
-        <h2 className="text-[var(--text-primary)] text-lg font-bold">Songs</h2>
+      <div className="px-6 pt-4 pb-2">
+        <h2 className="text-text-primary text-lg font-bold">Songs</h2>
       </div>
-      <div className="relative px-3 pb-8">
+      <div className="px-3 pb-8">
         {allTracks.slice(0, 60).map((t, i) => <SongRow key={t.id} track={t} index={i} queue={allTracks} onContext={onContext} />)}
       </div>
     </div>
@@ -461,15 +435,15 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
 
 function EmptyState({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
-      <div className="w-24 h-24 rounded-[28px] glass-strong glass-edge flex items-center justify-center">
-        <Music size={40} className="text-[var(--text-secondary)]" />
+    <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
+      <div className="w-20 h-20 rounded-full bg-surface-overlay flex items-center justify-center">
+        <Music size={36} className="text-text-muted" />
       </div>
       <div>
-        <h2 className="text-[var(--text-primary)] text-2xl font-bold tracking-tight mb-1.5">Your library is empty</h2>
-        <p className="text-[var(--text-muted)] text-sm max-w-xs">Add folders in Settings → Library Folders, then scan to import your music.</p>
+        <h2 className="text-text-primary text-xl font-semibold mb-1">Your library is empty</h2>
+        <p className="text-text-muted text-sm max-w-xs">Add folders in Settings → Library Folders, then scan to import your music.</p>
       </div>
-      <button onClick={onOpenSettings} className="flex items-center gap-2 px-6 py-2.5 bg-[var(--accent)] text-white rounded-full text-sm font-semibold hover:bg-[var(--accent-hover)] transition-all shadow-lg active:scale-95">
+      <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
         <FolderOpen size={15} /> Add Folders
       </button>
     </div>
@@ -482,30 +456,30 @@ type LibKey = 'recent' | 'artists' | 'albums' | 'songs'
 type Nav = { kind: 'lib'; key: LibKey }
 
 const LIB_SECTIONS: { key: LibKey; label: string; icon: JSX.Element }[] = [
-  { key: 'recent', label: 'Recently Added', icon: <Sparkles size={15} /> },
-  { key: 'artists', label: 'Artists', icon: <User size={15} /> },
-  { key: 'albums', label: 'Albums', icon: <LayoutGrid size={15} /> },
-  { key: 'songs', label: 'Songs', icon: <List size={15} /> },
+  { key: 'recent', label: 'Recently Added', icon: <Sparkles size={16} /> },
+  { key: 'artists', label: 'Artists', icon: <User size={16} /> },
+  { key: 'albums', label: 'Albums', icon: <LayoutGrid size={16} /> },
+  { key: 'songs', label: 'Songs', icon: <List size={16} /> },
 ]
 
 function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => void; songCount: number }): JSX.Element {
   const row = (active: boolean) =>
-    `w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-200 ${
-      active ? 'glass-strong glass-edge text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)] hover:bg-[var(--glass-hover)] hover:text-[var(--text-primary)]'
+    `w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${
+      active ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
     }`
 
   return (
-    <div className="w-52 shrink-0 flex flex-col glass border-r border-[var(--glass-border)] overflow-y-auto">
-      <div className="px-5 pt-9 pb-3">
-        <h1 className="text-[var(--text-primary)] text-2xl font-bold tracking-tight">Library</h1>
+    <div className="w-52 shrink-0 flex flex-col bg-surface-raised border-r border-[var(--border)] overflow-y-auto">
+      <div className="px-4 pt-5 pb-3">
+        <h1 className="text-text-primary text-lg font-bold">Library</h1>
       </div>
 
-      <div className="px-2.5 space-y-1">
+      <div className="px-2 space-y-1">
         {LIB_SECTIONS.map(s => (
           <button key={s.key} onClick={() => onNav({ kind: 'lib', key: s.key })} className={row(nav.kind === 'lib' && nav.key === s.key)}>
-            <span className="opacity-80 shrink-0">{s.icon}</span>
-            <span className="truncate">{s.label}</span>
-            {s.key === 'songs' && <span className="ml-auto text-[10px] text-[var(--text-muted)]">{songCount}</span>}
+            <span className="shrink-0">{s.icon}</span>
+            <span className="truncate flex-1 text-left">{s.label}</span>
+            {s.key === 'songs' && <span className="text-[10px] text-text-muted">{songCount}</span>}
           </button>
         ))}
       </div>
@@ -539,7 +513,7 @@ export default function LibraryTab(): JSX.Element {
   }
 
   useEffect(() => { loadLibrary() }, [])
-  // Reset drill/search when the underlying library empties out
+  // Reset drill when switching rail section
   useEffect(() => { setDrill(null) }, [nav])
 
   // ── derived collections ──
@@ -611,38 +585,32 @@ export default function LibraryTab(): JSX.Element {
     : LIB_SECTIONS.find(s => s.key === nav.key)?.label ?? 'Library'
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-[var(--surface)] relative">
+    <div className="flex-1 flex overflow-hidden bg-surface">
       <BrowseRail nav={nav} onNav={navTo} songCount={libraryTracks.length} />
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
-        {/* top ambient wash for grid/list views */}
-        {showToolbar && (
-          <div className="absolute inset-x-0 top-0 h-64 pointer-events-none -z-0"
-            style={{ background: 'radial-gradient(110% 70% at 30% -10%, rgba(var(--accent-rgb),0.12), transparent 65%)' }} />
-        )}
-
         {/* Toolbar (grid/list sections only; detail views carry their own header) */}
         {showToolbar && !showEmpty && !libraryScanning && (
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 pl-6 pr-6 pt-9 pb-3 glass border-b border-[var(--glass-border)] z-10" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            <h2 className="text-[var(--text-primary)] text-xl font-bold tracking-tight shrink-0">{title}</h2>
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ WebkitAppRegion: 'no-drag', paddingRight: (window as any).electron ? 148 : undefined } as React.CSSProperties}>
+            <h2 className="text-text-primary text-xl font-bold shrink-0">{title}</h2>
             <div className="relative flex-1 min-w-[120px] max-w-xs ml-2">
-              <Search size={13} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
               <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search library…"
-                className="w-full pl-9 pr-3 py-2 glass-soft rounded-full text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 transition-all" />
+                className="w-full pl-8 pr-3 py-1.5 bg-surface-overlay border border-[var(--border)] rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
             </div>
-            <div className="flex items-center gap-3 ml-auto">
+            <div className="flex items-center gap-2 ml-auto">
               {libraryTracks.length > 0 && (
                 <>
-                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-4 py-2.5 bg-[var(--accent)] text-white rounded-full text-xs font-semibold hover:bg-[var(--accent-hover)] transition-all active:scale-95">
-                    <Play size={12} fill="white" /> Play
+                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition-colors">
+                    <Play size={12} fill="currentColor" /> Play
                   </button>
-                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-4 py-2.5 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all active:scale-95">
+                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors">
                     <Shuffle size={12} /> Shuffle
                   </button>
                 </>
               )}
               <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
-                className="flex items-center gap-1.5 px-4 py-2.5 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all disabled:opacity-40 active:scale-95"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors disabled:opacity-40"
                 title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}>
                 {libraryScanning ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
                 {libraryScanning ? 'Scanning…' : 'Scan'}
@@ -656,8 +624,8 @@ export default function LibraryTab(): JSX.Element {
           <EmptyState onOpenSettings={() => setShowSettings(true)} />
         ) : libraryScanning ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
-            <Loader2 size={32} className="animate-spin text-[var(--accent)]" />
-            <p className="text-[var(--text-muted)] text-sm">Scanning your library…</p>
+            <Loader2 size={32} className="animate-spin text-accent" />
+            <p className="text-text-muted text-sm">Scanning your library…</p>
           </div>
         ) : drill?.kind === 'album' ? (
           <AlbumDetail album={drill.album} onBack={() => setDrill(null)} onContext={openCtx} />
@@ -673,15 +641,15 @@ export default function LibraryTab(): JSX.Element {
           <SongList tracks={songs} onContext={openCtx}
             header={
               <div className="flex items-center gap-3 px-4 py-1.5 mb-1">
-                <div className="w-5 text-[10px] text-[var(--text-muted)] uppercase tracking-wider text-center">#</div>
+                <div className="w-5 text-[10px] text-text-muted uppercase tracking-wider text-center">#</div>
                 <div className="w-10 shrink-0" />
-                <button onClick={() => toggleSort('title')} className="flex-1 flex items-center gap-1 text-[10px] text-[var(--text-muted)] uppercase tracking-[0.12em] hover:text-[var(--text-primary)] transition-colors">
+                <button onClick={() => toggleSort('title')} className="flex-1 flex items-center gap-1 text-[10px] text-text-muted uppercase tracking-wider hover:text-text-primary transition-colors">
                   Title {sortField === 'title' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-                <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[180px] text-[10px] text-[var(--text-muted)] uppercase tracking-[0.12em] hover:text-[var(--text-primary)] transition-colors">
+                <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[180px] text-[10px] text-text-muted uppercase tracking-wider hover:text-text-primary transition-colors">
                   Album {sortField === 'album' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-                <button onClick={() => toggleSort('duration')} className="flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors shrink-0">
+                <button onClick={() => toggleSort('duration')} className="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors shrink-0">
                   <Clock size={11} /> {sortField === 'duration' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
                 <div className="w-7" />

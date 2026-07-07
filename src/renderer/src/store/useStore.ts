@@ -640,6 +640,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (!el) return
     const silent = !!opts?.silent
     const downloadId = `playlist-${key}`
+    // Songs already saved locally only need a quiet metadata refresh, not a
+    // real download — so the visible progress total is the count of songs
+    // actually missing, not the whole playlist. Otherwise re-downloading a
+    // playlist that's mostly already offline showed "Downloading 1/40, 2/40…"
+    // and looked like the whole thing was being fetched again.
+    const offlineTracksNow = get().offlineTracks
+    const missingCount = songIds.filter((id) => !offlineTracksNow[`jw-${id}`]).length
+    const total = missingCount
     // Background resyncs (startup/focus/15-min interval — see syncOfflinePlaylists)
     // re-run this for every already-synced playlist just to pick up metadata
     // changes; nearly everything is a fast no-op `skipped` hit. Surfacing that
@@ -647,20 +655,21 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // "Downloading… x/y" label (both read `offlineSync`) — made it look like
     // the same playlist was re-downloading every time the app loaded or
     // regained focus. Only flip on the visible "syncing" state when something
-    // is actually fetched (tracked below) or when the caller isn't silent.
+    // is actually fetched (tracked below) or when the caller isn't silent and
+    // there's actually something missing to fetch.
     let announced = false
     const announce = (): void => {
       if (announced) return
       announced = true
-      set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total: songIds.length } } }))
+      set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total } } }))
       if (get().downloads.some((d) => d.id === downloadId)) {
-        get().updateDownload(downloadId, { filename: name, state: 'downloading', percent: 0, received: 0, total: songIds.length, error: undefined })
+        get().updateDownload(downloadId, { filename: name, state: 'downloading', percent: 0, received: 0, total, error: undefined })
       } else {
-        get().addDownload({ id: downloadId, filename: name, type: 'playlist', state: 'downloading', percent: 0, received: 0, total: songIds.length })
+        get().addDownload({ id: downloadId, filename: name, type: 'playlist', state: 'downloading', percent: 0, received: 0, total })
       }
       get().setShowDownloadManager(true)
     }
-    if (!silent) announce()
+    if (!silent && total > 0) announce()
 
     // Byte-level size/speed tracking across the whole playlist — cumulativeBytes
     // is bytes already settled (finished or skipped tracks); the per-track
@@ -673,6 +682,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
     const trackIds: string[] = []
     let hadError = false
+    let doneCount = 0
     for (let i = 0; i < songIds.length; i++) {
       const songId = songIds[i]
       const id = `jw-${songId}`
@@ -704,7 +714,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
         }
         const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
         if (result?.error) throw new Error(result.error)
-        if (!result?.skipped) announce()
+        if (!result?.skipped) {
+          announce()
+          doneCount++
+        }
         cumulativeBytes += result?.size || 0
         set((s) => ({
           offlineTracks: {
@@ -719,8 +732,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
         offProgress?.()
       }
       if (announced) {
-        set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: i + 1, total: songIds.length } } }))
-        get().updateDownload(downloadId, { received: i + 1, percent: Math.round(((i + 1) / songIds.length) * 100), bytesReceived: cumulativeBytes })
+        set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: doneCount, total } } }))
+        get().updateDownload(downloadId, { received: doneCount, percent: total ? Math.round((doneCount / total) * 100) : 100, bytesReceived: cumulativeBytes })
       }
     }
     if (announced) get().updateDownload(downloadId, { speedBps: undefined })
@@ -730,7 +743,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: trackIds, name, updatedAt: Date.now() } } }))
     } catch (e) { console.error('offlineSetPlaylist error:', e) }
 
-    if (announced) set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: songIds.length, total: songIds.length } } }))
+    if (announced) set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: total, total } } }))
     if (announced) get().updateDownload(downloadId, { state: hadError ? 'error' : 'done', percent: 100, error: hadError ? 'Some tracks failed to download' : undefined })
     // Refresh from disk truth — pruning may have dropped tracks shared with
     // another playlist that's no longer synced.

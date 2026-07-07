@@ -185,6 +185,12 @@ export default function EditorPage(): JSX.Element {
 
   const [song,    setSong]    = useState<JWApiSong | null>(null)
   const [loading, setLoading] = useState(false)
+  // Set when a manual load (Edit click / proposal open) fails, so the
+  // "nothing to edit" effect below doesn't silently bounce the user to My
+  // Proposals — it used to swallow the fetch error entirely, making it look
+  // like clicking Edit just redirected there for no reason.
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const lastLoadIdRef = useRef<number | null>(null)
   const [eras,    setEras]    = useState<JWApiEra[]>([])
   // Set synchronously the instant a manual load (Edit click / proposal open)
   // is kicked off, before the async fetch resolves into `song`. Without this,
@@ -305,12 +311,16 @@ export default function EditorPage(): JSX.Element {
   }, [])
 
   const loadSong = useCallback(async (id: number): Promise<void> => {
+    lastLoadIdRef.current = id
     setLoading(true)
+    setLoadError(null)
     try {
       const s = await apiFetch<JWApiSong>(`/songs/${id}/`)
       setSong(s)
       populate(s)
-    } catch {} finally {
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load song')
+    } finally {
       setLoading(false)
       // Once a load completes (success or failure), `song` (if set) already
       // blocks the currently-playing prefill effect on its own — the ref's
@@ -410,9 +420,9 @@ export default function EditorPage(): JSX.Element {
   // the prefill effect above so `loading` is already true if a currently-
   // playing track's song is still being fetched.
   useEffect(() => {
-    if (!isEditor || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal) return
+    if (!isEditor || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError) return
     setActiveView('editor-profile')
-  }, [isEditor, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, setActiveView])
+  }, [isEditor, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
 
   useEffect(() => {
     if (!pendingEditProposal || !isEditor) return
@@ -623,6 +633,24 @@ export default function EditorPage(): JSX.Element {
         {loading ? (
           <div className="flex items-center justify-center h-40">
             <Loader2 size={18} className="animate-spin text-text-muted" />
+          </div>
+        ) : !song && !isNewSongDraft && loadError ? (
+          <div className="flex flex-col items-center justify-center gap-3 h-64 px-6 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-surface-overlay border border-[var(--border)] flex items-center justify-center">
+              <AlertCircle size={18} className="text-red-400" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-text-primary text-sm font-medium">Couldn't load song</p>
+              <p className="text-text-muted opacity-65 text-xs leading-relaxed">{loadError}</p>
+            </div>
+            {lastLoadIdRef.current != null && (
+              <button
+                onClick={() => { const id = lastLoadIdRef.current; if (id != null) loadSong(id) }}
+                className="text-xs font-medium text-accent hover:opacity-80 transition-opacity"
+              >
+                Try again
+              </button>
+            )}
           </div>
         ) : !song && !isNewSongDraft ? (
           <div className="flex flex-col items-center justify-center gap-3 h-64 px-6 text-center">
