@@ -179,6 +179,11 @@ export default function EditorPage(): JSX.Element {
   } = useStore()
   const isEditor = !!account?.is_editor
   const isAdmin  = !!account?.is_administrator
+  // Admins can edit songs too (SongContextMenu's canEdit check already grants
+  // them the "Edit" menu item) — gating this page on isEditor alone sent
+  // admin-only accounts straight to the "apply to be an editor" screen
+  // instead of the actual editor, every time they clicked Edit.
+  const canEdit  = isEditor || isAdmin
 
   const [application, setApplication] = useState<EditorApplication | null>(null)
   const [appLoading, setAppLoading]   = useState(false)
@@ -330,11 +335,11 @@ export default function EditorPage(): JSX.Element {
   }, [populate])
 
   useEffect(() => {
-    if (!isEditor) return
+    if (!canEdit) return
     apiFetch<JWApiEra[] | { results: JWApiEra[] }>('/eras/')
       .then(d => setEras(Array.isArray(d) ? d : (d as { results: JWApiEra[] }).results ?? []))
       .catch(() => undefined)
-  }, [isEditor])
+  }, [canEdit])
 
   useEffect(() => {
     if (!versionsEnabled || !song) { setVersionNum(''); setVersionTitle(''); setOwnGroupId(null); return }
@@ -392,12 +397,12 @@ export default function EditorPage(): JSX.Element {
   }
 
   useEffect(() => {
-    if (!pendingEditorSongId || !isEditor) return
+    if (!pendingEditorSongId || !canEdit) return
     manualLoadRef.current = true
     const id = pendingEditorSongId
     setPendingEditorSongId(null)
     loadSong(id)
-  }, [pendingEditorSongId, isEditor, setPendingEditorSongId, loadSong])
+  }, [pendingEditorSongId, canEdit, setPendingEditorSongId, loadSong])
 
   useEffect(() => {
     // Don't hijack a new-song draft (or an about-to-be-applied edit proposal)
@@ -408,11 +413,11 @@ export default function EditorPage(): JSX.Element {
     // null synchronously before their loadSong() promise resolves into
     // `song`, leaving a render where this effect's guard would otherwise
     // wrongly see "nothing pending" and prefill from whatever's playing.
-    if (!isEditor || song || pendingEditorSongId || isNewSongDraft || pendingEditProposal || manualLoadRef.current) return
+    if (!canEdit || song || pendingEditorSongId || isNewSongDraft || pendingEditProposal || manualLoadRef.current) return
     if (!currentTrack) return
     const id = userApi.trackIdToSongId(currentTrack.id)
     if (id) loadSong(id)
-  }, [isEditor, song, currentTrack, pendingEditorSongId, isNewSongDraft, pendingEditProposal, loadSong])
+  }, [canEdit, song, currentTrack, pendingEditorSongId, isNewSongDraft, pendingEditProposal, loadSong])
 
   // Landing here with nothing to edit (no song playing, no pending proposal/
   // draft) used to show a static "No song selected" placeholder — send editors
@@ -420,12 +425,12 @@ export default function EditorPage(): JSX.Element {
   // the prefill effect above so `loading` is already true if a currently-
   // playing track's song is still being fetched.
   useEffect(() => {
-    if (!isEditor || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError) return
+    if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError) return
     setActiveView('editor-profile')
-  }, [isEditor, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
+  }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
 
   useEffect(() => {
-    if (!pendingEditProposal || !isEditor) return
+    if (!pendingEditProposal || !canEdit) return
     manualLoadRef.current = true
     const { id, songId, proposedData: d, editorNotes } = pendingEditProposal
     setPendingEditProposal(null)
@@ -466,16 +471,16 @@ export default function EditorPage(): JSX.Element {
       setIsNewSongDraft(false)
       loadSong(songId).then(applyProposedData)
     }
-  }, [pendingEditProposal, isEditor, setPendingEditProposal, loadSong])
+  }, [pendingEditProposal, canEdit, setPendingEditProposal, loadSong])
 
   useEffect(() => {
-    if (!account || isEditor) { setApplication(null); return }
+    if (!account || canEdit) { setApplication(null); return }
     setAppLoading(true)
     userApi.getMyApplication()
       .then(r => setApplication(r.application))
       .catch(() => setApplication(null))
       .finally(() => setAppLoading(false))
-  }, [account, isEditor])
+  }, [account, canEdit])
 
   const current: Record<string, unknown> = {
     name, credited_artists: artists, album, category: cat,
@@ -606,7 +611,7 @@ export default function EditorPage(): JSX.Element {
     </div>
   )
 
-  if (!isEditor) return (
+  if (!canEdit) return (
     <ApplicationView
       application={application} loading={appLoading}
       onSubmitted={onSubmitted} onSignOut={onSignOut}

@@ -61,25 +61,26 @@ export default function Sidebar(): JSX.Element {
 
   return (
     <aside
-      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 border-r border-[var(--border)] transition-[width] duration-200 will-change-[width] ${collapsed ? 'w-16' : 'w-60'}`}
+      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 border-r border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
     >
       {isElectron && (
         <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
-      {/* Logo — hidden when collapsed (redundant with the WRLD tab icon) */}
-      {!collapsed && (
-        <div className="pt-5 pb-4 flex flex-col items-center gap-1 shrink-0 px-5">
+      {/* Logo — collapses to zero height (redundant with the WRLD tab icon) */}
+      <div
+        className="flex flex-col items-center gap-1 shrink-0 px-5 overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out"
+        style={{ maxHeight: collapsed ? '0px' : '200px', opacity: collapsed ? 0 : 1 }}
+      >
+        <div className="pt-5 pb-4 flex flex-col items-center gap-1">
           <img src={logo} alt="unreleased" className="object-contain h-32 w-auto" />
-          {showExpanded && (
-            <span
-              className="text-text-primary text-sm uppercase select-none"
-              style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 300, letterSpacing: '0.35em' }}
-            >
-              unreleased
-            </span>
-          )}
+          <span
+            className="text-text-primary text-sm uppercase select-none whitespace-nowrap"
+            style={{ fontFamily: "'Josefin Sans', sans-serif", fontWeight: 300, letterSpacing: '0.35em' }}
+          >
+            unreleased
+          </span>
         </div>
-      )}
+      </div>
 
       {/* Nav items */}
       <nav className="space-y-1 flex-1 px-3">
@@ -101,10 +102,15 @@ export default function Sidebar(): JSX.Element {
                   }
                 }}
                 title={collapsed ? label : undefined}
-                className="flex items-center flex-1 min-w-0 py-2 gap-3 px-0"
+                className={`flex items-center flex-1 min-w-0 py-2 transition-[padding-left,gap] duration-200 ${collapsed ? 'pl-3 gap-0' : 'pl-0 gap-3'}`}
               >
-                {icon}
-                {showExpanded && <span className="flex-1 text-left truncate">{label}</span>}
+                <span className="shrink-0 flex items-center justify-center">{icon}</span>
+                <span
+                  aria-hidden={collapsed}
+                  className={`flex-1 text-left truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                >
+                  {label}
+                </span>
               </button>
               {view === 'playlists' && showExpanded && playlists.length > 0 && (
                 <button
@@ -169,7 +175,7 @@ export default function Sidebar(): JSX.Element {
             className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
             <span className="w-6 h-6 flex items-center justify-center shrink-0"><LogIn size={18} /></span>
-            {showExpanded && <span>Log in</span>}
+            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Log in</span>
           </button>
         )}
         {isAdmin && (
@@ -183,7 +189,7 @@ export default function Sidebar(): JSX.Element {
             }`}
           >
             <span className="w-6 h-6 flex items-center justify-center shrink-0"><ShieldCheck size={18} /></span>
-            {showExpanded && <span>Admin</span>}
+            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Admin</span>
           </button>
         )}
         {/* Only on the web build — Electron users already have the app. */}
@@ -196,7 +202,7 @@ export default function Sidebar(): JSX.Element {
             className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
           >
             <span className="w-6 h-6 flex items-center justify-center shrink-0"><Download size={18} /></span>
-            {showExpanded && <span>Download app</span>}
+            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Download app</span>
           </a>
         )}
         <button
@@ -205,7 +211,7 @@ export default function Sidebar(): JSX.Element {
           className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
           <span className="w-6 h-6 flex items-center justify-center shrink-0"><Settings size={18} /></span>
-          {showExpanded && <span>Settings</span>}
+          <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Settings</span>
         </button>
 
         {/* Collapse toggle */}
@@ -215,7 +221,7 @@ export default function Sidebar(): JSX.Element {
           className="flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
           <span className="w-6 h-6 flex items-center justify-center shrink-0">{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</span>
-          {showExpanded && <span>Collapse</span>}
+          <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Collapse</span>
         </button>
       </div>
 
