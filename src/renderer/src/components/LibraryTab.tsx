@@ -623,26 +623,26 @@ export default function LibraryTab(): JSX.Element {
 
         {/* Toolbar (grid/list sections only; detail views carry their own header) */}
         {showToolbar && !showEmpty && !libraryScanning && (
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 pl-6 pr-4 pt-9 pb-3 glass border-b border-[var(--glass-border)] z-10" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 pl-6 pr-6 pt-9 pb-3 glass border-b border-[var(--glass-border)] z-10" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <h2 className="text-[var(--text-primary)] text-xl font-bold tracking-tight shrink-0">{title}</h2>
             <div className="relative flex-1 min-w-[120px] max-w-xs ml-2">
               <Search size={13} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
               <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search library…"
                 className="w-full pl-9 pr-3 py-2 glass-soft rounded-full text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 transition-all" />
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-3 ml-auto">
               {libraryTracks.length > 0 && (
                 <>
-                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-4 py-2 bg-[var(--accent)] text-white rounded-full text-xs font-semibold hover:bg-[var(--accent-hover)] transition-all active:scale-95">
+                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-4 py-2.5 bg-[var(--accent)] text-white rounded-full text-xs font-semibold hover:bg-[var(--accent-hover)] transition-all active:scale-95">
                     <Play size={12} fill="white" /> Play
                   </button>
-                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-4 py-2 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all active:scale-95">
+                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-4 py-2.5 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all active:scale-95">
                     <Shuffle size={12} /> Shuffle
                   </button>
                 </>
               )}
               <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
-                className="flex items-center gap-1.5 px-4 py-2 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all disabled:opacity-40 active:scale-95"
+                className="flex items-center gap-1.5 px-4 py-2.5 glass-strong glass-edge text-[var(--text-secondary)] rounded-full text-xs font-semibold hover:text-[var(--text-primary)] transition-all disabled:opacity-40 active:scale-95"
                 title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}>
                 {libraryScanning ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
                 {libraryScanning ? 'Scanning…' : 'Scan'}

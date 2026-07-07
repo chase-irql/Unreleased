@@ -452,7 +452,6 @@ export default function PlaylistsView(): JSX.Element {
 
   const loadDetail = useCallback(async (id: number, shared = false) => {
     const gen = ++loadGen.current
-    setLoadingDetail(true)
     // A cached cover renders immediately (no null/spinner flash) instead of
     // waiting on a network round trip for a playlist we've already opened.
     const cached = userApi.peekPlaylistCover(id)
@@ -463,6 +462,16 @@ export default function PlaylistsView(): JSX.Element {
     } else {
       setCoverData(null)
       setCoverLoading(true)
+    }
+    // A cached detail (tracks + metadata) renders instantly too — then we
+    // still refetch in the background to pick up changes made elsewhere,
+    // swapping in the fresh result without ever showing a loading spinner.
+    const cachedDetail = userApi.peekPlaylistDetail(id)
+    if (cachedDetail) {
+      setDetail(cachedDetail)
+      setLoadingDetail(false)
+    } else {
+      setLoadingDetail(true)
     }
     try {
       const result = shared ? await userApi.getPublicPlaylist(id) : await userApi.getPlaylist(id)
@@ -480,7 +489,7 @@ export default function PlaylistsView(): JSX.Element {
         }).catch(() => { if (gen === loadGen.current) setCoverLoading(false) })
       }
     } catch {
-      if (gen === loadGen.current) setDetail(null)
+      if (gen === loadGen.current && !cachedDetail) setDetail(null)
     } finally {
       if (gen === loadGen.current) setLoadingDetail(false)
     }

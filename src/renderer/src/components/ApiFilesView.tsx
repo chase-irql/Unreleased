@@ -527,13 +527,13 @@ export default function ApiFilesView(): JSX.Element {
     <>
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Header */}
-        <div className="px-5 pt-5 pb-3 shrink-0">
+        <div className={`px-5 pb-3 shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <HardDrive size={18} className="text-text-muted" />
               <h1 className="text-text-primary text-xl font-bold">API Files</h1>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               {/* Sort controls */}
               <div className="flex items-center gap-1 text-text-muted">
                 {(['name', 'type', 'size'] as SortBy[]).map((by) => (
@@ -553,29 +553,29 @@ export default function ApiFilesView(): JSX.Element {
                 ))}
               </div>
               {/* View toggle */}
-              <div className="flex items-center bg-surface-overlay rounded-lg p-0.5">
+              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5">
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                   title="List view"
                 ><LayoutList size={15} /></button>
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                   title="Grid view"
                 ><LayoutGrid size={15} /></button>
               </div>
               {/* API / Local toggle (Electron only) */}
               {isElectron && (
-                <div className="flex items-center bg-surface-overlay rounded-lg p-0.5 gap-0.5">
+                <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-1">
                   <button
                     onClick={() => setLocalMode(false)}
-                    className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${!localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${!localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
                     title="Browse API files"
                   ><Globe size={12} /> API</button>
                   <button
                     onClick={() => setLocalMode(true)}
-                    className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
                     title="Browse local files"
                   ><MonitorSmartphone size={12} /> Local</button>
                 </div>

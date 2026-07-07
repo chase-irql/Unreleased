@@ -79,7 +79,7 @@ export default function DownloadManager(): JSX.Element | null {
   const hasDownloads = downloads.length > 0
 
   return (
-    <div ref={panelRef} className="fixed top-0 z-[9990]" style={{ right: '132px' }}>
+    <div ref={panelRef} className="fixed top-0 z-[9990]" style={{ right: '144px' }}>
       {/* Trigger icon */}
       <button
         onClick={() => setShowDownloadManager(!showDownloadManager)}
