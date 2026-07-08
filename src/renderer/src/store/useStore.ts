@@ -198,6 +198,8 @@ interface AppActions {
   completeDiscordLogin: (code: string, state: string) => Promise<void>
   logoutAccount: () => Promise<void>
   refreshPlaylists: () => Promise<void>
+  prefetchPlaylistDetails: () => Promise<void>
+  prefetchApiData: () => Promise<void>
   setPendingPlaylistId: (id: number | null) => void
   setPlaylistsSelectedId: (id: number | null) => void
   setPlaylistsSelectedLocalId: (id: string | null) => void
@@ -249,6 +251,11 @@ export type AppStore = QueueSlice & AppState & AppActions
 
 // Dedup flag: prevents concurrent /playlists/ fetches
 let _playlistsInFlight = false
+// Dedup flag: prevents the startup detail/cover prefetch from running twice
+// (e.g. loadAccount racing with a later refreshPlaylists on the same session)
+let _detailsPrefetchInFlight = false
+// Dedup flag: same idea for the Tracker/Files offline-cache warm-up
+let _apiPrefetchInFlight = false
 
 export const useStore = create<AppStore>((set, get, store) => ({
   // ── Queue slice (all queue + playback logic) ───────────────────────────────
@@ -433,6 +440,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
       ls.set('likedTrackIds', merged)
     } catch {}
     await get().refreshPlaylists()
+    // Fire-and-forget: warm playlist tracks + covers in the background so the
+    // Playlists page is ready before the user ever navigates to it.
+    get().prefetchPlaylistDetails()
   },
 
   loginWithDiscord: async () => {
@@ -474,6 +484,61 @@ export const useStore = create<AppStore>((set, get, store) => ({
       set({ playlists })
     } catch {}
     finally { _playlistsInFlight = false }
+  },
+
+  // Warm the in-memory (and, via the API layer, localStorage) caches for every
+  // playlist's tracks + cover right after the summaries load — so opening the
+  // Playlists page and any individual playlist renders instantly instead of
+  // showing a spinner while it fetches. Runs in the background off startup;
+  // skips playlists already cached, so repeat calls are cheap and it never
+  // re-fetches what a prior session-warmed peek already holds. Concurrency is
+  // capped so this stays low-priority and doesn't stall foreground requests.
+  prefetchPlaylistDetails: async () => {
+    if (_detailsPrefetchInFlight) return
+    const targets = get().playlists.filter(p => !userApi.peekPlaylistDetail(p.id))
+    if (!targets.length) return
+    _detailsPrefetchInFlight = true
+    try {
+      const CONCURRENCY = 3
+      let idx = 0
+      const run = async (): Promise<void> => {
+        while (idx < targets.length) {
+          const p = targets[idx++]
+          // getPlaylist warms the track/detail cache; getPlaylistCover warms
+          // the cover cache (and no-ops if already cached). Failures are
+          // swallowed — a prefetch miss just means the normal on-open fetch
+          // happens later, so it must never surface as an error.
+          await userApi.getPlaylist(p.id).catch(() => undefined)
+          await userApi.getPlaylistCover(p.id).catch(() => undefined)
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, run))
+    } finally {
+      _detailsPrefetchInFlight = false
+    }
+  },
+
+  // Warm the offline cache for the Tracker and Files views on startup, so those
+  // pages are ready — and render instantly when offline — before the user ever
+  // navigates to them. These calls go through apiFetch's cacheKey, which is the
+  // same offline fallback the views themselves read from on a network failure,
+  // and the URLs/params match the views' own first fetches exactly so the cache
+  // keys line up (tracker: stats + eras + first unfiltered song page; files:
+  // the root folder listing). Fire-and-forget and failure-tolerant — a miss
+  // just means the view does its normal fetch later.
+  prefetchApiData: async () => {
+    if (_apiPrefetchInFlight) return
+    _apiPrefetchInFlight = true
+    try {
+      await Promise.allSettled([
+        apiFetch('/stats/'),
+        apiFetch('/eras/'),
+        apiFetch('/songs/', { page: 1, page_size: 50 }),
+        apiFetch('/files/browse/'),
+      ])
+    } finally {
+      _apiPrefetchInFlight = false
+    }
   },
 
   // ── Editor ────────────────────────────────────────────────────────────────

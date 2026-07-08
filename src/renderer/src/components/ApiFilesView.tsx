@@ -8,6 +8,7 @@ import {
 import { useStore } from '../store/useStore'
 import {
   apiFetch,
+  apiPeek,
   buildStreamUrl,
   buildCoverArtUrl,
   JWApiFileEntry,
@@ -302,8 +303,19 @@ export default function ApiFilesView(): JSX.Element {
     // Navigating to a folder (including clicking a directory result while
     // searching) always exits search mode and lands in normal browsing.
     setSearch(''); setDebouncedSearch('')
-    setLoading(true)
-    setError(null)
+    // Stale-while-revalidate: if this folder is already in the offline cache,
+    // paint it instantly (no spinner) and refresh silently in the background.
+    // Only show the loading state when there's nothing cached to fall back on.
+    const cached = apiPeek<JWApiBrowseResponse>('/files/browse/', path ? { path } : {})
+    if (cached) {
+      setEntries(parseEntries(cached))
+      setCurrentPath(path)
+      setError(null)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const data = await apiFetch<JWApiBrowseResponse>('/files/browse/', path ? { path } : {})
       const items = parseEntries(data)
@@ -314,7 +326,9 @@ export default function ApiFilesView(): JSX.Element {
       setCurrentPath(path)
       setEntries(items)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load')
+      // Keep the cached listing visible on a network failure — only surface the
+      // error when we had nothing to show in the first place.
+      if (!cached) setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
       setLoading(false)
     }

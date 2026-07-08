@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
   X, Moon, Sun, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getToken } from '../lib/userApi'
@@ -580,6 +580,15 @@ export default function Settings(): JSX.Element {
                 <Row icon={MessageCircle} iconColor="#5865f2" label="Show Discord Status">
                   <Toggle on={appSettings.discordRpcEnabled} onClick={() => setSetting('discordRpcEnabled', !appSettings.discordRpcEnabled)} />
                 </Row>
+                <Row icon={FileText} iconColor="#6b7280" label="Diagnostic logs" sub="Opens the folder with current-run.log & previous-run.log">
+                  <button
+                    onClick={() => el?.openLogsFolder?.()}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
+                  >
+                    <FolderOpen size={13} />
+                    Open logs
+                  </button>
+                </Row>
               </div>
             )}
 
@@ -683,7 +692,7 @@ export default function Settings(): JSX.Element {
                     },
                     {
                       q: 'Who are you?',
-                      a: "We are passionate Juice WRLD fans and developers who wanted to create an accessible platform for others to explore and analyze Juice WRLD musical legacy.",
+                      a: "We are passionate Juice WRLD fans and developers who wanted to create an accessible platform for others to explore and analyze Juice WRLD musical legacy. Shoutout to hypixelforums on Discord for the bug feedback.",
                     },
                     {
                       q: 'Why did you build this?',
