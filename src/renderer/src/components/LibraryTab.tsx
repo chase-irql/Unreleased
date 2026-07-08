@@ -591,7 +591,7 @@ export default function LibraryTab(): JSX.Element {
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {/* Toolbar (grid/list sections only; detail views carry their own header) */}
         {showToolbar && !showEmpty && !libraryScanning && (
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ WebkitAppRegion: 'no-drag', paddingRight: (window as any).electron ? 148 : undefined } as React.CSSProperties}>
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ WebkitAppRegion: 'no-drag', paddingRight: (window as any).electron ? 188 : undefined } as React.CSSProperties}>
             <h2 className="text-text-primary text-xl font-bold shrink-0">{title}</h2>
             <div className="relative flex-1 min-w-[120px] max-w-xs ml-2">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />

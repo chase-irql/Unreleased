@@ -425,7 +425,15 @@ export default function EditorPage(): JSX.Element {
   // the prefill effect above so `loading` is already true if a currently-
   // playing track's song is still being fetched.
   useEffect(() => {
-    if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError) return
+    // manualLoadRef guards a cross-store race: the Edit-click load effect above
+    // clears pendingEditorSongId (Zustand) and flips `loading` on (React state)
+    // in the same tick, but those commit in separate passes — leaving a render
+    // where pendingEditorSongId is already null yet `loading` is still false.
+    // Without this guard that window looked like "nothing to edit" and bounced
+    // the user to My Proposals the instant they clicked Edit. The ref is set
+    // synchronously before that window opens and cleared once loadSong settles
+    // (by which point `song`/`loadError` block this effect on their own).
+    if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError || manualLoadRef.current) return
     setActiveView('editor-profile')
   }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
 

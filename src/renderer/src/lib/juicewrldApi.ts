@@ -1,5 +1,6 @@
 import { Track } from '../types'
 import { apiRequest } from './apiClient'
+import { cacheGet } from './apiCache'
 
 export const JWAPI_BASE = 'https://juicewrldapi.com/juicewrld'
 
@@ -86,20 +87,37 @@ export type JWApiBrowseResponse = JWApiFileEntry[] | { items: JWApiFileEntry[]; 
 
 // ─── Fetch util ───────────────────────────────────────────────────────────────
 
-export async function apiFetch<T>(
-  path: string,
-  params: Record<string, string | number | null | undefined> = {}
-): Promise<T> {
+// Builds the same URL/cache key apiFetch uses, so apiPeek below can read the
+// exact entry apiFetch wrote for a given path+params.
+function apiUrl(path: string, params: Record<string, string | number | null | undefined> = {}): string {
   const url = new URL(JWAPI_BASE + path)
   for (const [k, v] of Object.entries(params)) {
     if (v != null) url.searchParams.set(k, String(v))
   }
-  const cacheKey = url.toString()
+  return url.toString()
+}
+
+export async function apiFetch<T>(
+  path: string,
+  params: Record<string, string | number | null | undefined> = {}
+): Promise<T> {
+  const cacheKey = apiUrl(path, params)
   return apiRequest<T>(cacheKey, {
     cache: 'no-store',
     cacheKey,
     parseError: async (res) => `JW API error ${res.status}`,
   })
+}
+
+// Synchronous read of the offline cache for a path+params — returns the last
+// successful apiFetch response for that exact key, or undefined. Lets views do
+// stale-while-revalidate: render the cached copy instantly on mount, then let
+// their normal apiFetch refresh it in the background.
+export function apiPeek<T>(
+  path: string,
+  params: Record<string, string | number | null | undefined> = {}
+): T | undefined {
+  return cacheGet<T>(apiUrl(path, params))
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────

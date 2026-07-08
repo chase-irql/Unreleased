@@ -83,7 +83,7 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary } = useStore()
+  const { showNowPlaying, showQueue, showSettings, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStore()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -155,6 +155,10 @@ export default function App(): JSX.Element {
     const interval = setInterval(() => scanLibrary(), 15 * 60 * 1000)
     return () => { window.removeEventListener('focus', onFocus); clearInterval(interval) }
   }, [libraryAutoRefresh, libraryFolders, loadLibrary, scanLibrary])
+
+  // Warm the Tracker/Files offline cache on startup (public data — no auth
+  // needed), so those views are ready before the user first opens them.
+  useEffect(() => { prefetchApiData() }, [prefetchApiData])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')

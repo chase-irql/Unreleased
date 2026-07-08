@@ -12,7 +12,7 @@ import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
 import { CompactGroupRow, useExpandedGroups } from './CompactGroupRow'
 import {
-  apiFetch, songToTrack, parseDuration, CATEGORY_LABELS, JWAPI_BASE,
+  apiFetch, apiPeek, songToTrack, parseDuration, CATEGORY_LABELS, JWAPI_BASE,
   JWApiSong, JWApiPaginatedResponse, JWApiStats, JWApiEra,
 } from '../lib/juicewrldApi'
 import { fisherYates } from '../store/queueSlice'
@@ -22,6 +22,7 @@ import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTit
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { fetchAllCompactGroups, filterCompactGroups } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
+import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'grid'
@@ -741,12 +742,32 @@ export default function ApiTrackerView(): JSX.Element {
     return () => { cancelled = true }
   }, [compactView])
 
-  const [stats, setStats] = useState<JWApiStats | null>(null)
-  const [eras, setEras] = useState<JWApiEra[]>([])
-  const [songs, setSongs] = useState<JWApiSong[]>([])
-  const [count, setCount] = useState(0)
+  // Stale-while-revalidate: seed from the offline cache synchronously so the
+  // list renders instantly on open, then the effects below refetch and replace
+  // it in the background. The seeded first-songs page must use the exact same
+  // params as the initial scroll-mode fetch (unfiltered: no search from the
+  // saved query, no category/era, page 1) or the cache key won't match. Read
+  // once via a ref so the per-render path never re-parses localStorage.
+  const seedRef = useRef<JWApiPaginatedResponse | undefined>(undefined)
+  const seededRef = useRef(false)
+  if (!seededRef.current) {
+    seededRef.current = true
+    const initialSearch = localStorage.getItem(LS_TRACKER_SEARCH) || ''
+    seedRef.current = apiPeek<JWApiPaginatedResponse>('/songs/', {
+      searchall: initialSearch || undefined, category: undefined, era: undefined,
+      page: 1, page_size: PAGE_SIZE,
+    })
+  }
+  const cachedFirstPage = seedRef.current
+  const [stats, setStats] = useState<JWApiStats | null>(() => apiPeek<JWApiStats>('/stats/') ?? null)
+  const [eras, setEras] = useState<JWApiEra[]>(() => {
+    const c = apiPeek<JWApiEra[] | { results: JWApiEra[] }>('/eras/')
+    return c ? (Array.isArray(c) ? c : c.results ?? []) : []
+  })
+  const [songs, setSongs] = useState<JWApiSong[]>(() => cachedFirstPage?.results ?? [])
+  const [count, setCount] = useState(() => cachedFirstPage?.count ?? 0)
   const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(false)
+  const [hasMore, setHasMore] = useState(() => cachedFirstPage ? cachedFirstPage.next !== null : false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -836,6 +857,8 @@ export default function ApiTrackerView(): JSX.Element {
     let cancelled = false
     loadingRef.current = true
     setLoading(true); setError(null); setSongs([]); setHasMore(false); setCount(0)
+    const t0 = performance.now()
+    runLog('tracker-sort', `start field=${orderField} dir=${orderDir} search=${JSON.stringify(debouncedSearch)} category=${category || '-'} era=${era || '-'}`)
     ;(async () => {
       const all: JWApiSong[] = []
       let p = 1
@@ -852,11 +875,13 @@ export default function ApiTrackerView(): JSX.Element {
           all.push(...data.results)
           setSongs([...all]) // progressive display while loading
           setCount(data.count)
+          runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${data.count}`)
           if (!data.next) break
           p++
         }
+        if (!cancelled) runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
       } catch (e) {
-        if (!cancelled) setError((e as Error).message)
+        if (!cancelled) { setError((e as Error).message); runLog('tracker-sort', 'ERROR', e as Error) }
       } finally {
         if (!cancelled) { loadingRef.current = false; setLoading(false) }
       }

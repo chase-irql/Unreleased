@@ -52,6 +52,47 @@ function log(...args) {
   if (isDev) console.log(...args)
 }
 
+// ── Run / crash logging ─────────────────────────────────────────────────────
+// A rolling log of the current run. At startup the previous run's log is kept
+// as `previous-run.log` so that after a hang/crash (or a plain restart) we can
+// still read what the app was doing right before it died — even when the app
+// never showed an error. Renderer-side breadcrumbs are forwarded here over IPC
+// (see 'run-log' handler + preload logRun), so a browser-side freeze like the
+// tracker's "sort by name" full-library load leaves a trail too.
+const runLogPath = path.join(app.getPath('userData'), 'current-run.log')
+const prevRunLogPath = path.join(app.getPath('userData'), 'previous-run.log')
+try {
+  if (fs.existsSync(runLogPath)) fs.renameSync(runLogPath, prevRunLogPath)
+} catch {}
+
+function runLog(scope, ...args) {
+  const msg = args
+    .map((a) => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a) } catch { return String(a) } })()))
+    .join(' ')
+  const line = `[${new Date().toISOString()}] [${scope}] ${msg}\n`
+  try { fs.appendFileSync(runLogPath, line) } catch {}
+  if (isDev) console.log(`[${scope}]`, ...args)
+}
+
+function memSnapshot() {
+  try {
+    const m = process.memoryUsage()
+    const mb = (n) => Math.round(n / 1024 / 1024)
+    return `rss=${mb(m.rss)}MB heapUsed=${mb(m.heapUsed)}MB`
+  } catch { return '' }
+}
+
+runLog('main', `=== app start === v${app.getVersion?.() || '?'} pid=${process.pid} ${memSnapshot()}`)
+
+// Main-process crashes: log them (and to updater.log) before the app dies.
+process.on('uncaughtException', (err) => {
+  runLog('main', 'UNCAUGHT EXCEPTION:', err?.stack || String(err))
+  log('Uncaught exception:', err?.stack || String(err))
+})
+process.on('unhandledRejection', (reason) => {
+  runLog('main', 'UNHANDLED REJECTION:', reason?.stack || String(reason))
+})
+
 // ── Shared file download helper (used by force-update + offline library) ──────
 function downloadFile(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
@@ -118,6 +159,21 @@ function createWindow() {
   })
 
   mainWindow.once('ready-to-show', () => mainWindow.show())
+
+  // Renderer crash / freeze diagnostics. `render-process-gone` fires when the
+  // renderer dies (crash, OOM-kill) even though the main process — and thus the
+  // app window frame — may survive; `unresponsive` fires when the renderer is
+  // frozen (e.g. a synchronous blowup like sorting/rendering a huge list), which
+  // is the classic "nearly crashed my PC" hang. Both land in the run log.
+  mainWindow.webContents.on('render-process-gone', (_, details) => {
+    runLog('renderer', `PROCESS GONE reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+  mainWindow.webContents.on('unresponsive', () => {
+    runLog('renderer', `UNRESPONSIVE (renderer frozen) ${memSnapshot()}`)
+  })
+  mainWindow.webContents.on('responsive', () => {
+    runLog('renderer', 'responsive again')
+  })
 
   mainWindow.on('close', (e) => {
     if (!isQuitting && appSettings.minimizeToTray && tray) {
@@ -250,7 +306,7 @@ ipcMain.handle('maximize-window', () => {
   else mainWindow?.maximize()
 })
 ipcMain.handle('close-window', () => {
-  isQuitting = true
+  if (!appSettings.minimizeToTray || !tray) isQuitting = true
   mainWindow?.close()
 })
 ipcMain.handle('is-maximized', () => mainWindow?.isMaximized() ?? false)
@@ -297,6 +353,13 @@ ipcMain.handle('pick-folder', async () => {
 })
 
 ipcMain.handle('open-path', (_, p) => shell.openPath(p))
+
+// ── IPC: run logging ──────────────────────────────────────────────────────────
+// Renderer breadcrumbs (window errors, unhandled rejections, and explicit
+// diagnostic logs like the tracker sort loop) funnel here into the run log.
+ipcMain.on('run-log', (_, scope, message) => runLog(scope || 'renderer', message))
+ipcMain.handle('open-logs-folder', () => shell.showItemInFolder(runLogPath))
+ipcMain.handle('get-log-paths', () => ({ current: runLogPath, previous: prevRunLogPath }))
 
 // ── IPC: app settings ─────────────────────────────────────────────────────────
 ipcMain.handle('get-app-settings', () => appSettings)

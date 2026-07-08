@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('electron', {
   getAppSettings:  ()           => ipcRenderer.invoke('get-app-settings'),
   setAppSetting:   (key, value) => ipcRenderer.invoke('set-app-setting', key, value),
 
+  // Run/crash logging — fire-and-forget breadcrumbs into the run log
+  runLog:        (scope, message) => ipcRenderer.send('run-log', scope, message),
+  openLogsFolder: ()             => ipcRenderer.invoke('open-logs-folder'),
+  getLogPaths:   ()              => ipcRenderer.invoke('get-log-paths'),
+
   // Discord Rich Presence
   discordRpcSetActivity: (activity) => ipcRenderer.invoke('discord-rpc-set-activity', activity),
   discordRpcClearActivity: ()       => ipcRenderer.invoke('discord-rpc-clear-activity'),
