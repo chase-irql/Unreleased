@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
   X, Moon, Sun, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getToken } from '../lib/userApi'
+import { cacheClearAll } from '../lib/apiCache'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -121,6 +122,7 @@ export default function Settings(): JSX.Element {
   })
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
+  const [cacheCleared, setCacheCleared] = useState<number | null>(null)
 
   const [tab, setTab] = useState<Tab>('appearance')
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
@@ -437,7 +439,7 @@ export default function Settings(): JSX.Element {
                   iconColor="#059669"
                   label="Prefer OG version"
                   sub="Play a track's linked OG file instead, when one exists"
-                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
+                  labelExtra={<div className="ml-2 translate-y-[6px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
                 />
                 <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
                   <div className="flex items-center gap-2">
@@ -595,6 +597,15 @@ export default function Settings(): JSX.Element {
                   >
                     <FolderOpen size={13} />
                     Open logs
+                  </button>
+                </Row>
+                <Row icon={Trash2} iconColor="#dc2626" label="Clear cache" sub="Removes cached API responses used for offline browsing">
+                  <button
+                    onClick={() => { setCacheCleared(cacheClearAll()); setTimeout(() => setCacheCleared(null), 3000) }}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
+                  >
+                    <Trash2 size={13} />
+                    {cacheCleared !== null ? `Cleared ${cacheCleared}` : 'Clear cache'}
                   </button>
                 </Row>
               </div>

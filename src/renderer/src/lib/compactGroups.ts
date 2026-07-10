@@ -21,20 +21,28 @@ export interface CompactGroup<T> {
 }
 
 function buildGroups<T>(metas: SongVersionMeta[], getItem: (songId: number) => T | undefined): CompactGroup<T>[] {
-  const byGroup = new Map<number, SongVersionMeta[]>()
+  // Keyed by songId within each group — the /versions/ table has no
+  // uniqueness constraint, and dozens of songs actually have two rows in the
+  // same group, which showed up here as the same song listed twice inside an
+  // expanded group (with duplicate React keys to boot).
+  const byGroup = new Map<number, Map<number, SongVersionMeta>>()
   for (const meta of metas) {
     if (!meta.versionTitle) continue
-    if (!byGroup.has(meta.groupId)) byGroup.set(meta.groupId, [])
-    byGroup.get(meta.groupId)!.push(meta)
+    if (!byGroup.has(meta.groupId)) byGroup.set(meta.groupId, new Map())
+    const members = byGroup.get(meta.groupId)!
+    if (!members.has(meta.songId)) members.set(meta.songId, meta)
   }
   return [...byGroup.entries()]
-    .map(([groupId, groupMetas]) => ({
-      groupId,
-      title: groupMetas.find(m => m.versionTitle)?.versionTitle ?? '',
-      members: groupMetas
-        .map(m => ({ item: getItem(m.songId), meta: m }))
-        .filter((x): x is { item: T; meta: SongVersionMeta } => !!x.item),
-    }))
+    .map(([groupId, groupMetas]) => {
+      const metaList = [...groupMetas.values()]
+      return {
+        groupId,
+        title: metaList.find(m => m.versionTitle)?.versionTitle ?? '',
+        members: metaList
+          .map(m => ({ item: getItem(m.songId), meta: m }))
+          .filter((x): x is { item: T; meta: SongVersionMeta } => !!x.item),
+      }
+    })
     .filter(g => g.members.length > 0)
 }
 

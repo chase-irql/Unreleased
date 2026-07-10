@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check, Download } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check, Download, History } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, formatDuration, downloadSyncedLyrics } from '../lib/lyrics'
@@ -1427,6 +1427,7 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
 // panel matching the rest of the page instead of the app-wide QueuePanel's
 // light theme (which App.tsx suppresses while this page is active, mirroring
 // how it already suppresses the standalone NowPlaying panel here).
+const WRLD_MAX_HISTORY_SHOWN = 10 // matches QueuePanel's MAX_HISTORY_SHOWN
 const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   onClose: () => void
   // 'inline' pops up directly under the interface column on desktop (the
@@ -1435,19 +1436,23 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   // 'panel' fills the desktop right column in place of the lyrics view.
   variant: 'inline' | 'sheet' | 'panel'
 }): JSX.Element {
-  const { queue, queueIndex, currentTrack, isPlaying, shuffle, playTrack, removeFromQueue, clearQueue, reorderQueue } = useStore(useShallow(s => ({
+  const { queue, queueIndex, currentTrack, isPlaying, shuffle, radioMode, playTrack, jumpToTrack, removeFromQueue, clearQueue, reorderQueue } = useStore(useShallow(s => ({
     queue: s.queue,
     queueIndex: s.queueIndex,
     currentTrack: s.currentTrack,
     isPlaying: s.isPlaying,
     shuffle: s.shuffle,
+    radioMode: s.radioMode,
     playTrack: s.playTrack,
+    jumpToTrack: s.jumpToTrack,
     removeFromQueue: s.removeFromQueue,
     clearQueue: s.clearQueue,
     reorderQueue: s.reorderQueue,
   })))
 
+  const history = queue.slice(0, queueIndex) // played tracks, oldest first
   const upcoming = queue.slice(queueIndex + 1)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
 
@@ -1501,6 +1506,43 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
           .wrld-queue-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
           .wrld-queue-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
         `}</style>
+        {/* ── History ── (collapsible, above now playing — same behavior as
+            the app-wide QueuePanel's history section, restyled for this
+            panel's glass theme). During radio the queue holds *only* played
+            history, so without this the panel looked empty in radio mode. */}
+        {history.length > 0 && (
+          <div className="px-3 pt-3 pb-1">
+            <button
+              onClick={() => setHistoryOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-1 mb-1 text-white/50 hover:text-white/80 transition-colors w-full text-left"
+            >
+              <History size={11} />
+              <span className="text-[10px] uppercase tracking-widest flex-1 font-semibold">
+                History · {history.length}
+              </span>
+              <ChevronDown size={12} className={`transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {historyOpen && (
+              <div className="opacity-60">
+                {[...history].reverse().slice(0, WRLD_MAX_HISTORY_SHOWN).map((track, i) => (
+                  <WrldQueueRow
+                    key={`hist-${track.id}-${i}`}
+                    track={track}
+                    isActive={false}
+                    isPlaying={false}
+                    onPlay={() => radioMode ? jumpToTrack(track) : playTrack(track)}
+                  />
+                ))}
+                {history.length > WRLD_MAX_HISTORY_SHOWN && (
+                  <p className="text-white/40 text-[10px] text-center py-1">
+                    +{history.length - WRLD_MAX_HISTORY_SHOWN} older
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {currentTrack ? (
           <div className="px-3 py-3">
             <p className="text-white/50 text-[10px] uppercase tracking-widest px-1 mb-2 font-semibold">Now Playing</p>
