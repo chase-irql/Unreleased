@@ -22,6 +22,7 @@ import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTit
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
+import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
@@ -653,6 +654,242 @@ const SongRow = memo(function SongRow({
 // the memo is a no-op. Without it, compact view froze when selecting songs
 // across many expanded groups.
 
+// ─── Virtualized lists ────────────────────────────────────────────────────────
+// Row heights in this view are responsive (40px thumb + py-2.5 on mobile,
+// 36px + py-2 at md:), so the virtual-window strides below need to know
+// which side of the md: breakpoint we're on.
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)')
+    const onChange = (e: MediaQueryListEvent): void => setIsDesktop(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return isDesktop
+}
+
+// ─── Compact-view group list (virtualized) ────────────────────────────────────
+// Compact view renders every titled version group app-wide (1200+ rows, each
+// with cover art). Mounted all at once, that's enough DOM that a single
+// expand/collapse (one relayout + style recalc across all of it) could hang
+// the renderer outright — the same many-rows failure mode useVirtualWindow
+// already solves for the local library. Groups and the expanded groups'
+// member rows are flattened into one fixed-stride row list so only the
+// visible slice is ever mounted.
+type CompactListRow =
+  | { key: string; kind: 'group'; group: CompactGroup<JWApiSong> }
+  | { key: string; kind: 'member'; item: JWApiSong; meta: SongVersionMeta; isLast: boolean }
+
+function CompactGroupList({
+  scrollRef, groups, expanded, onToggleGroup, onGroupContextMenu,
+  onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement>
+  groups: CompactGroup<JWApiSong>[]
+  expanded: Set<number>
+  onToggleGroup: (group: CompactGroup<JWApiSong>) => void
+  onGroupContextMenu: (group: CompactGroup<JWApiSong>, e: React.MouseEvent) => void
+  onPlay: (song: JWApiSong) => void
+  onCategoryClick: (cat: Category) => void
+  onEraClick: (era: string) => void
+  onInfo: (song: JWApiSong) => void
+  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
+  selectMode: boolean
+  selected: Map<number, JWApiSong>
+  onToggleSelect: (song: JWApiSong) => void
+}): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Row stride mirrors CompactGroupRow/SongRow's natural height plus the 2px
+  // gap the old space-y-0.5 flow layout provided — absolutely positioned rows
+  // have to encode that spacing themselves.
+  const isDesktop = useIsDesktop()
+  const rowH = isDesktop ? 52 : 60
+  const stride = rowH + 2
+
+  const rows = useMemo(() => {
+    const out: CompactListRow[] = []
+    for (const group of groups) {
+      out.push({ key: `g${group.groupId}`, kind: 'group', group })
+      if (expanded.has(group.groupId)) {
+        group.members.forEach((m, i) => out.push({
+          key: `g${group.groupId}-s${m.item.id}`, kind: 'member',
+          item: m.item, meta: m.meta, isLast: i === group.members.length - 1,
+        }))
+      }
+    }
+    return out
+  }, [groups, expanded])
+
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows.length, stride)
+
+  return (
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {rows.slice(start, end).map((row, i) => {
+        const top = (start + i) * stride
+        if (row.kind === 'group') {
+          const cat = groupCategory(row.group.members)
+          return (
+            <div key={row.key} style={{ position: 'absolute', top, left: 0, right: 0, height: rowH }}>
+              <CompactGroupRow
+                coverTrack={songToTrack(row.group.members[0].item)}
+                title={row.group.title}
+                count={row.group.members.length}
+                expanded={expanded.has(row.group.groupId)}
+                onToggle={() => onToggleGroup(row.group)}
+                onContextMenu={(e) => onGroupContextMenu(row.group, e)}
+                categoryLabel={CATEGORY_LABELS[cat] ?? cat}
+                categoryClassName={CATEGORY_COLORS[cat]}
+              />
+            </div>
+          )
+        }
+        return (
+          <div
+            key={row.key}
+            className="ml-4 pl-4 border-l border-[var(--border)]"
+            // Non-last member wrappers span the full stride so the indent
+            // rail stays continuous across the 2px row gap.
+            style={{ position: 'absolute', top, left: 0, right: 0, height: row.isLast ? rowH : stride }}
+          >
+            <SongRow
+              song={row.item}
+              onPlay={onPlay}
+              onCategoryClick={onCategoryClick}
+              onEraClick={onEraClick}
+              onInfo={onInfo}
+              onContextMenu={onContextMenu}
+              selectMode={selectMode}
+              selected={selected.has(row.item.id)}
+              onToggleSelect={onToggleSelect}
+              versionLabel={row.meta.version}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Flat song list / grid (virtualized) ──────────────────────────────────────
+// The flat views accumulate without bound — infinite scroll appends pages
+// forever, and sort mode outright loads the whole ~2500-song catalog (that
+// load is what originally hung the renderer hard enough to look like a PC
+// freeze; see the tracker-sort runLog breadcrumbs). Windowing caps the
+// mounted rows/cards at what's visible regardless of how many songs are
+// loaded.
+interface VirtualSongsProps {
+  scrollRef: React.RefObject<HTMLDivElement>
+  songs: JWApiSong[]
+  onPlay: (song: JWApiSong) => void
+  onCategoryClick: (cat: Category) => void
+  onEraClick: (era: string) => void
+  onInfo: (song: JWApiSong) => void
+  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
+  selectMode: boolean
+  selected: Map<number, JWApiSong>
+  onToggleSelect: (song: JWApiSong) => void
+}
+
+function VirtualSongList({
+  scrollRef, songs, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: VirtualSongsProps): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const isDesktop = useIsDesktop()
+  const rowH = isDesktop ? 52 : 60
+  const stride = rowH + 2 // + the old space-y-0.5 gap
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, songs.length, stride)
+  return (
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {songs.slice(start, end).map((song, i) => (
+        <div key={song.id} style={{ position: 'absolute', top: (start + i) * stride, left: 0, right: 0, height: rowH }}>
+          <SongRow
+            song={song}
+            onPlay={onPlay}
+            onCategoryClick={onCategoryClick}
+            onEraClick={onEraClick}
+            onInfo={onInfo}
+            onContextMenu={onContextMenu}
+            selectMode={selectMode}
+            selected={selected.has(song.id)}
+            onToggleSelect={onToggleSelect}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Mirrors LibraryTab's virtualized grid: column count/width derived from the
+// container width (same auto-fill/minmax(140px,1fr) math the CSS grid did),
+// fixed text-block height under the square art so every row shares a stride.
+const GRID_CARD_MIN = 140
+const GRID_CARD_GAP = 12
+const GRID_CARD_TEXT_H = 82
+
+function VirtualSongGrid({
+  scrollRef, songs, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: VirtualSongsProps): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [cols, setCols] = useState(1)
+  const [colW, setColW] = useState(GRID_CARD_MIN)
+
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const compute = (): void => {
+      const w = el.clientWidth
+      const c = Math.max(1, Math.floor((w + GRID_CARD_GAP) / (GRID_CARD_MIN + GRID_CARD_GAP)))
+      setCols(c)
+      setColW((w - (c - 1) * GRID_CARD_GAP) / c)
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const rowStride = colW + GRID_CARD_TEXT_H + GRID_CARD_GAP // square art + text + gap
+  const rows = Math.ceil(songs.length / cols)
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows, rowStride)
+
+  return (
+    <div ref={contentRef} className="mt-1" style={{ height: totalHeight, position: 'relative' }}>
+      {Array.from({ length: end - start }, (_, r) => {
+        const row = start + r
+        return (
+          <div
+            key={row}
+            style={{
+              position: 'absolute', top: row * rowStride, left: 0, right: 0,
+              display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: GRID_CARD_GAP,
+            }}
+          >
+            {songs.slice(row * cols, row * cols + cols).map((song) => (
+              <SongCard
+                key={song.id}
+                song={song}
+                onPlay={onPlay}
+                onCategoryClick={onCategoryClick}
+                onEraClick={onEraClick}
+                onInfo={onInfo}
+                onContextMenu={onContextMenu}
+                selectMode={selectMode}
+                selected={selected.has(song.id)}
+                onToggleSelect={onToggleSelect}
+              />
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Lyric search result row ──────────────────────────────────────────────────
 // Deliberately its own row type rather than reusing SongRow — the whole point
 // of lyric search is surfacing *why* a song matched, so this trades the flat
@@ -882,7 +1119,9 @@ function SongCard({
         )}
       </div>
 
-      <div className="p-2.5 flex flex-col gap-1 min-w-0">
+      {/* Fixed height so every card matches VirtualSongGrid's row stride —
+          a wrapping badge row clips instead of growing the card. */}
+      <div className="p-2.5 flex flex-col gap-1 min-w-0 overflow-hidden" style={{ height: GRID_CARD_TEXT_H }}>
         <p className="text-text-primary text-xs font-semibold truncate leading-tight">{title}</p>
         <p className="text-text-muted text-[10px] truncate">{song.credited_artists || 'Juice WRLD'}</p>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -1020,12 +1259,29 @@ export default function ApiTrackerView(): JSX.Element {
   }
   const { expanded: expandedGroups, toggle: toggleGroupExpanded, clear: clearExpandedGroups } = useExpandedGroups()
 
+  // Breadcrumb the toggle (same spirit as the tracker-sort breadcrumbs): if a
+  // freeze ever lands here again, previous-run.log will name the exact group.
+  const handleToggleGroup = (group: CompactGroup<JWApiSong>): void => {
+    runLog('compact', `toggle group=${group.groupId} "${group.title}" members=${group.members.length}`)
+    toggleGroupExpanded(group.groupId)
+  }
+
   useEffect(() => {
     if (!compactView || !versionsEnabled) { setCompactGroups([]); return }
     let cancelled = false
     setLoadingCompact(true)
     fetchAllCompactGroups().then(groups => {
-      if (!cancelled) { setCompactGroups(groups); setLoadingCompact(false) }
+      if (cancelled) return
+      runLog('compact', `loaded ${groups.length} groups (${groups.reduce((n, g) => n + g.members.length, 0)} members)`)
+      setCompactGroups(groups)
+      setLoadingCompact(false)
+    }).catch(e => {
+      // Without this, a failed catalog fetch left the "Loading version
+      // groups…" spinner up forever (and the rejection unhandled).
+      if (cancelled) return
+      runLog('compact', 'ERROR loading groups', e as Error)
+      setCompactGroups([])
+      setLoadingCompact(false)
     })
     return () => { cancelled = true }
   }, [compactView])
@@ -1060,6 +1316,8 @@ export default function ApiTrackerView(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
 
   const sentinelRef = useRef<HTMLDivElement>(null)
+  // The song-list scroll container — CompactGroupList windows against it.
+  const listScrollRef = useRef<HTMLDivElement>(null)
   // Refs for scroll logic — avoids stale closure issues in observer callback
   const hasMoreRef = useRef(false)
   const loadingRef = useRef(true)
@@ -2000,7 +2258,9 @@ export default function ApiTrackerView(): JSX.Element {
           )}
 
           {/* Song list / grid */}
-          <div className="flex-1 overflow-y-auto px-3 md:px-5 pb-4">
+          {/* relative so CompactGroupList's offset math is measured against
+              this scroller rather than some higher positioned ancestor. */}
+          <div ref={listScrollRef} className="relative flex-1 overflow-y-auto px-3 md:px-5 pb-4">
             {compactView ? loadingCompact ? (
               <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
                 <Loader2 size={18} className="animate-spin" />
@@ -2040,44 +2300,21 @@ export default function ApiTrackerView(): JSX.Element {
                     : <span className="w-2.5" />}
                 </button>
               </div>
-              <div className="space-y-0.5">
-                {filteredCompactGroups.map((group) => {
-                  const cat = groupCategory(group.members)
-                  return (
-                  <div key={group.groupId}>
-                    <CompactGroupRow
-                      coverTrack={songToTrack(group.members[0].item)}
-                      title={group.title}
-                      count={group.members.length}
-                      expanded={expandedGroups.has(group.groupId)}
-                      onToggle={() => toggleGroupExpanded(group.groupId)}
-                      onContextMenu={(e) => handleGroupContextMenu(group, e)}
-                      categoryLabel={CATEGORY_LABELS[cat] ?? cat}
-                      categoryClassName={CATEGORY_COLORS[cat]}
-                    />
-                    {expandedGroups.has(group.groupId) && (
-                      <div className="ml-4 pl-4 border-l border-[var(--border)] space-y-0.5">
-                        {group.members.map(({ item: member, meta }) => (
-                          <SongRow
-                            key={member.id}
-                            song={member}
-                            onPlay={handlePlay}
-                            onCategoryClick={handleCategoryClick}
-                            onEraClick={handleEraClick}
-                            onInfo={handleInfo}
-                            onContextMenu={handleContextMenu}
-                            selectMode={selectMode}
-                            selected={selected.has(member.id)}
-                            onToggleSelect={toggleSelect}
-                            versionLabel={meta.version}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  )
-                })}
-              </div>
+              <CompactGroupList
+                scrollRef={listScrollRef}
+                groups={filteredCompactGroups}
+                expanded={expandedGroups}
+                onToggleGroup={handleToggleGroup}
+                onGroupContextMenu={handleGroupContextMenu}
+                onPlay={handlePlay}
+                onCategoryClick={handleCategoryClick}
+                onEraClick={handleEraClick}
+                onInfo={handleInfo}
+                onContextMenu={handleContextMenu}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
               </>
             ) : loading && sortedSongs.length === 0 ? (
               <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
@@ -2095,39 +2332,31 @@ export default function ApiTrackerView(): JSX.Element {
                 <p className="text-text-muted text-sm">No songs found</p>
               </div>
             ) : viewMode === 'list' ? (
-              <div className="space-y-0.5">
-                {sortedSongs.map((song) => (
-                  <SongRow
-                    key={song.id}
-                    song={song}
-                    onPlay={handlePlay}
-                    onCategoryClick={handleCategoryClick}
-                    onEraClick={handleEraClick}
-                    onInfo={handleInfo}
-                    onContextMenu={handleContextMenu}
-                    selectMode={selectMode}
-                    selected={selected.has(song.id)}
-                    onToggleSelect={toggleSelect}
-                  />
-                ))}
-              </div>
+              <VirtualSongList
+                scrollRef={listScrollRef}
+                songs={sortedSongs}
+                onPlay={handlePlay}
+                onCategoryClick={handleCategoryClick}
+                onEraClick={handleEraClick}
+                onInfo={handleInfo}
+                onContextMenu={handleContextMenu}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
             ) : (
-              <div className="grid gap-3 pt-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
-                {sortedSongs.map((song) => (
-                  <SongCard
-                    key={song.id}
-                    song={song}
-                    onPlay={handlePlay}
-                    onCategoryClick={handleCategoryClick}
-                    onEraClick={handleEraClick}
-                    onInfo={handleInfo}
-                    onContextMenu={handleContextMenu}
-                    selectMode={selectMode}
-                    selected={selected.has(song.id)}
-                    onToggleSelect={toggleSelect}
-                  />
-                ))}
-              </div>
+              <VirtualSongGrid
+                scrollRef={listScrollRef}
+                songs={sortedSongs}
+                onPlay={handlePlay}
+                onCategoryClick={handleCategoryClick}
+                onEraClick={handleEraClick}
+                onInfo={handleInfo}
+                onContextMenu={handleContextMenu}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
             )}
             {/* Sentinel always in DOM so IntersectionObserver is set up from mount */}
             <div ref={sentinelRef} className="h-4" />
