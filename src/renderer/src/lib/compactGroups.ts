@@ -38,37 +38,49 @@ function buildGroups<T>(metas: SongVersionMeta[], getItem: (songId: number) => T
     .filter(g => g.members.length > 0)
 }
 
-// Firing one request per song via a single Promise.all works fine for a
-// handful of groups, but once most of the catalog is grouped (as happened
-// here — thousands of unique song ids), the browser refuses that many
-// simultaneous requests outright (net::ERR_INSUFFICIENT_RESOURCES), so most
-// fetches fail silently and whole groups vanish for having no members left.
-// A small worker pool keeps only a bounded number in flight at once.
-async function mapWithConcurrency<T>(items: number[], limit: number, fn: (id: number) => Promise<T | null>): Promise<Map<number, T>> {
-  const out = new Map<number, T>()
-  let next = 0
-  async function worker(): Promise<void> {
-    while (next < items.length) {
-      const id = items[next++]
-      const result = await fn(id)
-      if (result != null) out.set(id, result)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
+// Caches the built groups (not just the raw fetches) so reopening compact
+// view — switching tabs and coming back, toggling the view off/on — is
+// instant instead of re-running the /versions/ + /songs/ fetch and the
+// group-building pass every time. Same TTL as versionsApi's own cache, and
+// invalidated explicitly wherever this app writes a version/title change
+// (see invalidateCompactGroupsCache callers) so an edit shows up immediately
+// rather than waiting out the TTL.
+const COMPACT_GROUPS_TTL = 30_000
+let compactGroupsCache: { promise: Promise<CompactGroup<JWApiSong>[]>; ts: number } | null = null
+
+export function invalidateCompactGroupsCache(): void {
+  compactGroupsCache = null
+}
+
+async function buildAllCompactGroups(): Promise<CompactGroup<JWApiSong>[]> {
+  const [metas, songs] = await Promise.all([
+    getAllVersionGroups(),
+    apiFetch<JWApiSong[]>('/songs/', { all: 'true' }),
+  ])
+  const songMap = new Map(songs.map(s => [s.id, s]))
+  return buildGroups(metas, id => songMap.get(id))
 }
 
 /** Every titled version group app-wide, with full song objects fetched for
  *  each member — for callers (the Tracker) that can't rely on their own
- *  song list to contain every group's members. */
+ *  song list to contain every group's members. Fetches the whole catalog in
+ *  one request (`?all=true`, same bulk mode the /versions/ table uses)
+ *  rather than one request per versioned song — the catalog is small enough
+ *  (~2500 songs) that this is both simpler and far faster than the
+ *  thousands of individual /songs/{id}/ round trips that used to make
+ *  compact view slow to open. */
 export async function fetchAllCompactGroups(): Promise<CompactGroup<JWApiSong>[]> {
   if (!versionsEnabled) return []
-  const metas = await getAllVersionGroups()
-  const uniqueIds = [...new Set(metas.map(m => m.songId))]
-  const songMap = await mapWithConcurrency(uniqueIds, 24, id =>
-    apiFetch<JWApiSong>(`/songs/${id}/`).catch(() => null)
-  )
-  return buildGroups(metas, id => songMap.get(id))
+  const now = Date.now()
+  if (!compactGroupsCache || now - compactGroupsCache.ts > COMPACT_GROUPS_TTL) {
+    compactGroupsCache = { promise: buildAllCompactGroups(), ts: now }
+  }
+  try {
+    return await compactGroupsCache.promise
+  } catch (e) {
+    compactGroupsCache = null
+    throw e
+  }
 }
 
 /** Titled version groups among a known, already-loaded list of items (e.g. a

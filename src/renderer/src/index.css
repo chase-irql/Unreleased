@@ -75,7 +75,10 @@ input[type='range'] {
   appearance: none;
   background: transparent;
   cursor: pointer;
-  height: 12px;   /* match thumb height so element never taller than thumb */
+  /* Taller than the thumb so the vertical grab/drag area is more forgiving
+     than the visible 4px track — dragging slightly off-track shouldn't feel
+     like losing the slider. */
+  height: 20px;
   display: block;
   padding: 0;
   margin: 0;
@@ -96,7 +99,14 @@ input[type='range']::-webkit-slider-thumb {
   opacity: 0;
   transition: opacity 0.15s;
 }
-input[type='range']:hover::-webkit-slider-thumb { opacity: 1; }
+/* Keep the thumb visible for the whole drag — :hover alone drops out the
+   moment the cursor strays vertically off the thin track, which reads as
+   the slider "slipping away" even though the drag (native pointer capture)
+   is still tracking correctly. :active persists for the whole mouse-down. */
+input[type='range']:hover::-webkit-slider-thumb,
+input[type='range']:active::-webkit-slider-thumb {
+  opacity: 1;
+}
 
 .progress-track input[type='range']::-webkit-slider-runnable-track {
   background: linear-gradient(to right, var(--accent) var(--val, 0%), var(--surface-overlay) var(--val, 0%));

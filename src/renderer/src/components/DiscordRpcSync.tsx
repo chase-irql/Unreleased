@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { buildImageUrl } from '../lib/juicewrldApi'
+import { discordCoverUrl } from '../lib/juicewrldApi'
 
 // How far the live playback position is allowed to drift from what we last
 // told Discord before we resend. A seek (fast-forward/rewind) jumps
@@ -65,7 +65,7 @@ export default function DiscordRpcSync(): JSX.Element | null {
         duration: (radioFmNowPlaying.duration_ms ?? 0) / 1000,
         isRadio: true,
         era: radioFmNowPlaying.album || undefined,
-        coverUrl: radioFmMatchedSong?.imageUrl ?? buildImageUrl(radioFmNowPlaying.image_url) ?? null,
+        coverUrl: discordCoverUrl(radioFmMatchedSong?.imageUrl ?? radioFmNowPlaying.image_url, radioFmMatchedSong?.path) ?? null,
       })
       return
     }
@@ -107,9 +107,9 @@ export default function DiscordRpcSync(): JSX.Element | null {
       duration: currentTrack.duration,
       isRadio: false,
       era: currentTrack.album || undefined,
-      coverUrl: buildImageUrl(currentTrack.imageUrl) ?? null,
+      coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
     })
-  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, currentTrack?.imageUrl, currentTrack?.album, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl])
+  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, currentTrack?.imageUrl, currentTrack?.path, currentTrack?.album, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl, radioFmMatchedSong?.path])
 
   // Seek detection: periodically compare where Discord thinks playback is
   // (extrapolated from the last update) against the real live position, and
@@ -131,7 +131,7 @@ export default function DiscordRpcSync(): JSX.Element | null {
         duration: currentTrack.duration,
         isRadio: false,
         era: currentTrack.album || undefined,
-        coverUrl: buildImageUrl(currentTrack.imageUrl) ?? null,
+        coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
       })
     }, DRIFT_CHECK_MS)
     return () => clearInterval(id)

@@ -3,7 +3,7 @@ import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, LayoutGrid, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
-  CheckSquare2, Square, Link2, Layers, Mic2,
+  CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -20,13 +20,13 @@ import { Track } from '../types'
 import * as userApi from '../lib/userApi'
 import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTitle } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
-import { fetchAllCompactGroups, filterCompactGroups } from '../lib/compactGroups'
+import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'grid'
-type TrackerTab = 'songs' | 'lyrics'
+type TrackerTab = 'songs' | 'lyrics' | 'calendar'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'text-emerald-400 bg-emerald-400/10 border-emerald-400/25',
@@ -34,6 +34,29 @@ const CATEGORY_COLORS: Record<string, string> = {
   unsurfaced:        'text-amber-400  bg-amber-400/10  border-amber-400/25',
   recording_session: 'text-purple-400 bg-purple-400/10 border-purple-400/25',
 }
+
+// ─── Era color palette (Calendar tab) ─────────────────────────────────────────
+// Eras are dynamic (fetched from the API, not a fixed enum), so colors are
+// assigned by index rather than hardcoded per name — same era always gets the
+// same color as long as `eras` keeps returning them in the same order.
+// Written as literal class names (not template-built) so Tailwind's static
+// scanner picks them all up.
+interface EraColor { text: string; bg: string; border: string; dot: string }
+const ERA_COLOR_PALETTE: EraColor[] = [
+  { text: 'text-rose-400',     bg: 'bg-rose-400/10',     border: 'border-rose-400/25',     dot: 'bg-rose-400' },
+  { text: 'text-orange-400',   bg: 'bg-orange-400/10',   border: 'border-orange-400/25',   dot: 'bg-orange-400' },
+  { text: 'text-amber-400',    bg: 'bg-amber-400/10',    border: 'border-amber-400/25',    dot: 'bg-amber-400' },
+  { text: 'text-lime-400',     bg: 'bg-lime-400/10',     border: 'border-lime-400/25',      dot: 'bg-lime-400' },
+  { text: 'text-emerald-400',  bg: 'bg-emerald-400/10',  border: 'border-emerald-400/25',  dot: 'bg-emerald-400' },
+  { text: 'text-teal-400',     bg: 'bg-teal-400/10',     border: 'border-teal-400/25',     dot: 'bg-teal-400' },
+  { text: 'text-cyan-400',     bg: 'bg-cyan-400/10',     border: 'border-cyan-400/25',     dot: 'bg-cyan-400' },
+  { text: 'text-blue-400',     bg: 'bg-blue-400/10',     border: 'border-blue-400/25',     dot: 'bg-blue-400' },
+  { text: 'text-indigo-400',   bg: 'bg-indigo-400/10',   border: 'border-indigo-400/25',   dot: 'bg-indigo-400' },
+  { text: 'text-violet-400',   bg: 'bg-violet-400/10',   border: 'border-violet-400/25',   dot: 'bg-violet-400' },
+  { text: 'text-fuchsia-400',  bg: 'bg-fuchsia-400/10',  border: 'border-fuchsia-400/25',  dot: 'bg-fuchsia-400' },
+  { text: 'text-pink-400',     bg: 'bg-pink-400/10',     border: 'border-pink-400/25',     dot: 'bg-pink-400' },
+]
+const DEFAULT_ERA_COLOR: EraColor = { text: 'text-text-muted', bg: 'bg-surface-overlay', border: 'border-[var(--border)]', dot: 'bg-text-muted' }
 
 // A compact-view group bundles several versions of one song, each of which
 // can sit in a different category — the group as a whole is labeled by
@@ -50,6 +73,18 @@ const PAGE_SIZE = 50
 const LS_TRACKER_VIEW = 'api-tracker:viewMode'
 const LS_TRACKER_SIDEBAR = 'api-tracker:showSidebar'
 const LS_TRACKER_SEARCH  = 'api-tracker:search'
+
+// The `q` URL param takes priority over the saved localStorage query so that
+// following/reloading a link with a search in it (or navigating back to one)
+// shows that search rather than whatever was last typed. Electron's file://
+// protocol has no meaningful URL routing (see App.tsx), so it's skipped there.
+function getInitialSearch(): string {
+  if (window.location.protocol !== 'file:') {
+    const q = new URLSearchParams(window.location.search).get('q')
+    if (q) return q
+  }
+  return localStorage.getItem(LS_TRACKER_SEARCH) || ''
+}
 
 type OrderField = 'name' | 'credited_artists' | 'era__name' | 'category' | 'length'
 
@@ -85,6 +120,106 @@ function formatDur(secs: number): string {
   const m = Math.floor(secs / 60)
   const s = Math.floor(secs % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+const SNIPPET_CONTEXT_CHARS = 70
+// Finds where `query` occurs in `lyrics` and returns the surrounding text
+// split into before/match/after so the caller can highlight just the match.
+// The API's lyrics search may be more lenient than a plain substring match
+// (e.g. punctuation/case normalization), so this falls back to locating just
+// the first query word if the full phrase isn't found verbatim — better to
+// show an approximate snippet than none at all.
+function getLyricSnippet(lyrics: string | null, query: string): { before: string; match: string; after: string } | null {
+  const q = query.trim()
+  if (!lyrics || !q) return null
+  const lower = lyrics.toLowerCase()
+  let idx = lower.indexOf(q.toLowerCase())
+  let matchLen = q.length
+  if (idx === -1) {
+    const firstWord = q.split(/\s+/)[0]
+    idx = firstWord ? lower.indexOf(firstWord.toLowerCase()) : -1
+    matchLen = firstWord.length
+  }
+  if (idx === -1) return null
+  const start = Math.max(0, idx - SNIPPET_CONTEXT_CHARS)
+  const end = Math.min(lyrics.length, idx + matchLen + SNIPPET_CONTEXT_CHARS)
+  const clean = (s: string): string => s.replace(/\s+/g, ' ').trim()
+  return {
+    before: (start > 0 ? '…' : '') + clean(lyrics.slice(start, idx)),
+    match: lyrics.slice(idx, idx + matchLen),
+    after: clean(lyrics.slice(idx + matchLen, end)) + (end < lyrics.length ? '…' : ''),
+  }
+}
+
+// ─── Recording-date parsing (Calendar tab) ────────────────────────────────────
+// `record_dates` is free-text (e.g. "5/5/18", "May 5, 2018", sometimes several
+// dates for one song, sometimes just a year/season with no day at all) —
+// there's no structured date field to key a calendar off of. These helpers
+// pull out every exact (year, month, day) triple found in the text and
+// silently drop anything too vague to place on a specific day, rather than
+// guessing.
+const MONTH_MAP: Record<string, number> = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4,
+  jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+}
+const MONTH_NAME_RE = new RegExp(
+  `\\b(${Object.keys(MONTH_MAP).join('|')})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})\\b`, 'gi'
+)
+
+function normalizeYear(y: number): number {
+  if (y >= 100) return y
+  return y <= 30 ? 2000 + y : 1900 + y
+}
+
+function isValidYMD(y: number, m: number, d: number): boolean {
+  if (m < 0 || m > 11 || d < 1 || d > 31) return false
+  const dt = new Date(y, m, d)
+  return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d
+}
+
+function dateKey(y: number, m: number, d: number): string {
+  return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+function extractDateKeys(text: string | null | undefined): string[] {
+  if (!text) return []
+  const keys = new Set<string>()
+
+  for (const m of text.matchAll(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g)) {
+    const y = +m[1], mo = +m[2] - 1, d = +m[3]
+    if (isValidYMD(y, mo, d)) keys.add(dateKey(y, mo, d))
+  }
+  for (const m of text.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g)) {
+    const mo = +m[1] - 1, d = +m[2], y = normalizeYear(+m[3])
+    if (isValidYMD(y, mo, d)) keys.add(dateKey(y, mo, d))
+  }
+  for (const m of text.matchAll(MONTH_NAME_RE)) {
+    const mo = MONTH_MAP[m[1].toLowerCase()]
+    const d = +m[2], y = +m[3]
+    if (mo !== undefined && isValidYMD(y, mo, d)) keys.add(dateKey(y, mo, d))
+  }
+
+  return [...keys]
+}
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTH_LABELS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+// One 7-wide grid of the given month, padded with nulls so every week is a
+// full row (including leading/trailing days from adjacent months).
+function buildMonthGrid(year: number, month: number): (Date | null)[][] {
+  const startDow = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const cells: (Date | null)[] = Array(startDow).fill(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d))
+  while (cells.length % 7 !== 0) cells.push(null)
+  const weeks: (Date | null)[][] = []
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
+  return weeks
 }
 
 // ─── Stats bar ────────────────────────────────────────────────────────────────
@@ -518,6 +653,127 @@ const SongRow = memo(function SongRow({
 // the memo is a no-op. Without it, compact view froze when selecting songs
 // across many expanded groups.
 
+// ─── Lyric search result row ──────────────────────────────────────────────────
+// Deliberately its own row type rather than reusing SongRow — the whole point
+// of lyric search is surfacing *why* a song matched, so this trades the flat
+// list's fixed artist/era/category columns for a quoted lyric snippet with
+// the matched text highlighted.
+const LyricResultRow = memo(function LyricResultRow({
+  song, query, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: {
+  song: JWApiSong
+  query: string
+  onPlay: (song: JWApiSong) => void
+  onCategoryClick: (cat: Category) => void
+  onEraClick: (era: string) => void
+  onInfo: (song: JWApiSong) => void
+  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
+  selectMode: boolean
+  selected: boolean
+  onToggleSelect: (song: JWApiSong) => void
+}): JSX.Element {
+  const track = songToTrack(song)
+  const canPlay = !!song.path
+  const snippet = useMemo(() => getLyricSnippet(song.lyrics, query), [song.lyrics, query])
+
+  return (
+    <div
+      className={`group flex items-start gap-3 px-3 py-3 hover:bg-surface-overlay active:bg-surface-overlay rounded-lg transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
+      onClick={() => onToggleSelect(song)}
+      onDoubleClick={() => { if (!selectMode) onInfo(song) }}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
+    >
+      {selectMode && (
+        <div className="shrink-0 pt-1.5">
+          {selected
+            ? <CheckSquare2 size={17} className="text-accent" />
+            : <Square size={17} className="text-text-muted opacity-50" />}
+        </div>
+      )}
+
+      {/* Cover art */}
+      <div className="relative shrink-0 w-11 h-11 rounded overflow-hidden bg-surface-overlay">
+        <AlbumArtThumbnail track={track} size={44} shimmer={false} />
+        {canPlay && !selectMode && (
+          <button
+            className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
+            onClick={(e) => { e.stopPropagation(); onPlay(song) }}
+            title="Play"
+          >
+            <Play size={14} fill="white" className="text-white ml-0.5" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <p className="text-text-primary text-sm font-medium truncate">{song.name}</p>
+          <span className="text-text-muted text-xs truncate">{song.credited_artists || 'Juice WRLD'}</span>
+          {song.era?.name && (
+            <button
+              onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
+              className="text-text-muted text-[9px] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate hover:text-accent hover:border-accent/40 transition-colors"
+              title={`Filter by era: ${song.era.name}`}
+            >
+              {song.era.name}
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); if (!selectMode) onCategoryClick(song.category as Category) }}
+            className={`text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+          >
+            {CATEGORY_LABELS[song.category] ?? song.category}
+          </button>
+        </div>
+
+        {/* Lyric snippet — the reason this song matched */}
+        {snippet ? (
+          <p className="mt-1 text-xs text-text-secondary italic leading-relaxed line-clamp-2">
+            {snippet.before}
+            <mark className="bg-accent/20 text-accent not-italic rounded px-0.5">{snippet.match}</mark>
+            {snippet.after}
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-text-muted italic">Lyric preview unavailable</p>
+        )}
+      </div>
+
+      <span className="hidden md:block text-text-muted text-xs w-12 text-right shrink-0 tabular-nums pt-1.5">{formatDur(parseDuration(song.length))}</span>
+
+      {/* Desktop action buttons */}
+      {!selectMode && (
+        <div className="hidden md:flex items-center gap-0.5 shrink-0 pt-1">
+          <SongActions onInfo={() => onInfo(song)} onContextMenu={(e) => onContextMenu(song, e)} />
+        </div>
+      )}
+
+      {/* Mobile: more + play */}
+      {!selectMode && (
+        <div className="md:hidden flex items-center shrink-0">
+          <button
+            className="p-2 text-text-muted active:text-accent transition-colors"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
+            title="More options"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+          {canPlay && (
+            <button
+              className="p-2 text-text-muted active:text-accent transition-colors"
+              onClick={() => onPlay(song)}
+              title="Play"
+            >
+              <Play size={17} />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
 // ─── Version title prompt (shown after linking, if the group has no title yet) ─
 function VersionTitlePromptModal({
   saving, onSave, onSkip,
@@ -784,7 +1040,7 @@ export default function ApiTrackerView(): JSX.Element {
   const seededRef = useRef(false)
   if (!seededRef.current) {
     seededRef.current = true
-    const initialSearch = localStorage.getItem(LS_TRACKER_SEARCH) || ''
+    const initialSearch = getInitialSearch()
     seedRef.current = apiPeek<JWApiPaginatedResponse>('/songs/', {
       searchall: initialSearch || undefined, category: undefined, era: undefined,
       page: 1, page_size: PAGE_SIZE,
@@ -851,8 +1107,8 @@ export default function ApiTrackerView(): JSX.Element {
     }
   }
 
-  const [search, setSearch] = useState(() => localStorage.getItem(LS_TRACKER_SEARCH) || '')
-  const [debouncedSearch, setDebouncedSearch] = useState(() => localStorage.getItem(LS_TRACKER_SEARCH) || '')
+  const [search, setSearch] = useState(getInitialSearch)
+  const [debouncedSearch, setDebouncedSearch] = useState(getInitialSearch)
   const [category, setCategory] = useState<Category>('')
   const [era, setEra] = useState('')
 
@@ -911,12 +1167,102 @@ export default function ApiTrackerView(): JSX.Element {
       .finally(() => setLyricsLoading(false))
   }
 
+  // ── Calendar (separate tab) — songs grouped by recording date ─────────────
+  // Fetches the whole catalog once (lazily, on first visiting the tab) since
+  // there's no server-side way to filter/group by record_dates — it's parsed
+  // out of free text client-side (see extractDateKeys above).
+  const [calendarSongs, setCalendarSongs] = useState<JWApiSong[]>([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarError, setCalendarError] = useState<string | null>(null)
+  const calendarFetchedRef = useRef(false)
+
+  useEffect(() => {
+    if (trackerTab !== 'calendar' || calendarFetchedRef.current) return
+    calendarFetchedRef.current = true
+    setCalendarLoading(true)
+    apiFetch<JWApiSong[]>('/songs/', { all: 'true' })
+      .then(setCalendarSongs)
+      .catch((err) => setCalendarError(err.message))
+      .finally(() => setCalendarLoading(false))
+  }, [trackerTab])
+
+  const calendarByDate = useMemo(() => {
+    const map = new Map<string, JWApiSong[]>()
+    for (const song of calendarSongs) {
+      for (const key of extractDateKeys(song.record_dates)) {
+        if (!map.has(key)) map.set(key, [])
+        map.get(key)!.push(song)
+      }
+    }
+    return map
+  }, [calendarSongs])
+
+  // Assigns each era a stable color by its position in `eras` (already
+  // fetched for the category sidebar) — same era always maps to the same
+  // color as long as the API keeps returning eras in the same order.
+  const eraColorMap = useMemo(() => {
+    const map = new Map<string, EraColor>()
+    eras.forEach((era, i) => map.set(era.name, ERA_COLOR_PALETTE[i % ERA_COLOR_PALETTE.length]))
+    return map
+  }, [eras])
+
+  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number } | null>(null)
+  const calendarMonthInitRef = useRef(false)
+  useEffect(() => {
+    if (calendarMonthInitRef.current || calendarByDate.size === 0) return
+    calendarMonthInitRef.current = true
+    const [y, m] = [...calendarByDate.keys()].sort()[0].split('-').map(Number)
+    setCalendarMonth({ year: y, month: m - 1 })
+  }, [calendarByDate])
+
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
+
+  const shiftCalendarMonth = (delta: number): void => {
+    setCalendarMonth((prev) => {
+      const base = prev ?? { year: new Date().getFullYear(), month: new Date().getMonth() }
+      let month = base.month + delta
+      let year = base.year
+      if (month < 0) { month = 11; year -= 1 }
+      if (month > 11) { month = 0; year += 1 }
+      return { year, month }
+    })
+  }
+
   const handleCategoryClick = useCallback((cat: Category) => { setCategory(cat); resetSongs() }, [resetSongs])
   const handleEraClick = useCallback((eraName: string) => { setEra(eraName); resetSongs() }, [resetSongs])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isFirstDebounce = useRef(true)
 
   useEffect(() => { localStorage.setItem(LS_TRACKER_SEARCH, search) }, [search])
+
+  // Reflect each settled search in the URL (?q=...) via pushState, one history
+  // entry per search, so the back button steps through previous searches
+  // instead of just leaving the page. Skipped in Electron (see getInitialSearch)
+  // and on the very first render, since that value already came from the URL.
+  const isFirstUrlSync = useRef(true)
+  useEffect(() => {
+    if (window.location.protocol === 'file:') return
+    if (isFirstUrlSync.current) { isFirstUrlSync.current = false; return }
+    const url = new URL(window.location.href)
+    if (debouncedSearch) url.searchParams.set('q', debouncedSearch)
+    else url.searchParams.delete('q')
+    window.history.pushState({}, '', url)
+  }, [debouncedSearch])
+
+  // Restore the search box when the user navigates back/forward through
+  // those history entries.
+  useEffect(() => {
+    if (window.location.protocol === 'file:') return
+    const onPopState = (): void => {
+      const q = new URLSearchParams(window.location.search).get('q') || ''
+      isFirstUrlSync.current = true // this sync came from the URL — don't push it again
+      setSearch(q)
+      setDebouncedSearch(q)
+      resetSongs()
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [resetSongs])
 
   useEffect(() => {
     apiFetch<JWApiStats>('/stats/').then(setStats).catch(console.error)
@@ -1243,6 +1589,7 @@ export default function ApiTrackerView(): JSX.Element {
     try {
       const [first, ...rest] = ids
       for (const id of rest) await linkSongVersion(first, id)
+      invalidateCompactGroupsCache()
       const meta = await getOwnVersionMeta(first)
       if (meta && !meta.versionTitle) setTitlePromptGroupId(meta.groupId)
       setBulkLinkStatus('done')
@@ -1266,26 +1613,36 @@ export default function ApiTrackerView(): JSX.Element {
       <div className="px-4 md:px-5 pt-4 md:pt-5 pb-3 shrink-0">
         <h1 className="text-text-primary text-xl font-bold mb-1">Tracker</h1>
 
-        <div className="flex items-center gap-1 mb-3 border-b border-[var(--border)]">
+        <div className="flex items-center gap-0.5 mb-2.5 w-fit bg-surface-overlay rounded-md p-0.5">
           <button
             onClick={() => setTrackerTab('songs')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
               trackerTab === 'songs'
-                ? 'text-accent border-accent'
-                : 'text-text-muted border-transparent hover:text-text-secondary'
+                ? 'bg-surface-raised text-text-primary'
+                : 'text-text-muted hover:text-text-secondary'
             }`}
           >
-            <Music2 size={14} /> Songs
+            <Music2 size={11} /> Songs
           </button>
           <button
             onClick={() => setTrackerTab('lyrics')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
               trackerTab === 'lyrics'
-                ? 'text-accent border-accent'
-                : 'text-text-muted border-transparent hover:text-text-secondary'
+                ? 'bg-surface-raised text-text-primary'
+                : 'text-text-muted hover:text-text-secondary'
             }`}
           >
-            <Mic2 size={14} /> Lyric Search
+            <Mic2 size={11} /> Lyrics
+          </button>
+          <button
+            onClick={() => setTrackerTab('calendar')}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+              trackerTab === 'calendar'
+                ? 'bg-surface-raised text-text-primary'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <CalendarDays size={11} /> Calendar
           </button>
         </div>
 
@@ -1441,9 +1798,10 @@ export default function ApiTrackerView(): JSX.Element {
             <>
               <div className="space-y-0.5">
                 {lyricsResults.map((song) => (
-                  <SongRow
+                  <LyricResultRow
                     key={song.id}
                     song={song}
+                    query={debouncedLyricsQuery}
                     onPlay={handlePlay}
                     onCategoryClick={handleCategoryClick}
                     onEraClick={handleEraClick}
@@ -1470,6 +1828,142 @@ export default function ApiTrackerView(): JSX.Element {
                 <p className="text-center text-text-muted text-xs py-4">{lyricsCount.toLocaleString()} songs found</p>
               )}
             </>
+          )}
+        </div>
+      ) : trackerTab === 'calendar' ? (
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 pb-4">
+          {calendarLoading ? (
+            <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-sm">Loading recording dates…</span>
+            </div>
+          ) : calendarError ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-center">
+              <p className="text-text-muted text-sm">Failed to load: {calendarError}</p>
+            </div>
+          ) : calendarByDate.size === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <CalendarDays size={32} className="text-text-muted opacity-30" />
+              <p className="text-text-muted text-sm">No recording dates found</p>
+            </div>
+          ) : (
+            <div className="flex flex-col md:flex-row gap-5 md:gap-6 items-start">
+              <div className="w-full md:w-80 shrink-0">
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    onClick={() => shiftCalendarMonth(-1)}
+                    className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <p className="text-text-primary text-sm font-semibold">
+                    {calendarMonth ? `${MONTH_LABELS[calendarMonth.month]} ${calendarMonth.year}` : ''}
+                  </p>
+                  <button
+                    onClick={() => shiftCalendarMonth(1)}
+                    className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1 mb-1">
+                  {WEEKDAY_LABELS.map((label) => (
+                    <div key={label} className="text-center text-text-muted text-[10px] font-medium uppercase tracking-wide py-1">
+                      {label}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  {calendarMonth && buildMonthGrid(calendarMonth.year, calendarMonth.month).map((week, wi) => (
+                    <div key={wi} className="grid grid-cols-7 gap-1">
+                      {week.map((date, di) => {
+                        if (!date) return <div key={di} />
+                        const key = dateKey(date.getFullYear(), date.getMonth(), date.getDate())
+                        const daySongs = calendarByDate.get(key)
+                        const isSelected = selectedDateKey === key
+                        const dayEraNames = daySongs
+                          ? [...new Set(daySongs.map((s) => s.era?.name).filter((n): n is string => !!n))]
+                          : []
+                        const soleEraColor = dayEraNames.length === 1 ? eraColorMap.get(dayEraNames[0]) ?? DEFAULT_ERA_COLOR : null
+                        return (
+                          <button
+                            key={di}
+                            onClick={() => daySongs && setSelectedDateKey(key)}
+                            disabled={!daySongs}
+                            title={dayEraNames.join(', ') || undefined}
+                            className={`aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors border ${
+                              isSelected
+                                ? 'bg-accent border-accent text-white font-semibold'
+                                : !daySongs
+                                  ? 'border-transparent text-text-muted opacity-40 cursor-default'
+                                  : soleEraColor
+                                    ? `${soleEraColor.bg} ${soleEraColor.border} ${soleEraColor.text} font-medium hover:opacity-80 cursor-pointer`
+                                    : 'bg-accent/10 border-transparent text-accent font-medium hover:bg-accent/20 cursor-pointer'
+                            }`}
+                          >
+                            <span className="text-xs leading-none">{date.getDate()}</span>
+                            {daySongs && (
+                              <span className={`text-[9px] leading-none tabular-nums ${isSelected ? 'text-white/80' : 'opacity-70'}`}>
+                                {daySongs.length}
+                              </span>
+                            )}
+                            {!isSelected && dayEraNames.length > 1 && (
+                              <span className="flex items-center gap-0.5 mt-0.5">
+                                {dayEraNames.slice(0, 4).map((name) => (
+                                  <span key={name} className={`w-1 h-1 rounded-full ${(eraColorMap.get(name) ?? DEFAULT_ERA_COLOR).dot}`} />
+                                ))}
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                {eras.length > 0 && (
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-1 mt-3 pt-3 border-t border-[var(--border)]">
+                    {eras.map((era) => (
+                      <div key={era.id} className="flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${(eraColorMap.get(era.name) ?? DEFAULT_ERA_COLOR).dot}`} />
+                        <span className="text-text-muted text-[10px] truncate">{era.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 w-full">
+                {!selectedDateKey ? (
+                  <p className="text-text-muted text-xs py-4">Select a highlighted day to see songs recorded then.</p>
+                ) : (
+                  <>
+                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2">
+                      Recorded {new Date(selectedDateKey + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                      {' '}· {(calendarByDate.get(selectedDateKey) ?? []).length} {(calendarByDate.get(selectedDateKey) ?? []).length === 1 ? 'song' : 'songs'}
+                    </p>
+                    <div className="space-y-0.5">
+                      {(calendarByDate.get(selectedDateKey) ?? []).map((song) => (
+                        <SongRow
+                          key={song.id}
+                          song={song}
+                          onPlay={handlePlay}
+                          onCategoryClick={handleCategoryClick}
+                          onEraClick={handleEraClick}
+                          onInfo={handleInfo}
+                          onContextMenu={handleContextMenu}
+                          selectMode={selectMode}
+                          selected={selected.has(song.id)}
+                          onToggleSelect={toggleSelect}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       ) : (
@@ -1824,6 +2318,7 @@ export default function ApiTrackerView(): JSX.Element {
             setSavingTitlePrompt(true)
             try {
               await setGroupVersionTitle(titlePromptGroupId, title)
+              invalidateCompactGroupsCache()
             } finally {
               setSavingTitlePrompt(false)
               setTitlePromptGroupId(null)

@@ -91,6 +91,7 @@ export default function Settings(): JSX.Element {
     accentColor, setAccentColor,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
+    preferOgVersion, setPreferOgVersion,
     playbackSpeed, setPlaybackSpeed,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
@@ -431,6 +432,13 @@ export default function Settings(): JSX.Element {
                     </div>
                   )}
                 </Row>
+                <Row
+                  icon={FileText}
+                  iconColor="#059669"
+                  label="Prefer OG version"
+                  sub="Play a track's linked OG file instead, when one exists"
+                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
+                />
                 <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
                   <div className="flex items-center gap-2">
                     {sleepTimerEnd ? (

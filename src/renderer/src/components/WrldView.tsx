@@ -1305,10 +1305,11 @@ import { memo as _memo2, useRef as _useRef2, useCallback as _cb2 } from 'react'
 // (like LyricsPanel/FmProgressBar) so it reads the store directly instead of
 // drilling props from WrldView.
 const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Element {
-  const { currentTrack, radioFmActive, radioFmNowPlaying, likedTrackIds, toggleLike, account, setActiveView, setPendingEditorSongId } = useStore(useShallow(s => ({
+  const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike, account, setActiveView, setPendingEditorSongId } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     radioFmActive: s.radioFmActive,
     radioFmNowPlaying: s.radioFmNowPlaying,
+    radioFmMatchedSong: s.radioFmMatchedSong,
     likedTrackIds: s.likedTrackIds,
     toggleLike: s.toggleLike,
     account: s.account,
@@ -1323,7 +1324,9 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
   const btnRef = useRef<HTMLButtonElement>(null)
 
   const currentSongId = !radioFmActive && currentTrack ? userApi.trackIdToSongId(currentTrack.id) : null
-  const fmSongId = radioFmActive ? (radioFmNowPlaying?.song_id ?? null) : null
+  // Stream metadata's song_id is sometimes missing; RadioFmPlayer's title-search
+  // fallback resolves the actual song separately, so fall back to that match.
+  const fmSongId = radioFmActive ? (radioFmNowPlaying?.song_id ?? radioFmMatchedSong?.songId ?? null) : null
   const hasTarget = radioFmActive ? fmSongId != null : !!currentTrack
 
   const openInfo = (songId: number): void => {
@@ -1354,26 +1357,37 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
         <MoreHorizontal size={18} />
       </button>
 
-      {/* FM radio is server-driven — only Song info applies while it's
-          playing, so it gets its own minimal popup rather than the full
-          shared menu (which would otherwise offer Like/playlist/version
-          actions that don't make sense mid-broadcast). */}
-      {open && radioFmActive && fmSongId != null && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full right-0 mt-1.5 z-50 w-48 bg-black/90 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl py-1 overflow-hidden">
-            <div className="px-3 py-2 border-b border-white/10 mb-1">
-              <p className="text-white/90 text-xs font-semibold truncate">{radioFmNowPlaying?.title ?? ''}</p>
-              <p className="text-white/40 text-[10px] truncate">{radioFmNowPlaying?.artist ?? ''}</p>
-            </div>
-            <button
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-              onClick={() => openInfo(fmSongId)}
-            >
-              <Info size={14} /> Song info
-            </button>
-          </div>
-        </>
+      {/* FM radio is server-driven — Play/Play next/Add to queue/version
+          switching don't make sense mid-broadcast, so those are left off,
+          but Song info and Add to playlist still apply to the now-playing
+          track. Synthesize a minimal Track since FM only gives us title/
+          artist/album, not a full local/API track object. */}
+      {open && radioFmActive && fmSongId != null && createPortal(
+        <SongContextMenu
+          state={{
+            track: {
+              id: `fm-${fmSongId}`,
+              path: '',
+              title: radioFmNowPlaying?.title ?? '',
+              artist: radioFmNowPlaying?.artist ?? '',
+              album: radioFmNowPlaying?.album ?? '',
+              albumArtist: '',
+              year: null,
+              trackNumber: null,
+              duration: 0,
+              genre: '',
+              hasAlbumArt: false,
+            },
+            songId: fmSongId,
+            x: (btnRef.current?.getBoundingClientRect().right ?? 208) - 208,
+            y: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 6,
+          }}
+          onClose={() => setOpen(false)}
+          canEdit={canEdit}
+          onInfo={() => openInfo(fmSongId)}
+          disableChangeVersion
+        />,
+        document.body
       )}
 
       {open && !radioFmActive && currentTrack && createPortal(
@@ -1627,8 +1641,10 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
 
 const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }) {
   const { progress, currentTime } = useStore(useShallow(s => ({ progress: s.progress, currentTime: s.currentTime })))
-  const dragging = useRef(false)
-  const barRef   = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  // Buffer the scrub position visually while dragging — only call seekAudio
+  // on release, since seeking on every mousemove makes playback glitch/stutter.
+  const [dragPct, setDragPct] = useState<number | null>(null)
 
   const fmt = (s: number) => {
     if (!isFinite(s) || isNaN(s) || s < 0) return '0:00'
@@ -1637,18 +1653,17 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
     return `${m}:${sec.toString().padStart(2, '0')}`
   }
 
-  const seekFromEvent = useCallback((e: React.MouseEvent) => {
+  const pctFromClientX = useCallback((clientX: number): number | null => {
     const bar = barRef.current
-    if (!bar) return
+    if (!bar) return null
     const rect = bar.getBoundingClientRect()
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    const dur = getAudioDuration()
-    if (dur > 0) seekAudio(pct * dur)
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
   }, [])
 
-  const duration  = getAudioDuration()
-  const remaining = duration > 0 ? duration - currentTime : 0
-  const pct       = Math.min(100, (progress || 0) * 100)
+  const duration    = getAudioDuration()
+  const displayTime = dragPct !== null && duration > 0 ? dragPct * duration : currentTime
+  const remaining   = duration > 0 ? duration - displayTime : 0
+  const pct         = Math.min(100, (dragPct !== null ? dragPct : (progress || 0)) * 100)
 
   return (
     <div className="w-full flex flex-col gap-1.5 select-none">
@@ -1656,10 +1671,24 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
         ref={barRef}
         className="relative h-1 rounded-full cursor-pointer group/bar"
         style={{ background: 'rgba(255,255,255,0.18)' }}
-        onMouseDown={e => { dragging.current = true; seekFromEvent(e) }}
-        onMouseMove={e => { if (dragging.current) seekFromEvent(e) }}
-        onMouseUp={() => { dragging.current = false }}
-        onMouseLeave={() => { dragging.current = false }}
+        onMouseDown={e => {
+          const startPct = pctFromClientX(e.clientX)
+          if (startPct !== null) setDragPct(startPct)
+          const onMove = (ev: MouseEvent) => {
+            const p = pctFromClientX(ev.clientX)
+            if (p !== null) setDragPct(p)
+          }
+          const onUp = (ev: MouseEvent) => {
+            const p = pctFromClientX(ev.clientX)
+            const dur = getAudioDuration()
+            if (p !== null && dur > 0) seekAudio(p * dur)
+            setDragPct(null)
+            document.removeEventListener('mousemove', onMove)
+            document.removeEventListener('mouseup', onUp)
+          }
+          document.addEventListener('mousemove', onMove)
+          document.addEventListener('mouseup', onUp)
+        }}
       >
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
         <div
@@ -1668,7 +1697,7 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
         />
       </div>
       <div className="flex justify-between">
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{fmt(currentTime)}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{fmt(displayTime)}</span>
         <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{duration > 0 ? `-${fmt(remaining)}` : '-∞'}</span>
       </div>
     </div>
