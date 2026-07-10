@@ -835,7 +835,12 @@ export default function ApiFilesView(): JSX.Element {
                     className={`group flex items-center gap-3 px-3 py-2 rounded-lg transition-colors cursor-default ${
                       isSelected ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-surface-overlay'
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey) {
+                        if (!selectMode) setSelectMode(true)
+                        toggleSelect(entry.path)
+                        return
+                      }
                       if (selectMode) { toggleSelect(entry.path); return }
                       if (isDir) navigate(entry.path)
                       else if (isMedia) openLightbox(entry)
@@ -950,7 +955,12 @@ export default function ApiFilesView(): JSX.Element {
                     className={`group flex flex-col rounded-xl overflow-hidden transition-colors cursor-default ${
                       isSelected ? 'bg-accent/10 ring-2 ring-accent/40' : 'bg-surface-overlay hover:bg-surface-raised'
                     }`}
-                    onClick={() => {
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey) {
+                        if (!selectMode) setSelectMode(true)
+                        toggleSelect(entry.path)
+                        return
+                      }
                       if (selectMode) { toggleSelect(entry.path); return }
                       if (isDir) navigate(entry.path)
                       else if (isMedia) openLightbox(entry)
