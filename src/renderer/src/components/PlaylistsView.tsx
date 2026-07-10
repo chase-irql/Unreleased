@@ -291,8 +291,8 @@ export default function PlaylistsView(): JSX.Element {
   // Compact view — same grouping as the Tracker's (see lib/compactGroups.ts):
   // collapses tracks sharing a version_title into one row. Uses the
   // playlist-scoped groupItemsByVersion since `tracks` here is already the
-  // playlist's full, unpaginated list — no need to ask Supabase for every
-  // group app-wide like the Tracker has to.
+  // playlist's full, unpaginated list — no need to ask juicewrldapi's
+  // /versions/ table for every group app-wide like the Tracker has to.
   const [compactView, setCompactView] = useState(false)
   const [compactGroups, setCompactGroups] = useState<CompactGroup<Track>[]>([])
   const [loadingCompact, setLoadingCompact] = useState(false)

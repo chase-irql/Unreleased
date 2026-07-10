@@ -244,8 +244,8 @@ export default function EditorPage(): JSX.Element {
   // This song's own version label plus the group's shared version title —
   // linking songs together happens from the Tracker's multi-select "Link
   // versions" action (see ApiTrackerView.tsx), not here. These write
-  // straight to Supabase (see lib/versionsApi.ts), not through the
-  // juicewrldapi.com proposal/review system, hence the separate save button
+  // straight to juicewrldapi.com's /versions/ table (see lib/versionsApi.ts),
+  // not through its proposal/review system, hence the separate save button
   // below rather than piggybacking on "Submit proposal". Version is
   // per-song ("v1", "TV Mix"); version title is written to every song in
   // the group at once so they always match — read-only everywhere else
@@ -363,7 +363,7 @@ export default function EditorPage(): JSX.Element {
     setVersionSaveStatus('saving')
     setLinkError(null)
     try {
-      const groupId = await setSongVersion(song.id, versionNum.trim() || null, ownGroupId, account?.display_name ?? null)
+      const groupId = await setSongVersion(song.id, versionNum.trim() || null, ownGroupId)
       await setGroupVersionTitle(groupId, versionTitle.trim() || null)
       setOwnGroupId(groupId)
       setVersionSaveStatus('saved')
@@ -385,7 +385,7 @@ export default function EditorPage(): JSX.Element {
     setVersionSaveStatus('saving')
     setLinkError(null)
     try {
-      const groupId = await joinVersionGroup(song.id, suggestion.groupId, account?.display_name ?? null)
+      const groupId = await joinVersionGroup(song.id, suggestion.groupId)
       await setGroupVersionTitle(groupId, suggestion.title)
       setOwnGroupId(groupId)
       setVersionSaveStatus('saved')

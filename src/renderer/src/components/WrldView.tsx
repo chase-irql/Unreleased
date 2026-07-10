@@ -234,7 +234,7 @@ export default function WrldView(): JSX.Element {
   useEffect(() => { setArtError(false) }, [artSrc])
 
   // Sibling versions of the currently playing song (v1/v2/TV Mix/etc, linked
-  // via the Supabase song_versions table — see versionsApi.ts), shown as
+  // via juicewrldapi's /versions/ table — see versionsApi.ts), shown as
   // small bookmark tabs peeking out of the cover art's right edge.
   const [songVersions, setSongVersions] = useState<{ songId: number; label: string | null }[]>([])
   // Collapsed, these merge into a single small notch — hovering anywhere on
@@ -248,7 +248,7 @@ export default function WrldView(): JSX.Element {
     let cancelled = false
     getVersionGroup(numericId).then(async metas => {
       if (cancelled) return
-      // A version linked in the Supabase table isn't necessarily playable —
+      // A version linked in the /versions/ table isn't necessarily playable —
       // recording-session songs (and some unsurfaced ones) have no `path`,
       // same gate used for bulk queue/playlist adds elsewhere in the app.
       const withPaths = await Promise.all(metas.map(async m => {

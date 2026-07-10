@@ -5,8 +5,9 @@
 // There are two different fetch strategies because the two callers start
 // from different places:
 //   - The Tracker doesn't reliably have every song loaded (paginated,
-//     filtered by category/search), so it has to ask Supabase for every
-//     titled group app-wide and then fetch the actual song objects.
+//     filtered by category/search), so it has to ask juicewrldapi's
+//     /versions/ table for every titled group app-wide and then fetch the
+//     actual song objects.
 //   - Playlists already has its full, unpaginated track list in hand, so it
 //     only needs version metadata for those specific songs — no need to
 //     fetch anything about the songs themselves.

@@ -1,54 +1,42 @@
-// Song "version" grouping — a separate, independent database from
-// juicewrldapi.com, since that API has no concept of linking e.g. "She's The
-// One (v1)" / "(v2)" / "(TV Mix)" together as the same underlying song.
-// Backed by a free Supabase project (Postgres + auto-generated REST API).
+// Song "version" grouping — e.g. "She's The One (v1)" / "(v2)" / "(TV Mix)"
+// linked together as the same underlying song. juicewrldapi.com's own
+// /versions/ table backs this (previously a separate Supabase project).
 //
-// Run this once in the Supabase SQL editor to create the table this file
-// talks to:
+// The table's list endpoint (GET /versions/) doesn't apply its query params
+// (group_id=, search=, title=) server-side, so any filtering by group or
+// title has to happen client-side — fetched in one shot via ?all=true (same
+// bulk mode /songs/ supports) rather than paging through it. GET
+// /versions/{song_id}/ is the one endpoint that *does* filter server-side (0
+// or 1 result for that song), so single-song lookups go through that instead
+// of the full list.
 //
-//   create table if not exists song_versions (
-//     song_id       bigint primary key,
-//     group_id      bigint not null,
-//     version       text,
-//     version_title text,
-//     added_by      text,
-//     created_at    timestamptz not null default now()
-//   );
-//
-//   -- version_title is written to every row in a group together (see
-//   -- setGroupVersionTitle below), so all linked songs always show the same
-//   -- title — it's stored per-row rather than in a separate groups table
-//   -- purely to avoid an extra migration, not because it's meant to vary.
-//   create index if not exists song_versions_group_id_idx on song_versions (group_id);
-//
-//   alter table song_versions enable row level security;
-//
-//   create policy "Anyone can read song versions"
-//     on song_versions for select
-//     using (true);
-//
-//   -- Writes are gated client-side (editor/admin accounts only, same as the
-//   -- rest of this app's edit-only actions) rather than through Supabase
-//   -- auth, so this policy is intentionally wide open. Fine for a low-stakes
-//   -- fan-curated dataset; tighten this if that trust model ever changes.
-//   create policy "Anyone can write song versions"
-//     on song_versions for all
-//     using (true)
-//     with check (true);
+// Writes (POST to create a row, PATCH /versions/{song_id}/ to update one)
+// require an editor/admin auth token; there's no bulk-write endpoint, so
+// group merges/title changes touching multiple rows send one request per
+// affected song.
+import { JWAPI_BASE, apiFetch } from './juicewrldApi'
+import { getToken } from './userApi'
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+/** Always true now that this is core juicewrldapi functionality rather than
+ *  optional Supabase config — kept as an export so existing call sites that
+ *  gate version UI on it don't need to change. */
+export const versionsEnabled = true
 
-/** True once VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are configured — lets
- *  callers hide version-grouping UI entirely when it's not set up. */
-export const versionsEnabled = !!(SUPABASE_URL && SUPABASE_ANON_KEY)
-
-interface SongVersionRow {
+interface VersionRow {
+  id: number
   song_id: number
   group_id: number
   version: string | null
-  version_title: string | null
-  added_by: string | null
+  title: string | null
+  created_at: string
+  created_by: string | null
+}
+
+interface VersionsPage {
+  count: number
+  next: string | null
+  previous: string | null
+  results: VersionRow[]
 }
 
 /** Version metadata for one song within a linked group. */
@@ -60,107 +48,115 @@ export interface SongVersionMeta {
   addedBy: string | null
 }
 
-async function supaFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error('Supabase not configured')
-  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
+function toMeta(row: VersionRow): SongVersionMeta {
+  return { songId: row.song_id, groupId: row.group_id, version: row.version, versionTitle: row.title, addedBy: row.created_by }
+}
+
+async function getRow(songId: number): Promise<VersionRow | null> {
+  const data = await apiFetch<VersionsPage>(`/versions/${songId}/`)
+  return data.results[0] ?? null
+}
+
+// Full-table fetch (via ?all=true, same as juicewrldApi's /songs/ bulk mode),
+// cached briefly since most operations here (group lookup, title search,
+// bulk metadata) need the whole set and re-fetching it on every call would
+// make the Tracker's compact view and song-info lookups noticeably slow.
+// Invalidated immediately after any write so merges/title changes are
+// reflected right away rather than waiting out the TTL.
+const ALL_ROWS_TTL = 30_000
+let allRowsCache: { promise: Promise<VersionRow[]>; ts: number } | null = null
+
+function invalidateAllRowsCache(): void {
+  allRowsCache = null
+}
+
+async function fetchAllRows(): Promise<VersionRow[]> {
+  return apiFetch<VersionRow[]>('/versions/', { all: 'true' })
+}
+
+async function getAllRows(): Promise<VersionRow[]> {
+  const now = Date.now()
+  if (!allRowsCache || now - allRowsCache.ts > ALL_ROWS_TTL) {
+    allRowsCache = { promise: fetchAllRows(), ts: now }
+  }
+  try {
+    return await allRowsCache.promise
+  } catch (e) {
+    allRowsCache = null
+    throw e
+  }
+}
+
+async function writeVersions<T>(path: string, method: 'POST' | 'PATCH', body: Record<string, unknown>): Promise<T> {
+  const token = getToken()
+  if (!token) throw new Error('Not logged in')
+  const res = await fetch(`${JWAPI_BASE}/versions${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
+    body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Supabase error ${res.status}`)
+  if (!res.ok) {
+    let message = `Versions API error ${res.status}`
+    try {
+      const data = await res.json()
+      if (data?.detail) message = data.detail
+    } catch {}
+    throw new Error(message)
+  }
+  invalidateAllRowsCache()
   const text = await res.text()
   return (text ? JSON.parse(text) : null) as T
 }
 
-const ROW_FIELDS = 'song_id,group_id,version,version_title,added_by'
-
-function toMeta(row: SongVersionRow): SongVersionMeta {
-  return { songId: row.song_id, groupId: row.group_id, version: row.version, versionTitle: row.version_title, addedBy: row.added_by }
+async function createRow(songId: number, groupId: number, version?: string | null, title?: string | null): Promise<void> {
+  await writeVersions('/', 'POST', { song_id: songId, group_id: groupId, version: version ?? null, title: title ?? null })
 }
 
-async function getRow(songId: number): Promise<SongVersionRow | null> {
-  const rows = await supaFetch<SongVersionRow[]>(`/song_versions?song_id=eq.${songId}&select=${ROW_FIELDS}`)
-  return rows[0] ?? null
-}
-
-async function upsertRow(songId: number, groupId: number, addedBy?: string | null, versionTitle?: string | null): Promise<void> {
-  await supaFetch('/song_versions', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify({ song_id: songId, group_id: groupId, added_by: addedBy ?? null, version_title: versionTitle ?? null }),
-  })
+async function patchRow(songId: number, body: Record<string, unknown>): Promise<void> {
+  await writeVersions(`/${songId}/`, 'PATCH', body)
 }
 
 /** All other songs grouped with this one (excluding itself), with their
- *  version metadata. Empty if ungrouped or Supabase isn't configured. */
+ *  version metadata. Empty if ungrouped. */
 export async function getVersionGroup(songId: number): Promise<SongVersionMeta[]> {
-  if (!versionsEnabled) return []
   try {
     const row = await getRow(songId)
     if (!row) return []
-    const rows = await supaFetch<SongVersionRow[]>(
-      `/song_versions?group_id=eq.${row.group_id}&song_id=neq.${songId}&select=${ROW_FIELDS}`
-    )
-    return rows.map(toMeta)
+    const all = await getAllRows()
+    return all.filter(r => r.group_id === row.group_id && r.song_id !== songId).map(toMeta)
   } catch {
     return []
   }
 }
 
-/** Every titled version group's rows, grouped by group id. Used by the
- *  Tracker's compact view — deliberately independent of whichever songs
- *  happen to be paginated into the Tracker at the time, since a group's
- *  members can easily span pages the Tracker hasn't loaded yet (or won't,
- *  under the current category/search filter).
- *
- *  PostgREST silently caps unpaginated responses at 1000 rows — this table
- *  grew well past that once most of the catalog got auto-grouped, so a
- *  plain unpaginated fetch here was quietly dropping every group past
- *  whichever song id happened to land on row 1000 (ordered by group_id),
- *  with no error, just missing groups. Page through explicitly instead of
- *  trusting a single response to contain everything. */
+/** Every titled version group's rows. Used by the Tracker's compact view —
+ *  deliberately independent of whichever songs happen to be paginated into
+ *  the Tracker at the time, since a group's members can easily span pages
+ *  the Tracker hasn't loaded yet (or won't, under the current category/search
+ *  filter). */
 export async function getAllVersionGroups(): Promise<SongVersionMeta[]> {
-  if (!versionsEnabled) return []
-  const PAGE_SIZE = 1000
-  const rows: SongVersionRow[] = []
   try {
-    for (let offset = 0; ; offset += PAGE_SIZE) {
-      const page = await supaFetch<SongVersionRow[]>(
-        `/song_versions?version_title=not.is.null&select=${ROW_FIELDS}&order=group_id.asc&offset=${offset}&limit=${PAGE_SIZE}`
-      )
-      rows.push(...page)
-      if (page.length < PAGE_SIZE) break
-    }
-    return rows.map(toMeta)
+    const all = await getAllRows()
+    return all.filter(r => r.title != null).map(toMeta)
   } catch {
-    return rows.map(toMeta)
+    return []
   }
 }
 
 /** Version metadata for a known, bounded set of songs (e.g. a playlist's
- *  tracks) — only songs actually linked into a group come back. Unlike
- *  getAllVersionGroups, this doesn't fetch full song objects since the
- *  caller already has them; cheap enough to use for any already-loaded,
- *  non-paginated song list. Chunked to keep query strings a sane length. */
+ *  tracks) — only songs actually linked into a group come back. */
 export async function getVersionMetaForSongs(songIds: number[]): Promise<Map<number, SongVersionMeta>> {
-  if (!versionsEnabled || songIds.length === 0) return new Map()
-  const CHUNK = 150
-  const out = new Map<number, SongVersionMeta>()
+  if (songIds.length === 0) return new Map()
   try {
-    for (let i = 0; i < songIds.length; i += CHUNK) {
-      const chunk = songIds.slice(i, i + CHUNK)
-      const rows = await supaFetch<SongVersionRow[]>(
-        `/song_versions?song_id=in.(${chunk.join(',')})&select=${ROW_FIELDS}`
-      )
-      for (const row of rows) out.set(row.song_id, toMeta(row))
+    const ids = new Set(songIds)
+    const all = await getAllRows()
+    const out = new Map<number, SongVersionMeta>()
+    for (const row of all) {
+      if (ids.has(row.song_id)) out.set(row.song_id, toMeta(row))
     }
     return out
   } catch {
-    return out
+    return new Map()
   }
 }
 
@@ -169,41 +165,38 @@ export async function getVersionMetaForSongs(songIds: number[]): Promise<Map<num
  *  groups already, the groups merge (all members repointed to the lower
  *  group id, and the surviving title — whichever side had one set — is
  *  written to every row so the merged group doesn't end up with two songs
- *  claiming different titles). `addedBy` is stamped on any row newly created
- *  by this call (existing rows are left as-is). */
-export async function linkSongVersion(songId: number, otherSongId: number, addedBy?: string | null): Promise<void> {
+ *  claiming different titles). */
+export async function linkSongVersion(songId: number, otherSongId: number): Promise<void> {
   if (songId === otherSongId) return
   const [a, b] = await Promise.all([getRow(songId), getRow(otherSongId)])
   if (a && b) {
     if (a.group_id === b.group_id) return
     const keep = Math.min(a.group_id, b.group_id)
     const drop = Math.max(a.group_id, b.group_id)
-    await supaFetch(`/song_versions?group_id=eq.${drop}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ group_id: keep }),
-    })
-    const survivingTitle = (a.group_id === keep ? a.version_title : b.version_title)
-      ?? (a.group_id === keep ? b.version_title : a.version_title)
-    if (survivingTitle) {
-      await supaFetch(`/song_versions?group_id=eq.${keep}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ version_title: survivingTitle }),
-      })
-    }
+    const survivingTitle = (a.group_id === keep ? a.title : b.title) ?? (a.group_id === keep ? b.title : a.title)
+    const all = await getAllRows()
+    await Promise.all(
+      all
+        .filter(r => r.group_id === keep || r.group_id === drop)
+        .filter(r => r.group_id === drop || (survivingTitle != null && r.title !== survivingTitle))
+        .map(r => patchRow(r.song_id, {
+          group_id: keep,
+          ...(survivingTitle != null ? { title: survivingTitle } : {}),
+        }))
+    )
   } else if (a) {
-    await upsertRow(otherSongId, a.group_id, addedBy, a.version_title)
+    await createRow(otherSongId, a.group_id, null, a.title)
   } else if (b) {
-    await upsertRow(songId, b.group_id, addedBy, b.version_title)
+    await createRow(songId, b.group_id, null, b.title)
   } else {
     const groupId = Math.min(songId, otherSongId)
-    await Promise.all([upsertRow(songId, groupId, addedBy), upsertRow(otherSongId, groupId, addedBy)])
+    await Promise.all([createRow(songId, groupId), createRow(otherSongId, groupId)])
   }
 }
 
 /** This song's own version number/title/author, if it's linked into a group.
- *  Null if ungrouped or Supabase isn't configured. */
+ *  Null if ungrouped. */
 export async function getOwnVersionMeta(songId: number): Promise<SongVersionMeta | null> {
-  if (!versionsEnabled) return null
   try {
     const row = await getRow(songId)
     return row ? toMeta(row) : null
@@ -215,36 +208,29 @@ export async function getOwnVersionMeta(songId: number): Promise<SongVersionMeta
 /** Sets this song's own version label (e.g. "v1", "TV Mix") — distinct per
  *  song within a group, unlike the shared version title below. If the song
  *  isn't linked to anything yet, this creates a standalone one-song group
- *  for it (group_id = its own song id) rather than silently no-op'ing — a
- *  plain PATCH would match zero rows and appear to do nothing. `addedBy` is
- *  only written when this call creates the row (existingGroupId is nullish)
- *  — otherwise it's left as whoever originally added it. Returns the group
- *  id the song ends up in, for setting the shared title afterward. */
+ *  for it (group_id = its own song id) rather than silently no-op'ing.
+ *  Returns the group id the song ends up in, for setting the shared title
+ *  afterward. */
 export async function setSongVersion(
   songId: number,
   version: string | null,
-  existingGroupId?: number | null,
-  addedBy?: string | null
+  existingGroupId?: number | null
 ): Promise<number> {
-  const isNewRow = existingGroupId == null
   const groupId = existingGroupId ?? songId
-  const body: Record<string, unknown> = { song_id: songId, group_id: groupId, version }
-  if (isNewRow) body.added_by = addedBy ?? null
-  await supaFetch('/song_versions', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify(body),
-  })
+  if (existingGroupId == null) {
+    await createRow(songId, groupId, version)
+  } else {
+    await patchRow(songId, { version, group_id: groupId })
+  }
   return groupId
 }
 
 /** Sets the version title for every song in a group at once, so linked
  *  songs always agree on the title (e.g. "She's The One"). */
 export async function setGroupVersionTitle(groupId: number, versionTitle: string | null): Promise<void> {
-  await supaFetch(`/song_versions?group_id=eq.${groupId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ version_title: versionTitle }),
-  })
+  const all = await getAllRows()
+  const members = all.filter(r => r.group_id === groupId)
+  await Promise.all(members.map(row => patchRow(row.song_id, { title: versionTitle })))
 }
 
 /** An existing version title plus the group it belongs to — picking one of
@@ -259,17 +245,16 @@ export interface VersionTitleSuggestion {
  *  title field so editors reuse e.g. "TV Mix" instead of typing variants of
  *  it across different groups. Empty query returns the most recent titles. */
 export async function searchVersionTitles(query: string, limit = 8): Promise<VersionTitleSuggestion[]> {
-  if (!versionsEnabled) return []
   try {
-    const q = query.trim()
-    const filter = q ? `version_title=ilike.*${encodeURIComponent(q)}*&` : ''
-    const rows = await supaFetch<{ version_title: string | null; group_id: number }[]>(
-      `/song_versions?${filter}version_title=not.is.null&select=version_title,group_id&order=created_at.desc&limit=50`
-    )
+    const q = query.trim().toLowerCase()
+    const all = await getAllRows()
+    const matches = (q ? all.filter(r => r.title && r.title.toLowerCase().includes(q)) : all.filter(r => r.title != null))
+      .slice()
+      .sort((r1, r2) => r2.created_at.localeCompare(r1.created_at))
     const seen = new Set<string>()
     const out: VersionTitleSuggestion[] = []
-    for (const r of rows) {
-      const title = r.version_title
+    for (const r of matches) {
+      const title = r.title
       if (!title || seen.has(title)) continue
       seen.add(title)
       out.push({ title, groupId: r.group_id })
@@ -284,18 +269,16 @@ export async function searchVersionTitles(query: string, limit = 8): Promise<Ver
 /** Merges `songId` into an existing group (e.g. the one behind a title
  *  autocomplete suggestion), the same way linkSongVersion merges two songs'
  *  groups. Returns the group id the song ends up in. */
-export async function joinVersionGroup(songId: number, targetGroupId: number, addedBy?: string | null): Promise<number> {
+export async function joinVersionGroup(songId: number, targetGroupId: number): Promise<number> {
   const row = await getRow(songId)
   if (!row) {
-    await upsertRow(songId, targetGroupId, addedBy)
+    await createRow(songId, targetGroupId)
     return targetGroupId
   }
   if (row.group_id === targetGroupId) return targetGroupId
   const keep = Math.min(row.group_id, targetGroupId)
   const drop = Math.max(row.group_id, targetGroupId)
-  await supaFetch(`/song_versions?group_id=eq.${drop}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ group_id: keep }),
-  })
+  const all = await getAllRows()
+  await Promise.all(all.filter(r => r.group_id === drop).map(r => patchRow(r.song_id, { group_id: keep })))
   return keep
 }
