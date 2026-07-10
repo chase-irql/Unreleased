@@ -1040,7 +1040,7 @@ export default function Player(): JSX.Element {
         </div>
 
         {/* Right: speed + queue + NP + volume */}
-        <div className="flex items-center gap-3 w-56 justify-end">
+        <div className="flex items-center gap-3 w-72 justify-end">
           {/* Playback speed */}
           {!radioFmActive && (
           <button

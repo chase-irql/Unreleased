@@ -15,6 +15,14 @@ const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
 app.setAppUserModelId('Unreleased')
 Menu.setApplicationMenu(null)
 
+// Only one instance may run at a time — launching a second copy (e.g. double-
+// clicking the exe again, or a shortcut) just focuses the existing window
+// instead of spinning up a competing process against the same userData files.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
+
 // Dev mode loads the renderer from http://localhost:3018 (see electron:dev
 // script), and Chromium blocks <audio>/<img>/<video> loading a `file://`
 // resource from a non-file-origin page ("Not allowed to load local resource").
@@ -948,6 +956,14 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  }
 })
 
 app.on('before-quit', () => { isQuitting = true; discordRpc.setEnabled(false) })

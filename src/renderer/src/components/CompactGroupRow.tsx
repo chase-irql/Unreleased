@@ -45,7 +45,7 @@ export const CompactGroupRow = memo(function CompactGroupRow({
     <button
       onClick={onToggle}
       onContextMenu={onContextMenu}
-      className="w-full flex items-center gap-2.5 px-3 py-2.5 md:py-2 hover:bg-surface-overlay rounded-lg transition-colors text-left"
+      className="w-full flex items-center gap-3 px-3 py-2.5 md:py-2 hover:bg-surface-overlay rounded-lg transition-colors text-left"
     >
       {expanded ? <ChevronUp size={14} className="text-text-muted shrink-0" /> : <ChevronDown size={14} className="text-text-muted shrink-0" />}
       <div className="shrink-0 w-10 h-10 md:w-9 md:h-9 rounded overflow-hidden bg-surface-overlay">

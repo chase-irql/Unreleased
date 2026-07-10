@@ -74,6 +74,14 @@ const PAGE_SIZE = 50
 const LS_TRACKER_VIEW = 'api-tracker:viewMode'
 const LS_TRACKER_SIDEBAR = 'api-tracker:showSidebar'
 const LS_TRACKER_SEARCH  = 'api-tracker:search'
+const LS_TRACKER_CALENDAR_MONTH = 'api-tracker:calendarMonth'
+
+// record_dates is free-text and occasionally yields a technically-valid but
+// implausible match (e.g. a stray "1/2/03" fragment that isn't really a
+// date). Juice WRLD's earliest known recordings are from the mid-2010s, so
+// anything before this is almost certainly a parsing false-positive rather
+// than a real recording date — treat it as invalid.
+const MIN_PLAUSIBLE_RECORD_YEAR = 2010
 
 // The `q` URL param takes priority over the saved localStorage query so that
 // following/reloading a link with a search in it (or navigating back to one)
@@ -174,6 +182,7 @@ function normalizeYear(y: number): number {
 }
 
 function isValidYMD(y: number, m: number, d: number): boolean {
+  if (y < MIN_PLAUSIBLE_RECORD_YEAR || y > new Date().getFullYear()) return false
   if (m < 0 || m > 11 || d < 1 || d > 31) return false
   const dt = new Date(y, m, d)
   return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d
@@ -1464,14 +1473,28 @@ export default function ApiTrackerView(): JSX.Element {
     return map
   }, [eras])
 
-  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number } | null>(null)
+  // Restores the last-viewed month from localStorage (this view unmounts
+  // whenever the user switches tabs, so component state alone doesn't
+  // survive a round trip). Only falls back to the earliest recorded month
+  // if the user has never browsed the calendar before.
+  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number } | null>(() => {
+    const saved = localStorage.getItem(LS_TRACKER_CALENDAR_MONTH)
+    if (!saved) return null
+    const [y, m] = saved.split('-').map(Number)
+    return Number.isFinite(y) && Number.isFinite(m) ? { year: y, month: m } : null
+  })
   const calendarMonthInitRef = useRef(false)
   useEffect(() => {
     if (calendarMonthInitRef.current || calendarByDate.size === 0) return
     calendarMonthInitRef.current = true
+    if (calendarMonth) return
     const [y, m] = [...calendarByDate.keys()].sort()[0].split('-').map(Number)
     setCalendarMonth({ year: y, month: m - 1 })
   }, [calendarByDate])
+
+  useEffect(() => {
+    if (calendarMonth) localStorage.setItem(LS_TRACKER_CALENDAR_MONTH, `${calendarMonth.year}-${calendarMonth.month}`)
+  }, [calendarMonth])
 
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
 
