@@ -165,6 +165,28 @@ export function buildImageUrl(imageUrl: string | null | undefined): string | und
   return `https://juicewrldapi.com${rel}`
 }
 
+// Discord's classic (local IPC) Rich Presence only reliably applies a
+// `large_url` up to roughly this many characters — longer ones get silently
+// ignored, leaving the static fallback logo. There's no way to shorten the
+// query path itself, since /files/cover-art/ needs the song's exact path to
+// resolve the file, so this gates whether we send the per-track cover at all
+// rather than sending a truncated (and broken) one.
+const DISCORD_RPC_URL_LIMIT = 256
+
+/** Cover art URL for Discord RPC: prefers the curated `image_url`, and falls
+ *  back to the file's own cover art by path — but only when that URL fits
+ *  under Discord's length limit. Returns undefined (static logo) otherwise. */
+export function discordCoverUrl(
+  imageUrl: string | null | undefined,
+  path: string | null | undefined
+): string | undefined {
+  const curated = buildImageUrl(imageUrl)
+  if (curated) return curated
+  if (!path) return undefined
+  const url = buildCoverArtUrl(path)
+  return url.length <= DISCORD_RPC_URL_LIMIT ? url : undefined
+}
+
 /** Picks the best cover URL from a playlist summary or detail object.
  *  cover_image may contain a base64 data URI; cover_image_url may be a relative path. */
 export function playlistCoverUrl(p: { cover_image_url?: string | null; cover_image?: string | null }): string | undefined {

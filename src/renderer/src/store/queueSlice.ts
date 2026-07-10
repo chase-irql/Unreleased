@@ -15,6 +15,8 @@ import type { StateCreator } from 'zustand'
 import type { Track } from '../types'
 import { apiFetch, songToTrack } from '../lib/juicewrldApi'
 import type { JWApiPaginatedResponse, JWApiSong } from '../lib/juicewrldApi'
+import { getOwnVersionMeta, getVersionGroup } from '../lib/versionsApi'
+import type { SongVersionMeta } from '../lib/versionsApi'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -113,6 +115,9 @@ export interface QueueSlice {
   // Internal
   _loadMore: () => void
   _prefetchRadioTrack: () => void
+  /** If "prefer OG version" is enabled, asynchronously swaps `track` for its
+   *  linked OG sibling (if one exists) once it becomes the current track. */
+  _maybeSwapToOg: (track: Track) => void
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -140,6 +145,29 @@ function insertRandom<T>(base: T[], items: T[]): T[] {
 }
 
 const RADIO_HISTORY_LIMIT = 30
+
+/** Matches version labels like "OG", "OG File", "OG Quality" (not "Original Key",
+ *  which is an unrelated field) — the community convention for the raw/leaked
+ *  file as opposed to a snippet, CDQ rip, TV mix, etc. */
+const isOgVersion = (meta: SongVersionMeta | null | undefined): boolean =>
+  !!meta && /\bog\b/i.test(`${meta.version ?? ''} ${meta.versionTitle ?? ''}`)
+
+/** Given an API-sourced track, looks up its linked version group and — if an
+ *  "OG" sibling exists and this track isn't already it — returns a Track for
+ *  that sibling. Returns null if there's nothing to swap to. */
+async function findOgTrack(track: Track): Promise<Track | null> {
+  if (!track.id.startsWith('jw-')) return null
+  const songId = Number(track.id.slice(3))
+  if (!Number.isFinite(songId)) return null
+
+  const [own, group] = await Promise.all([getOwnVersionMeta(songId), getVersionGroup(songId)])
+  if (isOgVersion(own)) return null
+  const ogSibling = group.find(isOgVersion)
+  if (!ogSibling) return null
+
+  const song = await apiFetch<JWApiSong>(`/songs/${ogSibling.songId}/`)
+  return songToTrack(song)
+}
 
 // ─── Slice factory ────────────────────────────────────────────────────────────
 
@@ -197,6 +225,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       currentTime: 0,
     })
     if (filter?.hasMore) get()._loadMore()
+    get()._maybeSwapToOg(track)
   },
 
   // ── stopRadio ──────────────────────────────────────────────────────────────
@@ -223,6 +252,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       currentTime: 0,
     })
     get()._prefetchRadioTrack()
+    get()._maybeSwapToOg(track)
   },
 
   // ── nextTrack ──────────────────────────────────────────────────────────────
@@ -251,6 +281,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         currentTime: 0,
       })
       get()._prefetchRadioTrack()
+      get()._maybeSwapToOg(radioNext)
       return radioNext
     }
 
@@ -269,6 +300,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
           const first = reshuffled[0]
           set({ queue: reshuffled, queueIndex: 0, currentTrack: first, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
           get()._loadMore()
+          get()._maybeSwapToOg(first)
           return first
         } else {
           set({ isPlaying: false }); return null
@@ -285,6 +317,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const track = queue[nextIdx]
     set({ queueIndex: nextIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
     get()._loadMore()
+    get()._maybeSwapToOg(track)
     return track
   },
 
@@ -307,6 +340,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const prevIdx = Math.max(0, queueIndex - 1)
     const track = queue[prevIdx]
     set({ queueIndex: prevIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    get()._maybeSwapToOg(track)
     return track
   },
 
@@ -316,6 +350,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const idx = queue.findIndex((t: Track) => t.id === track.id)
     if (idx < 0) return
     set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    get()._maybeSwapToOg(track)
   },
 
   // ── toggleShuffle ──────────────────────────────────────────────────────────
@@ -444,6 +479,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         const newQueue = [...queue.slice(-(RADIO_HISTORY_LIMIT - 1)), track]
         set({ queue: newQueue, queueIndex: newQueue.length - 1, currentTrack: track, currentTrackFull: null, isPlaying: true, radioNext: null, progress: 0, currentTime: 0 })
         get()._prefetchRadioTrack()
+        get()._maybeSwapToOg(track)
       }
     }
 
@@ -474,5 +510,23 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         .then((data) => handleTrack(songToTrack(data.song)))
         .catch(handleError)
     }
+  },
+
+  // ── Prefer-OG swap ─────────────────────────────────────────────────────────
+  _maybeSwapToOg: (track) => {
+    if (!get().preferOgVersion) return
+    findOgTrack(track)
+      .then((ogTrack) => {
+        if (!ogTrack) return
+        const state = get()
+        // Bail if the user has since moved on to a different track.
+        if (state.currentTrack?.id !== track.id) return
+        set({
+          currentTrack: ogTrack,
+          currentTrackFull: null,
+          queue: state.queue.map((t: Track) => (t.id === track.id ? ogTrack : t)),
+        })
+      })
+      .catch(() => {})
   },
 })

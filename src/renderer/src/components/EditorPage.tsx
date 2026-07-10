@@ -12,6 +12,7 @@ import {
   versionsEnabled, getOwnVersionMeta, setSongVersion, setGroupVersionTitle, searchVersionTitles, joinVersionGroup,
 } from '../lib/versionsApi'
 import type { VersionTitleSuggestion } from '../lib/versionsApi'
+import { invalidateCompactGroupsCache } from '../lib/compactGroups'
 
 type SubmitState = 'idle' | 'submitting' | 'submitted' | 'error'
 type LyricsTab = 'lyrics' | 'synced'
@@ -365,6 +366,7 @@ export default function EditorPage(): JSX.Element {
     try {
       const groupId = await setSongVersion(song.id, versionNum.trim() || null, ownGroupId)
       await setGroupVersionTitle(groupId, versionTitle.trim() || null)
+      invalidateCompactGroupsCache()
       setOwnGroupId(groupId)
       setVersionSaveStatus('saved')
     } catch (e) {
@@ -387,6 +389,7 @@ export default function EditorPage(): JSX.Element {
     try {
       const groupId = await joinVersionGroup(song.id, suggestion.groupId)
       await setGroupVersionTitle(groupId, suggestion.title)
+      invalidateCompactGroupsCache()
       setOwnGroupId(groupId)
       setVersionSaveStatus('saved')
     } catch (e) {

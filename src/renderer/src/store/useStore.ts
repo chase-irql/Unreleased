@@ -81,7 +81,7 @@ interface AppState {
   radioFmVote: import('../lib/radioLive').RadioVote | null
   radioFmUpNext: import('../lib/radioLive').RadioTrack | null
   radioFmQueuePreview: string[]
-  radioFmMatchedSong: { imageUrl: string | null; lyrics: string | null; syncedLyrics: string | null } | null
+  radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null } | null
   viewMode: 'list' | 'grid'
   theme: 'dark' | 'light'
   searchQuery: string
@@ -97,6 +97,10 @@ interface AppState {
   sleepTimerEnd: number | null
   audioOutput: string
   accentColor: string
+  // When enabled, if a track has a linked "OG" version (same song, grouped via
+  // the versions system, labeled e.g. "OG"/"OG File"), play that version's
+  // file instead of the currently selected one.
+  preferOgVersion: boolean
 
   // Liked songs
   likedTrackIds: string[]
@@ -168,7 +172,7 @@ interface AppActions {
   setRadioFmVote: (vote: import('../lib/radioLive').RadioVote | null) => void
   setRadioFmUpNext: (track: import('../lib/radioLive').RadioTrack | null) => void
   setRadioFmQueuePreview: (preview: string[]) => void
-  setRadioFmMatchedSong: (song: { imageUrl: string | null; lyrics: string | null; syncedLyrics: string | null } | null) => void
+  setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null } | null) => void
   setShowSettings: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
@@ -184,6 +188,7 @@ interface AppActions {
   setSleepTimer: (endTimestamp: number | null) => void
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
+  setPreferOgVersion: (enabled: boolean) => void
 
   setLikedTrackIds: (ids: string[]) => void
   toggleLike: (trackId: string) => void
@@ -349,6 +354,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   sleepTimerEnd: null,
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
+  preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
 
   setCrossfade: (enabled, duration) => {
     set({ crossfadeEnabled: enabled, crossfadeDuration: duration })
@@ -357,6 +363,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
+  setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
 
   // ── Liked songs ───────────────────────────────────────────────────────────

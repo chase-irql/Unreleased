@@ -52,7 +52,7 @@ export default function Sidebar(): JSX.Element {
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
-    { icon: <img src={logo} alt="WRLD" className="w-[22px] h-[22px] object-contain" />, label: 'WRLD', view: 'wrld' },
+    { icon: <img src={logo} alt="WRLD" className="w-[24px] h-[24px] object-contain" />, label: 'WRLD', view: 'wrld' },
     { icon: <SearchCode size={18} />, label: 'Tracker', view: 'api-tracker' },
     { icon: <HardDrive size={18} />, label: 'Files', view: 'api-files' },
     ...(isElectron ? [{ icon: <Library size={18} />, label: 'Library', view: 'library' as const }] : []),
@@ -102,12 +102,12 @@ export default function Sidebar(): JSX.Element {
                   }
                 }}
                 title={collapsed ? label : undefined}
-                className={`flex items-center flex-1 min-w-0 py-2 transition-[padding-left,gap] duration-200 ${collapsed ? 'pl-3 gap-0' : 'pl-0 gap-3'}`}
+                className={`flex items-center flex-1 min-w-0 py-2 transition-[padding-left,gap,justify-content] duration-200 ${collapsed ? 'justify-center pl-0 gap-0' : 'pl-0 gap-3'}`}
               >
-                <span className="shrink-0 flex items-center justify-center">{icon}</span>
+                <span className="w-6 h-6 shrink-0 flex items-center justify-center">{icon}</span>
                 <span
                   aria-hidden={collapsed}
-                  className={`flex-1 text-left truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                  className={`text-left truncate transition-opacity duration-200 ${collapsed ? 'w-0 flex-none opacity-0 pointer-events-none' : 'flex-1 opacity-100'}`}
                 >
                   {label}
                 </span>

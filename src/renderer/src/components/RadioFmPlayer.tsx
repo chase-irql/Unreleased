@@ -92,7 +92,9 @@ export default function RadioFmPlayer(): JSX.Element {
     const apply = (song: JWApiSong) => {
       if (cancelled) return
       setRadioFmMatchedSong({
+        songId: song.id ?? null,
         imageUrl: buildImageUrl(song.image_url) ?? null,
+        path: song.path ?? null,
         lyrics: song.lyrics ?? null,
         syncedLyrics: song.synced_lyrics ?? null,
       })
