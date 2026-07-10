@@ -3,7 +3,7 @@ import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, LayoutGrid, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
-  CheckSquare2, Square, Link2, Layers,
+  CheckSquare2, Square, Link2, Layers, Mic2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -26,6 +26,7 @@ import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'grid'
+type TrackerTab = 'songs' | 'lyrics'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'text-emerald-400 bg-emerald-400/10 border-emerald-400/25',
@@ -49,6 +50,35 @@ const PAGE_SIZE = 50
 const LS_TRACKER_VIEW = 'api-tracker:viewMode'
 const LS_TRACKER_SIDEBAR = 'api-tracker:showSidebar'
 const LS_TRACKER_SEARCH  = 'api-tracker:search'
+
+type OrderField = 'name' | 'credited_artists' | 'era__name' | 'category' | 'length'
+
+// Defined at module scope (not inline in render) so React keeps a stable
+// component identity across re-renders — an inline definition gets recreated
+// every render, which makes React unmount/remount the buttons on every
+// state update (e.g. every page loaded while sorting), causing a visible
+// flicker instead of a smooth active/inactive toggle.
+const SortBtn = ({ field, label, className, orderField, orderDir, onClick }: {
+  field: OrderField
+  label: string
+  className?: string
+  orderField: OrderField | null
+  orderDir: 'asc' | 'desc'
+  onClick: (field: OrderField) => void
+}): JSX.Element => {
+  const active = orderField === field
+  return (
+    <button
+      onClick={() => onClick(field)}
+      className={`flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${active ? 'text-accent' : 'text-text-muted hover:text-text-secondary'} ${className ?? ''}`}
+    >
+      {label}
+      {active
+        ? orderDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+        : <span className="w-2.5" />}
+    </button>
+  )
+}
 
 function formatDur(secs: number): string {
   if (!secs) return '--:--'
@@ -659,6 +689,8 @@ export default function ApiTrackerView(): JSX.Element {
 
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
+  const [trackerTab, setTrackerTab] = useState<TrackerTab>('songs')
+
   const [selectedSong, setSelectedSong] = useState<JWApiSong | null>(null)
   const [contextMenu, setContextMenu] = useState<{ song: JWApiSong; x: number; y: number } | null>(null)
   const [bulkContextMenu, setBulkContextMenu] = useState<BulkContextMenuState | null>(null)
@@ -792,9 +824,13 @@ export default function ApiTrackerView(): JSX.Element {
   const setViewMode = (v: ViewMode): void => { setViewModeState(v); localStorage.setItem(LS_TRACKER_VIEW, v) }
   const setShowSidebar = (v: boolean): void => { setShowSidebarState(v); localStorage.setItem(LS_TRACKER_SIDEBAR, String(v)) }
 
-  type OrderField = 'name' | 'credited_artists' | 'era__name' | 'category' | 'length'
   const [orderField, setOrderField] = useState<OrderField | null>(null)
   const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('asc')
+  // Whether any column is currently driving sort mode — the fetched song set
+  // only depends on this and the search/category/era filters, not on *which*
+  // column it'll be sorted by (that's applied client-side), so this is what
+  // the fetch effect below keys off instead of orderField itself.
+  const sortModeActive = orderField !== null
 
   // Reset accumulated songs and go back to page 1
   const resetSongs = useCallback((): void => {
@@ -825,6 +861,56 @@ export default function ApiTrackerView(): JSX.Element {
     if (apiTrackerEra) { setEra(apiTrackerEra); setApiTrackerEra('') }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Lyric search (separate tab) — its own query/results, independent of
+  // the main song list's search/category/era/sort state above.
+  const [lyricsQuery, setLyricsQuery] = useState('')
+  const [debouncedLyricsQuery, setDebouncedLyricsQuery] = useState('')
+  const [lyricsResults, setLyricsResults] = useState<JWApiSong[]>([])
+  const [lyricsPage, setLyricsPage] = useState(1)
+  const [lyricsCount, setLyricsCount] = useState(0)
+  const [lyricsHasMore, setLyricsHasMore] = useState(false)
+  const [lyricsLoading, setLyricsLoading] = useState(false)
+  const [lyricsError, setLyricsError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedLyricsQuery(lyricsQuery), 400)
+    return () => clearTimeout(t)
+  }, [lyricsQuery])
+
+  useEffect(() => {
+    if (!debouncedLyricsQuery.trim()) {
+      setLyricsResults([]); setLyricsCount(0); setLyricsHasMore(false); setLyricsError(null)
+      return
+    }
+    let cancelled = false
+    setLyricsLoading(true); setLyricsError(null)
+    apiFetch<JWApiPaginatedResponse>('/songs/', { lyrics: debouncedLyricsQuery, page: 1, page_size: PAGE_SIZE })
+      .then((data) => {
+        if (cancelled) return
+        setLyricsResults(data.results)
+        setLyricsCount(data.count)
+        setLyricsHasMore(data.next !== null)
+        setLyricsPage(1)
+      })
+      .catch((err) => { if (!cancelled) setLyricsError(err.message) })
+      .finally(() => { if (!cancelled) setLyricsLoading(false) })
+    return () => { cancelled = true }
+  }, [debouncedLyricsQuery])
+
+  const loadMoreLyrics = (): void => {
+    if (lyricsLoading || !lyricsHasMore) return
+    const nextPage = lyricsPage + 1
+    setLyricsLoading(true)
+    apiFetch<JWApiPaginatedResponse>('/songs/', { lyrics: debouncedLyricsQuery, page: nextPage, page_size: PAGE_SIZE })
+      .then((data) => {
+        setLyricsResults((prev) => [...prev, ...data.results])
+        setLyricsHasMore(data.next !== null)
+        setLyricsPage(nextPage)
+      })
+      .catch((err) => setLyricsError(err.message))
+      .finally(() => setLyricsLoading(false))
+  }
+
   const handleCategoryClick = useCallback((cat: Category) => { setCategory(cat); resetSongs() }, [resetSongs])
   const handleEraClick = useCallback((eraName: string) => { setEra(eraName); resetSongs() }, [resetSongs])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -850,35 +936,50 @@ export default function ApiTrackerView(): JSX.Element {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search, resetSongs])
 
-  // ── SORT MODE: load the entire library sequentially, sort client-side ──────────
+  // ── SORT MODE: load the entire library, sort client-side ──────────────────
   // The API has no ordering param, so we fetch all pages and sort in memory.
+  // Keyed on sortModeActive rather than orderField — switching which column
+  // is active only changes how the already-fetched songs are sorted (see the
+  // sortedSongs memo below), so it must not re-trigger this fetch.
   useEffect(() => {
-    if (!orderField) return
+    if (!sortModeActive) return
     let cancelled = false
     loadingRef.current = true
     setLoading(true); setError(null); setSongs([]); setHasMore(false); setCount(0)
     const t0 = performance.now()
-    runLog('tracker-sort', `start field=${orderField} dir=${orderDir} search=${JSON.stringify(debouncedSearch)} category=${category || '-'} era=${era || '-'}`)
+    const PAGE_SIZE_SORT = 200 // bigger batches to reduce round-trips
+    const CONCURRENCY = 6 // fetch several pages in parallel instead of one at a time
+    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${category || '-'} era=${era || '-'}`)
+    const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
+      searchall: debouncedSearch || undefined,
+      category: category || undefined,
+      era: era || undefined,
+      page: p,
+      page_size: PAGE_SIZE_SORT,
+    })
     ;(async () => {
-      const all: JWApiSong[] = []
-      let p = 1
       try {
-        while (!cancelled) {
-          const data = await apiFetch<JWApiPaginatedResponse>('/songs/', {
-            searchall: debouncedSearch || undefined,
-            category: category || undefined,
-            era: era || undefined,
-            page: p,
-            page_size: 200, // bigger batches to reduce round-trips
-          })
-          if (cancelled) return
-          all.push(...data.results)
-          setSongs([...all]) // progressive display while loading
-          setCount(data.count)
-          runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${data.count}`)
-          if (!data.next) break
-          p++
+        const first = await fetchPage(1)
+        if (cancelled) return
+        const all: JWApiSong[] = [...first.results]
+        setSongs([...all])
+        setCount(first.count)
+        runLog('tracker-sort', `page 1 loaded, accumulated ${all.length}/${first.count}`)
+
+        const totalPages = Math.ceil(first.count / PAGE_SIZE_SORT)
+        let nextPage = 2
+        const worker = async (): Promise<void> => {
+          while (!cancelled) {
+            const p = nextPage++
+            if (p > totalPages) return
+            const data = await fetchPage(p)
+            if (cancelled) return
+            all.push(...data.results)
+            setSongs([...all]) // progressive display while loading
+            runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${first.count}`)
+          }
         }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
         if (!cancelled) runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
       } catch (e) {
         if (!cancelled) { setError((e as Error).message); runLog('tracker-sort', 'ERROR', e as Error) }
@@ -887,7 +988,7 @@ export default function ApiTrackerView(): JSX.Element {
       }
     })()
     return () => { cancelled = true }
-  }, [orderField, debouncedSearch, category, era])
+  }, [sortModeActive, debouncedSearch, category, era])
 
   // ── SCROLL MODE: infinite scroll, accumulates pages ──────────────────────────
   useEffect(() => {
@@ -1141,7 +1242,7 @@ export default function ApiTrackerView(): JSX.Element {
     setBulkLinkStatus('linking')
     try {
       const [first, ...rest] = ids
-      for (const id of rest) await linkSongVersion(first, id, account?.display_name ?? null)
+      for (const id of rest) await linkSongVersion(first, id)
       const meta = await getOwnVersionMeta(first)
       if (meta && !meta.versionTitle) setTitlePromptGroupId(meta.groupId)
       setBulkLinkStatus('done')
@@ -1164,9 +1265,33 @@ export default function ApiTrackerView(): JSX.Element {
       {/* Header */}
       <div className="px-4 md:px-5 pt-4 md:pt-5 pb-3 shrink-0">
         <h1 className="text-text-primary text-xl font-bold mb-1">Tracker</h1>
-        <StatsBar stats={stats} />
 
-        <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-1 mb-3 border-b border-[var(--border)]">
+          <button
+            onClick={() => setTrackerTab('songs')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              trackerTab === 'songs'
+                ? 'text-accent border-accent'
+                : 'text-text-muted border-transparent hover:text-text-secondary'
+            }`}
+          >
+            <Music2 size={14} /> Songs
+          </button>
+          <button
+            onClick={() => setTrackerTab('lyrics')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              trackerTab === 'lyrics'
+                ? 'text-accent border-accent'
+                : 'text-text-muted border-transparent hover:text-text-secondary'
+            }`}
+          >
+            <Mic2 size={14} /> Lyric Search
+          </button>
+        </div>
+
+        {trackerTab === 'songs' && <StatsBar stats={stats} />}
+
+        {trackerTab === 'songs' && <div className="flex flex-col gap-2">
           {/* Search — uses searchall to include producers */}
           <div className="relative w-full">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
@@ -1269,10 +1394,85 @@ export default function ApiTrackerView(): JSX.Element {
               )}
             </div>
           )}
-        </div>
+        </div>}
+
+        {trackerTab === 'lyrics' && (
+          <div className="relative w-full">
+            <Mic2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search lyrics…"
+              value={lyricsQuery}
+              onChange={(e) => setLyricsQuery(e.target.value)}
+              className="w-full bg-surface-overlay text-text-primary text-sm pl-8 pr-8 py-2.5 md:py-2 rounded-lg outline-none focus:ring-1 ring-accent border border-transparent focus:border-accent/40 placeholder:text-text-muted"
+            />
+            {lyricsQuery && (
+              <button onClick={() => setLyricsQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Body */}
+      {trackerTab === 'lyrics' ? (
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 pb-4">
+          {!debouncedLyricsQuery.trim() ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <Mic2 size={32} className="text-text-muted opacity-30" />
+              <p className="text-text-muted text-sm">Search for a lyric to find matching songs</p>
+            </div>
+          ) : lyricsLoading && lyricsResults.length === 0 ? (
+            <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-sm">Searching…</span>
+            </div>
+          ) : lyricsError ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-center">
+              <p className="text-text-muted text-sm">Failed to search: {lyricsError}</p>
+            </div>
+          ) : lyricsResults.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <Mic2 size={32} className="text-text-muted opacity-30" />
+              <p className="text-text-muted text-sm">No songs found with lyrics matching "{debouncedLyricsQuery}"</p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-0.5">
+                {lyricsResults.map((song) => (
+                  <SongRow
+                    key={song.id}
+                    song={song}
+                    onPlay={handlePlay}
+                    onCategoryClick={handleCategoryClick}
+                    onEraClick={handleEraClick}
+                    onInfo={handleInfo}
+                    onContextMenu={handleContextMenu}
+                    selectMode={selectMode}
+                    selected={selected.has(song.id)}
+                    onToggleSelect={toggleSelect}
+                  />
+                ))}
+              </div>
+              {lyricsHasMore ? (
+                <div className="flex items-center justify-center py-4">
+                  <button
+                    onClick={loadMoreLyrics}
+                    disabled={lyricsLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+                  >
+                    {lyricsLoading && <Loader2 size={13} className="animate-spin" />}
+                    Load more
+                  </button>
+                </div>
+              ) : (
+                <p className="text-center text-text-muted text-xs py-4">{lyricsCount.toLocaleString()} songs found</p>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {showSidebar && (
           <div className="hidden md:flex min-h-0">
@@ -1293,33 +1493,15 @@ export default function ApiTrackerView(): JSX.Element {
               rows and just misleads. Compact view sorts via its own dropdown. */}
           {viewMode === 'list' && !compactView && (
             <div className="hidden md:block px-5 pb-1 shrink-0">
-              {(() => {
-                const SortBtn = ({ field, label, className }: { field: OrderField; label: string; className?: string }): JSX.Element => {
-                  const active = orderField === field
-                  return (
-                    <button
-                      onClick={() => handleSort(field)}
-                      className={`flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${active ? 'text-accent' : 'text-text-muted hover:text-text-secondary'} ${className ?? ''}`}
-                    >
-                      {label}
-                      {active
-                        ? orderDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
-                        : <span className="w-2.5" />}
-                    </button>
-                  )
-                }
-                return (
-                  <div className="flex items-center gap-3 px-3 py-1">
-                    <div className="w-9 shrink-0" />
-                    <SortBtn field="name" label="Title" className="flex-1" />
-                    <SortBtn field="credited_artists" label="Artist" className="w-32 shrink-0" />
-                    <SortBtn field="era__name" label="Era" className="w-36 shrink-0" />
-                    <SortBtn field="category" label="Category" className="w-24 shrink-0 justify-center" />
-                    <SortBtn field="length" label="Time" className="w-12 shrink-0 justify-end" />
-                    <div className="w-14 shrink-0" />
-                  </div>
-                )
-              })()}
+              <div className="flex items-center gap-3 px-3 py-1">
+                <div className="w-9 shrink-0" />
+                <SortBtn field="name" label="Title" className="flex-1" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                <SortBtn field="credited_artists" label="Artist" className="w-32 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                <SortBtn field="era__name" label="Era" className="w-36 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                <SortBtn field="category" label="Category" className="w-24 shrink-0 justify-center" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                <SortBtn field="length" label="Time" className="w-12 shrink-0 justify-end" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                <div className="w-14 shrink-0" />
+              </div>
             </div>
           )}
 
@@ -1467,6 +1649,7 @@ export default function ApiTrackerView(): JSX.Element {
           </div>
         </div>
       </div>
+      )}
 
       {/* Bulk selection action bar */}
       {selectMode && (
