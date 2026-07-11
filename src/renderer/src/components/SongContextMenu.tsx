@@ -110,13 +110,14 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
-  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
       setShowUserAuth: s.setShowUserAuth, setPendingEditorSongId: s.setPendingEditorSongId,
       setActiveView: s.setActiveView, playTrack: s.playTrack,
       localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
       offlineTracks: s.offlineTracks, removeOfflineTrack: s.removeOfflineTrack, downloadTrackOffline: s.downloadTrackOffline,
+      autoDownloadIfOffline: s.autoDownloadIfOffline,
     }))
   )
   const { track, songId } = state
@@ -167,6 +168,7 @@ export default function SongContextMenu({
       setDoneId(id)
       setContained(prev => new Set([...prev, id]))
       await refreshPlaylists()
+      autoDownloadIfOffline(id, [songId])
     } catch {} finally { setBusyId(null) }
   }
 

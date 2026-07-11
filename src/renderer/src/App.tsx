@@ -72,7 +72,7 @@ function WindowControls(): JSX.Element {
       </button>
       <button className={btn} onClick={async () => { await el?.maximizeWindow(); el?.isMaximized().then((v: boolean) => setMaximized(v)) }} title={maximized ? "Restore" : "Maximize"}>
         {maximized
-          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><rect x="2" y="0" width="8" height="8"/><rect x="0" y="2" width="8" height="8" fill="var(--surface)"/><rect x="0" y="2" width="8" height="8"/></svg>
+          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><path d="M2.5 0.5H9.5V7.5"/><rect x="0.5" y="2.5" width="7" height="7"/></svg>
           : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg>}
       </button>
       <button className={`${btn} hover:bg-red-600 hover:text-white`} onClick={() => el?.closeWindow()} title="Close">
