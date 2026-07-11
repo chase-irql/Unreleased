@@ -102,7 +102,13 @@ process.on('unhandledRejection', (reason) => {
 })
 
 // ── Shared file download helper (used by force-update + offline library) ──────
+// Writes to a `.part` temp file and renames into place only after the byte
+// count checks out against Content-Length. Writing straight to `dest` meant a
+// dropped connection could leave a truncated file that later passed the
+// offline library's "already downloaded" existence check — or, on a
+// re-download of a changed track, destroy the old good copy with partial data.
 function downloadFile(url, dest, onProgress) {
+  const tmp = dest + '.part'
   return new Promise((resolve, reject) => {
     function doGet(u) {
       const opts = new URL(u)
@@ -111,15 +117,24 @@ function downloadFile(url, dest, onProgress) {
         if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`))
         const total = parseInt(res.headers['content-length'] || '0', 10)
         let received = 0
-        const out = fs.createWriteStream(dest)
+        const out = fs.createWriteStream(tmp)
+        const fail = (err) => {
+          out.destroy()
+          try { fs.unlinkSync(tmp) } catch {}
+          reject(err)
+        }
         res.on('data', chunk => {
           received += chunk.length
           if (onProgress) onProgress(total > 0 ? Math.round(received / total * 100) : 0, received, total)
         })
         res.pipe(out)
-        out.on('finish', resolve)
-        out.on('error', reject)
-        res.on('error', reject)
+        out.on('finish', () => {
+          if (total > 0 && received !== total) return fail(new Error(`Truncated download: got ${received} of ${total} bytes`))
+          try { fs.renameSync(tmp, dest) } catch (e) { return fail(e) }
+          resolve()
+        })
+        out.on('error', fail)
+        res.on('error', fail)
       }).on('error', reject)
     }
     doGet(url)
@@ -222,7 +237,13 @@ function createWindow() {
     const savePath = path.join(appSettings.downloadPath, filename)
     item.setSavePath(savePath)
 
-    mainWindow.webContents.send('download-started', {
+    // The window can be destroyed while a download is still running (quit
+    // during a transfer) — sending on destroyed webContents throws in main.
+    const send = (channel, payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+    }
+
+    send('download-started', {
       filename,
       savePath,
       total: item.getTotalBytes(),
@@ -231,7 +252,7 @@ function createWindow() {
     item.on('updated', (_, state) => {
       if (state === 'progressing') {
         const total = item.getTotalBytes()
-        mainWindow.webContents.send('download-progress', {
+        send('download-progress', {
           filename,
           received: item.getReceivedBytes(),
           total,
@@ -241,7 +262,7 @@ function createWindow() {
     })
 
     item.once('done', (_, state) => {
-      mainWindow.webContents.send('download-done', {
+      send('download-done', {
         filename,
         state,
         savePath: item.getSavePath(),
@@ -261,6 +282,10 @@ ipcMain.handle('force-update', async () => {
       const opts = new URL(url)
       https.get({ hostname: opts.hostname, path: opts.pathname + opts.search, headers: { 'User-Agent': 'Unreleased-App', 'Accept': 'application/vnd.github+json' } }, (res) => {
         if (res.statusCode === 302 || res.statusCode === 301) return fetchJson(res.headers.location).then(resolve).catch(reject)
+        // A 403 (rate limit) still returns parseable JSON — without this check
+        // it flowed through and died later on `release.assets` being undefined,
+        // surfacing a cryptic TypeError instead of the real cause.
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error(`GitHub API HTTP ${res.statusCode}`)) }
         let data = ''
         res.on('data', d => data += d)
         res.on('end', () => { try { resolve(JSON.parse(data)) } catch (e) { reject(e) } })
@@ -903,6 +928,18 @@ ipcMain.handle('select-image-file', async () => {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  // Sweep partial downloads left by a crash mid-transfer: downloadFile writes
+  // to "<file>.part" and renames into place on completion, so any .part still
+  // present at startup is abandoned. Runs before the renderer loads, so no
+  // download can be mid-write yet.
+  try {
+    for (const name of fs.readdirSync(getOfflineAudioDir())) {
+      if (name.endsWith('.part')) {
+        try { fs.unlinkSync(path.join(getOfflineAudioDir(), name)) } catch {}
+      }
+    }
+  } catch {}
+
   protocol.handle('local-media', (request) => {
     try {
       const filePath = new URL(request.url).searchParams.get('p')

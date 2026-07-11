@@ -175,26 +175,29 @@ export default function Player(): JSX.Element {
     if (a) a.volume = volumeRef.current
   }
 
-  // Compute what the next queue index would be (mirrors store's nextTrack logic, without advancing)
+  // Compute what the next queue index would be (mirrors store's nextTrack logic,
+  // without advancing). Shuffle included: the store pre-shuffles the upcoming
+  // list and then advances sequentially, so the next track is queueIndex + 1
+  // there too — picking a random index here (as this used to) could crossfade
+  // into already-played history and desync from what nextTrack() would play.
   const computeNextIdx = (): number => {
     if (queue.length === 0) return -1
     if (repeat === 'one') return queueIndex
-    if (shuffle && queue.length > 1) {
-      let r: number
-      do { r = Math.floor(Math.random() * queue.length) } while (r === queueIndex)
-      return r
-    }
     const next = queueIndex + 1
     if (next >= queue.length) return repeat === 'all' ? 0 : -1
     return next
   }
 
-  // Preload next track into inactive slot (skip shuffle mode — can't predict next)
+  // Preload next track into inactive slot — only when crossfade is on: the
+  // inactive slot is never played otherwise, so preloading just streamed data
+  // that got thrown away on every track change. Shuffle queues are
+  // pre-shuffled, so the next track is deterministic (queueIndex + 1) there
+  // too. Radio's next track lives in radioNext, not the queue — nothing to
+  // preload from here.
   useEffect(() => {
-    if (!isPlaying || queue.length === 0 || cfActive.current) return
+    if (!crossfadeEnabled || radioMode || !isPlaying || queue.length === 0 || cfActive.current) return
     let nextIdx: number
     if (repeat === 'one') nextIdx = queueIndex
-    else if (shuffle) return // random — can't preload
     else {
       nextIdx = queueIndex + 1
       if (nextIdx >= queue.length) {
@@ -209,7 +212,7 @@ export default function Player(): JSX.Element {
     if (!na || na.src === url) return
     na.src = url
     na.load()
-  }, [queueIndex, queue.length, isPlaying, repeat, shuffle])
+  }, [queueIndex, queue.length, isPlaying, repeat, crossfadeEnabled, radioMode])
 
   // Expose seek and duration to other components
   useEffect(() => {
@@ -553,6 +556,11 @@ export default function Player(): JSX.Element {
   // can invoke the exact same advance-to-next-track logic directly on the
   // audio element, for when the real 'ended' event never reaches JS at all.
   const onAudioEnded = (audio: HTMLAudioElement): void => {
+    // Read playback state fresh from the store: the background watchdog calls
+    // this from an effect keyed only on isPlaying, so the closure's
+    // repeat/queue/currentTrack can be stale (e.g. repeat toggled mid-song)
+    // by the time a missed locked-screen 'ended' is handled here.
+    const { repeat, queue, queueIndex, currentTrack } = useStore.getState()
     if (audio !== getActive()) {
       // Pre-loading slot ended (very short next track, or error)
       if (cfActive.current) cancelCF()
@@ -601,6 +609,12 @@ export default function Player(): JSX.Element {
           currentTrackFull: isSameTrack ? useStore.getState().currentTrackFull : null,
           isPlaying: wasPlaying,
         })
+        // This setState bypasses nextTrack(), which is what normally tops up a
+        // lazily-loaded queue and applies the prefer-OG swap — without these,
+        // crossfaded advances never fetch the next page and playback stops
+        // dead at the end of the initially loaded songs.
+        useStore.getState()._loadMore()
+        useStore.getState()._maybeSwapToOg(track)
       }
       return
     }
@@ -687,7 +701,11 @@ export default function Player(): JSX.Element {
     if (dur > 0) setCurrentTime(val * dur)
   }
 
-  const handleSeekCommit = (e: React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>): void => {
+  // Commits on mouse-up, touch-end, AND key-up: keyboard seeking (arrow keys
+  // on the focused slider) fires change events with no mouse/touch pair, so
+  // without the key-up commit `seekDrag` was set by handleSeekChange and never
+  // cleared — the bar froze at the phantom position while audio played on.
+  const handleSeekCommit = (): void => {
     if (seekDrag === null) return
     const audio = getActive()
     const dur = audio && isFinite(audio.duration) ? audio.duration : (currentTrack?.duration || 0)
@@ -758,9 +776,11 @@ export default function Player(): JSX.Element {
       } catch { /* ignore */ }
     }
     enumerate()
+    // Mount-once: 'devicechange' already covers plug/unplug, so re-enumerating
+    // (and re-registering the listener) on every play/pause was pure churn.
     navigator.mediaDevices.addEventListener('devicechange', enumerate)
     return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate)
-  }, [isPlaying])
+  }, [])
 
   const openOutputPicker = (): void => {
     if (!outputBtnRef.current) return
@@ -1026,9 +1046,11 @@ export default function Player(): JSX.Element {
                 type="range" min={0} max={1} step={0.001}
                 value={radioFmActive ? fmProgress : (seekDrag !== null ? seekDrag : progress)}
                 onMouseDown={radioFmActive ? undefined : handleSeekMouseDown}
+                onTouchStart={radioFmActive ? undefined : handleSeekMouseDown}
                 onChange={handleSeekChange}
                 onMouseUp={radioFmActive ? undefined : handleSeekCommit}
                 onTouchEnd={radioFmActive ? undefined : handleSeekCommit}
+                onKeyUp={radioFmActive ? undefined : handleSeekCommit}
                 disabled={!currentTrack} className="w-full"
                 style={{ '--val': `${(radioFmActive ? fmProgress : (seekDrag !== null ? seekDrag : progress)) * 100}%`, ...(radioFmActive ? { pointerEvents: 'none' as const } : {}) } as React.CSSProperties}
               />

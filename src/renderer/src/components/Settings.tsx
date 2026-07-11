@@ -742,7 +742,7 @@ export default function Settings(): JSX.Element {
                     {
                       q: 'What is this?',
                       a: "The Juice WRLD API is a RESTful API providing access to a comprehensive database of Juice WRLD songs, albums, and eras. Whether you are a fan, developer, or researcher, this API offers the tools you need to dive deep into Juice WRLD music.",
-                      link: { text: 'Check out the documentation to get started.', href: 'https://juicewrldapi.com/docs' },
+                      link: { text: 'Check out the documentation to get started.' },
                     },
                     {
                       q: 'Who are you?',
@@ -756,7 +756,7 @@ export default function Settings(): JSX.Element {
                       q: 'Technical stuff?',
                       a: 'The Juice WRLD API is built with Django and PostgreSQL. This player (unreleased) is built with React, TypeScript, Vite, and Tailwind CSS.',
                     },
-                  ] as { q: string; a: string; link?: { text: string; href: string } }[]).map(({ q, a, link }) => (
+                  ] as { q: string; a: string; link?: { text: string } }[]).map(({ q, a, link }) => (
                     <div key={q}>
                       <button
                         onClick={() => setOpenAbout(openAbout === q ? null : q)}
@@ -769,10 +769,11 @@ export default function Settings(): JSX.Element {
                         <div className="px-3 pb-3 pt-0">
                           <p className="text-text-muted text-xs leading-relaxed">{a}</p>
                           {link && (
-                            <a href={link.href} target="_blank" rel="noopener noreferrer"
+                            <button
+                              onClick={() => { setShowSettings(false); setActiveView('docs') }}
                               className="mt-1.5 inline-block text-xs text-accent hover:underline">
                               {link.text}
-                            </a>
+                            </button>
                           )}
                         </div>
                       )}

@@ -161,6 +161,12 @@ export default function ApiFilesView(): JSX.Element {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ entry: JWApiFileEntry; x: number; y: number } | null>(null)
+  // Whether a right-clicked audio file actually has a matching song in the
+  // Tracker — resolved lazily per path on menu-open (not for every row up
+  // front) so "Find in Tracker" can be hidden for files with no match instead
+  // of opening the info modal on nothing. undefined = not looked up yet,
+  // null = looked up, no match.
+  const [trackerMatches, setTrackerMatches] = useState<Map<string, number | null>>(new Map())
   // Clamped against the actual rendered size (not a static guess) — the
   // menu's height varies with the entry type and canEdit, so a fixed guess
   // undershoots near the screen edges and spills the menu off-screen.
@@ -388,6 +394,24 @@ export default function ApiFilesView(): JSX.Element {
     } catch {
       setInfoSong(null)
     }
+  }
+
+  // Resolves (and caches) whether an audio file has a matching Tracker entry,
+  // so the context menu can hide "Find in Tracker" when there isn't one.
+  const resolveTrackerMatch = (entry: JWApiFileEntry): void => {
+    if (getMediaType(entry.name) !== 'audio' || trackerMatches.has(entry.path)) return
+    const title = entry.name.replace(/\.[^.]+$/, '')
+    apiFetch<JWApiPaginatedResponse>('/songs/', { search: title, page_size: 1 })
+      .then((data) => {
+        const id = data.results[0]?.id ?? null
+        setTrackerMatches((prev) => new Map(prev).set(entry.path, id))
+      })
+      .catch(() => setTrackerMatches((prev) => new Map(prev).set(entry.path, null)))
+  }
+
+  const openContextMenu = (entry: JWApiFileEntry, x: number, y: number): void => {
+    setCtxMenu({ entry, x, y })
+    resolveTrackerMatch(entry)
   }
 
   const copyLink = (entry: JWApiFileEntry): void => {
@@ -833,7 +857,7 @@ export default function ApiFilesView(): JSX.Element {
                       else if (isMedia) openLightbox(entry)
                     }}
                     onDoubleClick={() => { if (!selectMode && mt === 'audio') handlePlay(entry) }}
-                    onContextMenu={e => { e.preventDefault(); setCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
+                    onContextMenu={e => { e.preventDefault(); openContextMenu(entry, e.clientX, e.clientY) }}
                     onTouchStart={() => handleLongPressStart(entry)}
                     onTouchEnd={handleLongPressEnd}
                   >
@@ -927,7 +951,7 @@ export default function ApiFilesView(): JSX.Element {
                       else if (isMedia) openLightbox(entry)
                       else if (mt === 'audio') handlePlay(entry)
                     }}
-                    onContextMenu={e => { e.preventDefault(); setCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
+                    onContextMenu={e => { e.preventDefault(); openContextMenu(entry, e.clientX, e.clientY) }}
                     onTouchStart={() => handleLongPressStart(entry)}
                     onTouchEnd={handleLongPressEnd}
                   >
@@ -1082,10 +1106,12 @@ export default function ApiFilesView(): JSX.Element {
                     className={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'text-accent' : 'text-text-muted'} />
                   {likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'Unlike' : 'Like'}
                 </button>
-                <button onClick={() => { openSongInfo(ctxMenu.entry); setCtxMenu(null) }}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
-                  <Info size={14} className="text-text-muted" /> Find in Tracker
-                </button>
+                {trackerMatches.get(ctxMenu.entry.path) != null && (
+                  <button onClick={() => { openSongInfo(ctxMenu.entry); setCtxMenu(null) }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                    <Info size={14} className="text-text-muted" /> Find in Tracker
+                  </button>
+                )}
                 {canEdit && (
                   <button onClick={async () => {
                     const title = ctxMenu.entry.name.replace(/\.[^.]+$/, '')

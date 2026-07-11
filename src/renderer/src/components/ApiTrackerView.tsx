@@ -953,7 +953,7 @@ const LyricResultRow = memo(function LyricResultRow({
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="hidden md:flex items-center gap-1.5 flex-wrap">
           <p className="text-text-primary text-sm font-medium truncate">{song.name}</p>
           <span className="text-text-muted text-xs truncate">{song.credited_artists || 'Juice WRLD'}</span>
           {song.era?.name && (
@@ -972,6 +972,15 @@ const LyricResultRow = memo(function LyricResultRow({
             {CATEGORY_LABELS[song.category] ?? song.category}
           </button>
         </div>
+
+        {/* Mobile: title + a single compact subtitle line instead of the
+            wrapping badge row above, matching SongRow's mobile layout. */}
+        <p className="md:hidden text-text-primary text-sm font-medium truncate">{song.name}</p>
+        <p className="md:hidden text-text-muted text-xs truncate mt-0.5">
+          {song.credited_artists || 'Juice WRLD'}
+          {song.era?.name ? ` · ${song.era.name}` : ''}
+          {` · ${CATEGORY_LABELS[song.category] ?? song.category}`}
+        </p>
 
         {/* Lyric snippet — the reason this song matched */}
         {snippet ? (
@@ -2142,7 +2151,7 @@ export default function ApiTrackerView(): JSX.Element {
                 <div className="flex items-center justify-between mb-3">
                   <button
                     onClick={() => shiftCalendarMonth(-1)}
-                    className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                    className="p-2 md:p-1.5 rounded-lg hover:bg-surface-overlay active:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
                   >
                     <ChevronLeft size={16} />
                   </button>
@@ -2151,7 +2160,7 @@ export default function ApiTrackerView(): JSX.Element {
                   </p>
                   <button
                     onClick={() => shiftCalendarMonth(1)}
-                    className="p-1.5 rounded-lg hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                    className="p-2 md:p-1.5 rounded-lg hover:bg-surface-overlay active:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
                   >
                     <ChevronRight size={16} />
                   </button>
@@ -2233,10 +2242,10 @@ export default function ApiTrackerView(): JSX.Element {
                           key={studio}
                           onClick={() => { setSelectedStudio(studio); setSelectedDateKey(null) }}
                           title={studio}
-                          className={`flex items-center justify-between gap-2 px-1 py-1 rounded-lg text-left text-xs transition-colors ${
+                          className={`flex items-center justify-between gap-2 px-1 py-1.5 md:py-1 rounded-lg text-left text-xs transition-colors ${
                             selectedStudio === studio
                               ? 'text-accent font-semibold bg-accent/5'
-                              : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
+                              : 'text-text-secondary hover:text-text-primary active:bg-surface-overlay hover:bg-surface-overlay'
                           }`}
                         >
                           <span className="truncate">{studio}</span>
