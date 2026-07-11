@@ -770,6 +770,7 @@ export default function PlaylistsView(): JSX.Element {
       const result = await userApi.uploadPlaylistCover(selectedId, file)
       setCoverImgError(false)
       setCoverData({ cover_image: result.cover_image, cover_image_url: result.cover_image_url })
+      setCovers(prev => ({ ...prev, [selectedId]: result.cover_image_url ?? result.cover_image ?? null }))
       await refreshPlaylists()
     } catch {}
     setCoverUploading(false)
@@ -778,6 +779,7 @@ export default function PlaylistsView(): JSX.Element {
   const handleRemoveCover = useCallback(async () => {
     if (!selectedId) return
     setCoverData(null) // optimistic clear
+    setCovers(prev => ({ ...prev, [selectedId]: null }))
     try {
       await userApi.removePlaylistCover(selectedId)
       await refreshPlaylists()
@@ -1553,15 +1555,6 @@ export default function PlaylistsView(): JSX.Element {
                                 >
                                   <MoreHorizontal size={13} />
                                 </button>
-                                {!isSharedView && (
-                                  <button
-                                    onClick={e => { e.stopPropagation(); removeTrack(songId) }}
-                                    className="p-1.5 text-text-muted hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors shrink-0"
-                                    title="Remove"
-                                  >
-                                    <X size={13} />
-                                  </button>
-                                )}
                               </div>
                             )
                           })}
@@ -1657,11 +1650,6 @@ export default function PlaylistsView(): JSX.Element {
                       className="p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors hidden md:flex" title="More options">
                       <MoreHorizontal size={13} />
                     </button>
-                    {!isSharedView && (
-                      <button onClick={e => { e.stopPropagation(); removeTrack(songId) }} className="p-1.5 text-text-muted hover:text-red-400 rounded-lg hover:bg-red-500/10 transition-colors" title="Remove">
-                        <X size={13} />
-                      </button>
-                    )}
                   </div>
                 </div>
               )

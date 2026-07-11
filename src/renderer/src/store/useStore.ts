@@ -263,6 +263,36 @@ let _detailsPrefetchInFlight = false
 // Dedup flag: same idea for the Tracker/Files offline-cache warm-up
 let _apiPrefetchInFlight = false
 
+// ── Offline-sync concurrency guards ──────────────────────────────────────────
+// syncOfflinePlaylists fires from three places (startup, every window focus,
+// a 15-min interval) with nothing stopping them from overlapping. Overlapping
+// runs each snapshot `offlineTracks` at their start, so both would download
+// the same missing songs — two streams writing the same file — and re-announce
+// downloads the user already saw ("my playlists redownload on their own").
+let _offlineSyncInFlight = false
+// Serializes offline writers per playlist key. Without this, a manual download,
+// a background resync, and autoDownloadIfOffline can interleave for the same
+// playlist; whichever finishes last saves its (possibly stale) song list, and
+// offline-set-playlist's prune then deletes freshly-downloaded files that the
+// stale list doesn't mention — which the next resync dutifully re-downloads.
+const _offlineKeyQueues = new Map<string, Promise<void>>()
+// Bumped by removePlaylistOffline. A download that started before the bump
+// aborts instead of running offlineSetPlaylist at its end — otherwise removing
+// a playlist while a sync was in flight re-registered ("resurrected") it, and
+// since removal had already pruned its files, the next background sync
+// re-downloaded the entire playlist unprompted.
+const _offlineKeyEpochs = new Map<string, number>()
+
+// Chains `fn` behind any in-flight offline work for `key` so writers for the
+// same playlist never interleave.
+function enqueueOfflineWork(key: string, fn: () => Promise<void>): Promise<void> {
+  const prev = _offlineKeyQueues.get(key) ?? Promise.resolve()
+  const run = prev.catch(() => {}).then(fn)
+  _offlineKeyQueues.set(key, run)
+  run.finally(() => { if (_offlineKeyQueues.get(key) === run) _offlineKeyQueues.delete(key) }).catch(() => {})
+  return run
+}
+
 export const useStore = create<AppStore>((set, get, store) => ({
   // ── Queue slice (all queue + playback logic) ───────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -711,74 +741,184 @@ export const useStore = create<AppStore>((set, get, store) => ({
   downloadPlaylistOffline: async (key, name, songIds, opts) => {
     const el = (window as any).electron
     if (!el) return
-    const silent = !!opts?.silent
-    const downloadId = `playlist-${key}`
-    // Songs already saved locally only need a quiet metadata refresh, not a
-    // real download — so the visible progress total is the count of songs
-    // actually missing, not the whole playlist. Otherwise re-downloading a
-    // playlist that's mostly already offline showed "Downloading 1/40, 2/40…"
-    // and looked like the whole thing was being fetched again.
-    const offlineTracksNow = get().offlineTracks
-    const missingCount = songIds.filter((id) => !offlineTracksNow[`jw-${id}`]).length
-    const total = missingCount
-    // Background resyncs (startup/focus/15-min interval — see syncOfflinePlaylists)
-    // re-run this for every already-synced playlist just to pick up metadata
-    // changes; nearly everything is a fast no-op `skipped` hit. Surfacing that
-    // as "syncing" — in the Download Manager, or in the playlist/context-menu's
-    // "Downloading… x/y" label (both read `offlineSync`) — made it look like
-    // the same playlist was re-downloading every time the app loaded or
-    // regained focus. Only flip on the visible "syncing" state when something
-    // is actually fetched (tracked below) or when the caller isn't silent and
-    // there's actually something missing to fetch.
-    let announced = false
-    const announce = (): void => {
-      if (announced) return
-      announced = true
-      set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total } } }))
-      if (get().downloads.some((d) => d.id === downloadId)) {
-        get().updateDownload(downloadId, { filename: name, state: 'downloading', percent: 0, received: 0, total, error: undefined })
-      } else {
-        get().addDownload({ id: downloadId, filename: name, type: 'playlist', state: 'downloading', percent: 0, received: 0, total })
-      }
-      get().setShowDownloadManager(true)
-    }
-    if (!silent && total > 0) announce()
-
-    // Byte-level size/speed tracking across the whole playlist — cumulativeBytes
-    // is bytes already settled (finished or skipped tracks); the per-track
-    // listener below adds the in-flight file's partial bytes on top so the
-    // Download Manager can show a live running total + throughput, even
-    // though we never know the playlist's full size up front.
-    let cumulativeBytes = 0
-    let lastSampleTime = Date.now()
-    let lastSampleBytes = 0
-
-    const trackIds: string[] = []
-    let hadError = false
-    let doneCount = 0
-    for (let i = 0; i < songIds.length; i++) {
-      const songId = songIds[i]
-      const id = `jw-${songId}`
-      trackIds.push(id)
-      // Already downloaded — skip the network round-trip entirely instead of
-      // still fetching /songs/{id}/ + hitting the IPC layer just to no-op.
-      // Looping through every already-cached song's metadata refresh made
-      // downloading a mostly-synced playlist with a few new songs feel like
-      // the whole thing was being fetched again.
-      if (offlineTracksNow[id]) continue
-      const offProgress = el.onOfflineDownloadProgress?.((d: { id: string; percent: number; received?: number; total?: number }) => {
-        if (d.id !== id || !announced) return
-        const totalBytes = cumulativeBytes + (d.received || 0)
-        const now = Date.now()
-        const dt = (now - lastSampleTime) / 1000
-        const updates: { bytesReceived: number; speedBps?: number } = { bytesReceived: totalBytes }
-        if (dt >= 0.4) {
-          updates.speedBps = Math.max(0, (totalBytes - lastSampleBytes) / dt)
-          lastSampleTime = now
-          lastSampleBytes = totalBytes
+    await enqueueOfflineWork(key, async () => {
+      const silent = !!opts?.silent
+      // Background resync queued behind other work for a playlist that was
+      // removed while it waited — nothing to sync anymore.
+      if (silent && !get().offlinePlaylists[key]) return
+      // Removal mid-download bumps the epoch; checked between tracks and before
+      // the final offlineSetPlaylist so an aborted run can't re-register the
+      // playlist it raced with.
+      const epoch = _offlineKeyEpochs.get(key) ?? 0
+      const cancelled = (): boolean => (_offlineKeyEpochs.get(key) ?? 0) !== epoch
+      const downloadId = `playlist-${key}`
+      // Songs already saved locally only need a quiet metadata refresh, not a
+      // real download — so the visible progress total is the count of songs
+      // actually missing, not the whole playlist. Otherwise re-downloading a
+      // playlist that's mostly already offline showed "Downloading 1/40, 2/40…"
+      // and looked like the whole thing was being fetched again.
+      const offlineTracksNow = get().offlineTracks
+      const missingCount = songIds.filter((id) => !offlineTracksNow[`jw-${id}`]).length
+      const total = missingCount
+      // Background resyncs (startup/focus/15-min interval — see syncOfflinePlaylists)
+      // re-run this for every already-synced playlist just to pick up metadata
+      // changes; nearly everything is a fast no-op `skipped` hit. Surfacing that
+      // as "syncing" — in the Download Manager, or in the playlist/context-menu's
+      // "Downloading… x/y" label (both read `offlineSync`) — made it look like
+      // the same playlist was re-downloading every time the app loaded or
+      // regained focus. Only flip on the visible "syncing" state when something
+      // is actually fetched (tracked below) or when the caller isn't silent and
+      // there's actually something missing to fetch.
+      let announced = false
+      const announce = (): void => {
+        if (announced) return
+        announced = true
+        set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: 0, total } } }))
+        if (get().downloads.some((d) => d.id === downloadId)) {
+          get().updateDownload(downloadId, { filename: name, state: 'downloading', percent: 0, received: 0, total, error: undefined })
+        } else {
+          get().addDownload({ id: downloadId, filename: name, type: 'playlist', state: 'downloading', percent: 0, received: 0, total })
         }
-        get().updateDownload(downloadId, updates)
-      })
+        // Only pop the Download Manager open for downloads the user just asked
+        // for. Background catch-ups (new song added on the site, a previously
+        // failed track retrying) still track progress in the downloads list and
+        // `offlineSync`, but the panel appearing out of nowhere on focus read
+        // as "the app is redownloading my playlists on its own".
+        if (!silent) get().setShowDownloadManager(true)
+      }
+      if (!silent && total > 0) announce()
+
+      // Byte-level size/speed tracking across the whole playlist — cumulativeBytes
+      // is bytes already settled (finished or skipped tracks); the per-track
+      // listener below adds the in-flight file's partial bytes on top so the
+      // Download Manager can show a live running total + throughput, even
+      // though we never know the playlist's full size up front.
+      let cumulativeBytes = 0
+      let lastSampleTime = Date.now()
+      let lastSampleBytes = 0
+
+      const trackIds: string[] = []
+      let hadError = false
+      let doneCount = 0
+      for (let i = 0; i < songIds.length; i++) {
+        if (cancelled()) break
+        const songId = songIds[i]
+        const id = `jw-${songId}`
+        trackIds.push(id)
+        // Already downloaded — skip the network round-trip entirely instead of
+        // still fetching /songs/{id}/ + hitting the IPC layer just to no-op.
+        // Looping through every already-cached song's metadata refresh made
+        // downloading a mostly-synced playlist with a few new songs feel like
+        // the whole thing was being fetched again.
+        if (offlineTracksNow[id]) continue
+        const offProgress = el.onOfflineDownloadProgress?.((d: { id: string; percent: number; received?: number; total?: number }) => {
+          if (d.id !== id || !announced) return
+          const totalBytes = cumulativeBytes + (d.received || 0)
+          const now = Date.now()
+          const dt = (now - lastSampleTime) / 1000
+          const updates: { bytesReceived: number; speedBps?: number } = { bytesReceived: totalBytes }
+          if (dt >= 0.4) {
+            updates.speedBps = Math.max(0, (totalBytes - lastSampleBytes) / dt)
+            lastSampleTime = now
+            lastSampleBytes = totalBytes
+          }
+          get().updateDownload(downloadId, updates)
+        })
+        try {
+          const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+          const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
+          const meta = {
+            title: song.track_titles?.[0] || song.name,
+            artist: song.credited_artists || 'Juice WRLD',
+            album: song.album || song.era?.name || '',
+            imageUrl: buildImageUrl(song.image_url) ?? null,
+            lyrics: song.lyrics || null,
+            syncedLyrics: song.synced_lyrics || null,
+            duration: parseDuration(song.length),
+          }
+          const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
+          if (result?.error) throw new Error(result.error)
+          if (!result?.skipped) {
+            announce()
+            doneCount++
+          }
+          cumulativeBytes += result?.size || 0
+          set((s) => ({
+            offlineTracks: {
+              ...s.offlineTracks,
+              [id]: { ...meta, path: song.path, localPath: result.localPath, ext, downloadedAt: Date.now() },
+            },
+          }))
+        } catch (e) {
+          hadError = true
+          console.error('offline download failed for song', songId, e)
+        } finally {
+          offProgress?.()
+        }
+        if (announced) {
+          set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: doneCount, total } } }))
+          get().updateDownload(downloadId, { received: doneCount, percent: total ? Math.round((doneCount / total) * 100) : 100, bytesReceived: cumulativeBytes })
+        }
+      }
+      if (announced) get().updateDownload(downloadId, { speedBps: undefined })
+
+      // The playlist was removed while this run was downloading — registering
+      // it now would resurrect it and queue every pruned file for re-download
+      // on the next background sync. Drop the run's UI traces and stop.
+      if (cancelled()) {
+        if (announced) get().removeDownload(downloadId)
+        set((s) => {
+          const nextSync = { ...s.offlineSync }
+          delete nextSync[key]
+          return { offlineSync: nextSync }
+        })
+        get().loadOfflineLibrary()
+        return
+      }
+
+      try {
+        await el.offlineSetPlaylist(key, trackIds, name)
+        set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: trackIds, name, updatedAt: Date.now() } } }))
+      } catch (e) { console.error('offlineSetPlaylist error:', e) }
+
+      if (announced) set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: total, total } } }))
+      if (announced) get().updateDownload(downloadId, { state: hadError ? 'error' : 'done', percent: 100, error: hadError ? 'Some tracks failed to download' : undefined })
+      // Refresh from disk truth — pruning may have dropped tracks shared with
+      // another playlist that's no longer synced.
+      get().loadOfflineLibrary()
+    })
+  },
+
+  removePlaylistOffline: async (key) => {
+    const el = (window as any).electron
+    if (!el) return
+    // Cancel any in-flight download for this key (epoch bump) and wait for it
+    // to notice — it checks between tracks, so this waits at most one file —
+    // before pruning. Otherwise the in-flight run would re-register the
+    // playlist after removal and the next sync would re-download all of it.
+    _offlineKeyEpochs.set(key, (_offlineKeyEpochs.get(key) ?? 0) + 1)
+    await (_offlineKeyQueues.get(key) ?? Promise.resolve()).catch(() => {})
+    try { await el.offlineRemovePlaylist(key) } catch (e) { console.error('offlineRemovePlaylist error:', e) }
+    set((s) => {
+      const next = { ...s.offlinePlaylists }
+      delete next[key]
+      const nextSync = { ...s.offlineSync }
+      delete nextSync[key]
+      return { offlinePlaylists: next, offlineSync: nextSync }
+    })
+    get().loadOfflineLibrary()
+  },
+
+  // Serialized on the individual-downloads key: two quick downloads used to
+  // both read the membership list before either wrote it, so the second
+  // offlineSetPlaylist omitted the first song — and the prune deleted its
+  // freshly-downloaded file.
+  downloadTrackOffline: async (songId) => {
+    const el = (window as any).electron
+    if (!el) return
+    const key = INDIVIDUAL_DOWNLOADS_KEY
+    const id = `jw-${songId}`
+    await enqueueOfflineWork(key, async () => {
       try {
         const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
         const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
@@ -793,88 +933,20 @@ export const useStore = create<AppStore>((set, get, store) => ({
         }
         const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
         if (result?.error) throw new Error(result.error)
-        if (!result?.skipped) {
-          announce()
-          doneCount++
-        }
-        cumulativeBytes += result?.size || 0
         set((s) => ({
           offlineTracks: {
             ...s.offlineTracks,
             [id]: { ...meta, path: song.path, localPath: result.localPath, ext, downloadedAt: Date.now() },
           },
         }))
+        const existingIds = get().offlinePlaylists[key]?.songIds ?? []
+        const nextIds = existingIds.includes(id) ? existingIds : [...existingIds, id]
+        await el.offlineSetPlaylist(key, nextIds, 'Downloaded songs')
+        set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: nextIds, name: 'Downloaded songs', updatedAt: Date.now() } } }))
       } catch (e) {
-        hadError = true
-        console.error('offline download failed for song', songId, e)
-      } finally {
-        offProgress?.()
+        console.error('downloadTrackOffline error:', e)
       }
-      if (announced) {
-        set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: 'syncing', current: doneCount, total } } }))
-        get().updateDownload(downloadId, { received: doneCount, percent: total ? Math.round((doneCount / total) * 100) : 100, bytesReceived: cumulativeBytes })
-      }
-    }
-    if (announced) get().updateDownload(downloadId, { speedBps: undefined })
-
-    try {
-      await el.offlineSetPlaylist(key, trackIds, name)
-      set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: trackIds, name, updatedAt: Date.now() } } }))
-    } catch (e) { console.error('offlineSetPlaylist error:', e) }
-
-    if (announced) set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: total, total } } }))
-    if (announced) get().updateDownload(downloadId, { state: hadError ? 'error' : 'done', percent: 100, error: hadError ? 'Some tracks failed to download' : undefined })
-    // Refresh from disk truth — pruning may have dropped tracks shared with
-    // another playlist that's no longer synced.
-    get().loadOfflineLibrary()
-  },
-
-  removePlaylistOffline: async (key) => {
-    const el = (window as any).electron
-    if (!el) return
-    try { await el.offlineRemovePlaylist(key) } catch (e) { console.error('offlineRemovePlaylist error:', e) }
-    set((s) => {
-      const next = { ...s.offlinePlaylists }
-      delete next[key]
-      const nextSync = { ...s.offlineSync }
-      delete nextSync[key]
-      return { offlinePlaylists: next, offlineSync: nextSync }
     })
-    get().loadOfflineLibrary()
-  },
-
-  downloadTrackOffline: async (songId) => {
-    const el = (window as any).electron
-    if (!el) return
-    const key = INDIVIDUAL_DOWNLOADS_KEY
-    const id = `jw-${songId}`
-    try {
-      const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
-      const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
-      const meta = {
-        title: song.track_titles?.[0] || song.name,
-        artist: song.credited_artists || 'Juice WRLD',
-        album: song.album || song.era?.name || '',
-        imageUrl: buildImageUrl(song.image_url) ?? null,
-        lyrics: song.lyrics || null,
-        syncedLyrics: song.synced_lyrics || null,
-        duration: parseDuration(song.length),
-      }
-      const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
-      if (result?.error) throw new Error(result.error)
-      set((s) => ({
-        offlineTracks: {
-          ...s.offlineTracks,
-          [id]: { ...meta, path: song.path, localPath: result.localPath, ext, downloadedAt: Date.now() },
-        },
-      }))
-      const existingIds = get().offlinePlaylists[key]?.songIds ?? []
-      const nextIds = existingIds.includes(id) ? existingIds : [...existingIds, id]
-      await el.offlineSetPlaylist(key, nextIds, 'Downloaded songs')
-      set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: nextIds, name: 'Downloaded songs', updatedAt: Date.now() } } }))
-    } catch (e) {
-      console.error('downloadTrackOffline error:', e)
-    }
   },
 
   // Deletes a single track's downloaded audio (e.g. from a song's context
@@ -902,16 +974,30 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   syncOfflinePlaylists: async () => {
-    const keys = Object.keys(get().offlinePlaylists)
-    for (const key of keys) {
-      const match = key.match(/^api-(\d+)$/)
-      if (!match) continue
-      try {
-        const detail = await userApi.getPlaylist(Number(match[1]))
-        await get().downloadPlaylistOffline(key, detail.name, detail.items.map((i) => i.song.id), { silent: true })
-      } catch {
-        // Offline, deleted, or no longer accessible — keep the existing cache as-is.
+    // Startup, every window focus, and the 15-min interval all call this;
+    // without the guard they overlap, and each run re-downloads the songs the
+    // other is mid-flight on (two writers to the same file, plus a second
+    // round of "downloading" announcements for work already underway).
+    if (_offlineSyncInFlight) return
+    _offlineSyncInFlight = true
+    try {
+      const keys = Object.keys(get().offlinePlaylists)
+      for (const key of keys) {
+        const match = key.match(/^api-(\d+)$/)
+        if (!match) continue
+        // Removed from offline while this sync was walking earlier keys —
+        // syncing it anyway would re-download and re-register it.
+        if (!get().offlinePlaylists[key]) continue
+        try {
+          const detail = await userApi.getPlaylist(Number(match[1]))
+          if (!get().offlinePlaylists[key]) continue
+          await get().downloadPlaylistOffline(key, detail.name, detail.items.map((i) => i.song.id), { silent: true })
+        } catch {
+          // Offline, deleted, or no longer accessible — keep the existing cache as-is.
+        }
       }
+    } finally {
+      _offlineSyncInFlight = false
     }
   },
 
@@ -921,6 +1007,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   autoDownloadIfOffline: async (playlistId, addedSongIds) => {
     if (!addedSongIds.length) return
     const key = `api-${playlistId}`
+    if (!get().offlinePlaylists[key]) return
+    // Wait out any in-flight download for this key before building the merged
+    // list — merging from a snapshot taken mid-sync saved a stale membership
+    // list, and the prune then deleted files for songs the sync had just added.
+    await (_offlineKeyQueues.get(key) ?? Promise.resolve()).catch(() => {})
     const entry = get().offlinePlaylists[key]
     if (!entry) return
     const existingIds = new Set(entry.songIds.map((id) => Number(id.replace('jw-', ''))))

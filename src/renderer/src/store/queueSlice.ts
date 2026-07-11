@@ -93,10 +93,12 @@ export interface QueueSlice {
   prevTrack: () => Track | null
 
   /**
-   * Jump to a specific track in the queue without touching radioMode.
-   * Used when clicking history items during radio.
+   * Jump to a specific track in the queue without touching radioMode,
+   * the queue itself, or the lazy-load filter. Used when clicking queue
+   * rows (history or upcoming). `absoluteIndex` disambiguates queues that
+   * contain the same track twice; falls back to first id match.
    */
-  jumpToTrack: (track: Track) => void
+  jumpToTrack: (track: Track, absoluteIndex?: number) => void
 
   toggleShuffle: () => void
   toggleRepeat: () => void
@@ -145,6 +147,12 @@ function insertRandom<T>(base: T[], items: T[]): T[] {
 }
 
 const RADIO_HISTORY_LIMIT = 30
+
+// Bumped whenever a new radio session starts. Prefetch callbacks and 3s error
+// retries capture the value at their start and bail if it has moved on —
+// otherwise stopping radio and quickly restarting it left the old session's
+// retry loop alive alongside the new one, both racing to set radioNext.
+let _radioSession = 0
 
 /** Matches version labels like "OG", "OG File", "OG Quality" (not "Original Key",
  *  which is an unrelated field) — the community convention for the raw/leaked
@@ -235,6 +243,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
   // ── startRadio ─────────────────────────────────────────────────────────────
   startRadio: (track, filter = null) => {
+    _radioSession++
     set({
       queue: [track],
       queueIndex: 0,
@@ -345,9 +354,11 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   },
 
   // ── jumpToTrack ───────────────────────────────────────────────────────────────
-  jumpToTrack: (track) => {
+  jumpToTrack: (track, absoluteIndex) => {
     const { queue } = get()
-    const idx = queue.findIndex((t: Track) => t.id === track.id)
+    const idx = (absoluteIndex != null && queue[absoluteIndex]?.id === track.id)
+      ? absoluteIndex
+      : queue.findIndex((t: Track) => t.id === track.id)
     if (idx < 0) return
     set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
     get()._maybeSwapToOg(track)
@@ -469,9 +480,11 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // ── Radio pre-fetch ────────────────────────────────────────────────────────────
   _prefetchRadioTrack: () => {
     const { radioFilter } = get()
+    const session = _radioSession
+    const live = (): boolean => get().radioMode && session === _radioSession
 
     const handleTrack = (track: Track): void => {
-      if (!get().radioMode) return
+      if (!live()) return
       const wasWaiting = get()._radioWaiting
       set({ radioNext: track, _radioWaiting: false })
       if (wasWaiting) {
@@ -484,7 +497,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     }
 
     const handleError = (): void => {
-      if (get().radioMode) setTimeout(() => get()._prefetchRadioTrack(), 3000)
+      if (live()) setTimeout(() => { if (live()) get()._prefetchRadioTrack() }, 3000)
     }
 
     if (radioFilter && (radioFilter.category || radioFilter.era || radioFilter.search)) {
@@ -499,7 +512,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         page_size: pageSize,
       })
         .then((data) => {
-          if (!get().radioMode) return
+          if (!live()) return
           const playable = data.results.filter((s: JWApiSong) => !!s.path)
           if (playable.length === 0) { handleError(); return }
           handleTrack(songToTrack(playable[Math.floor(Math.random() * playable.length)]))

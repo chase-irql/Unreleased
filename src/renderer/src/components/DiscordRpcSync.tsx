@@ -119,7 +119,11 @@ export default function DiscordRpcSync(): JSX.Element | null {
     const id = setInterval(() => {
       const last = lastSentPosRef.current
       if (!last) return
-      const expected = last.currentTime + (Date.now() - last.at) / 1000
+      // Extrapolate at the actual playback rate — at 1.5x/2x a 1x wall-clock
+      // estimate falls behind real playback immediately, tripping the drift
+      // threshold over and over and re-sending the activity every few
+      // seconds: exactly the RPC rate-limit spam this check exists to avoid.
+      const expected = last.currentTime + ((Date.now() - last.at) / 1000) * useStore.getState().playbackSpeed
       const actual = getCurrentTime()
       if (Math.abs(actual - expected) < SEEK_DRIFT_THRESHOLD_S) return
       lastSentPosRef.current = { currentTime: actual, at: Date.now() }

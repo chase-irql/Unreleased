@@ -13,7 +13,7 @@ export default function QueuePanel(): JSX.Element {
   const {
     queue, queueIndex, currentTrack, isPlaying, shuffle, queueFilter, queueLoadingMore,
     radioMode, radioNext,
-    setShowQueue, removeFromQueue, clearQueue, reorderQueue, playTrack, jumpToTrack, _loadMore,
+    setShowQueue, removeFromQueue, clearQueue, reorderQueue, jumpToTrack, _loadMore,
   } = useStore()
 
   const [panelWidth, dragHandle] = useResizablePanel(300, 240, 480)
@@ -132,7 +132,9 @@ export default function QueuePanel(): JSX.Element {
                       track={track}
                       isActive={false}
                       isPlaying={false}
-                      onPlay={() => radioMode ? jumpToTrack(track) : playTrack(track)}
+                      // Displayed newest-first, so reversed index i maps back
+                      // to absolute queue position history.length - 1 - i.
+                      onPlay={() => jumpToTrack(track, history.length - 1 - i)}
                     />
                   ))}
                   {history.length > MAX_HISTORY_SHOWN && (
@@ -213,7 +215,10 @@ export default function QueuePanel(): JSX.Element {
                     isActive={false}
                     isPlaying={false}
                     showDrag
-                    onPlay={() => playTrack(track, queue.slice(queueIndex + 1 + i))}
+                    // jumpToTrack, not playTrack: rebuilding the queue from a
+                    // slice here dropped history AND reset queueFilter, which
+                    // permanently killed lazy loading for the session.
+                    onPlay={() => jumpToTrack(track, queueIndex + 1 + i)}
                     onRemove={() => removeFromQueue(queueIndex + 1 + i)}
                   />
                 </div>

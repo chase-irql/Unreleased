@@ -181,6 +181,9 @@ export default function WrldView(): JSX.Element {
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null)
   const [selectedVersionIdx, setSelectedVersionIdx] = useState(0)
   const [playingAlbumSongId, setPlayingAlbumSongId] = useState<number | null>(null)
+  // Lives here (not inside AlbumDetail) because AlbumDetail is invoked as a
+  // plain function — see the note above ArtBox — and plain calls can't own hooks.
+  const [versionMenuOpen, setVersionMenuOpen] = useState(false)
 
   useEffect(() => {
     fetch('/wrlddata.json')
@@ -390,6 +393,13 @@ export default function WrldView(): JSX.Element {
   // look interactive when there's no track loaded (and FM isn't filling in).
   const noTrack = !radioFmActive && !currentTrack
 
+  // ArtBox / FmRadioPanel / AlbumsGrid / AlbumDetail are rendered via plain
+  // function calls, NOT <JSX/> element syntax: they're (re)defined on every
+  // WrldView render, so as JSX components React would see a brand-new type
+  // each time and unmount/remount their whole subtree — album art re-decoded
+  // and flickered, and any internal DOM/menu state was lost on every parent
+  // re-render. As plain calls they're just part of this component's own tree.
+  // (Corollary: they must not contain hooks of their own.)
   const ArtBox = ({ mobile }: { mobile: boolean }) => (
     <div
       className={mobile
@@ -548,7 +558,7 @@ export default function WrldView(): JSX.Element {
         return (
           <button
             key={album.id}
-            onClick={() => { setSelectedAlbumId(album.id); setSelectedVersionIdx(0) }}
+            onClick={() => { setSelectedAlbumId(album.id); setSelectedVersionIdx(0); setVersionMenuOpen(false) }}
             className="flex flex-col gap-1.5 text-left group/album"
           >
             <div className="relative w-full aspect-square rounded-xl overflow-hidden shadow-lg ring-1 ring-white/[0.06] group-hover/album:ring-white/25 transition-all duration-200">
@@ -574,10 +584,11 @@ export default function WrldView(): JSX.Element {
     </div>
   )
 
-  const AlbumDetail = ({ albumId }: { albumId: number }) => {
+  const AlbumDetail = ({ albumId }: { albumId: number }): JSX.Element | null => {
     const album = wrldAlbums.find(a => a.id === albumId)
     if (!album) return null
     const version = album.versions[selectedVersionIdx] ?? album.versions[0]
+    const versionLabel = (v: WrldVersion): string => v.name.includes('Deluxe') ? 'Deluxe' : 'Standard'
 
     return (
       <div className="flex flex-col gap-3">
@@ -601,22 +612,38 @@ export default function WrldView(): JSX.Element {
           <p className="text-white/40 text-[10px] mt-0.5">Juice WRLD · {version.year}</p>
         </div>
 
-        {/* Version tabs */}
+        {/* Version notch menu */}
         {album.versions.length > 1 && (
-          <div className="flex gap-1.5">
-            {album.versions.map((v, i) => (
-              <button
-                key={i}
-                onClick={() => setSelectedVersionIdx(i)}
-                className={`px-2.5 py-1 rounded-lg text-[9px] font-semibold transition-all duration-150 ${
-                  selectedVersionIdx === i
-                    ? 'bg-white/15 text-white/95 ring-1 ring-white/20'
-                    : 'bg-white/[0.04] text-white/35 hover:bg-white/10 hover:text-white/65'
-                }`}
-              >
-                {v.name.includes('Deluxe') ? 'Deluxe' : 'Standard'}
-              </button>
-            ))}
+          <div className="relative">
+            <button
+              onClick={() => setVersionMenuOpen(o => !o)}
+              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] transition-colors"
+            >
+              <span className="text-white/70 text-[9px] font-semibold tracking-wide truncate leading-none">
+                {versionLabel(version)}
+              </span>
+              <ChevronDown size={10} className={`text-white/30 shrink-0 transition-transform duration-150 ${versionMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {versionMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setVersionMenuOpen(false)} />
+                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl">
+                  {album.versions.map((v, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setSelectedVersionIdx(i); setVersionMenuOpen(false) }}
+                      className={`w-full px-3 py-1.5 text-left text-[9px] font-medium transition-colors ${
+                        selectedVersionIdx === i
+                          ? 'text-white/90 bg-white/[0.08]'
+                          : 'text-white/45 hover:text-white/80 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      {versionLabel(v)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -740,7 +767,7 @@ export default function WrldView(): JSX.Element {
 
             {/* Header: art + title */}
             <div className="flex items-center gap-3 px-4 pt-12 pb-3 shrink-0">
-              <ArtBox mobile />
+              {ArtBox({ mobile: true })}
               <div className="flex-1 min-w-0">
                 {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }}>{displayTitle}</p>}
                 {displayArtist && <p className="text-xs mt-0.5 truncate" style={{ color: txtSec }}>{displayArtist}</p>}
@@ -912,7 +939,7 @@ export default function WrldView(): JSX.Element {
 
               {/* Album art */}
               <div className="relative w-full" style={{ maxWidth: 320 }}>
-                <ArtBox mobile={false} />
+                {ArtBox({ mobile: false })}
                 {!radioFmActive && songVersions.length > 0 && (
                   <div
                     className="wrld-bookmarks absolute right-full flex flex-col items-end z-20 overflow-y-auto"
@@ -1238,8 +1265,8 @@ export default function WrldView(): JSX.Element {
               {/* ── Albums ── */}
               {notchCategory === 'albums' ? (
                 selectedAlbumId !== null
-                  ? <AlbumDetail albumId={selectedAlbumId} />
-                  : <AlbumsGrid />
+                  ? AlbumDetail({ albumId: selectedAlbumId })
+                  : AlbumsGrid()
 
               /* ── Playlists ── */
               ) : notchCategory === 'playlists' && account && playlists.length > 0 ? (
