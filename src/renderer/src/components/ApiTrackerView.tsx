@@ -3,7 +3,7 @@ import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, LayoutGrid, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
-  CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight,
+  CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -27,7 +27,7 @@ import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'grid'
-type TrackerTab = 'songs' | 'lyrics' | 'calendar'
+type TrackerTab = 'songs' | 'lyrics' | 'calendar' | 'producers'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'text-emerald-400 bg-emerald-400/10 border-emerald-400/25',
@@ -1453,7 +1453,7 @@ export default function ApiTrackerView(): JSX.Element {
   const calendarFetchedRef = useRef(false)
 
   useEffect(() => {
-    if (trackerTab !== 'calendar' || calendarFetchedRef.current) return
+    if ((trackerTab !== 'calendar' && trackerTab !== 'producers') || calendarFetchedRef.current) return
     calendarFetchedRef.current = true
     setCalendarLoading(true)
     apiFetch<JWApiSong[]>('/songs/', { all: 'true' })
@@ -1487,6 +1487,23 @@ export default function ApiTrackerView(): JSX.Element {
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }, [calendarSongs])
 
+  // `producers` is free text, often multiple names separated by commas
+  // (e.g. "Nick Mira, Taz Taylor") — split so each producer gets their own
+  // entry instead of grouping by the exact combined string.
+  const producersByName = useMemo(() => {
+    const map = new Map<string, JWApiSong[]>()
+    for (const song of calendarSongs) {
+      if (!song.producers) continue
+      for (const raw of song.producers.split(',')) {
+        const name = raw.trim()
+        if (!name) continue
+        if (!map.has(name)) map.set(name, [])
+        map.get(name)!.push(song)
+      }
+    }
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
+  }, [calendarSongs])
+
   // Assigns each era a stable color by its position in `eras` (already
   // fetched for the category sidebar) — same era always maps to the same
   // color as long as the API keeps returning eras in the same order.
@@ -1514,6 +1531,7 @@ export default function ApiTrackerView(): JSX.Element {
 
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
   const [selectedStudio, setSelectedStudio] = useState<string | null>(null)
+  const [selectedProducer, setSelectedProducer] = useState<string | null>(null)
 
   const shiftCalendarMonth = (delta: number): void => {
     setCalendarMonth((prev) => {
@@ -1941,7 +1959,17 @@ export default function ApiTrackerView(): JSX.Element {
                 : 'text-text-muted hover:text-text-secondary'
             }`}
           >
-            <CalendarDays size={11} /> Calendar
+            <CalendarDays size={11} /> Overview
+          </button>
+          <button
+            onClick={() => setTrackerTab('producers')}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+              trackerTab === 'producers'
+                ? 'bg-surface-raised text-text-primary'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <Users size={11} /> Producers
           </button>
         </div>
 
@@ -2292,6 +2320,77 @@ export default function ApiTrackerView(): JSX.Element {
                     </p>
                     <div className="space-y-0.5">
                       {(calendarByDate.get(selectedDateKey) ?? []).map((song) => (
+                        <SongRow
+                          key={song.id}
+                          song={song}
+                          onPlay={handlePlay}
+                          onCategoryClick={handleCategoryClick}
+                          onEraClick={handleEraClick}
+                          onInfo={handleInfo}
+                          onContextMenu={handleContextMenu}
+                          selectMode={selectMode}
+                          selected={selected.has(song.id)}
+                          onToggleSelect={toggleSelect}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : trackerTab === 'producers' ? (
+        <div className="flex-1 overflow-y-auto px-3 md:px-5 pb-4">
+          {calendarLoading ? (
+            <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-sm">Loading producers…</span>
+            </div>
+          ) : calendarError ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-center">
+              <p className="text-text-muted text-sm">Failed to load: {calendarError}</p>
+            </div>
+          ) : producersByName.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <Users size={32} className="text-text-muted opacity-30" />
+              <p className="text-text-muted text-sm">No producer credits found</p>
+            </div>
+          ) : (
+            <div className="flex flex-col md:flex-row gap-5 md:gap-6 items-start">
+              <div className="w-full md:w-80 shrink-0">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Producers</p>
+                <div className="flex flex-col max-h-[70vh] overflow-y-auto -mx-1">
+                  {producersByName.map(([producer, songs]) => (
+                    <button
+                      key={producer}
+                      onClick={() => setSelectedProducer(producer)}
+                      title={producer}
+                      className={`flex items-center justify-between gap-2 px-1 py-1.5 md:py-1 rounded-lg text-left text-xs transition-colors ${
+                        selectedProducer === producer
+                          ? 'text-accent font-semibold bg-accent/5'
+                          : 'text-text-secondary hover:text-text-primary active:bg-surface-overlay hover:bg-surface-overlay'
+                      }`}
+                    >
+                      <span className="truncate">{producer}</span>
+                      <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 min-w-0 w-full">
+                {!selectedProducer ? (
+                  <p className="text-text-muted text-xs py-4">Select a producer to see songs they worked on.</p>
+                ) : (
+                  <>
+                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedProducer}>
+                      Produced by {selectedProducer}
+                      {' '}· {(producersByName.find(([p]) => p === selectedProducer)?.[1] ?? []).length}{' '}
+                      {(producersByName.find(([p]) => p === selectedProducer)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
+                    </p>
+                    <div className="space-y-0.5">
+                      {(producersByName.find(([p]) => p === selectedProducer)?.[1] ?? []).map((song) => (
                         <SongRow
                           key={song.id}
                           song={song}

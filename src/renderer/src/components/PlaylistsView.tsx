@@ -532,7 +532,6 @@ export default function PlaylistsView(): JSX.Element {
     setEditingDesc(false)
     setDescValue('')
     setCoverImgError(false)
-    setCoverData(null)
     setSelectMode(false)
     setSelectedTracks(new Map())
     setShowBulkPlaylists(false)
