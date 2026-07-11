@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ListMusic, Play, Loader2, Plus, Trash2, Pencil, ArrowLeft,
@@ -262,6 +262,21 @@ export default function PlaylistsView(): JSX.Element {
   // Context menus
   const [trackMenu, setTrackMenu] = useState<SongContextMenuState | null>(null)
   const [cardMenu, setCardMenu] = useState<CardMenuState | null>(null)
+  const cardMenuRef = useRef<HTMLDivElement>(null)
+  const [cardMenuPos, setCardMenuPos] = useState({ left: 0, top: 0 })
+
+  // Re-clamp the card menu against the actual rendered box each time its
+  // content changes size (e.g. the "Add all to playlist" submenu opening) —
+  // the initial x/y guess from the click is otherwise stale and the box can
+  // render partly off-screen or oddly stretched.
+  useLayoutEffect(() => {
+    const el = cardMenuRef.current
+    if (!cardMenu || !el) return
+    const rect = el.getBoundingClientRect()
+    const left = Math.max(8, Math.min(cardMenu.x, window.innerWidth - rect.width - 8))
+    const top = Math.max(8, Math.min(cardMenu.y, window.innerHeight - rect.height - 8))
+    setCardMenuPos(prev => (prev.left === left && prev.top === top ? prev : { left, top }))
+  }, [cardMenu])
 
   // Multi-select of playlists in the library grid — ctrl/cmd-click a card to
   // toggle it, mirroring the file browser's selection model (ApiFilesView).
@@ -269,7 +284,8 @@ export default function PlaylistsView(): JSX.Element {
   // could otherwise collide.
   const [plSelectMode, setPlSelectMode] = useState(false)
   const [selectedPlaylistKeys, setSelectedPlaylistKeys] = useState<Set<string>>(new Set())
-  const [plBulkMenu, setPlBulkMenu] = useState<{ x: number; y: number } | null>(null)
+  const [plBulkMenu, setPlBulkMenu] = useState<{ x: number; y: number; showPlaylists?: boolean } | null>(null)
+  const [showPlBulkAddMenu, setShowPlBulkAddMenu] = useState(false)
 
   // Multi-select of tracks within an open playlist — mirrors the Tracker's
   // bulk-select (ApiTrackerView). Keyed by track.id (Track has a string id;
@@ -643,6 +659,7 @@ export default function PlaylistsView(): JSX.Element {
   const exitPlaylistSelectMode = useCallback(() => {
     setPlSelectMode(false)
     setSelectedPlaylistKeys(new Set())
+    setShowPlBulkAddMenu(false)
   }, [])
 
   // Deselecting the last playlist drops out of select mode on its own.
@@ -676,6 +693,46 @@ export default function PlaylistsView(): JSX.Element {
       exitPlaylistSelectMode()
     }
   }, [selectedPlaylistKeys, deleteLocalPlaylist, refreshPlaylists, selectedId, localSelectedId, setSelectedId, setLocalSelectedId, exitPlaylistSelectMode])
+
+  // "Add to playlist" only makes sense when every selected playlist is the
+  // same kind, since a synced (api) target can't hold local-only tracks and
+  // vice versa. Mixed selections simply don't offer the action.
+  const selectedPlaylistKind = useMemo(() => {
+    const kinds = new Set([...selectedPlaylistKeys].map(k => k.split(':')[0]))
+    return kinds.size === 1 ? ([...kinds][0] as 'api' | 'local') : null
+  }, [selectedPlaylistKeys])
+
+  const [bulkAddingPlaylists, setBulkAddingPlaylists] = useState(false)
+
+  const bulkAddPlaylistsTo = useCallback(async (target: { kind: 'api'; id: number } | { kind: 'local'; id: string }) => {
+    const keys = [...selectedPlaylistKeys]
+    setBulkAddingPlaylists(true)
+    try {
+      if (target.kind === 'api') {
+        const srcIds = keys.filter(k => k.startsWith('api:')).map(k => Number(k.slice(4))).filter(id => id !== target.id)
+        for (const srcId of srcIds) {
+          const srcDetail = await userApi.getPlaylist(srcId).catch(() => null)
+          if (!srcDetail) continue
+          await Promise.all(srcDetail.items.map(item => userApi.addToPlaylist(target.id, item.song.id).catch(() => {})))
+        }
+        await refreshPlaylists()
+      } else {
+        const srcIds = keys.filter(k => k.startsWith('local:')).map(k => k.slice(6)).filter(id => id !== target.id)
+        const targetPl = localPlaylists.find(p => p.id === target.id)
+        const existing = new Set(targetPl?.trackIds ?? [])
+        for (const srcId of srcIds) {
+          const src = localPlaylists.find(p => p.id === srcId)
+          if (!src) continue
+          src.trackIds.filter(id => !existing.has(id)).forEach(id => { existing.add(id); addToLocalPlaylist(target.id, id) })
+        }
+      }
+    } finally {
+      setBulkAddingPlaylists(false)
+      setShowPlBulkAddMenu(false)
+      setPlBulkMenu(null)
+      exitPlaylistSelectMode()
+    }
+  }, [selectedPlaylistKeys, refreshPlaylists, localPlaylists, addToLocalPlaylist, exitPlaylistSelectMode])
 
   const handleSort = (field: SortField) => {
     setSort(prev => {
@@ -1031,6 +1088,41 @@ export default function PlaylistsView(): JSX.Element {
             >
               Clear
             </button>
+            {selectedPlaylistKind && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowPlBulkAddMenu(v => !v)}
+                  disabled={selectedPlaylistKeys.size === 0 || bulkAddingPlaylists}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+                >
+                  {bulkAddingPlaylists ? <Loader2 size={13} className="animate-spin" /> : <FolderInput size={13} />} Add to playlist
+                </button>
+                {showPlBulkAddMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowPlBulkAddMenu(false)} />
+                    <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
+                      <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                        Add to playlist
+                      </div>
+                      <div className="max-h-56 overflow-y-auto py-1">
+                        {localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`)).length === 0 ? (
+                          <p className="px-3 py-2 text-xs text-text-muted">No other playlists</p>
+                        ) : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`)).map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => bulkAddPlaylistsTo({ kind: 'local', id: p.id })}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                          >
+                            <ListMusic size={14} className="shrink-0 text-text-muted" />
+                            <span className="flex-1 truncate">{p.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               onClick={bulkDeletePlaylists}
               disabled={selectedPlaylistKeys.size === 0 || bulkDeletingPlaylists}
@@ -1062,6 +1154,28 @@ export default function PlaylistsView(): JSX.Element {
               label="Select all"
               onClick={() => { setSelectedPlaylistKeys(new Set(localPlaylists.map(lp => `local:${lp.id}`))); setPlBulkMenu(null) }}
             />
+            {selectedPlaylistKind === 'local' && (
+              <>
+                <button
+                  className="w-full flex items-center justify-between gap-2.5 px-3.5 py-2 text-sm text-text-primary transition-colors hover:bg-surface-overlay"
+                  onClick={e => { e.stopPropagation(); setPlBulkMenu(prev => prev ? { ...prev, showPlaylists: !prev.showPlaylists } : null) }}
+                >
+                  <span className="flex items-center gap-2.5"><FolderInput size={14} className="text-text-muted" />Add to playlist</span>
+                  <span className="text-text-muted text-xs">›</span>
+                </button>
+                {plBulkMenu.showPlaylists && (
+                  <div className="border-t border-[var(--border)] max-h-40 overflow-y-auto">
+                    {localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`)).length === 0 ? (
+                      <p className="px-3.5 py-2 text-xs text-text-muted">No other playlists</p>
+                    ) : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`)).map(p => (
+                      <button key={p.id} onClick={() => bulkAddPlaylistsTo({ kind: 'local', id: p.id })} className="w-full text-left px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors truncate">
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
             <MenuItem
               icon={Trash2}
               label="Delete selected"
@@ -1504,7 +1618,7 @@ export default function PlaylistsView(): JSX.Element {
                   onDragOver={e => { if (!dragEnabled || selectMode) return; e.preventDefault(); setDropIdx(displayIdx) }}
                   onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
                   onDrop={() => dragEnabled && !selectMode && handleDrop(displayIdx)}
-                  onClick={() => { if (selectMode) toggleTrackSelect(track) }}
+                  onClick={e => { if (e.ctrlKey || e.metaKey || selectMode) toggleTrackSelect(track) }}
                   onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
                   className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
                     isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
@@ -1982,6 +2096,47 @@ export default function PlaylistsView(): JSX.Element {
           >
             Clear
           </button>
+          {selectedPlaylistKind && (
+            <div className="relative">
+              <button
+                onClick={() => setShowPlBulkAddMenu(v => !v)}
+                disabled={selectedPlaylistKeys.size === 0 || bulkAddingPlaylists}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                {bulkAddingPlaylists ? <Loader2 size={13} className="animate-spin" /> : <FolderInput size={13} />} Add to playlist
+              </button>
+              {showPlBulkAddMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowPlBulkAddMenu(false)} />
+                  <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
+                    <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                      Add to playlist
+                    </div>
+                    <div className="max-h-56 overflow-y-auto py-1">
+                      {(selectedPlaylistKind === 'api'
+                        ? playlists.filter(p => !selectedPlaylistKeys.has(`api:${p.id}`))
+                        : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`))
+                      ).length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-text-muted">No other playlists</p>
+                      ) : (selectedPlaylistKind === 'api'
+                        ? playlists.filter(p => !selectedPlaylistKeys.has(`api:${p.id}`))
+                        : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`))
+                      ).map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => bulkAddPlaylistsTo(selectedPlaylistKind === 'api' ? { kind: 'api', id: p.id as number } : { kind: 'local', id: p.id as string })}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                        >
+                          <ListMusic size={14} className="shrink-0 text-text-muted" />
+                          <span className="flex-1 truncate">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <button
             onClick={bulkDeletePlaylists}
             disabled={selectedPlaylistKeys.size === 0 || bulkDeletingPlaylists}
@@ -2021,6 +2176,38 @@ export default function PlaylistsView(): JSX.Element {
               setPlBulkMenu(null)
             }}
           />
+          {selectedPlaylistKind && (
+            <>
+              <button
+                className="w-full flex items-center justify-between gap-2.5 px-3.5 py-2 text-sm text-text-primary transition-colors hover:bg-surface-overlay"
+                onClick={e => { e.stopPropagation(); setPlBulkMenu(prev => prev ? { ...prev, showPlaylists: !prev.showPlaylists } : null) }}
+              >
+                <span className="flex items-center gap-2.5"><FolderInput size={14} className="text-text-muted" />Add to playlist</span>
+                <span className="text-text-muted text-xs">›</span>
+              </button>
+              {plBulkMenu.showPlaylists && (
+                <div className="border-t border-[var(--border)] max-h-40 overflow-y-auto">
+                  {(selectedPlaylistKind === 'api'
+                    ? playlists.filter(p => !selectedPlaylistKeys.has(`api:${p.id}`))
+                    : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`))
+                  ).length === 0 ? (
+                    <p className="px-3.5 py-2 text-xs text-text-muted">No other playlists</p>
+                  ) : (selectedPlaylistKind === 'api'
+                    ? playlists.filter(p => !selectedPlaylistKeys.has(`api:${p.id}`))
+                    : localPlaylists.filter(lp => !selectedPlaylistKeys.has(`local:${lp.id}`))
+                  ).map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => bulkAddPlaylistsTo(selectedPlaylistKind === 'api' ? { kind: 'api', id: p.id as number } : { kind: 'local', id: p.id as string })}
+                      className="w-full text-left px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors truncate"
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
           <MenuItem
             icon={Trash2}
             label="Delete selected"
@@ -2032,11 +2219,15 @@ export default function PlaylistsView(): JSX.Element {
         </div>
       )}
 
-      {/* Unified playlist card context menu */}
-      {cardMenu && (
+      {/* Unified playlist card context menu — portaled to <body> and
+          re-clamped (see cardMenuPos above) so growing content like the
+          "Add all to playlist" submenu can't push it off-screen or get
+          clipped/mis-measured by an ancestor. */}
+      {cardMenu && createPortal(
         <div
+          ref={cardMenuRef}
           className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-          style={{ left: Math.min(cardMenu.x, window.innerWidth - 230), top: Math.min(cardMenu.y, window.innerHeight - 320) }}
+          style={{ left: cardMenuPos.left, top: cardMenuPos.top }}
           onClick={e => e.stopPropagation()}
         >
           {cardMenu.renaming ? (
@@ -2232,7 +2423,8 @@ export default function PlaylistsView(): JSX.Element {
               />
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

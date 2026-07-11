@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } fr
 import {
   Folder, Music2, ChevronRight, ArrowLeft, Home, Play, Loader2,
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
-  Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus,
+  Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -11,6 +11,8 @@ import {
   apiPeek,
   buildStreamUrl,
   buildCoverArtUrl,
+  apiFileTrackId,
+  apiFilePathToTrack,
   JWApiFileEntry,
   JWApiBrowseResponse,
   JWApiSong,
@@ -49,23 +51,7 @@ function parentFolder(path: string): string {
 }
 
 function fileToTrack(entry: JWApiFileEntry): Track {
-  const title = entry.name.replace(/\.[^.]+$/, '')
-  const album = parentFolder(entry.path).split('/').pop() ?? ''
-  return {
-    id: `jw-file-${entry.path}`,
-    path: entry.path,
-    streamUrl: buildStreamUrl(entry.path),
-    imageUrl: buildCoverArtUrl(entry.path),
-    title,
-    artist: 'Juice WRLD',
-    album,
-    albumArtist: 'Juice WRLD',
-    year: null,
-    trackNumber: null,
-    duration: 0,
-    genre: '',
-    hasAlbumArt: true,
-  }
+  return apiFilePathToTrack(entry.path, entry.name)
 }
 
 function localFileToTrack(entry: { name: string; path: string; size: number | null }): Track {
@@ -160,7 +146,7 @@ function urlToPath(pathname: string): string {
 }
 
 export default function ApiFilesView(): JSX.Element {
-  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, account, setActiveView, setPendingEditorSongId } = useStore()
+  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStore()
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [currentPath, setCurrentPath] = useState('')
@@ -830,6 +816,7 @@ export default function ApiFilesView(): JSX.Element {
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
                 const isMedia = mt === 'image' || mt === 'video'
                 const isSelected = selectedPaths.has(entry.path)
+                const isLiked = mt === 'audio' && likedTrackIds.includes(apiFileTrackId(entry.path))
                 return (
                   <div key={entry.path}
                     className={`group flex items-center gap-3 px-3 py-2 rounded-lg transition-colors cursor-default ${
@@ -891,46 +878,19 @@ export default function ApiFilesView(): JSX.Element {
                         <span className="block text-text-muted text-[10px] truncate">{parentFolder(entry.path)}</span>
                       )}
                     </span>
+                    {isLiked && (
+                      <button
+                        className="shrink-0 p-1 text-accent"
+                        onClick={(e) => { e.stopPropagation(); toggleLike(apiFileTrackId(entry.path)) }}
+                        title="Unlike"
+                      >
+                        <Heart size={13} fill="currentColor" />
+                      </button>
+                    )}
                     {!isDir && entry.size != null && (
-                      <span className="hidden md:inline text-text-muted text-xs shrink-0 w-14 text-right">{(entry.size / 1_048_576).toFixed(1)} MB</span>
+                      <span className="hidden md:inline-block text-text-muted text-xs shrink-0 w-14 text-right">{(entry.size / 1_048_576).toFixed(1)} MB</span>
                     )}
-                    {!isDir && <span className="hidden md:inline text-[10px] uppercase tracking-wide text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded shrink-0">{ext}</span>}
-                    {!selectMode && mt === 'audio' && (
-                      <button
-                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 w-7 h-7 rounded-full bg-surface-raised hover:bg-surface-overlay flex items-center justify-center transition-opacity shrink-0 border border-[var(--border)]"
-                        onClick={(e) => { e.stopPropagation(); openSongInfo(entry) }}
-                        title="Find in Tracker"
-                      >
-                        <Info size={12} className="text-text-muted" />
-                      </button>
-                    )}
-                    {!selectMode && mt === 'audio' && (
-                      <button
-                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 w-7 h-7 rounded-full bg-surface-raised hover:bg-surface-overlay flex items-center justify-center transition-opacity shrink-0 border border-[var(--border)]"
-                        onClick={(e) => { e.stopPropagation(); addToQueue(fileToTrack(entry)) }}
-                        title="Add to queue"
-                      >
-                        <ListPlus size={12} className="text-text-muted" />
-                      </button>
-                    )}
-                    {!selectMode && !isDir && (
-                      <button
-                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 w-7 h-7 rounded-full bg-surface-raised hover:bg-surface-overlay flex items-center justify-center transition-opacity shrink-0 border border-[var(--border)]"
-                        onClick={(e) => { e.stopPropagation(); handleDownload(entry) }}
-                        title="Download"
-                      >
-                        {downloading === entry.path ? <Loader2 size={12} className="text-text-muted animate-spin" /> : <Download size={12} className="text-text-muted" />}
-                      </button>
-                    )}
-                    {!selectMode && (
-                      <button
-                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 w-7 h-7 rounded-full bg-surface-raised hover:bg-surface-overlay flex items-center justify-center transition-opacity shrink-0 border border-[var(--border)]"
-                        onClick={(e) => { e.stopPropagation(); copyLink(entry) }}
-                        title={isDir ? 'Copy folder link' : 'Copy file link'}
-                      >
-                        {copiedPath === entry.path ? <Check size={12} className="text-accent" /> : <Link size={12} className="text-text-muted" />}
-                      </button>
-                    )}
+                    {!isDir && <span className="hidden md:inline-block text-center text-[10px] uppercase tracking-wide text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded shrink-0 w-12">{ext}</span>}
                   </div>
                 )
               })}
@@ -950,6 +910,7 @@ export default function ApiFilesView(): JSX.Element {
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
                 const isMedia = mt === 'image' || mt === 'video'
                 const isSelected = selectedPaths.has(entry.path)
+                const isLiked = mt === 'audio' && likedTrackIds.includes(apiFileTrackId(entry.path))
                 return (
                   <div key={entry.path}
                     className={`group flex flex-col rounded-xl overflow-hidden transition-colors cursor-default ${
@@ -1020,42 +981,15 @@ export default function ApiFilesView(): JSX.Element {
                             : <Square size={18} className="text-white/70 drop-shadow" />}
                         </div>
                       )}
-                      {/* Top-right overlay buttons (grid, non-select mode) */}
-                      {!selectMode && !isDir && (
-                        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                          {mt === 'audio' && (
-                            <button
-                              className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center"
-                              onClick={(e) => { e.stopPropagation(); openSongInfo(entry) }}
-                              title="Find in Tracker"
-                            >
-                              <Info size={11} className="text-white" />
-                            </button>
-                          )}
-                          {mt === 'audio' && (
-                            <button
-                              className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center"
-                              onClick={(e) => { e.stopPropagation(); addToQueue(fileToTrack(entry)) }}
-                              title="Add to queue"
-                            >
-                              <ListPlus size={11} className="text-white" />
-                            </button>
-                          )}
-                          <button
-                            className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center"
-                            onClick={(e) => { e.stopPropagation(); copyLink(entry) }}
-                            title="Copy link"
-                          >
-                            {copiedPath === entry.path ? <Check size={11} className="text-accent" /> : <Link size={11} className="text-white" />}
-                          </button>
-                          <button
-                            className="w-6 h-6 rounded-full bg-black/60 flex items-center justify-center"
-                            onClick={(e) => { e.stopPropagation(); handleDownload(entry) }}
-                            title="Download"
-                          >
-                            {downloading === entry.path ? <Loader2 size={11} className="text-white animate-spin" /> : <Download size={11} className="text-white" />}
-                          </button>
-                        </div>
+                      {/* Liked indicator */}
+                      {isLiked && (
+                        <button
+                          className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center"
+                          onClick={(e) => { e.stopPropagation(); toggleLike(apiFileTrackId(entry.path)) }}
+                          title="Unlike"
+                        >
+                          <Heart size={12} fill="currentColor" className="text-accent" />
+                        </button>
                       )}
                     </div>
                     {/* Label */}
@@ -1141,6 +1075,12 @@ export default function ApiFilesView(): JSX.Element {
                 <button onClick={() => { addToQueue(fileToTrack(ctxMenu.entry)); setCtxMenu(null) }}
                   className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <ListPlus size={14} className="text-text-muted" /> Add to queue
+                </button>
+                <button onClick={() => { toggleLike(apiFileTrackId(ctxMenu.entry.path)); setCtxMenu(null) }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  <Heart size={14} fill={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'currentColor' : 'none'}
+                    className={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'text-accent' : 'text-text-muted'} />
+                  {likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'Unlike' : 'Like'}
                 </button>
                 <button onClick={() => { openSongInfo(ctxMenu.entry); setCtxMenu(null) }}
                   className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">

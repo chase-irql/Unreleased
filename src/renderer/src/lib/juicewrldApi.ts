@@ -130,6 +130,46 @@ export function buildCoverArtUrl(path: string): string {
   return `${JWAPI_BASE}/files/cover-art/?path=${encodeURIComponent(path)}`
 }
 
+// ─── API file → track (for liking raw file-browser entries) ───────────────────
+//
+// Files browsed in ApiFilesView don't correspond to a numeric song id, so they
+// can't go through the favorites API — they're liked purely locally, the same
+// way locally-scanned library tracks are. The path is encoded directly into the
+// track id so a liked entry can be reconstructed (e.g. in LikedSongsView)
+// without re-fetching the folder it came from.
+const API_FILE_ID_PREFIX = 'jw-file-'
+
+export function apiFileTrackId(path: string): string {
+  return `${API_FILE_ID_PREFIX}${path}`
+}
+
+export function apiFileIdToPath(trackId: string): string | null {
+  return trackId.startsWith(API_FILE_ID_PREFIX) ? trackId.slice(API_FILE_ID_PREFIX.length) : null
+}
+
+export function apiFilePathToTrack(path: string, name?: string): Track {
+  const fileName = name ?? path.split('/').pop() ?? path
+  const title = fileName.replace(/\.[^.]+$/, '')
+  const slashIdx = path.lastIndexOf('/')
+  const parent = slashIdx > 0 ? path.slice(0, slashIdx) : ''
+  const album = parent.split('/').pop() ?? ''
+  return {
+    id: apiFileTrackId(path),
+    path,
+    streamUrl: buildStreamUrl(path),
+    imageUrl: buildCoverArtUrl(path),
+    title,
+    artist: 'Juice WRLD',
+    album,
+    albumArtist: 'Juice WRLD',
+    year: null,
+    trackNumber: null,
+    duration: 0,
+    genre: '',
+    hasAlbumArt: true,
+  }
+}
+
 // ─── Recording session ZIP lookup ──────────────────────────────────────────────
 //
 // "recording_session" songs have no `path` — the actual Pro Tools/Logic
