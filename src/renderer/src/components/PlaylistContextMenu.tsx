@@ -151,6 +151,7 @@ export default function PlaylistContextMenu({ state, onClose }: {
     const src = await userApi.getPlaylist(playlist.id)
     await Promise.all(src.items.map(item => userApi.addToPlaylist(targetId, item.song.id).catch(() => {})))
     await refreshPlaylists()
+    useStore.getState().autoDownloadIfOffline(targetId, src.items.map(item => item.song.id))
   }
 
   const commitRename = async (): Promise<void> => {

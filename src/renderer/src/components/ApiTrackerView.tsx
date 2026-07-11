@@ -551,7 +551,7 @@ const SongRow = memo(function SongRow({
   return (
     <div
       className={`group flex items-center gap-3 px-3 py-2.5 md:py-2 hover:bg-surface-overlay active:bg-surface-overlay rounded-lg transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
-      onClick={() => onToggleSelect(song)}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -926,7 +926,7 @@ const LyricResultRow = memo(function LyricResultRow({
   return (
     <div
       className={`group flex items-start gap-3 px-3 py-3 hover:bg-surface-overlay active:bg-surface-overlay rounded-lg transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
-      onClick={() => onToggleSelect(song)}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -1086,7 +1086,7 @@ function SongCard({
   return (
     <div
       className={`group flex flex-col rounded-xl overflow-hidden bg-surface-overlay hover:bg-surface-raised transition-colors cursor-default ${selected ? 'ring-2 ring-accent' : ''}`}
-      onClick={() => onToggleSelect(song)}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
       <div className="relative w-full aspect-square bg-surface-raised">
@@ -1475,25 +1475,18 @@ export default function ApiTrackerView(): JSX.Element {
 
   // Restores the last-viewed month from localStorage (this view unmounts
   // whenever the user switches tabs, so component state alone doesn't
-  // survive a round trip). Only falls back to the earliest recorded month
-  // if the user has never browsed the calendar before.
-  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number } | null>(() => {
+  // survive a round trip). Falls back to May 2018 for first-time visitors.
+  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number }>(() => {
     const saved = localStorage.getItem(LS_TRACKER_CALENDAR_MONTH)
-    if (!saved) return null
-    const [y, m] = saved.split('-').map(Number)
-    return Number.isFinite(y) && Number.isFinite(m) ? { year: y, month: m } : null
+    if (saved) {
+      const [y, m] = saved.split('-').map(Number)
+      if (Number.isFinite(y) && Number.isFinite(m)) return { year: y, month: m }
+    }
+    return { year: 2018, month: 4 }
   })
-  const calendarMonthInitRef = useRef(false)
-  useEffect(() => {
-    if (calendarMonthInitRef.current || calendarByDate.size === 0) return
-    calendarMonthInitRef.current = true
-    if (calendarMonth) return
-    const [y, m] = [...calendarByDate.keys()].sort()[0].split('-').map(Number)
-    setCalendarMonth({ year: y, month: m - 1 })
-  }, [calendarByDate])
 
   useEffect(() => {
-    if (calendarMonth) localStorage.setItem(LS_TRACKER_CALENDAR_MONTH, `${calendarMonth.year}-${calendarMonth.month}`)
+    localStorage.setItem(LS_TRACKER_CALENDAR_MONTH, `${calendarMonth.year}-${calendarMonth.month}`)
   }, [calendarMonth])
 
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
@@ -1826,6 +1819,7 @@ export default function ApiTrackerView(): JSX.Element {
     // song is eligible.
     await Promise.all(selectedSongs.map(s => userApi.addToPlaylist(playlistId, s.id).catch(() => {})))
     await refreshPlaylists()
+    useStore.getState().autoDownloadIfOffline(playlistId, selectedSongs.map(s => s.id))
     exitSelectMode()
   }
 

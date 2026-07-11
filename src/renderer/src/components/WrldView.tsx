@@ -316,7 +316,10 @@ export default function WrldView(): JSX.Element {
     if (!currentTrack?.id) return
     const numericId = parseInt(currentTrack.id.replace('jw-', ''), 10)
     if (isNaN(numericId)) return
-    try { await userApi.addToPlaylist(playlistId, numericId) } catch { /* silent */ }
+    try {
+      await userApi.addToPlaylist(playlistId, numericId)
+      useStore.getState().autoDownloadIfOffline(playlistId, [numericId])
+    } catch { /* silent */ }
   }
 
   const syncedLines = useMemo(() => {

@@ -241,6 +241,7 @@ interface AppActions {
   downloadTrackOffline: (songId: number) => Promise<void>
   removeOfflineTrack: (trackId: string) => Promise<void>
   syncOfflinePlaylists: () => Promise<void>
+  autoDownloadIfOffline: (playlistId: number, addedSongIds: number[]) => Promise<void>
 
   addDownload: (item: DownloadItem) => void
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void
@@ -759,6 +760,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const songId = songIds[i]
       const id = `jw-${songId}`
       trackIds.push(id)
+      // Already downloaded — skip the network round-trip entirely instead of
+      // still fetching /songs/{id}/ + hitting the IPC layer just to no-op.
+      // Looping through every already-cached song's metadata refresh made
+      // downloading a mostly-synced playlist with a few new songs feel like
+      // the whole thing was being fetched again.
+      if (offlineTracksNow[id]) continue
       const offProgress = el.onOfflineDownloadProgress?.((d: { id: string; percent: number; received?: number; total?: number }) => {
         if (d.id !== id || !announced) return
         const totalBytes = cumulativeBytes + (d.received || 0)
@@ -906,6 +913,19 @@ export const useStore = create<AppStore>((set, get, store) => ({
         // Offline, deleted, or no longer accessible — keep the existing cache as-is.
       }
     }
+  },
+
+  // Called after songs are added to an API playlist — if that playlist is
+  // synced offline, immediately downloads the newly-added songs instead of
+  // waiting for the next background resync (startup/focus/15-min interval).
+  autoDownloadIfOffline: async (playlistId, addedSongIds) => {
+    if (!addedSongIds.length) return
+    const key = `api-${playlistId}`
+    const entry = get().offlinePlaylists[key]
+    if (!entry) return
+    const existingIds = new Set(entry.songIds.map((id) => Number(id.replace('jw-', ''))))
+    const nextSongIds = [...existingIds, ...addedSongIds.filter((id) => !existingIds.has(id))]
+    await get().downloadPlaylistOffline(key, entry.name, nextSongIds)
   },
 
   // ── Downloads ─────────────────────────────────────────────────────────────

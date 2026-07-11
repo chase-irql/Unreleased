@@ -37,7 +37,7 @@ function PlaylistMosaic({ tracks, className = '' }: { tracks: Track[]; className
   }
   if (artUrls.length < 4) return <img src={artUrls[0]} alt="" className={`object-cover ${className}`} />
   return (
-    <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden' }}>
+    <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
       {artUrls.map((url, i) => (
         <img key={i} src={url} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
       ))}
@@ -231,7 +231,7 @@ function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
     return <img src={artTracks[0].albumArt!} alt="" className={`object-cover ${className}`} />
   }
   return (
-    <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden' }}>
+    <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
       {artTracks.map((t, i) => (
         <img key={i} src={t.albumArt!} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
       ))}
@@ -269,6 +269,7 @@ export default function PlaylistsView(): JSX.Element {
   // could otherwise collide.
   const [plSelectMode, setPlSelectMode] = useState(false)
   const [selectedPlaylistKeys, setSelectedPlaylistKeys] = useState<Set<string>>(new Set())
+  const [plBulkMenu, setPlBulkMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Multi-select of tracks within an open playlist — mirrors the Tracker's
   // bulk-select (ApiTrackerView). Keyed by track.id (Track has a string id;
@@ -450,11 +451,11 @@ export default function PlaylistsView(): JSX.Element {
 
   // Close menus on outside click
   useEffect(() => {
-    if (!trackMenu && !cardMenu && !showAddAllMenu) return
-    const h = () => { setTrackMenu(null); setCardMenu(null); setShowAddAllMenu(false) }
+    if (!trackMenu && !cardMenu && !showAddAllMenu && !plBulkMenu) return
+    const h = () => { setTrackMenu(null); setCardMenu(null); setShowAddAllMenu(false); setPlBulkMenu(null) }
     setTimeout(() => window.addEventListener('click', h), 0)
     return () => window.removeEventListener('click', h)
-  }, [trackMenu, cardMenu, showAddAllMenu])
+  }, [trackMenu, cardMenu, showAddAllMenu, plBulkMenu])
 
 
   const loadDetail = useCallback(async (id: number, shared = false) => {
@@ -603,6 +604,7 @@ export default function PlaylistsView(): JSX.Element {
     ids.forEach(id => targetSet.add(id))
     membershipCache.current.set(targetId, targetSet)
     await refreshPlaylists()
+    useStore.getState().autoDownloadIfOffline(targetId, ids)
     exitSelectMode()
   }, [selectedTrackList, refreshPlaylists, exitSelectMode])
 
@@ -812,12 +814,14 @@ export default function PlaylistsView(): JSX.Element {
 
   const handleAddAllTo = useCallback(async (targetId: number, srcDetail: PlaylistDetail) => {
     setAddingAll(true)
-    await Promise.all(srcDetail.items.filter(item => !['recording_session', 'unsurfaced'].includes(item.song.category)).map(item => userApi.addToPlaylist(targetId, item.song.id).catch(() => {})))
+    const eligible = srcDetail.items.filter(item => !['recording_session', 'unsurfaced'].includes(item.song.category))
+    await Promise.all(eligible.map(item => userApi.addToPlaylist(targetId, item.song.id).catch(() => {})))
     const targetSet = membershipCache.current.get(targetId) ?? new Set<number>()
     srcDetail.items.forEach(i => targetSet.add(i.song.id))
     membershipCache.current.set(targetId, targetSet)
     setAddingAll(false)
     await refreshPlaylists()
+    useStore.getState().autoDownloadIfOffline(targetId, eligible.map(item => item.song.id))
   }, [refreshPlaylists])
 
   const handleImportPlaylist = useCallback(async () => {
@@ -939,7 +943,7 @@ export default function PlaylistsView(): JSX.Element {
       )
     }
     return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
         <div className="px-5 pt-5 pb-8">
           <h1 className="text-text-primary text-xl font-bold mb-1">Your Library</h1>
           <p className="text-text-muted text-sm mb-6">Local playlists</p>
@@ -947,9 +951,27 @@ export default function PlaylistsView(): JSX.Element {
             <p className="text-text-muted text-sm">No local playlists yet. Add music to your library first.</p>
           ) : (
             <div className="grid gap-4 mb-8" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-              {localPlaylists.map(lp => (
-                <div key={lp.id} className="group text-left relative cursor-pointer" onClick={() => setLocalSelectedId(lp.id)} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}>
-                  <div className="relative aspect-square rounded-xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 group-hover:scale-[1.03] transition-transform shadow-md">
+              {localPlaylists.map(lp => {
+                const plKey = `local:${lp.id}`
+                const plSelected = selectedPlaylistKeys.has(plKey)
+                return (
+                <div key={lp.id} className="group text-left relative cursor-pointer"
+                  onClick={e => {
+                    if (e.ctrlKey || e.metaKey) { togglePlaylistSelect(plKey); return }
+                    if (plSelectMode) { togglePlaylistSelect(plKey); return }
+                    setLocalSelectedId(lp.id)
+                  }}
+                  onContextMenu={e => {
+                    e.preventDefault(); e.stopPropagation()
+                    if (plSelectMode) {
+                      if (!plSelected) setSelectedPlaylistKeys(prev => new Set(prev).add(plKey))
+                      setPlBulkMenu({ x: e.clientX, y: e.clientY })
+                    } else {
+                      setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false })
+                    }
+                  }}
+                >
+                  <div className={`relative aspect-square rounded-xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 group-hover:scale-[1.03] transition-transform shadow-md ${plSelected ? 'ring-2 ring-accent' : ''}`}>
                     {lp.coverImage
                       ? <img src={lp.coverImage} alt="" className="w-full h-full object-cover" />
                       : <LocalPlaylistMosaic trackIds={lp.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
@@ -959,19 +981,30 @@ export default function PlaylistsView(): JSX.Element {
                       if (qt.length) playTrack(qt[0], qt)
                     }} />
                   </div>
-                  <span className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-md">
-                    <HardDrive size={9} /> Local
-                  </span>
-                  <button
-                    className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
-                    onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
-                  >
-                    <MoreHorizontal size={13} />
-                  </button>
+                  {plSelectMode ? (
+                    <div className="absolute top-1.5 left-1.5 z-10 bg-black/60 rounded-md p-0.5">
+                      {plSelected
+                        ? <CheckSquare2 size={16} className="text-accent" />
+                        : <Square size={16} className="text-white/70" />}
+                    </div>
+                  ) : (
+                    <span className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-md">
+                      <HardDrive size={9} /> Local
+                    </span>
+                  )}
+                  {!plSelectMode && (
+                    <button
+                      className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
+                      onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                  )}
                   <p className="text-text-primary text-sm font-semibold truncate">{lp.name}</p>
                   <p className="text-text-muted text-xs mt-0.5">{lp.trackIds.length} {lp.trackIds.length === 1 ? 'track' : 'tracks'}</p>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
           <div className="flex flex-col items-center text-center gap-3 py-6 border-t border-[var(--border)]">
@@ -981,6 +1014,64 @@ export default function PlaylistsView(): JSX.Element {
             </button>
           </div>
         </div>
+        {plSelectMode && (
+          <div className="sticky bottom-0 shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2 relative z-30" onClick={e => e.stopPropagation()}>
+            <span className="text-sm text-text-primary font-medium flex-1">
+              {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
+            </span>
+            <button
+              onClick={() => setSelectedPlaylistKeys(new Set(localPlaylists.map(lp => `local:${lp.id}`)))}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => setSelectedPlaylistKeys(new Set())}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={bulkDeletePlaylists}
+              disabled={selectedPlaylistKeys.size === 0 || bulkDeletingPlaylists}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-red-500/10 text-red-400 rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              {bulkDeletingPlaylists ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Delete
+            </button>
+            <button
+              onClick={exitPlaylistSelectMode}
+              className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
+              title="Exit selection"
+            >
+              <X size={15} className="text-text-muted" />
+            </button>
+          </div>
+        )}
+        {plBulkMenu && (
+          <div
+            className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
+            style={{ left: Math.min(plBulkMenu.x, window.innerWidth - 230), top: Math.min(plBulkMenu.y, window.innerHeight - 200) }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-3.5 py-2 text-xs text-text-muted">
+              {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
+            </div>
+            <div className="border-t border-[var(--border)] my-1" />
+            <MenuItem
+              icon={CheckSquare2}
+              label="Select all"
+              onClick={() => { setSelectedPlaylistKeys(new Set(localPlaylists.map(lp => `local:${lp.id}`))); setPlBulkMenu(null) }}
+            />
+            <MenuItem
+              icon={Trash2}
+              label="Delete selected"
+              destructive
+              onClick={() => { setPlBulkMenu(null); bulkDeletePlaylists() }}
+            />
+            <div className="border-t border-[var(--border)] my-1" />
+            <MenuItem icon={X} label="Exit selection" onClick={() => { setPlBulkMenu(null); exitPlaylistSelectMode() }} />
+          </div>
+        )}
       </div>
     )
   }
@@ -1698,7 +1789,7 @@ export default function PlaylistsView(): JSX.Element {
   // ── Playlist library ───────────────────────────────────────────────────────
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => setCardMenu(null)}>
+    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]" onClick={() => setCardMenu(null)}>
       <div className="px-6 pt-6 pb-10">
         <div className="flex items-center justify-between mb-7">
           <div>
@@ -1741,7 +1832,15 @@ export default function PlaylistsView(): JSX.Element {
                 if (plSelectMode) { togglePlaylistSelect(plKey); return }
                 setSelectedId(p.id)
               }}
-              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCardMenu({ kind: 'api', playlist: p, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
+              onContextMenu={e => {
+                e.preventDefault(); e.stopPropagation()
+                if (plSelectMode) {
+                  if (!plSelected) setSelectedPlaylistKeys(prev => new Set(prev).add(plKey))
+                  setPlBulkMenu({ x: e.clientX, y: e.clientY })
+                } else {
+                  setCardMenu({ kind: 'api', playlist: p, x: e.clientX, y: e.clientY, showPlaylists: false })
+                }
+              }}
             >
               <div className={`relative aspect-square rounded-2xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 shadow-md group-hover:shadow-xl group-hover:-translate-y-1 transition-all duration-200 ${plSelected ? 'ring-2 ring-accent' : ''}`}>
                 {plSelectMode && (
@@ -1758,7 +1857,7 @@ export default function PlaylistsView(): JSX.Element {
                 ) : (() => {
                   const imgs = mosaicImages[p.id] ?? []
                   if (imgs.length >= 4) return (
-                    <div className="w-full h-full grid grid-cols-2" style={{ overflow: 'hidden' }}>
+                    <div className="w-full h-full grid grid-cols-2" style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
                       {imgs.map((url, i) => <img key={i} src={url} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />)}
                     </div>
                   )
@@ -1776,12 +1875,14 @@ export default function PlaylistsView(): JSX.Element {
                 }} />
               </div>
               {/* Context menu button */}
-              <button
-                className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
-                onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'api', playlist: p, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
-              >
-                <MoreHorizontal size={13} />
-              </button>
+              {!plSelectMode && (
+                <button
+                  className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
+                  onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'api', playlist: p, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
+                >
+                  <MoreHorizontal size={13} />
+                </button>
+              )}
               <p className="text-text-primary text-sm font-semibold truncate">{p.name}</p>
               <p className="text-text-muted text-xs mt-0.5">{p.track_count} {p.track_count === 1 ? 'track' : 'tracks'}</p>
             </div>
@@ -1809,7 +1910,15 @@ export default function PlaylistsView(): JSX.Element {
                     if (plSelectMode) { togglePlaylistSelect(plKey); return }
                     setLocalSelectedId(lp.id)
                   }}
-                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
+                  onContextMenu={e => {
+                    e.preventDefault(); e.stopPropagation()
+                    if (plSelectMode) {
+                      if (!plSelected) setSelectedPlaylistKeys(prev => new Set(prev).add(plKey))
+                      setPlBulkMenu({ x: e.clientX, y: e.clientY })
+                    } else {
+                      setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false })
+                    }
+                  }}
                 >
                   <div className={`relative aspect-square rounded-2xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 shadow-md group-hover:shadow-xl group-hover:-translate-y-1 transition-all duration-200 ${plSelected ? 'ring-2 ring-accent' : ''}`}>
                     {lp.coverImage
@@ -1834,12 +1943,14 @@ export default function PlaylistsView(): JSX.Element {
                     </span>
                   )}
                   {/* Context menu button */}
-                  <button
-                    className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
-                    onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
-                  >
-                    <MoreHorizontal size={13} />
-                  </button>
+                  {!plSelectMode && (
+                    <button
+                      className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
+                      onClick={e => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false }) }}
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                  )}
                   <p className="text-text-primary text-sm font-semibold truncate">{lp.name}</p>
                   <p className="text-text-muted text-xs mt-0.5">{lp.trackIds.length} {lp.trackIds.length === 1 ? 'track' : 'tracks'}</p>
                 </div>
@@ -1885,6 +1996,39 @@ export default function PlaylistsView(): JSX.Element {
           >
             <X size={15} className="text-text-muted" />
           </button>
+        </div>
+      )}
+
+      {/* Bulk context menu — shown when right-clicking a card during playlist multi-select */}
+      {plBulkMenu && (
+        <div
+          className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
+          style={{ left: Math.min(plBulkMenu.x, window.innerWidth - 230), top: Math.min(plBulkMenu.y, window.innerHeight - 200) }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-3.5 py-2 text-xs text-text-muted">
+            {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
+          </div>
+          <div className="border-t border-[var(--border)] my-1" />
+          <MenuItem
+            icon={CheckSquare2}
+            label="Select all"
+            onClick={() => {
+              setSelectedPlaylistKeys(new Set([
+                ...playlists.map(p => `api:${p.id}`),
+                ...localPlaylists.map(lp => `local:${lp.id}`),
+              ]))
+              setPlBulkMenu(null)
+            }}
+          />
+          <MenuItem
+            icon={Trash2}
+            label="Delete selected"
+            destructive
+            onClick={() => { setPlBulkMenu(null); bulkDeletePlaylists() }}
+          />
+          <div className="border-t border-[var(--border)] my-1" />
+          <MenuItem icon={X} label="Exit selection" onClick={() => { setPlBulkMenu(null); exitPlaylistSelectMode() }} />
         </div>
       )}
 
@@ -2066,6 +2210,7 @@ export default function PlaylistsView(): JSX.Element {
                       const srcDetail = await userApi.getPlaylist(srcId)
                       await Promise.all(srcDetail.items.map(item => userApi.addToPlaylist(p.id, item.song.id).catch(() => {})))
                       await refreshPlaylists()
+                      useStore.getState().autoDownloadIfOffline(p.id, srcDetail.items.map(item => item.song.id))
                     }} className="w-full text-left px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors truncate">
                       {p.name}
                     </button>
