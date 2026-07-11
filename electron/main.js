@@ -439,6 +439,22 @@ function saveOfflineLibrary(data) {
 
 ipcMain.handle('offline-get-library', () => loadOfflineLibrary())
 
+// Reads actual file sizes off disk (rather than trusting cached metadata)
+// so the Settings display stays accurate even for tracks downloaded before
+// size tracking existed, or if a file was moved/edited outside the app.
+ipcMain.handle('offline-get-stats', () => {
+  const lib = loadOfflineLibrary()
+  let totalSize = 0
+  let count = 0
+  for (const track of Object.values(lib.tracks)) {
+    try {
+      totalSize += fs.statSync(track.localPath).size
+      count++
+    } catch {}
+  }
+  return { count, totalSize }
+})
+
 ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: songPath, meta }) => {
   const lib = loadOfflineLibrary()
   const existing = lib.tracks[id]

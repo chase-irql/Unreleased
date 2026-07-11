@@ -14,11 +14,17 @@ export default function NowPlaying(): JSX.Element {
     account,
     setPendingEditorSongId,
     setActiveView,
+    showQueue,
   } = useStore()
 
   const [artCollapsed, setArtCollapsed] = useState(false)
   const [panelWidth, dragHandle] = useResizablePanel(360, 280, 520)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const isElectron = navigator.userAgent.includes('Electron')
+  // When the Queue panel is also open it sits to the right of this one and
+  // is the one that needs to clear the custom window controls (see its own
+  // header) — this panel only needs the clearance when it's the rightmost.
+  const needsWindowControlClearance = isElectron && !isMobile && !showQueue
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [loadingInfo, setLoadingInfo] = useState(false)
 
@@ -59,7 +65,10 @@ export default function NowPlaying(): JSX.Element {
       )}
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
+        <div
+          className="flex items-center justify-between px-5 pb-3 shrink-0"
+          style={{ paddingTop: needsWindowControlClearance ? 36 : 20, paddingRight: needsWindowControlClearance ? 148 : undefined }}
+        >
           <h2 className="text-text-primary font-semibold text-sm uppercase tracking-widest">Now Playing</h2>
           <div className="flex items-center gap-2">
             {currentTrack && (

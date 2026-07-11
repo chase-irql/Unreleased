@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Offline playlist sync
   offlineGetLibrary:    ()                        => ipcRenderer.invoke('offline-get-library'),
+  offlineGetStats:      ()                        => ipcRenderer.invoke('offline-get-stats'),
   offlineDownloadTrack: (payload)                  => ipcRenderer.invoke('offline-download-track', payload),
   offlineRemoveTrack:   (id)                       => ipcRenderer.invoke('offline-remove-track', id),
   offlineSetPlaylist:   (key, songIds, name)        => ipcRenderer.invoke('offline-set-playlist', key, songIds, name),

@@ -5,7 +5,7 @@ import * as userApi from '../lib/userApi'
 import { Track, LibraryTrack } from '../types'
 import { toFileUrl } from '../lib/fileTypes'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
-import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
+import { apiFetch, JWApiSong, apiFileIdToPath, apiFilePathToTrack } from '../lib/juicewrldApi'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 
@@ -80,9 +80,17 @@ export default function LikedSongsView(): JSX.Element {
     .filter((t) => likedTrackIds.includes(t.id))
     .map(libraryTrackToTrack)
 
-  const visible = [...apiTracks, ...localLikedTracks]
+  // Liked files from the API file browser (ApiFilesView) also skip the
+  // favorites API — same as local files, their id just encodes the path
+  // instead of pointing at a scanned library entry, so rebuild the track
+  // straight from the id rather than needing the folder they came from.
+  const likedApiFileTracks = likedTrackIds
+    .map((id) => { const path = apiFileIdToPath(id); return path ? apiFilePathToTrack(path) : null })
+    .filter((t): t is Track => t != null)
 
-  if (!account && localLikedTracks.length === 0) {
+  const visible = [...apiTracks, ...localLikedTracks, ...likedApiFileTracks]
+
+  if (!account && localLikedTracks.length === 0 && likedApiFileTracks.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
         <Heart size={40} className="text-text-muted mb-4" />

@@ -809,7 +809,7 @@ export default function Player(): JSX.Element {
         <div className="flex items-center px-3 py-2 gap-3 h-14">
           <button
             className="w-10 h-10 rounded bg-surface-overlay shrink-0 overflow-hidden"
-            onClick={() => radioFmActive ? setActiveView('wrld') : setShowNowPlaying(!showNowPlaying)}
+            onClick={() => setActiveView('wrld')}
           >
             {radioFmActive ? (
               radioFmMatchedSong?.imageUrl
@@ -873,8 +873,8 @@ export default function Player(): JSX.Element {
         <div className="flex items-center gap-3 w-72 min-w-0 shrink-0">
           <button
             className="w-14 h-14 rounded-md bg-surface-overlay shrink-0 overflow-hidden hover:ring-2 ring-accent transition-all"
-            onClick={() => radioFmActive ? setActiveView('wrld') : setShowNowPlaying(!showNowPlaying)}
-            title={radioFmActive ? '999FM' : 'Now Playing'}
+            onClick={() => setActiveView('wrld')}
+            title={radioFmActive ? '999FM' : 'Open WRLD'}
           >
             {radioFmActive ? (
               radioFmMatchedSong?.imageUrl

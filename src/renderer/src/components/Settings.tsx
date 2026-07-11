@@ -16,6 +16,13 @@ const ACCENT_PRESETS = [
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
 type Tab = 'appearance' | 'playback' | 'library' | 'app' | 'about'
 
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`
+  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`
+  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`
+  return `${(b / 1073741824).toFixed(2)} GB`
+}
+
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
 // content pane (macOS System Settings' detail-pane idiom, not the boxed
@@ -123,6 +130,8 @@ export default function Settings(): JSX.Element {
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
   const [cacheCleared, setCacheCleared] = useState<number | null>(null)
+  const [offlineStats, setOfflineStats] = useState<{ count: number; totalSize: number } | null>(null)
+  const [offlineStatsLoading, setOfflineStatsLoading] = useState(false)
 
   const [tab, setTab] = useState<Tab>('appearance')
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
@@ -142,6 +151,17 @@ export default function Settings(): JSX.Element {
   useEffect(() => {
     if (!isElectron || !el) return
     el.getAppSettings().then((s: AppSettings) => setAppSettings(s)).catch(() => {})
+  }, [isElectron, el])
+
+  const loadOfflineStats = (): void => {
+    if (!isElectron || !el?.offlineGetStats) return
+    setOfflineStatsLoading(true)
+    el.offlineGetStats().then((s: { count: number; totalSize: number }) => setOfflineStats(s)).catch(() => {}).finally(() => setOfflineStatsLoading(false))
+  }
+
+  useEffect(() => {
+    loadOfflineStats()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isElectron, el])
 
   useEffect(() => {
@@ -189,6 +209,7 @@ export default function Settings(): JSX.Element {
       if (result?.error) { setOfflinePathError(result.error); return }
       setAppSettings((prev) => ({ ...prev, offlineLibraryPath: result.path }))
       if (result?.failedCount) setOfflinePathError(`${result.failedCount} file(s) couldn't be moved and will re-download on next sync`)
+      loadOfflineStats()
     } finally {
       setMovingOfflinePath(false)
     }
@@ -438,7 +459,6 @@ export default function Settings(): JSX.Element {
                   icon={FileText}
                   iconColor="#059669"
                   label="Prefer OG version"
-                  sub="Play a track's linked OG file instead, when one exists"
                   labelExtra={<div className="ml-2 translate-y-[6px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
                 />
                 <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
@@ -568,6 +588,21 @@ export default function Settings(): JSX.Element {
                     <p className="text-red-400 text-[10px] mt-1.5 pl-[34px]">{offlinePathError}</p>
                   )}
                 </div>
+                <Row
+                  icon={DownloadCloud}
+                  iconColor="#7c3aed"
+                  label="Offline downloads"
+                  sub={offlineStatsLoading ? 'Calculating…' : offlineStats ? `${offlineStats.count} file${offlineStats.count === 1 ? '' : 's'} · ${fmtBytes(offlineStats.totalSize)}` : undefined}
+                >
+                  <button
+                    onClick={loadOfflineStats}
+                    disabled={offlineStatsLoading}
+                    title="Refresh"
+                    className="shrink-0 p-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={offlineStatsLoading ? 'animate-spin' : ''} />
+                  </button>
+                </Row>
                 <Row icon={Monitor} iconColor="#6b7280" label="Start on">
                   <select
                     value={appSettings.startupView}

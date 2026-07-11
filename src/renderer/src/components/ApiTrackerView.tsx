@@ -1464,6 +1464,20 @@ export default function ApiTrackerView(): JSX.Element {
     return map
   }, [calendarSongs])
 
+  // `recording_locations` is also free text (e.g. "Record One Studios, Los
+  // Angeles") — grouped by the exact trimmed string rather than parsed into
+  // parts, since there's no reliable delimiter between studio name and city.
+  const calendarByStudio = useMemo(() => {
+    const map = new Map<string, JWApiSong[]>()
+    for (const song of calendarSongs) {
+      const loc = song.recording_locations?.trim()
+      if (!loc) continue
+      if (!map.has(loc)) map.set(loc, [])
+      map.get(loc)!.push(song)
+    }
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
+  }, [calendarSongs])
+
   // Assigns each era a stable color by its position in `eras` (already
   // fetched for the category sidebar) — same era always maps to the same
   // color as long as the API keeps returning eras in the same order.
@@ -1490,6 +1504,7 @@ export default function ApiTrackerView(): JSX.Element {
   }, [calendarMonth])
 
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
+  const [selectedStudio, setSelectedStudio] = useState<string | null>(null)
 
   const shiftCalendarMonth = (delta: number): void => {
     setCalendarMonth((prev) => {
@@ -2165,7 +2180,7 @@ export default function ApiTrackerView(): JSX.Element {
                         return (
                           <button
                             key={di}
-                            onClick={() => daySongs && setSelectedDateKey(key)}
+                            onClick={() => { if (daySongs) { setSelectedDateKey(key); setSelectedStudio(null) } }}
                             disabled={!daySongs}
                             title={dayEraNames.join(', ') || undefined}
                             className={`aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors border ${
@@ -2208,11 +2223,58 @@ export default function ApiTrackerView(): JSX.Element {
                     ))}
                   </div>
                 )}
+
+                {calendarByStudio.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Studios</p>
+                    <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
+                      {calendarByStudio.map(([studio, songs]) => (
+                        <button
+                          key={studio}
+                          onClick={() => { setSelectedStudio(studio); setSelectedDateKey(null) }}
+                          title={studio}
+                          className={`flex items-center justify-between gap-2 px-1 py-1 rounded-lg text-left text-xs transition-colors ${
+                            selectedStudio === studio
+                              ? 'text-accent font-semibold bg-accent/5'
+                              : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
+                          }`}
+                        >
+                          <span className="truncate">{studio}</span>
+                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 min-w-0 w-full">
-                {!selectedDateKey ? (
-                  <p className="text-text-muted text-xs py-4">Select a highlighted day to see songs recorded then.</p>
+                {selectedStudio ? (
+                  <>
+                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedStudio}>
+                      Recorded at {selectedStudio}
+                      {' '}· {(calendarByStudio.find(([s]) => s === selectedStudio)?.[1] ?? []).length}{' '}
+                      {(calendarByStudio.find(([s]) => s === selectedStudio)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
+                    </p>
+                    <div className="space-y-0.5">
+                      {(calendarByStudio.find(([s]) => s === selectedStudio)?.[1] ?? []).map((song) => (
+                        <SongRow
+                          key={song.id}
+                          song={song}
+                          onPlay={handlePlay}
+                          onCategoryClick={handleCategoryClick}
+                          onEraClick={handleEraClick}
+                          onInfo={handleInfo}
+                          onContextMenu={handleContextMenu}
+                          selectMode={selectMode}
+                          selected={selected.has(song.id)}
+                          onToggleSelect={toggleSelect}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : !selectedDateKey ? (
+                  <p className="text-text-muted text-xs py-4">Select a highlighted day, or a studio, to see songs recorded there.</p>
                 ) : (
                   <>
                     <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2">
