@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
   X, Moon, Sun, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getToken } from '../lib/userApi'
@@ -14,7 +14,7 @@ const ACCENT_PRESETS = [
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
-type Tab = 'appearance' | 'playback' | 'library' | 'app' | 'about'
+type Tab = 'appearance' | 'playback' | 'library' | 'app' | 'developer' | 'about'
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`
@@ -106,6 +106,7 @@ export default function Settings(): JSX.Element {
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
+    developerMode, setDeveloperMode,
   } = useStore()
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -139,8 +140,13 @@ export default function Settings(): JSX.Element {
     { id: 'playback', label: 'Playback', icon: Volume2 },
     ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen }] : []),
     ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor }] : []),
+    ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench }] : []),
     { id: 'about', label: 'About', icon: Info },
   ]
+
+  useEffect(() => {
+    if (tab === 'developer' && !developerMode) setTab('app')
+  }, [tab, developerMode])
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then((devs) => {
@@ -459,7 +465,7 @@ export default function Settings(): JSX.Element {
                   icon={FileText}
                   iconColor="#059669"
                   label="Prefer OG version"
-                  labelExtra={<div className="ml-2 translate-y-[6px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
+                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
                 />
                 <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
                   <div className="flex items-center gap-2">
@@ -625,6 +631,16 @@ export default function Settings(): JSX.Element {
                 <Row icon={MessageCircle} iconColor="#5865f2" label="Show Discord Status">
                   <Toggle on={appSettings.discordRpcEnabled} onClick={() => setSetting('discordRpcEnabled', !appSettings.discordRpcEnabled)} />
                 </Row>
+                <Row icon={Wrench} iconColor="#6b7280" label="Developer options" sub="Shows a Developer tab with cache & diagnostics tools">
+                  <Toggle on={developerMode} onClick={() => setDeveloperMode(!developerMode)} />
+                </Row>
+              </div>
+            )}
+
+            {/* ── Developer ── */}
+            {tab === 'developer' && isElectron && developerMode && (
+              <div>
+                <h3 className="text-text-primary text-lg font-bold mb-4">Developer</h3>
                 <Row icon={FileText} iconColor="#6b7280" label="Diagnostic logs" sub="Opens the folder with current-run.log & previous-run.log">
                   <button
                     onClick={() => el?.openLogsFolder?.()}

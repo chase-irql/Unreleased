@@ -955,7 +955,10 @@ export default function PlaylistsView(): JSX.Element {
             </div>
             <div className="relative z-10 flex gap-6 items-end pt-6">
               <div className="shrink-0 rounded-xl shadow-2xl overflow-hidden bg-surface-overlay flex items-center justify-center" style={{ width: 180, height: 180 }}>
-                <LocalPlaylistMosaic trackIds={localPl.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                {localPl.coverImage
+                  ? <img src={localPl.coverImage} alt="" className="w-full h-full object-cover" />
+                  : <LocalPlaylistMosaic trackIds={localPl.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                }
               </div>
               <div className="pb-2">
                 <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-1">Local Playlist</p>
@@ -1236,7 +1239,7 @@ export default function PlaylistsView(): JSX.Element {
 
           <div className="relative z-10 flex gap-6 items-end pt-6">
             {/* Cover image — clickable to upload (owner only) */}
-            <div className={`shrink-0 group/cover relative rounded-xl shadow-2xl overflow-hidden ${isSharedView ? "cursor-default" : "cursor-pointer"}`} style={{ width: 180, height: 180 }} onClick={() => !isSharedView && coverInputRef.current?.click()}>
+            <div className={`shrink-0 self-start group/cover relative rounded-xl shadow-2xl overflow-hidden ${isSharedView ? "cursor-default" : "cursor-pointer"}`} style={{ width: 180, height: 180 }} onClick={() => !isSharedView && coverInputRef.current?.click()}>
               {loadingDetail && tracks.length === 0 ? (
                 <div className="w-full h-full bg-surface-overlay animate-pulse" />
               ) : coverLoading ? (
