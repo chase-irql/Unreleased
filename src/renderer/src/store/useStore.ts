@@ -70,6 +70,7 @@ interface AppState {
   activeView: ViewType
   showNowPlaying: boolean
   showSettings: boolean
+  showDiagnostics: boolean
   showQueue: boolean
   // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
   // is active — lets App.tsx hide the frameless-window title bar controls,
@@ -143,6 +144,9 @@ interface AppState {
   // size/mtime and reloads tags for any that changed on disk (e.g. edited in
   // an external tag editor) without a full manual "Scan Now".
   libraryAutoRefresh: boolean
+  // Reveals the Developer tab in Settings (cache/diagnostics tools normal
+  // users don't need cluttering the main App tab).
+  developerMode: boolean
   localPlaylists: LocalPlaylist[]
   activeLocalPlaylistId: string | null
 
@@ -174,6 +178,7 @@ interface AppActions {
   setRadioFmQueuePreview: (preview: string[]) => void
   setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null } | null) => void
   setShowSettings: (show: boolean) => void
+  setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
   setViewMode: (mode: 'list' | 'grid') => void
@@ -222,6 +227,7 @@ interface AppActions {
   setLibraryScanning: (scanning: boolean) => void
   setLibraryLastScanned: (ts: number | null) => void
   setLibraryAutoRefresh: (enabled: boolean) => void
+  setDeveloperMode: (enabled: boolean) => void
   scanLibrary: () => Promise<void>
 
   setLocalPlaylists: (playlists: LocalPlaylist[]) => void
@@ -319,6 +325,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   activeView: 'api-tracker',
   showNowPlaying: false,
   showSettings: false,
+  showDiagnostics: false,
   showQueue: false,
   wrldFullscreen: false,
   radioFmActive: false,
@@ -355,6 +362,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmQueuePreview: (radioFmQueuePreview) => set({ radioFmQueuePreview }),
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
   setShowSettings: (showSettings) => set({ showSettings }),
+  setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setViewMode: (viewMode) => { set({ viewMode }); ls.set('viewMode', viewMode) },
@@ -596,6 +604,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // Off by default — periodic disk scans of a large library aren't free, so
   // this is opt-in rather than always re-checking every file's mtime/size.
   libraryAutoRefresh: ls.get<boolean>('libraryAutoRefresh') ?? false,
+  developerMode: ls.get<boolean>('developerMode') ?? false,
   localPlaylists: [],
   activeLocalPlaylistId: null,
 
@@ -643,6 +652,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setLibraryAutoRefresh: (enabled) => {
     set({ libraryAutoRefresh: enabled })
     ls.set('libraryAutoRefresh', enabled)
+  },
+  setDeveloperMode: (enabled) => {
+    set({ developerMode: enabled })
+    ls.set('developerMode', enabled)
   },
 
   scanLibrary: async () => {

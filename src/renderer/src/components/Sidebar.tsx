@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore } from '../store/useStore'
 import { ViewType } from '../types'
@@ -9,7 +9,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId } = useStore()
+  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId } = useStore()
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
 
@@ -204,6 +204,16 @@ export default function Sidebar(): JSX.Element {
             <span className="w-6 h-6 flex items-center justify-center shrink-0"><Download size={18} /></span>
             <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Download app</span>
           </a>
+        )}
+        {developerMode && (
+          <button
+            onClick={() => setShowDiagnostics(true)}
+            title={collapsed ? 'Diagnostics' : undefined}
+            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
+          >
+            <span className="w-6 h-6 flex items-center justify-center shrink-0"><Info size={18} /></span>
+            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Diagnostics</span>
+          </button>
         )}
         <button
           onClick={() => setShowSettings(true)}

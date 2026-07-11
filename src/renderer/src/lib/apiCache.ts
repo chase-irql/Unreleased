@@ -80,3 +80,10 @@ export function cacheClearAll(): number {
   for (const k of keys) localStorage.removeItem(k)
   return keys.length
 }
+
+export function cacheStats(): { count: number; bytes: number } {
+  const keys = cacheKeys()
+  let bytes = 0
+  for (const k of keys) bytes += ((localStorage.getItem(k)?.length ?? 0) + k.length) * 2
+  return { count: keys.length, bytes }
+}

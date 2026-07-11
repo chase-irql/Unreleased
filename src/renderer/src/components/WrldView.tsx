@@ -238,12 +238,9 @@ export default function WrldView(): JSX.Element {
 
   // Sibling versions of the currently playing song (v1/v2/TV Mix/etc, linked
   // via juicewrldapi's /versions/ table — see versionsApi.ts), shown as
-  // small bookmark tabs peeking out of the cover art's right edge.
+  // a single notch menu next to the cover art.
   const [songVersions, setSongVersions] = useState<{ songId: number; label: string | null }[]>([])
-  // Collapsed, these merge into a single small notch — hovering anywhere on
-  // it fans all of them out at once, rather than each tab reacting to its
-  // own hover independently.
-  const [bookmarksHovered, setBookmarksHovered] = useState(false)
+  const [songVersionMenuOpen, setSongVersionMenuOpen] = useState(false)
   useEffect(() => {
     if (radioFmActive || !currentTrack?.id) { setSongVersions([]); return }
     const numericId = parseInt(currentTrack.id.replace('jw-', ''), 10)
@@ -705,47 +702,34 @@ export default function WrldView(): JSX.Element {
         <div className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       )}
 
-      {/* Fullscreen toggle. App.tsx only hides the Electron window-control
-          buttons (minimize/maximize/close, 132px wide, rendered `fixed
-          top-0 right-0`) once wrldFullscreen is true — which mirrors
-          `fullscreen` below, so it's only true *after* this button has
-          already been clicked to enter fullscreen. Before that, those
-          controls are still showing in the same corner, so this button
-          needs its own `fixed` positioning (not `absolute` within this
-          view's container, which sits at a different vertical offset and
-          was throwing the two out of alignment), sitting directly under
-          the close button (right-2 lines up with close's own center)
-          rather than off to the side of minimize. Once fullscreen is
-          entered the controls disappear and this can sit flush at the
-          corner instead. */}
-      <button
-        onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-        className={`z-30 flex items-center justify-center rounded-full transition-all border
-          ${isElectronApp
-            ? (fullscreen ? 'fixed top-1 right-2 w-8 h-8' : 'fixed top-9 right-2 w-7 h-7')
-            : 'absolute top-2 md:top-3 right-12 md:right-3 w-8 h-8'}
-          bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm`}
-        title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-      >
-        {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
-      </button>
+      {/* 999 FM toggle + fullscreen toggle, grouped together so they move as
+          one unit — 999FM sits top-right on mobile, top-left on desktop
+          (md:), and fullscreen now rides along right next to it instead of
+          living in its own corner. */}
+      <div className="absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:left-4 md:right-auto">
+        <button
+          onClick={() => setRadioFmActive(!radioFmActive)}
+          disabled={fmDisabled}
+          className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1.5 transition-all disabled:opacity-40
+            ${radioFmActive && radioFmIsLive
+              ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
+              : radioFmActive
+              ? 'bg-white/10 text-white/50 backdrop-blur-sm'
+              : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
+          title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
+        >
+          <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
+          <span>{fmLabel}</span>
+        </button>
 
-      {/* 999 FM toggle */}
-      <button
-        onClick={() => setRadioFmActive(!radioFmActive)}
-        disabled={fmDisabled}
-        className={`absolute z-30 flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1.5 transition-all disabled:opacity-40
-          top-3 right-3 md:top-4 md:left-4 md:right-auto
-          ${radioFmActive && radioFmIsLive
-            ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
-            : radioFmActive
-            ? 'bg-white/10 text-white/50 backdrop-blur-sm'
-            : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
-        title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
-      >
-        <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
-        <span>{fmLabel}</span>
-      </button>
+        <button
+          onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
+          className="w-8 h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
+          title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        >
+          {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
+        </button>
+      </div>
 
       <>
           {/* Blurred background */}
@@ -931,9 +915,9 @@ export default function WrldView(): JSX.Element {
             {/* overflow-x-hidden is required here, not just tidy: per the CSS
                 overflow spec, when one axis is 'auto' the other's computed
                 value is promoted from 'visible' to 'auto' too — so without
-                this, a bookmark tab expanding past this column's edge on
-                hover was making the browser grow a horizontal scrollbar,
-                which shifted the whole column up by its height. */}
+                this, the version menu popping out past this column's edge
+                was making the browser grow a horizontal scrollbar, which
+                shifted the whole column up by its height. */}
             <div className="relative flex flex-col items-center justify-center shrink-0 px-8 xl:px-12 gap-5 overflow-y-auto overflow-x-hidden"
               style={{ width: '50%', minWidth: 320 }}>
 
@@ -941,50 +925,32 @@ export default function WrldView(): JSX.Element {
               <div className="relative w-full" style={{ maxWidth: 320 }}>
                 {ArtBox({ mobile: false })}
                 {!radioFmActive && songVersions.length > 0 && (
-                  <div
-                    className="wrld-bookmarks absolute right-full flex flex-col items-end z-20 overflow-y-auto"
-                    onMouseEnter={() => setBookmarksHovered(true)}
-                    onMouseLeave={() => setBookmarksHovered(false)}
-                    style={{
-                      scrollbarWidth: 'none',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      maxHeight: 'calc(100% - 16px)',
-                      gap: bookmarksHovered ? 8 : 0,
-                      padding: bookmarksHovered ? '8px 0' : 0,
-                      // Fades the edges instead of hard-clipping mid-tab —
-                      // without this, whichever tab landed on the scroll
-                      // boundary got chopped in half, which read as broken
-                      // rather than "there's more, scroll".
-                      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 14px), transparent 100%)',
-                      maskImage: 'linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 14px), transparent 100%)',
-                    } as React.CSSProperties}
-                  >
-                    <style>{`.wrld-bookmarks::-webkit-scrollbar { display: none; }`}</style>
-                    {songVersions.map((v, i) => {
-                      const labelText = v.label ?? `Version ${i + 1}`
-                      // Sized to the label instead of a fixed width — a
-                      // short "v1" popping out to the same 150px as a full
-                      // version title looked absurdly long for no reason.
-                      const expandedWidth = Math.min(150, Math.max(46, labelText.length * 6.5 + 28))
-                      return (
-                        <button
-                          key={v.songId}
-                          onClick={() => handlePlayVersion(v.songId)}
-                          title={labelText}
-                          className={`h-6 shrink-0 flex items-center justify-end overflow-hidden transition-all duration-200 ease-out bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 ${
-                            bookmarksHovered
-                              ? 'rounded-l-full shadow-lg opacity-100 border border-white/40 dark:border-white/15'
-                              : 'rounded-l-full opacity-60 border border-transparent'
-                          }`}
-                          style={{ width: bookmarksHovered ? `${expandedWidth}px` : '5px' }}
-                        >
-                          <span className={`pl-3.5 pr-2 text-[10px] font-semibold text-white whitespace-nowrap transition-opacity duration-150 ${bookmarksHovered ? 'opacity-100' : 'opacity-0'}`}>
-                            {labelText}
-                          </span>
-                        </button>
-                      )
-                    })}
+                  <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20">
+                    <button
+                      onClick={() => setSongVersionMenuOpen(o => !o)}
+                      title="Other versions"
+                      className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border transition-colors ${
+                        songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-transparent'
+                      }`}
+                    >
+                      <ChevronDown size={12} className={`text-white transition-transform duration-150 ${songVersionMenuOpen ? 'rotate-180' : '-rotate-90'}`} />
+                    </button>
+                    {songVersionMenuOpen && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} />
+                        <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20 min-w-[120px] bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl">
+                          {songVersions.map((v, i) => (
+                            <button
+                              key={v.songId}
+                              onClick={() => { setSongVersionMenuOpen(false); handlePlayVersion(v.songId) }}
+                              className="w-full px-3 py-1.5 text-left text-[10px] font-medium text-white/70 hover:text-white/95 hover:bg-white/[0.08] transition-colors whitespace-nowrap"
+                            >
+                              {v.label ?? `Version ${i + 1}`}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1805,8 +1771,18 @@ const LyricsPanel = memo(function LyricsPanel({
   // than the Zustand-stored value (which only updates on the native
   // 'timeupdate' event, ~4x/sec) — that throttling is what made the active
   // line snap every ~250ms instead of transitioning smoothly.
-  const [currentLineIdx, setCurrentLineIdx] = useState(-1)
-  const lineIdxRef = useRef(-1)
+  // Lazily computed from the live audio position (not just -1) so that a
+  // remount — e.g. entering/exiting fullscreen re-parents this panel through
+  // a portal, which fully unmounts and remounts it — doesn't momentarily
+  // render with no active line (translateY snaps to 0 / the first line)
+  // before the next rAf tick corrects it. That produced a visible "jump to
+  // the top, then glide back down" flash on every fullscreen toggle.
+  const [currentLineIdx, setCurrentLineIdx] = useState(() =>
+    isSynced && syncedLines.length > 0
+      ? getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
+      : -1
+  )
+  const lineIdxRef = useRef(currentLineIdx)
 
   useEffect(() => {
     if (!isSynced || syncedLines.length === 0) {
