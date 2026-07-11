@@ -124,21 +124,34 @@ function OverviewTab() {
           <Endpoint method="GET" path="/files/info/" description="Metadata for a single file" />
           <Endpoint method="GET" path="/files/cover-art/" description="Cover art image for an audio file" />
           <Endpoint method="GET" path="/files/download/" description="Stream/download audio — supports Range requests" />
+          <Endpoint method="GET" path="/versions/" description="All song-version rows (bulk mode via ?all=true)" />
+          <Endpoint method="GET" path="/versions/{song_id}/" description="Version row for one song, if linked" />
+          <Endpoint method="POST" path="/versions/" description="Link a song into a version group (editor+)" />
+          <Endpoint method="PATCH" path="/versions/{song_id}/" description="Update a song's version label/title/group (editor+)" />
           <Endpoint method="POST" path="/playlists/share/" description="Create a public shared playlist link" />
           <Endpoint method="GET" path="/playlists/shared/{share_id}/" description="Fetch a shared playlist by ID" />
           <Endpoint method="POST" path="/plays/" description="Record a play event (no auth required)" />
           <Endpoint method="GET" path="/accounts/account/me/" description="Current user info (public-facing)" />
           <Endpoint method="GET" path="/accounts/me/" description="Current user with role — editor/admin dashboards" />
+          <Endpoint method="POST" path="/accounts/logout/" description="Invalidate the current token" />
+          <Endpoint method="GET" path="/accounts/application/" description="Fetch the logged-in user's editor application" />
+          <Endpoint method="POST" path="/accounts/application/" description="Apply to become an editor" />
+          <Endpoint method="GET" path="/accounts/editor/proposals/" description="List your own edit proposals" />
           <Endpoint method="POST" path="/accounts/editor/proposals/" description="Submit an edit proposal (editor+)" />
+          <Endpoint method="PATCH" path="/accounts/editor/proposals/{id}/" description="Edit a pending proposal" />
+          <Endpoint method="DELETE" path="/accounts/editor/proposals/{id}/" description="Withdraw a proposal" />
+          <Endpoint method="GET" path="/accounts/editor/leaderboard/" description="Editor approved-count leaderboard with badges" />
           <Endpoint method="GET" path="/library/favorites/" description="List personal favorites (any logged-in user)" />
           <Endpoint method="POST" path="/library/favorites/" description="Add a favorite" />
           <Endpoint method="DELETE" path="/library/favorites/{song_id}/" description="Remove a favorite" />
           <Endpoint method="GET" path="/library/playlists/" description="List personal playlists" />
           <Endpoint method="POST" path="/library/playlists/" description="Create a personal playlist" />
-          <Endpoint method="PATCH" path="/library/playlists/{id}/" description="Update name, description, cover, track order" />
+          <Endpoint method="GET" path="/library/playlists/{id}/" description="Get a personal playlist with tracks" />
+          <Endpoint method="PATCH" path="/library/playlists/{id}/" description="Update name, description, cover, visibility, track order" />
           <Endpoint method="DELETE" path="/library/playlists/{id}/" description="Delete a personal playlist" />
           <Endpoint method="POST" path="/library/playlists/{id}/items/" description="Add a track to a playlist" />
           <Endpoint method="DELETE" path="/library/playlists/{id}/items/{song_id}/" description="Remove a track from a playlist" />
+          <Endpoint method="GET" path="/library/playlists/public/{id}/" description="Fetch a playlist marked public — no auth required" />
         </div>
       </Section>
 
@@ -174,6 +187,7 @@ function OverviewTab() {
   "dates": "Additional Dates",
   "session_titles": "Session Titles",
   "session_tracking": "Session Tracking",
+  "notes": "Internal notes",
   "groupbuy_info": {
     "additional_info": "",
     "price": "",
@@ -425,15 +439,19 @@ function PlaylistsTab() {
         <Table
           headers={['Method', 'Path', 'Description']}
           rows={[
-            ['GET', '/library/playlists/', 'List all playlists for logged-in user'],
+            ['GET', '/library/playlists/', 'List all playlists for logged-in user (supports ?omit_cover_image=true)'],
             ['POST', '/library/playlists/', 'Create a playlist'],
             ['GET', '/library/playlists/{id}/', 'Get playlist with full track list'],
-            ['PATCH', '/library/playlists/{id}/', 'Update name, description, cover, or reorder tracks'],
+            ['PATCH', '/library/playlists/{id}/', 'Update name, description, cover, visibility, or reorder tracks'],
             ['DELETE', '/library/playlists/{id}/', 'Delete a playlist'],
             ['POST', '/library/playlists/{id}/items/', 'Add a track'],
             ['DELETE', '/library/playlists/{id}/items/{song_id}/', 'Remove a track'],
           ]}
         />
+        <p className="text-xs text-text-muted mt-2">
+          <Code>?omit_cover_image=true</Code> drops the (large, base64) <Code>cover_image</Code> field from the response — use it for
+          list views that only need <Code>cover_image_url</Code>.
+        </p>
         <p className="text-xs text-text-muted font-semibold mt-3">Create:</p>
         <Pre>{`POST /library/playlists/
 Authorization: Token <token>
@@ -450,6 +468,7 @@ Authorization: Token <token>
   "name": "New name",
   "description": "New description",
   "cover_image": "",         // base64, or "" to clear
+  "is_public": true,         // toggle public sharing (see below)
   "order": [123, 456, 789]  // song IDs in desired order
 }`}</Pre>
         <p className="text-xs text-text-muted font-semibold mt-3">List response — each item:</p>
@@ -460,6 +479,7 @@ Authorization: Token <token>
   "cover_image": "...",
   "cover_image_url": "...",  // fallback to first track image_url
   "track_count": 12,
+  "is_public": false,
   "created_at": "...",
   "updated_at": "..."
 }`}</Pre>
@@ -467,6 +487,7 @@ Authorization: Token <token>
         <Pre>{`{
   "id": 1,
   "name": "My Playlist",
+  "is_public": false,
   "items": [
     {
       "id": 501,
@@ -485,6 +506,21 @@ Authorization: Token <token>
   ]
 }`}</Pre>
         <p className="text-xs text-text-muted mt-2">The song object in playlist items is a trimmed shape — no <Code>producers</Code>, <Code>engineers</Code>, or <Code>bitrate</Code>.</p>
+      </Section>
+
+      <Section title="Public Library Playlists (no auth required)">
+        <p className="text-sm text-text-secondary">
+          A personal library playlist with <Code>is_public: true</Code> can be fetched anonymously by its numeric{' '}
+          <Code>id</Code> — distinct from the ephemeral, no-account "Shared Playlists" above. Toggle visibility via{' '}
+          <Code>{'PATCH /library/playlists/{id}/'}</Code> with <Code>{'{ "is_public": true }'}</Code>.
+        </p>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/library/playlists/public/{id}/', 'Full playlist detail (same shape as the authed detail response)'],
+          ]}
+        />
+        <p className="text-xs text-text-muted mt-2">Making a playlist public does not change its owner or contents — it only exposes this read-only endpoint.</p>
       </Section>
 
       <Section title="Favorites (auth required)">
@@ -537,6 +573,12 @@ function AuthTab() {
 
 // Response includes token + user object`}</Pre>
         <p className="text-xs text-text-muted">Store the token and attach it as <Code>Authorization: Token &lt;token&gt;</Code> on subsequent requests.</p>
+      </Section>
+
+      <Section title="Logout">
+        <Pre>{`POST /accounts/logout/
+Authorization: Token <token>`}</Pre>
+        <p className="text-xs text-text-muted">Invalidates the token server-side. Clear the locally stored token regardless of whether this call succeeds.</p>
       </Section>
 
       <Section title="Admin Login">
@@ -603,6 +645,18 @@ function AuthTab() {
       </Section>
 
       <Section title="Edit Proposals (Editor+)">
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/editor/proposals/', "List the logged-in editor's own proposals"],
+            ['POST', '/accounts/editor/proposals/', 'Submit a new proposal'],
+            ['PATCH', '/accounts/editor/proposals/{id}/', 'Edit a still-pending proposal'],
+            ['DELETE', '/accounts/editor/proposals/{id}/', 'Withdraw a proposal'],
+          ]}
+        />
+        <p className="text-xs text-text-muted">
+          <Code>change_type</Code> is <Code>"create"</Code>, <Code>"update"</Code>, or <Code>"delete"</Code> — <Code>"update"</Code> is by far the most common in practice.
+        </p>
         <Pre>{`POST /accounts/editor/proposals/
 Authorization: Token <token>
 Content-Type: application/json
@@ -619,13 +673,16 @@ Content-Type: application/json
         <Table
           headers={['Field', 'Type', 'Description']}
           rows={[
-            [<Code>change_type</Code>, 'string', '"update" (only known value)'],
-            [<Code>song</Code>, 'number', 'Internal song ID (song.id, not public_id)'],
+            [<Code>change_type</Code>, 'string', '"create" | "update" | "delete"'],
+            [<Code>song</Code>, 'number | null', 'Internal song ID (song.id, not public_id) — null for a "create" proposal'],
             [<Code>title</Code>, 'string', 'Song title for display purposes'],
             [<Code>editor_notes</Code>, 'string', 'Optional notes from the editor'],
             [<Code>proposed_data</Code>, 'object', 'Only the fields being changed'],
           ]}
         />
+        <p className="text-xs text-text-muted">
+          To re-submit a stale/stuck pending proposal, <Code>DELETE</Code> it then <Code>POST</Code> the same data again as a fresh proposal (there's no separate "resubmit" endpoint).
+        </p>
         <p className="text-xs text-text-muted font-semibold mt-3">Proposal object shape:</p>
         <Pre>{`{
   "id": 167,
@@ -649,6 +706,55 @@ Content-Type: application/json
   "created_at": "2026-06-16T22:07:24.970047Z",
   "reviewed_at": null
 }`}</Pre>
+        <p className="text-xs text-text-muted"><Code>status</Code> is one of <Code>pending</Code>, <Code>approved</Code>, <Code>rejected</Code>, <Code>reversed</Code>.</p>
+      </Section>
+
+      <Section title="Editor Applications">
+        <p className="text-sm text-text-secondary">How a standard user applies to become an editor.</p>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/application/', "Fetch the logged-in user's own application (null if none)"],
+            ['POST', '/accounts/application/', 'Submit an application'],
+          ]}
+        />
+        <Pre>{`POST /accounts/application/
+
+{
+  "display_name": "optional",
+  "contact": "optional",
+  "experience": "optional",
+  "motivation": "required — why you want editor access",
+  "areas": "optional"
+}`}</Pre>
+        <p className="text-xs text-text-muted"><Code>status</Code> on the returned application is <Code>pending</Code>, <Code>approved</Code>, or <Code>rejected</Code>.</p>
+      </Section>
+
+      <Section title="Editor Leaderboard">
+        <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/editor/leaderboard/</code></div>
+        <p className="text-xs text-text-muted mb-2">Ranked by approved proposal count. No auth required to view.</p>
+        <Pre>{`[
+  {
+    "rank": 1,
+    "user_id": 12,
+    "username": "freakypallet",
+    "discord_username": "freakypallet",
+    "discord_avatar": "https://cdn.discordapp.com/avatars/...",
+    "approved_count": 214,
+    "badges": [
+      {
+        "slug": "hundred-club",
+        "name": "100 Club",
+        "description": "100 approved edits",
+        "icon": "🏅",
+        "category": "milestone",
+        "note": "",
+        "awarded_at": "...",
+        "awarded_by_username": null
+      }
+    ]
+  }
+]`}</Pre>
       </Section>
 
       <Section title="Play Tracking">
@@ -662,9 +768,195 @@ Content-Type: application/json
           rows={[
             ['GET', '/accounts/admin/users/', 'List all users. Filter: ?role=editor|administrator|applicant'],
             ['GET', '/accounts/admin/users/{user_id}/', 'Single user detail — role, is_active, Discord info, proposal counts, badges'],
+            ['PATCH', '/accounts/admin/users/{user_id}/', 'Update role, is_active, or auto_approve_proposals'],
           ]}
         />
+        <Pre>{`PATCH /accounts/admin/users/{user_id}/
+
+{
+  "role": "editor",             // "editor" | "applicant"
+  "is_active": true,
+  "auto_approve_proposals": false
+}`}</Pre>
         <p className="text-xs text-text-muted">Requires admin token (<Code>is_administrator: true</Code>).</p>
+      </Section>
+
+      <Section title="Admin: Proposal Review" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/admin/proposals/', 'List all proposals. Filter: ?status=pending|approved|rejected|reversed'],
+            ['POST', '/accounts/admin/proposals/{id}/review/', 'Approve, reject, or revise-and-approve a proposal'],
+            ['POST', '/accounts/admin/proposals/{id}/reverse/', 'Reverse a previously approved proposal'],
+          ]}
+        />
+        <Pre>{`POST /accounts/admin/proposals/{id}/review/
+
+{
+  "action": "approve",          // "approve" | "reject" | "revise"
+  "review_notes": "optional",
+  "revised_data": { }           // only for action: "revise" — overrides proposed_data
+}`}</Pre>
+      </Section>
+
+      <Section title="Admin: Applications" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/admin/applications/', 'List editor applications. Filter: ?status=pending|approved|rejected'],
+            ['POST', '/accounts/admin/applications/{id}/review/', 'Approve or reject an application'],
+          ]}
+        />
+        <Pre>{`POST /accounts/admin/applications/{id}/review/
+
+{
+  "action": "approve",          // "approve" | "reject"
+  "review_notes": "optional"
+}`}</Pre>
+        <p className="text-xs text-text-muted">Approving promotes the applicant to <Code>editor</Code>.</p>
+      </Section>
+
+      <Section title="Two-Factor (OTP)" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/otp/setup/', 'Generate a new OTP secret + QR code for enrolling'],
+            ['POST', '/accounts/otp/setup/', 'Confirm enrollment with a code from the authenticator app'],
+          ]}
+        />
+        <Pre>{`// GET response
+{
+  "otp_enabled": false,
+  "account_label": "someuser",
+  "otp_secret": "JBSWY3DPEHPK3PXP",
+  "provisioning_uri": "otpauth://totp/...",
+  "qr_code": "data:image/png;base64,..."
+}
+
+// POST request
+{ "otp_token": "123456" }
+// Response: { "otp_enabled": true }`}</Pre>
+      </Section>
+    </div>
+  )
+}
+
+function VersionsTab() {
+  return (
+    <div className="space-y-6">
+      <Section title="What is the Versions API?">
+        <p className="text-sm text-text-secondary leading-relaxed">
+          Groups multiple song rows together as versions of the same underlying track — e.g. a released mix and a
+          leaked earlier take, or several titled variants like &quot;v1&quot;, &quot;v2&quot;, &quot;TV Mix&quot;.
+          Each row links one <Code>song_id</Code> to a shared <Code>group_id</Code>; every song in a group shares
+          the same <Code>title</Code> (the display name for the group, e.g. &quot;She&apos;s The One&quot;), while
+          each song keeps its own <Code>version</Code> label (e.g. &quot;v1&quot;) distinguishing it from its
+          groupmates.
+        </p>
+        <p className="text-sm text-text-secondary leading-relaxed mt-2">
+          Reads require no auth. Writes (<Code>POST</Code>/<Code>PATCH</Code>) require an editor or admin token.
+        </p>
+      </Section>
+
+      <Section title="Version Row Shape">
+        <Pre>{`{
+  "id": 501,
+  "song_id": 94086,
+  "group_id": 94086,
+  "version": "v1",
+  "title": "She's The One",
+  "created_at": "2026-03-04T12:00:00Z",
+  "created_by": "freakypallet"
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          <Code>group_id</Code> is just the <Code>song_id</Code> of whichever song originally anchored the group — it
+          has no meaning beyond being a shared key. <Code>title</Code> is <Code>null</Code> until an editor names the
+          group; <Code>version</Code> is <Code>null</Code> until an editor labels that specific song.
+        </p>
+      </Section>
+
+      <Section title="GET /versions/{song_id}/ — This Song's Row">
+        <p className="text-sm text-text-secondary">
+          The one filtered read the API supports server-side. Returns the paginated envelope with 0 or 1 result —
+          empty means the song isn&apos;t linked into any group.
+        </p>
+        <Pre>{`{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [ { "id": 501, "song_id": 94086, "group_id": 94086, "version": "v1", "title": "She's The One", ... } ]
+}`}</Pre>
+      </Section>
+
+      <Section title="GET /versions/ — All Rows">
+        <p className="text-sm text-text-secondary">
+          The list endpoint does <span className="font-semibold text-text-primary">not</span> apply query params
+          (<Code>group_id</Code>, <Code>search</Code>, <Code>title</Code>) server-side — any filtering by group or
+          title has to happen client-side. Pass <Code>?all=true</Code> to get every row in one response instead of
+          paging through it (same bulk-mode convention <Code>/songs/</Code> supports).
+        </p>
+        <Pre>{`GET /versions/?all=true
+
+// Response: a plain array (not the paginated envelope)
+[
+  { "id": 501, "song_id": 94086, "group_id": 94086, "version": "v1",   "title": "She's The One", ... },
+  { "id": 502, "song_id": 94112, "group_id": 94086, "version": "v2",   "title": "She's The One", ... },
+  { "id": 503, "song_id": 95230, "group_id": 95230, "version": null,   "title": null, ... }
+]`}</Pre>
+      </Section>
+
+      <Section title="POST /versions/ — Create a Row (editor+)">
+        <Pre>{`POST /versions/
+Authorization: Token <token>
+Content-Type: application/json
+
+{
+  "song_id": 94112,
+  "group_id": 94086,
+  "version": "v2",
+  "title": "She's The One"
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          Used both to link a previously-ungrouped song into an existing group and to seed a brand-new group
+          (pass a <Code>group_id</Code> no other row uses yet — the app conventionally uses one of the two
+          songs&apos; own <Code>song_id</Code>).
+        </p>
+      </Section>
+
+      <Section title="PATCH /versions/{song_id}/ — Update a Row (editor+)">
+        <Pre>{`PATCH /versions/{song_id}/
+Authorization: Token <token>
+Content-Type: application/json
+
+{ "group_id": 94086, "title": "She's The One" }`}</Pre>
+        <p className="text-xs text-text-muted">
+          Any subset of <Code>group_id</Code>, <Code>version</Code>, <Code>title</Code> may be sent. There is no
+          bulk-write endpoint — merging two groups or renaming a group&apos;s title means sending one
+          <Code> PATCH</Code> per affected song.
+        </p>
+      </Section>
+
+      <Section title="Common Operations (client-side recipes)">
+        <ul className="space-y-3 text-sm text-text-secondary">
+          <li>
+            <span className="font-semibold text-text-primary">Link two ungrouped songs:</span> create two rows
+            sharing a new <Code>group_id</Code> (e.g. the lower of the two song IDs).
+          </li>
+          <li>
+            <span className="font-semibold text-text-primary">Add an ungrouped song to an existing group:</span>{' '}
+            <Code>POST</Code> one row with that group&apos;s <Code>group_id</Code> and <Code>title</Code>.
+          </li>
+          <li>
+            <span className="font-semibold text-text-primary">Merge two existing groups:</span> fetch every row in
+            both groups (via <Code>?all=true</Code>), then <Code>PATCH</Code> every row in the losing group to the
+            surviving <Code>group_id</Code> — and if only one side had a <Code>title</Code> set, <Code>PATCH</Code>{' '}
+            that title onto every row in the merged group so all members agree.
+          </li>
+          <li>
+            <span className="font-semibold text-text-primary">Rename a group&apos;s title:</span> <Code>PATCH</Code>{' '}
+            <Code>{'{ title }'}</Code> onto every row whose <Code>group_id</Code> matches.
+          </li>
+        </ul>
       </Section>
     </div>
   )
@@ -919,6 +1211,7 @@ function RadioPlayer() {
 const TABS = [
   { id: 'overview',  label: 'Overview' },
   { id: 'songs',     label: 'Songs & Search' },
+  { id: 'versions',  label: 'Versions' },
   { id: 'files',     label: 'Files & Stream' },
   { id: 'playlists', label: 'Playlists' },
   { id: 'radio',     label: '999 FM' },
@@ -970,6 +1263,7 @@ export default function DocsPage(): JSX.Element {
         <div className="max-w-4xl mx-auto">
           {activeTab === 'overview'  && <OverviewTab />}
           {activeTab === 'songs'     && <SongsTab />}
+          {activeTab === 'versions'  && <VersionsTab />}
           {activeTab === 'files'     && <FilesTab />}
           {activeTab === 'playlists' && <PlaylistsTab />}
           {activeTab === 'radio'     && <RadioTab />}

@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { X, Info, FolderOpen } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { cacheStats } from '../lib/apiCache'
+import type { Track } from '../types'
 
 function fmtBytes(b: number): string {
   if (b < 1024) return `${b} B`
@@ -20,11 +21,42 @@ function localStorageBytes(): number {
   return bytes
 }
 
+// The filename actually being played — local tracks carry a filesystem
+// `path`, API/stream tracks only have a `streamUrl` (the "file" is whatever
+// the URL's last path segment resolves to).
+function filenameOf(track: Track | null): string {
+  if (!track) return 'none'
+  if (track.path) {
+    const parts = track.path.split(/[\\/]/)
+    return parts[parts.length - 1] || track.path
+  }
+  if (track.streamUrl) {
+    try {
+      const u = new URL(track.streamUrl)
+      const parts = u.pathname.split('/')
+      return decodeURIComponent(parts[parts.length - 1] || track.streamUrl)
+    } catch {
+      const parts = track.streamUrl.split('/')
+      return parts[parts.length - 1]
+    }
+  }
+  return track.title
+}
+
 function Row({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3 py-2 border-b border-[var(--border)] last:border-b-0">
-      <span className="text-text-muted text-xs">{label}</span>
-      <span className="text-text-primary text-xs font-mono text-right truncate max-w-[60%]">{value}</span>
+      <span className="text-text-muted text-xs shrink-0">{label}</span>
+      <span className="text-text-primary text-xs font-mono text-right truncate max-w-[62%]" title={value}>{value}</span>
+    </div>
+  )
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="mb-4">
+      <p className="text-text-muted text-[10px] font-semibold uppercase tracking-widest mb-1.5">{title}</p>
+      {children}
     </div>
   )
 }
@@ -32,15 +64,21 @@ function Row({ label, value }: { label: string; value: string }): JSX.Element {
 export default function DiagnosticsModal(): JSX.Element {
   const overlayRef = useRef<HTMLDivElement>(null)
   const {
-    setShowDiagnostics, activeView, queue, currentTrack,
-    libraryTracks, offlineTracks, theme, accentColor, audioOutput,
+    setShowDiagnostics, activeView, queue, queueIndex, currentTrack, currentTrackFull,
+    isPlaying, progress, currentTime, shuffle, repeat, volume, playbackSpeed,
+    crossfadeEnabled, crossfadeDuration, preferOgVersion, lyricsOffset,
+    libraryTracks, libraryFolders, offlineTracks, offlinePlaylists,
+    theme, accentColor, audioOutput, radioFmActive,
+    account, playlists, likedTrackIds, downloads, updateStatus,
   } = useStore()
   const isElectron = navigator.userAgent.includes('Electron')
   const el = (window as any).electron
 
   const cache = cacheStats()
   const offlineCount = Object.keys(offlineTracks).length
+  const offlinePlaylistCount = Object.keys(offlinePlaylists).length
   const lsBytes = localStorageBytes()
+  const mem = (performance as any).memory as { usedJSHeapSize: number; totalJSHeapSize: number } | undefined
 
   return (
     <div
@@ -48,7 +86,7 @@ export default function DiagnosticsModal(): JSX.Element {
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => { if (e.target === overlayRef.current) setShowDiagnostics(false) }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[440px] mx-3 max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-surface border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[480px] mx-3 h-[600px] max-h-[85vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-2">
             <Info size={16} className="text-accent" />
@@ -60,34 +98,85 @@ export default function DiagnosticsModal(): JSX.Element {
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          <p className="text-text-muted text-[10px] font-semibold uppercase tracking-widest mb-1.5">App</p>
-          <div className="mb-4">
+          <Section title="App">
             <Row label="Version" value={`v${__APP_VERSION__}`} />
             <Row label="Runtime" value={isElectron ? 'Electron' : 'Web'} />
             <Row label="Platform" value={el?.platform || navigator.platform || 'unknown'} />
             <Row label="Theme" value={`${theme} · ${accentColor}`} />
-          </div>
-
-          <p className="text-text-muted text-[10px] font-semibold uppercase tracking-widest mb-1.5">Playback</p>
-          <div className="mb-4">
             <Row label="Active view" value={activeView} />
-            <Row label="Current track" value={currentTrack ? `${currentTrack.title} (${currentTrack.id})` : 'none'} />
-            <Row label="Queue length" value={String(queue.length)} />
-            <Row label="Audio output" value={audioOutput || 'default'} />
-          </div>
+            <Row label="Online" value={navigator.onLine ? 'yes' : 'no'} />
+          </Section>
 
-          <p className="text-text-muted text-[10px] font-semibold uppercase tracking-widest mb-1.5">Storage</p>
-          <div className="mb-4">
+          <Section title="Now playing">
+            <Row label="Filename" value={filenameOf(currentTrack)} />
+            <Row label="Title" value={currentTrack?.title || 'none'} />
+            <Row label="Track ID" value={currentTrack?.id || 'none'} />
+            <Row label="Source" value={currentTrack ? (currentTrack.streamUrl ? 'stream' : 'local file') : 'none'} />
+            {currentTrack?.streamUrl && <Row label="Stream URL" value={currentTrack.streamUrl} />}
+            {currentTrack?.path && <Row label="Path" value={currentTrack.path} />}
+            <Row label="Playing" value={isPlaying ? 'yes' : 'no'} />
+            <Row label="Position" value={`${currentTime.toFixed(1)}s / ${currentTrack?.duration?.toFixed(1) ?? '?'}s`} />
+            <Row label="Progress" value={`${(progress * 100).toFixed(1)}%`} />
+            {currentTrackFull && (
+              <>
+                <Row label="Format" value={currentTrackFull.ext || 'unknown'} />
+                <Row label="Bitrate" value={currentTrackFull.bitrate ? `${Math.round(currentTrackFull.bitrate / 1000)} kbps` : 'unknown'} />
+                <Row label="Sample rate" value={currentTrackFull.sampleRate ? `${currentTrackFull.sampleRate} Hz` : 'unknown'} />
+                <Row label="Bit depth" value={currentTrackFull.bitsPerSample ? `${currentTrackFull.bitsPerSample}-bit` : 'unknown'} />
+                <Row label="Channels" value={currentTrackFull.channels ? String(currentTrackFull.channels) : 'unknown'} />
+                <Row label="File size" value={currentTrackFull.fileSize ? fmtBytes(currentTrackFull.fileSize) : 'unknown'} />
+              </>
+            )}
+          </Section>
+
+          <Section title="Playback">
+            <Row label="Queue length" value={String(queue.length)} />
+            <Row label="Queue index" value={String(queueIndex)} />
+            <Row label="Shuffle" value={shuffle ? 'on' : 'off'} />
+            <Row label="Repeat" value={repeat} />
+            <Row label="Volume" value={`${Math.round(volume * 100)}%`} />
+            <Row label="Speed" value={`${playbackSpeed.toFixed(2)}x`} />
+            <Row label="Crossfade" value={crossfadeEnabled ? `${crossfadeDuration}s` : 'off'} />
+            <Row label="Prefer OG version" value={preferOgVersion ? 'on' : 'off'} />
+            <Row label="Lyrics offset" value={`${lyricsOffset > 0 ? '+' : ''}${lyricsOffset.toFixed(1)}s`} />
+            <Row label="Audio output" value={audioOutput || 'default'} />
+            <Row label="Radio FM active" value={radioFmActive ? 'yes' : 'no'} />
+          </Section>
+
+          <Section title="Account">
+            <Row label="Logged in" value={account ? 'yes' : 'no'} />
+            {account && <Row label="User" value={account.display_name || account.discord_username} />}
+            {account && <Row label="Role" value={account.is_administrator ? 'administrator' : account.is_editor ? 'editor' : 'standard'} />}
+            <Row label="Playlists" value={String(playlists.length)} />
+            <Row label="Liked songs" value={String(likedTrackIds.length)} />
+          </Section>
+
+          <Section title="Storage">
             <Row label="API cache" value={`${cache.count} entries · ${fmtBytes(cache.bytes)}`} />
             <Row label="localStorage" value={fmtBytes(lsBytes)} />
-            {isElectron && <Row label="Offline tracks" value={String(offlineCount)} />}
+            {isElectron && <Row label="Library folders" value={String(libraryFolders.length)} />}
             {isElectron && <Row label="Library tracks" value={String(libraryTracks.length)} />}
-          </div>
+            {isElectron && <Row label="Offline tracks" value={String(offlineCount)} />}
+            {isElectron && <Row label="Offline playlists" value={String(offlinePlaylistCount)} />}
+            {mem && <Row label="JS heap" value={`${fmtBytes(mem.usedJSHeapSize)} / ${fmtBytes(mem.totalJSHeapSize)}`} />}
+          </Section>
 
-          <p className="text-text-muted text-[10px] font-semibold uppercase tracking-widest mb-1.5">Environment</p>
-          <div className="mb-2">
+          {isElectron && (
+            <Section title="Updates">
+              <Row label="Status" value={updateStatus?.type || 'idle'} />
+              {updateStatus?.version && <Row label="Version" value={updateStatus.version} />}
+              <Row label="Active downloads" value={String(downloads.filter(d => d.state === 'downloading').length)} />
+              <Row label="Downloads (session)" value={String(downloads.length)} />
+            </Section>
+          )}
+
+          <Section title="Environment">
+            <Row label="Screen" value={`${window.screen.width}×${window.screen.height}`} />
+            <Row label="Viewport" value={`${window.innerWidth}×${window.innerHeight}`} />
+            <Row label="Pixel ratio" value={String(window.devicePixelRatio)} />
+            <Row label="Language" value={navigator.language} />
             <Row label="User agent" value={navigator.userAgent} />
-          </div>
+          </Section>
         </div>
 
         {isElectron && (
