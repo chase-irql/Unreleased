@@ -102,7 +102,7 @@ export default function Sidebar(): JSX.Element {
                   }
                 }}
                 title={collapsed ? label : undefined}
-                className={`flex items-center flex-1 min-w-0 py-2 transition-[padding-left,gap,justify-content] duration-200 ${collapsed ? 'justify-center pl-0 gap-0' : 'pl-0 gap-3'}`}
+                className="flex items-center flex-1 min-w-0 py-2 pl-2 gap-3"
               >
                 <span className="w-6 h-6 shrink-0 flex items-center justify-center">{icon}</span>
                 <span
