@@ -694,6 +694,49 @@ export default function Player(): JSX.Element {
     nextTrack()
   }
 
+  // Tray — mirror playback state so the tray menu shows now-playing info and
+  // the right Play/Pause + Like labels. `hasTrack` gates the tray controls,
+  // matching the disabled state of the on-screen buttons during FM radio.
+  useEffect(() => {
+    const el = (window as any).electron
+    if (!el?.setTrayPlayback) return
+    const title  = radioFmActive ? (radioFmNowPlaying?.title  ?? '') : (currentTrack?.title  ?? '')
+    const artist = radioFmActive ? (radioFmNowPlaying?.artist ?? '') : (currentTrack?.artist ?? '')
+    el.setTrayPlayback({
+      hasTrack: !!currentTrack && !radioFmActive,
+      isPlaying,
+      title,
+      artist,
+      liked: !!currentTrack && likedTrackIds.includes(currentTrack.id),
+    })
+  }, [
+    isPlaying,
+    currentTrack?.id,
+    currentTrack?.title,
+    currentTrack?.artist,
+    radioFmActive,
+    radioFmNowPlaying?.title,
+    radioFmNowPlaying?.artist,
+    likedTrackIds,
+  ])
+
+  // Tray media commands — route through the same handlers as the on-screen
+  // controls (handleNext/handlePrev carry the repeat-one and radio-mode
+  // special cases). Handlers are recreated every render, so a ref keeps the
+  // IPC subscription itself stable while always dispatching to fresh closures.
+  const trayCommandsRef = useRef<Record<string, () => void>>({})
+  trayCommandsRef.current = {
+    'play-pause':  () => { if (currentTrack && !radioFmActive) setIsPlaying(!isPlaying) },
+    'next':        () => { if (currentTrack && !radioFmActive) handleNext() },
+    'previous':    () => { if (currentTrack && !radioFmActive) handlePrev() },
+    'toggle-like': () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
+  }
+  useEffect(() => {
+    const el = (window as any).electron
+    if (!el?.onTrayCommand) return
+    return el.onTrayCommand((cmd: string) => trayCommandsRef.current[cmd]?.())
+  }, [])
+
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {
     setSeekDrag(progress)

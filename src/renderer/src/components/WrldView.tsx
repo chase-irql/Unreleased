@@ -928,15 +928,17 @@ export default function WrldView(): JSX.Element {
                   <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-20">
                     {/* Notch sits half-embedded in the art's left edge, like it's
                         popping out of the cover itself, rather than floating
-                        beside it as a detached control. */}
+                        beside it as a detached control. Shaped as a plain tab
+                        bump (grabber line, no icon) rather than a button with
+                        an arrow glyph. */}
                     <button
                       onClick={() => setSongVersionMenuOpen(o => !o)}
                       title="Other versions"
-                      className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border shadow-lg transition-colors ${
+                      className={`w-4 h-9 flex items-center justify-center rounded-l-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border-y border-l shadow-lg transition-colors ${
                         songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-white/20 dark:border-white/10'
                       }`}
                     >
-                      <ChevronDown size={12} className={`text-white transition-transform duration-150 ${songVersionMenuOpen ? 'rotate-180' : '-rotate-90'}`} />
+                      <span className="w-[3px] h-4 rounded-full bg-white/50" />
                     </button>
                     <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} style={{ pointerEvents: songVersionMenuOpen ? 'auto' : 'none' }} />
                     <div

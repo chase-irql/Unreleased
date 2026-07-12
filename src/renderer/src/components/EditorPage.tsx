@@ -939,7 +939,8 @@ export default function EditorPage(): JSX.Element {
 
                 <Card title="Credits">
                   <FieldGrid>
-                    <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} span={2} />
+                    <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
+                    <FieldRow label="Engineers" value={eng}  original={String(base.engineers || '')} onChange={setEng} />
                   </FieldGrid>
                 </Card>
 
@@ -962,7 +963,6 @@ export default function EditorPage(): JSX.Element {
                 {showMore && (
                   <Card title="Additional details">
                     <FieldGrid>
-                      <FieldRow label="Engineers"  value={eng}              original={String(base.engineers || '')}             onChange={setEng} />
                       <FieldRow label="Location"   value={loc}              original={String(base.recording_locations || '')}   onChange={setLoc} placeholder="Studio / city" />
                       <FieldRow label="Leak type"  value={leak}             original={String(base.leak_type || '')}             onChange={setLeak} placeholder="HQ, LQ, snippet…" />
                       <FieldRow label="File names" value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
