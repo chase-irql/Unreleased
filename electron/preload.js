@@ -33,6 +33,14 @@ contextBridge.exposeInMainWorld('electron', {
   openLogsFolder: ()             => ipcRenderer.invoke('open-logs-folder'),
   getLogPaths:   ()              => ipcRenderer.invoke('get-log-paths'),
 
+  // Tray — playback state up to main, media commands back down
+  setTrayPlayback: (state) => ipcRenderer.send('tray-playback-state', state),
+  onTrayCommand: (cb) => {
+    const fn = (_, cmd) => cb(cmd)
+    ipcRenderer.on('tray-command', fn)
+    return () => ipcRenderer.removeListener('tray-command', fn)
+  },
+
   // Discord Rich Presence
   discordRpcSetActivity: (activity) => ipcRenderer.invoke('discord-rpc-set-activity', activity),
   discordRpcClearActivity: ()       => ipcRenderer.invoke('discord-rpc-clear-activity'),

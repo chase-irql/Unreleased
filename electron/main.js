@@ -156,21 +156,75 @@ let tray = null
 let isQuitting = false
 
 // ── Tray ──────────────────────────────────────────────────────────────────────
+// Playback state mirrored from the renderer (via 'tray-playback-state') so the
+// tray menu can show now-playing info and offer media controls. The renderer
+// owns the actual audio element; tray buttons just send commands back to it.
+let trayPlayback = { hasTrack: false, isPlaying: false, title: '', artist: '', liked: false }
+
+function sendTrayCommand(cmd) {
+  mainWindow?.webContents.send('tray-command', cmd)
+}
+
+function buildTrayMenu() {
+  // `hasTrack` gates the controls (false during FM radio, matching the in-app
+  // buttons), but the now-playing label follows `title` so FM still shows
+  // what's on air.
+  const { hasTrack, isPlaying, title, artist, liked } = trayPlayback
+  const nowPlaying = title
+    ? `${title}${artist ? ` — ${artist}` : ''}`
+    : 'Nothing playing'
+  return Menu.buildFromTemplate([
+    { label: nowPlaying.length > 60 ? nowPlaying.slice(0, 57) + '…' : nowPlaying, enabled: false },
+    { type: 'separator' },
+    { label: isPlaying ? 'Pause' : 'Play', enabled: hasTrack, click: () => sendTrayCommand('play-pause') },
+    { label: 'Next track', enabled: hasTrack, click: () => sendTrayCommand('next') },
+    { label: 'Previous track', enabled: hasTrack, click: () => sendTrayCommand('previous') },
+    { label: liked ? 'Unlike song' : 'Like song', enabled: hasTrack, click: () => sendTrayCommand('toggle-like') },
+    { type: 'separator' },
+    { label: 'Open Unreleased', click: () => showMainWindow() },
+    { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
+  ])
+}
+
+function showMainWindow() {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function updateTray() {
+  if (!tray) return
+  const { isPlaying, title, artist } = trayPlayback
+  tray.setToolTip(title
+    ? `Unreleased — ${isPlaying ? 'Playing' : 'Paused'}: ${title}${artist ? ` — ${artist}` : ''}`
+    : 'Unreleased')
+  tray.setContextMenu(buildTrayMenu())
+}
+
 function createTray() {
   try {
     tray = new Tray(iconPath)
-    const contextMenu = Menu.buildFromTemplate([
-      { label: 'Open Unreleased', click: () => mainWindow?.show() },
-      { type: 'separator' },
-      { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
-    ])
-    tray.setToolTip('Unreleased')
-    tray.setContextMenu(contextMenu)
-    tray.on('click', () => mainWindow?.show())
+    updateTray()
+    tray.on('click', () => showMainWindow())
+    // Windows only, but harmless elsewhere: double-click also restores.
+    tray.on('double-click', () => showMainWindow())
   } catch (e) {
     log('Tray creation failed:', e.message)
   }
 }
+
+ipcMain.on('tray-playback-state', (_, state) => {
+  if (!state || typeof state !== 'object') return
+  trayPlayback = {
+    hasTrack: !!state.hasTrack,
+    isPlaying: !!state.isPlaying,
+    title: typeof state.title === 'string' ? state.title : '',
+    artist: typeof state.artist === 'string' ? state.artist : '',
+    liked: !!state.liked,
+  }
+  updateTray()
+})
 
 // ── Window creation ───────────────────────────────────────────────────────────
 function createWindow() {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import {
   Search, Play, Loader2, Music2, X, Check,
-  LayoutList, LayoutGrid, Info, ListPlus, PanelLeft,
+  LayoutList, LayoutGrid, Rows3, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
   CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
 } from 'lucide-react'
@@ -26,7 +26,7 @@ import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
-type ViewMode = 'list' | 'grid'
+type ViewMode = 'list' | 'grid' | 'detail'
 type TrackerTab = 'songs' | 'lyrics' | 'calendar' | 'producers'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -663,6 +663,159 @@ const SongRow = memo(function SongRow({
 // the memo is a no-op. Without it, compact view froze when selecting songs
 // across many expanded groups.
 
+// ─── Song row (detailed mode) ─────────────────────────────────────────────────
+// One labeled metadata cell in the detailed-row field grid. Values are
+// single-line truncated (full text on hover via title) so every row keeps
+// the fixed height the virtual window depends on.
+function DetailField({ label, value, className }: {
+  label: string
+  value: string | null | undefined
+  className?: string
+}): JSX.Element {
+  const v = value?.trim() || ''
+  return (
+    <div className={`min-w-0 ${className ?? ''}`}>
+      <p className="text-[9px] uppercase tracking-wider text-text-muted/70 leading-tight truncate">{label}</p>
+      <p className={`text-xs truncate ${v ? 'text-text-secondary' : 'text-text-muted/50'}`} title={v || undefined}>
+        {v || '—'}
+      </p>
+    </div>
+  )
+}
+
+// Detailed view trades row density for inline metadata: the fields that
+// otherwise only show up in SongInfoModal (producers, engineers, recording
+// dates/locations, leak info, file names…) are laid out in a fixed grid on
+// every row. The grid is a *fixed* set of cells (empty ones render "—")
+// so all rows share one height — required by the virtual window's fixed
+// stride. Mobile shows a 2-column subset; md: adds a third column and the
+// rarer fields.
+const DetailedSongRow = memo(function DetailedSongRow({
+  song, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: {
+  song: JWApiSong
+  onPlay: (song: JWApiSong) => void
+  onCategoryClick: (cat: Category) => void
+  onEraClick: (era: string) => void
+  onInfo: (song: JWApiSong) => void
+  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
+  selectMode: boolean
+  selected: boolean
+  onToggleSelect: (song: JWApiSong) => void
+}): JSX.Element {
+  const track = songToTrack(song)
+  const canPlay = !!song.path
+  const altTitles = song.track_titles ?? []
+
+  return (
+    <div
+      className={`group flex gap-3 px-3 py-2.5 h-full overflow-hidden rounded-lg border border-[var(--border)] hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onDoubleClick={() => { if (!selectMode) onInfo(song) }}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
+    >
+      {selectMode && (
+        <div className="shrink-0 pt-1">
+          {selected
+            ? <CheckSquare2 size={17} className="text-accent" />
+            : <Square size={17} className="text-text-muted opacity-50" />}
+        </div>
+      )}
+
+      {/* Cover art */}
+      <div className="relative shrink-0 w-14 h-14 md:w-16 md:h-16 rounded overflow-hidden bg-surface-overlay">
+        <AlbumArtThumbnail track={track} size={64} shimmer={false} />
+        {canPlay && !selectMode && (
+          <button
+            className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
+            onClick={(e) => { e.stopPropagation(); onPlay(song) }}
+            title="Play"
+          >
+            <Play size={16} fill="white" className="text-white ml-0.5" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 min-w-0">
+        {/* Title row: name + artist + era/category badges + duration + actions */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-text-primary text-sm font-medium truncate">{song.name}</p>
+          <span className="hidden md:block text-text-muted text-xs truncate shrink-0 max-w-[160px]">
+            {song.credited_artists || 'Juice WRLD'}
+          </span>
+          {song.era?.name && (
+            <button
+              onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
+              className="hidden md:block text-text-muted text-[9px] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate max-w-[140px] shrink-0 hover:text-accent hover:border-accent/40 transition-colors"
+              title={`Filter by era: ${song.era.name}`}
+            >
+              {song.era.name}
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); if (!selectMode) onCategoryClick(song.category as Category) }}
+            className={`hidden md:block text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+            title="Filter by category"
+          >
+            {CATEGORY_LABELS[song.category] ?? song.category}
+          </button>
+          <span className="ml-auto text-text-muted text-xs shrink-0 tabular-nums">{formatDur(parseDuration(song.length))}</span>
+          {!selectMode && (
+            <div className="hidden md:flex items-center gap-0.5 shrink-0">
+              <SongActions onInfo={() => onInfo(song)} onContextMenu={(e) => onContextMenu(song, e)} />
+            </div>
+          )}
+          {!selectMode && (
+            <div className="md:hidden flex items-center shrink-0">
+              <button
+                className="p-1 text-text-muted active:text-accent transition-colors"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
+                title="More options"
+              >
+                <MoreHorizontal size={16} />
+              </button>
+              {canPlay && (
+                <button
+                  className="p-1 text-text-muted active:text-accent transition-colors"
+                  onClick={(e) => { e.stopPropagation(); onPlay(song) }}
+                  title="Play"
+                >
+                  <Play size={16} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Mobile subtitle — artist/era/category live here instead of badges */}
+        <p className="md:hidden text-text-muted text-xs truncate mt-0.5">
+          {song.credited_artists || 'Juice WRLD'}
+          {song.era?.name ? ` · ${song.era.name}` : ''}
+          {` · ${CATEGORY_LABELS[song.category] ?? song.category}`}
+        </p>
+
+        {/* Metadata field grid — fixed cell set so every row is the same height */}
+        <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
+          <DetailField label="Producers" value={song.producers} />
+          <DetailField label="Engineers" value={song.engineers} />
+          <DetailField label="Recording Locations" value={song.recording_locations} className="hidden md:block" />
+          <DetailField label="Record Dates" value={song.record_dates} />
+          <DetailField label="Leak Type" value={song.leak_type} />
+          <DetailField label="Date Leaked" value={song.date_leaked} className="hidden md:block" />
+          <DetailField label="Bitrate" value={song.bitrate} />
+          <DetailField label="Original Key" value={song.original_key} />
+          <DetailField label="Release Date" value={song.release_date} className="hidden md:block" />
+          <DetailField label="File Names" value={song.file_names} className="hidden md:block" />
+          <DetailField label="Session Titles" value={song.session_titles} className="hidden md:block" />
+          <DetailField label="Alt Titles" value={altTitles.join(' · ')} className="hidden md:block" />
+        </div>
+      </div>
+    </div>
+  )
+})
+
 // ─── Virtualized lists ────────────────────────────────────────────────────────
 // Row heights in this view are responsive (40px thumb + py-2.5 on mobile,
 // 36px + py-2 at md:), so the virtual-window strides below need to know
@@ -816,6 +969,44 @@ function VirtualSongList({
       {songs.slice(start, end).map((song, i) => (
         <div key={song.id} style={{ position: 'absolute', top: (start + i) * stride, left: 0, right: 0, height: rowH }}>
           <SongRow
+            song={song}
+            onPlay={onPlay}
+            onCategoryClick={onCategoryClick}
+            onEraClick={onEraClick}
+            onInfo={onInfo}
+            onContextMenu={onContextMenu}
+            selectMode={selectMode}
+            selected={selected.has(song.id)}
+            onToggleSelect={onToggleSelect}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Detailed rows are much taller than list rows (title line + a 4-row md: /
+// 3-row mobile metadata grid), but still fixed-height — DetailedSongRow
+// clips overflow, so the stride below just has to match its natural height
+// with a little headroom.
+const DETAIL_ROW_H_DESKTOP = 178
+const DETAIL_ROW_H_MOBILE = 166
+const DETAIL_ROW_GAP = 8 // bordered card-style rows want more breathing room than the flat list's 2px
+
+function VirtualSongDetailList({
+  scrollRef, songs, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: VirtualSongsProps): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const isDesktop = useIsDesktop()
+  const rowH = isDesktop ? DETAIL_ROW_H_DESKTOP : DETAIL_ROW_H_MOBILE
+  const stride = rowH + DETAIL_ROW_GAP
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, songs.length, stride)
+  return (
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {songs.slice(start, end).map((song, i) => (
+        <div key={song.id} style={{ position: 'absolute', top: (start + i) * stride, left: 0, right: 0, height: rowH }}>
+          <DetailedSongRow
             song={song}
             onPlay={onPlay}
             onCategoryClick={onCategoryClick}
@@ -2058,6 +2249,13 @@ export default function ApiTrackerView(): JSX.Element {
                 >
                   <LayoutGrid size={16} />
                 </button>
+                <button
+                  onClick={() => setViewMode('detail')}
+                  className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'detail' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  title="Detailed view"
+                >
+                  <Rows3 size={16} />
+                </button>
               </div>
             )}
           </div>
@@ -2473,7 +2671,7 @@ export default function ApiTrackerView(): JSX.Element {
                   asc → desc → default), aligned over CompactGroupRow's title
                   and count. */}
               <div className="hidden md:flex items-center gap-3 px-3 pb-1.5">
-                <span className="w-3.5 shrink-0" />
+                <span className="shrink-0" style={{ width: 14 }} />
                 <span className="w-10 md:w-9 shrink-0" />
                 <button
                   onClick={() => handleCompactSort('name')}
@@ -2527,6 +2725,19 @@ export default function ApiTrackerView(): JSX.Element {
               </div>
             ) : viewMode === 'list' ? (
               <VirtualSongList
+                scrollRef={listScrollRef}
+                songs={sortedSongs}
+                onPlay={handlePlay}
+                onCategoryClick={handleCategoryClick}
+                onEraClick={handleEraClick}
+                onInfo={handleInfo}
+                onContextMenu={handleContextMenu}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
+            ) : viewMode === 'detail' ? (
+              <VirtualSongDetailList
                 scrollRef={listScrollRef}
                 songs={sortedSongs}
                 onPlay={handlePlay}
