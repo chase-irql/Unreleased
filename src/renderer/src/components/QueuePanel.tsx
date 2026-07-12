@@ -1,6 +1,6 @@
 ﻿import { useRef, useState, useEffect } from 'react'
 import { X, GripVertical, ListMusic, Trash2, History, ChevronDown, Radio } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { formatDuration } from '../lib/lyrics'
 import { Track } from '../types'
@@ -14,7 +14,7 @@ export default function QueuePanel(): JSX.Element {
     queue, queueIndex, currentTrack, isPlaying, shuffle, queueFilter, queueLoadingMore,
     radioMode, radioNext,
     setShowQueue, removeFromQueue, clearQueue, reorderQueue, jumpToTrack, _loadMore,
-  } = useStore()
+  } = useStorePick('queue', 'queueIndex', 'currentTrack', 'isPlaying', 'shuffle', 'queueFilter', 'queueLoadingMore', 'radioMode', 'radioNext', 'setShowQueue', 'removeFromQueue', 'clearQueue', 'reorderQueue', 'jumpToTrack', '_loadMore')
 
   const [panelWidth, dragHandle] = useResizablePanel(300, 240, 480)
   const isElectron = navigator.userAgent.includes('Electron')

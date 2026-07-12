@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { X, Info, FolderOpen } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { cacheStats } from '../lib/apiCache'
 import type { Track } from '../types'
 
@@ -70,7 +70,7 @@ export default function DiagnosticsModal(): JSX.Element {
     libraryTracks, libraryFolders, offlineTracks, offlinePlaylists,
     theme, accentColor, audioOutput, radioFmActive,
     account, playlists, likedTrackIds, downloads, updateStatus,
-  } = useStore()
+  } = useStorePick('setShowDiagnostics', 'activeView', 'queue', 'queueIndex', 'currentTrack', 'currentTrackFull', 'isPlaying', 'progress', 'currentTime', 'shuffle', 'repeat', 'volume', 'playbackSpeed', 'crossfadeEnabled', 'crossfadeDuration', 'preferOgVersion', 'lyricsOffset', 'libraryTracks', 'libraryFolders', 'offlineTracks', 'offlinePlaylists', 'theme', 'accentColor', 'audioOutput', 'radioFmActive', 'account', 'playlists', 'likedTrackIds', 'downloads', 'updateStatus')
   const isElectron = navigator.userAgent.includes('Electron')
   const el = (window as any).electron
 
@@ -119,12 +119,12 @@ export default function DiagnosticsModal(): JSX.Element {
             <Row label="Progress" value={`${(progress * 100).toFixed(1)}%`} />
             {currentTrackFull && (
               <>
-                <Row label="Format" value={currentTrackFull.ext || 'unknown'} />
-                <Row label="Bitrate" value={currentTrackFull.bitrate ? `${Math.round(currentTrackFull.bitrate / 1000)} kbps` : 'unknown'} />
-                <Row label="Sample rate" value={currentTrackFull.sampleRate ? `${currentTrackFull.sampleRate} Hz` : 'unknown'} />
-                <Row label="Bit depth" value={currentTrackFull.bitsPerSample ? `${currentTrackFull.bitsPerSample}-bit` : 'unknown'} />
-                <Row label="Channels" value={currentTrackFull.channels ? String(currentTrackFull.channels) : 'unknown'} />
-                <Row label="File size" value={currentTrackFull.fileSize ? fmtBytes(currentTrackFull.fileSize) : 'unknown'} />
+                <Row label="Format" value={currentTrackFull.ext || (currentTrack?.streamUrl ? 'streamed' : 'unknown')} />
+                <Row label="Bitrate" value={currentTrackFull.bitrate ? `${currentTrackFull.bitrate} kbps` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <Row label="Sample rate" value={currentTrackFull.sampleRate ? `${currentTrackFull.sampleRate} Hz` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <Row label="Bit depth" value={currentTrackFull.bitsPerSample ? `${currentTrackFull.bitsPerSample}-bit` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <Row label="Channels" value={currentTrackFull.channels ? String(currentTrackFull.channels) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <Row label="File size" value={currentTrackFull.fileSize ? fmtBytes(currentTrackFull.fileSize) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
               </>
             )}
           </Section>

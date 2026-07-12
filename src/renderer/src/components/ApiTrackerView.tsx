@@ -1487,19 +1487,26 @@ export default function ApiTrackerView(): JSX.Element {
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }, [calendarSongs])
 
-  // `producers` is free text, often multiple names separated by commas
-  // (e.g. "Nick Mira, Taz Taylor") — split so each producer gets their own
-  // entry instead of grouping by the exact combined string.
+  // `producers` and `engineers` are both free text, often multiple names
+  // separated by commas (e.g. "Nick Mira, Taz Taylor") — split so each
+  // person gets their own entry instead of grouping by the exact combined
+  // string. A name credited as both producer and engineer on the same song
+  // only counts that song once.
   const producersByName = useMemo(() => {
     const map = new Map<string, JWApiSong[]>()
-    for (const song of calendarSongs) {
-      if (!song.producers) continue
-      for (const raw of song.producers.split(',')) {
+    const addNames = (field: string | null | undefined, song: JWApiSong): void => {
+      if (!field) return
+      for (const raw of field.split(',')) {
         const name = raw.trim()
         if (!name) continue
         if (!map.has(name)) map.set(name, [])
-        map.get(name)!.push(song)
+        const songs = map.get(name)!
+        if (!songs.includes(song)) songs.push(song)
       }
+    }
+    for (const song of calendarSongs) {
+      addNames(song.producers, song)
+      addNames(song.engineers, song)
     }
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }, [calendarSongs])
@@ -2465,7 +2472,7 @@ export default function ApiTrackerView(): JSX.Element {
               {/* Sortable headers — click "Name" or "Versions" to sort (cycles
                   asc → desc → default), aligned over CompactGroupRow's title
                   and count. */}
-              <div className="hidden md:flex items-center gap-2.5 px-3 pb-1.5">
+              <div className="hidden md:flex items-center gap-3 px-3 pb-1.5">
                 <span className="w-3.5 shrink-0" />
                 <span className="w-10 md:w-9 shrink-0" />
                 <button

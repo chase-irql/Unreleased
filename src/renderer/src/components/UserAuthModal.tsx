@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { X, Loader2, AlertCircle, Heart, ListMusic } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 
 interface Props {
   onClose: () => void
 }
 
 export default function UserAuthModal({ onClose }: Props): JSX.Element {
-  const { loginWithDiscord } = useStore()
+  const { loginWithDiscord } = useStorePick('loginWithDiscord')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

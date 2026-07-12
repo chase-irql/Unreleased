@@ -5,7 +5,7 @@ import {
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import {
   apiFetch,
   apiPeek,
@@ -146,8 +146,11 @@ function urlToPath(pathname: string): string {
 }
 
 export default function ApiFilesView(): JSX.Element {
-  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStore()
+  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
+  // Set lookup for the per-row liked check — .includes on the array made the
+  // listing O(rows × likes).
+  const likedSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds])
 
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<JWApiFileEntry[]>([])
@@ -840,7 +843,7 @@ export default function ApiFilesView(): JSX.Element {
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
                 const isMedia = mt === 'image' || mt === 'video'
                 const isSelected = selectedPaths.has(entry.path)
-                const isLiked = mt === 'audio' && likedTrackIds.includes(apiFileTrackId(entry.path))
+                const isLiked = mt === 'audio' && likedSet.has(apiFileTrackId(entry.path))
                 return (
                   <div key={entry.path}
                     className={`group flex items-center gap-3 px-3 py-2 rounded-lg transition-colors cursor-default ${
@@ -934,7 +937,7 @@ export default function ApiFilesView(): JSX.Element {
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
                 const isMedia = mt === 'image' || mt === 'video'
                 const isSelected = selectedPaths.has(entry.path)
-                const isLiked = mt === 'audio' && likedTrackIds.includes(apiFileTrackId(entry.path))
+                const isLiked = mt === 'audio' && likedSet.has(apiFileTrackId(entry.path))
                 return (
                   <div key={entry.path}
                     className={`group flex flex-col rounded-xl overflow-hidden transition-colors cursor-default ${

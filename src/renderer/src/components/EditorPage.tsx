@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react'
+import { useState, useEffect, useRef, useCallback, memo, type ReactNode } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown,
   ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import { invalidateLyricsCache } from './Player'
@@ -54,42 +54,66 @@ function diff(before: Record<string, unknown>, after: Record<string, unknown>): 
   return patch
 }
 
-/* ── Section header ─────────────────────────────────────────────────────────── */
-export function SectionLabel({ label }: { label: string }): JSX.Element {
+/* ── Card — grouped section container ─────────────────────────────────────── */
+export function Card({ title, icon, action, children, className = '' }: {
+  title?: string; icon?: ReactNode; action?: ReactNode
+  children: ReactNode; className?: string
+}): JSX.Element {
   return (
-    <div className="flex items-center gap-2.5 px-4 pt-5 pb-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted opacity-55 shrink-0 select-none">{label}</span>
-      <div className="flex-1 h-px bg-[var(--border)]/50" />
-    </div>
+    <section className={`rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden ${className}`}>
+      {title && (
+        <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[var(--border)]">
+          {icon && <span className="text-text-muted opacity-70 shrink-0">{icon}</span>}
+          <h3 className="text-[11px] font-bold uppercase tracking-widest text-text-muted opacity-80">{title}</h3>
+          {action && <div className="ml-auto">{action}</div>}
+        </div>
+      )}
+      <div className="p-5">{children}</div>
+    </section>
   )
 }
 
-/* ── Two-column field row ───────────────────────────────────────────────────── */
-export function FieldRow({ label, value, original, onChange, placeholder, mono = false }: {
+/* ── Grid — responsive field grid for use inside a Card ───────────────────── */
+export function FieldGrid({ children, cols = 2 }: { children: ReactNode; cols?: 1 | 2 | 3 }): JSX.Element {
+  const colClass = cols === 3 ? 'sm:grid-cols-3' : cols === 1 ? '' : 'sm:grid-cols-2'
+  return <div className={`grid grid-cols-1 ${colClass} gap-x-5 gap-y-4`}>{children}</div>
+}
+
+/* ── Field label with dirty dot ───────────────────────────────────────────── */
+function FieldLabel({ label, changed }: { label: string; changed: boolean }): JSX.Element {
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-75 select-none mb-1.5">
+      {label}
+      {changed && <span className="w-1 h-1 rounded-full bg-accent shrink-0" />}
+    </span>
+  )
+}
+
+const fieldInputClass = (changed: boolean, mono: boolean): string =>
+  `w-full bg-surface-overlay/70 rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-30 border transition-colors ${mono ? 'font-mono' : ''} ${
+    changed ? 'border-accent/40 bg-accent/[0.04]' : 'border-[var(--border)] focus:border-accent/40'
+  }`
+
+/* ── Field ─────────────────────────────────────────────────────────────────── */
+export function FieldRow({ label, value, original, onChange, placeholder, mono = false, span }: {
   label: string; value: string; original: string
-  onChange: (v: string) => void; placeholder?: string; mono?: boolean
+  onChange: (v: string) => void; placeholder?: string; mono?: boolean; span?: 2 | 3
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
   return (
-    <div className={`group grid grid-cols-[84px_1fr] gap-x-3 items-baseline px-4 py-[7px] border-l-2 transition-all
-      ${changed ? 'border-accent/70 bg-accent/[0.025]' : 'border-transparent hover:bg-white/[0.05]'}`}>
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-65 select-none truncate pt-px">
-        {label}
-      </span>
-      <div className="flex items-center gap-2 min-w-0">
-        <input
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder ?? (original || '—')}
-          className={`flex-1 bg-transparent text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-25 min-w-0 border-b border-[var(--border)] pb-px focus:border-accent transition-colors ${mono ? 'font-mono' : ''}`}
-        />
-        {changed && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-accent/80" />}
-      </div>
-    </div>
+    <label className={`flex flex-col min-w-0 ${span === 2 ? 'sm:col-span-2' : span === 3 ? 'sm:col-span-3' : ''}`}>
+      <FieldLabel label={label} changed={changed} />
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder ?? (original || '—')}
+        className={fieldInputClass(changed, mono)}
+      />
+    </label>
   )
 }
 
-/* ── Select row ─────────────────────────────────────────────────────────────── */
+/* ── Select field ──────────────────────────────────────────────────────────── */
 function SelectRow({ label, value, original, onChange, options, placeholder }: {
   label: string; value: string; original: string
   onChange: (v: string) => void
@@ -97,43 +121,34 @@ function SelectRow({ label, value, original, onChange, options, placeholder }: {
 }): JSX.Element {
   const changed = value !== original
   return (
-    <div className={`group grid grid-cols-[84px_1fr] gap-x-3 items-baseline px-4 py-[7px] border-l-2 transition-all
-      ${changed ? 'border-accent/70 bg-accent/[0.025]' : 'border-transparent hover:bg-white/[0.05]'}`}>
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-65 select-none truncate pt-px">
-        {label}
-      </span>
-      <div className="flex items-center gap-2 min-w-0">
-        <select
-          value={value} onChange={e => onChange(e.target.value)}
-          className="flex-1 bg-transparent text-sm text-text-primary focus:outline-none appearance-none cursor-pointer min-w-0 border-b border-[var(--border)] pb-px"
-        >
-          <option value="" style={{ color: '#111', backgroundColor: '#fff' }}>{placeholder || '—'}</option>
-          {options.map(o => <option key={o.value} value={o.value} style={{ color: '#111', backgroundColor: '#fff' }}>{o.label}</option>)}
-        </select>
-        {changed && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-accent/80" />}
-      </div>
-    </div>
+    <label className="flex flex-col min-w-0">
+      <FieldLabel label={label} changed={changed} />
+      <select
+        value={value} onChange={e => onChange(e.target.value)}
+        className={`${fieldInputClass(changed, false)} appearance-none cursor-pointer`}
+      >
+        <option value="" style={{ color: '#111', backgroundColor: '#fff' }}>{placeholder || '—'}</option>
+        {options.map(o => <option key={o.value} value={o.value} style={{ color: '#111', backgroundColor: '#fff' }}>{o.label}</option>)}
+      </select>
+    </label>
   )
 }
 
-/* ── Textarea row ───────────────────────────────────────────────────────────── */
-export function TextareaRow({ label, value, original, onChange, rows = 3, placeholder, mono = false }: {
+/* ── Textarea field ────────────────────────────────────────────────────────── */
+export function TextareaRow({ label, value, original, onChange, rows = 3, placeholder, mono = false, span }: {
   label: string; value: string; original: string
-  onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
+  onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean; span?: 2 | 3
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
   return (
-    <div className={`group border-l-2 transition-all px-4 py-2 ${changed ? 'border-accent/70 bg-accent/[0.025]' : 'border-transparent'}`}>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-65 select-none">{label}</span>
-        {changed && <span className="w-1.5 h-1.5 rounded-full bg-accent/80" />}
-      </div>
+    <label className={`flex flex-col min-w-0 ${span === 2 ? 'sm:col-span-2' : span === 3 ? 'sm:col-span-3' : ''}`}>
+      <FieldLabel label={label} changed={changed} />
       <textarea
         rows={rows} value={value} onChange={e => onChange(e.target.value)}
         placeholder={placeholder || '—'}
-        className={`w-full bg-surface-overlay rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${changed ? 'border-accent/20' : 'border-[var(--border)]'} ${mono ? 'font-mono' : ''}`}
+        className={`${fieldInputClass(changed, mono)} resize-none leading-relaxed py-2.5`}
       />
-    </div>
+    </label>
   )
 }
 
@@ -177,7 +192,7 @@ export default function EditorPage(): JSX.Element {
     pendingEditorSongId, setPendingEditorSongId, setActiveView,
     pendingEditProposal, setPendingEditProposal,
     setShowUserAuth, logoutAccount,
-  } = useStore()
+  } = useStorePick('account', 'currentTrack', 'pendingEditorSongId', 'setPendingEditorSongId', 'setActiveView', 'pendingEditProposal', 'setPendingEditProposal', 'setShowUserAuth', 'logoutAccount')
   const isEditor = !!account?.is_editor
   const isAdmin  = !!account?.is_administrator
   // Admins can edit songs too (SongContextMenu's canEdit check already grants
@@ -656,13 +671,13 @@ export default function EditorPage(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0">
 
       {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '148px' } : undefined}>
-        <span className="flex-1 font-bold text-sm text-text-primary">Edit song</span>
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '148px' } : undefined}>
+        <span className="flex-1 font-bold text-[15px] text-text-primary">Song editor</span>
         <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isAdmin ? 'bg-accent/20 text-accent' : 'bg-emerald-500/20 text-emerald-400'}`}>
           {isAdmin ? 'admin' : 'editor'}
         </span>
-        <span className="text-text-muted opacity-75 text-xs truncate max-w-[90px]">{account.display_name || account.discord_username}</span>
-        <button onClick={() => logoutAccount()} className="text-text-muted opacity-65 hover:opacity-100 text-xs transition-colors">out</button>
+        <span className="text-text-muted opacity-75 text-xs truncate max-w-[140px]">{account.display_name || account.discord_username}</span>
+        <button onClick={() => logoutAccount()} className="text-text-muted opacity-65 hover:opacity-100 text-xs transition-colors">Sign out</button>
       </div>
 
       {/* Scrollable body */}
@@ -701,11 +716,12 @@ export default function EditorPage(): JSX.Element {
             </div>
           </div>
         ) : (
-          <>
+          <div className="mx-auto w-full max-w-6xl px-6 py-6">
+
             {/* ── Editing proposal banner ── */}
             {editingPropId != null && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-accent/10 border-b border-accent/20 shrink-0">
-                <Pencil size={11} className="text-accent shrink-0" />
+              <div className="flex items-center gap-2 px-4 py-2.5 mb-5 rounded-xl bg-accent/10 border border-accent/20">
+                <Pencil size={12} className="text-accent shrink-0" />
                 <span className="text-xs text-accent font-medium flex-1">Editing proposal #{editingPropId}</span>
                 <button onClick={cancelEditProposal}
                   className="text-accent opacity-60 hover:opacity-100 text-xs transition-colors">
@@ -714,131 +730,52 @@ export default function EditorPage(): JSX.Element {
               </div>
             )}
 
-            {/* ── Song header with blurred art ── */}
-            <div className="relative overflow-hidden shrink-0">
-              {imageUrl && (
-                <img
-                  src={buildImageUrl(imageUrl)} alt=""
-                  className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.18] pointer-events-none select-none"
-                />
-              )}
-              <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(to bottom, transparent 0%, var(--surface) 100%)" }} />
-              <div className="relative flex items-end gap-3.5 px-4 pt-7 pb-4">
-                {imageUrl
-                  ? <img src={buildImageUrl(imageUrl)} alt=""
-                      className="w-[60px] h-[60px] rounded-xl object-cover shadow-xl shrink-0 ring-1 ring-white/10" />
-                  : <div className="w-[60px] h-[60px] rounded-xl bg-surface-overlay border border-[var(--border)] flex items-center justify-center shrink-0">
-                      <Music2 size={22} className="text-text-muted" />
-                    </div>
-                }
-                <div className="min-w-0 flex-1 pb-0.5">
-                  <p className="text-text-primary font-bold text-[15px] leading-snug truncate">
-                    {name || song?.track_titles?.[0] || song?.name || 'Untitled'}
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${CAT_BADGE[cat] || 'bg-surface-overlay text-text-muted'}`}>
-                      {CATEGORY_LABELS[cat] || cat || 'Uncategorized'}
-                    </span>
-                    {album && (
-                      <span className="text-text-muted opacity-75 text-[11px] truncate">{album}</span>
+            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start">
+
+              {/* ── Left rail: preview + actions ── */}
+              <aside className="flex flex-col gap-4 lg:sticky lg:top-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden">
+                  <div className="relative overflow-hidden">
+                    {imageUrl && (
+                      <img src={buildImageUrl(imageUrl)} alt=""
+                        className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.22] pointer-events-none select-none" />
                     )}
-                    <span className="text-text-muted opacity-25 text-[11px]">{song ? `#${song.id}` : 'new song'}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
-                  className="p-1.5 rounded-lg text-text-muted opacity-30 hover:opacity-100 hover:bg-white/10 transition-colors shrink-0 mb-0.5">
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-
-            {/* ── Field sections ── */}
-            <div className="pb-4">
-
-              {/* IDENTITY */}
-              <SectionLabel label="Identity" />
-              <FieldRow label="Title"    value={name}     original={String(base.name || '')}    onChange={setName} />
-              <FieldRow label="Artists"  value={artists}  original={String(base.credited_artists || '')} onChange={setArtists} />
-              <FieldRow label="Album"    value={album}    original={String(base.album || '')}   onChange={setAlbum} />
-              <FieldRow label="Cover URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} placeholder="https://…" />
-              <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" />
-              <TextareaRow
-                label="Alt names" value={altNames}
-                original={(Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : '')}
-                onChange={setAltNames} rows={2} placeholder="One name per line"
-              />
-
-              {versionsEnabled && song && (
-                <div className="px-4 py-2 border-l-2 border-transparent">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-65 select-none">Versions</span>
-
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    <input
-                      type="text"
-                      value={versionNum}
-                      onChange={(e) => setVersionNum(e.target.value)}
-                      placeholder="Version (e.g. v1, TV Mix)"
-                      className="w-32 bg-surface-overlay border border-[var(--border)] rounded px-2 py-1 text-xs text-text-primary focus:outline-none"
-                    />
-                    <div className="relative flex-1 min-w-0">
-                      <input
-                        type="text"
-                        value={versionTitle}
-                        onChange={(e) => setVersionTitle(e.target.value)}
-                        onFocus={() => setShowTitleSuggestions(true)}
-                        onBlur={() => setTimeout(() => setShowTitleSuggestions(false), 150)}
-                        placeholder="Version title (shared by all linked songs)"
-                        className="w-full bg-surface-overlay border border-[var(--border)] rounded px-2 py-1 text-xs text-text-primary focus:outline-none"
-                      />
-                      {showTitleSuggestions && titleSuggestions.length > 0 && (
-                        <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-surface border border-[var(--border)] rounded-lg shadow-2xl py-1">
-                          {titleSuggestions.map(s => (
-                            <button
-                              key={s.groupId}
-                              onMouseDown={(e) => { e.preventDefault(); handlePickTitleSuggestion(s) }}
-                              title="Joins this song into that existing version group"
-                              className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors truncate"
-                            >
-                              {s.title}
-                            </button>
-                          ))}
+                    <div className="relative flex flex-col items-center gap-3 px-5 pt-6 pb-5">
+                      {imageUrl
+                        ? <img src={buildImageUrl(imageUrl)} alt=""
+                            className="w-28 h-28 rounded-xl object-cover shadow-xl ring-1 ring-white/10" />
+                        : <div className="w-28 h-28 rounded-xl bg-surface-overlay border border-[var(--border)] flex items-center justify-center">
+                            <Music2 size={26} className="text-text-muted" />
+                          </div>
+                      }
+                      <div className="min-w-0 w-full text-center">
+                        <p className="text-text-primary font-bold text-sm leading-snug truncate">
+                          {name || song?.track_titles?.[0] || song?.name || 'Untitled'}
+                        </p>
+                        <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${CAT_BADGE[cat] || 'bg-surface-overlay text-text-muted'}`}>
+                            {CATEGORY_LABELS[cat] || cat || 'Uncategorized'}
+                          </span>
+                          <span className="text-text-muted opacity-25 text-[11px]">{song ? `#${song.id}` : 'new song'}</span>
                         </div>
-                      )}
+                        {album && <p className="text-text-muted opacity-75 text-[11px] truncate mt-1">{album}</p>}
+                      </div>
+                      <button
+                        onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
+                        className="flex items-center gap-1.5 text-[11px] text-text-muted opacity-60 hover:opacity-100 transition-colors">
+                        <X size={11} /> Close
+                      </button>
                     </div>
-                    <button
-                      onClick={saveVersionInfo}
-                      disabled={versionSaveStatus === 'saving'}
-                      title="Save version info (writes directly, not part of the proposal)"
-                      className={`shrink-0 p-1.5 rounded transition-colors ${
-                        versionSaveStatus === 'saved' ? 'text-emerald-400' :
-                        versionSaveStatus === 'error' ? 'text-red-400' :
-                        'bg-surface-overlay border border-[var(--border)] text-text-muted hover:text-text-primary'
-                      }`}
-                    >
-                      {versionSaveStatus === 'saving' && <Loader2 size={13} className="animate-spin" />}
-                      {versionSaveStatus === 'saved'  && <Check size={13} />}
-                      {versionSaveStatus === 'error'  && <AlertCircle size={13} />}
-                      {versionSaveStatus === 'idle'    && <Check size={13} />}
-                    </button>
                   </div>
-                  {linkError && (
-                    <p className="mt-1.5 text-red-400 text-xs">{linkError}</p>
-                  )}
                 </div>
-              )}
 
-              {/* CLASSIFICATION */}
-              <SectionLabel label="Classification" />
-
-              {/* Category pills */}
-              <div className={`border-l-2 transition-all px-4 py-2 ${cat !== String(base.category || '') ? 'border-accent/70 bg-accent/[0.025]' : 'border-transparent'}`}>
-                <div className="grid grid-cols-[84px_1fr] gap-x-3 items-start">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-65 select-none pt-1">Category</span>
-                  <div className="flex flex-wrap gap-1.5">
+                {/* Category pills */}
+                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-4">
+                  <FieldLabel label="Category" changed={cat !== String(base.category || '')} />
+                  <div className="flex flex-wrap gap-1.5 mt-0.5">
                     {CATEGORIES.map(c => (
                       <button key={c.value} onClick={() => setCat(c.value)}
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all ${
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all ${
                           cat === c.value
                             ? CAT_PILL[c.value] || 'bg-accent text-white'
                             : 'bg-surface-overlay text-text-muted hover:text-text-primary border border-[var(--border)]'
@@ -847,180 +784,259 @@ export default function EditorPage(): JSX.Element {
                       </button>
                     ))}
                   </div>
-                </div>
-              </div>
-
-              <SelectRow
-                label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
-                onChange={setEraId}
-                options={eras.map(e => ({ value: String(e.id), label: e.name }))}
-                placeholder={song?.era?.name || '—'}
-              />
-
-              {/* CREDITS */}
-              <SectionLabel label="Credits" />
-              <FieldRow label="Producers" value={prod}    original={String(base.producers || '')} onChange={setProd} />
-
-              {/* DATES */}
-              <SectionLabel label="Dates" />
-              <FieldRow label="Recorded"  value={recDate} original={String(base.record_dates || '')}  onChange={setRecDate} placeholder="YYYY-MM-DD" />
-              <FieldRow label="Released"  value={relDate} original={String(base.release_date || '')}  onChange={setRelDate} placeholder="YYYY-MM-DD" />
-              <FieldRow label="Preview"   value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} placeholder="YYYY-MM-DD" />
-
-              {/* More fields */}
-              <button
-                onClick={() => setShowMore(v => !v)}
-                className="flex items-center gap-1.5 w-full px-4 pt-4 pb-1 text-[11px] text-text-muted opacity-65 hover:opacity-70 transition-colors select-none">
-                {showMore ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-                {showMore ? 'Fewer fields' : 'More fields'}
-              </button>
-
-              {showMore && (
-                <>
-                  <FieldRow label="Engineers"  value={eng}              original={String(base.engineers || '')}             onChange={setEng} />
-                  <FieldRow label="Location"   value={loc}              original={String(base.recording_locations || '')}   onChange={setLoc} placeholder="Studio / city" />
-                  <FieldRow label="Leak type"  value={leak}             original={String(base.leak_type || '')}             onChange={setLeak} placeholder="HQ, LQ, snippet…" />
-                  <FieldRow label="File names" value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
-                  <FieldRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')}       onChange={setInstrumentals} placeholder="Instrumental versions available" />
-                  <FieldRow label="Inst. names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} />
-                  <div className="pt-2 space-y-2">
-                    <TextareaRow label="Add. info" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} />
-                    <TextareaRow label="Notes"     value={notes}   original={String(base.notes || '')}                  onChange={setNotes}   rows={2} />
-                  </div>
-                </>
-              )}
-
-              {/* LYRICS */}
-              <SectionLabel label="Lyrics" />
-
-              {/* Tab pills */}
-              <div className="flex items-center gap-1 px-4 pb-2">
-                {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
-                  const active = lyricsTab === tab
-                  const dirty = tab === 'lyrics'
-                    ? lyrics !== String(base.lyrics || '')
-                    : !!synced
-                  return (
-                    <button key={tab} onClick={() => setLyricsTab(tab)}
-                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        active ? 'bg-surface-overlay text-text-primary' : 'text-text-muted opacity-75 hover:text-text-muted'
-                      }`}>
-                      {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
-                      {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
-                    </button>
-                  )
-                })}
-
-              </div>
-
-              <div className="px-4">
-                {lyricsTab === 'lyrics' ? (
-                  <div className="relative">
-                    <textarea
-                      rows={15} value={lyrics} onChange={e => setLyrics(e.target.value)}
-                      onPaste={handleLyricsPaste}
-                      disabled={lyricsLoading}
-                      placeholder="Full lyrics… or paste a Genius URL"
-                      className={`w-full bg-surface-overlay rounded-xl px-3.5 py-3 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
-                        lyrics !== String(base.lyrics || '') ? 'border-accent/30' : 'border-[var(--border)]'
-                      } ${lyricsLoading ? 'opacity-40' : ''}`}
+                  <div className="mt-3.5">
+                    <SelectRow
+                      label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
+                      onChange={setEraId}
+                      options={eras.map(e => ({ value: String(e.id), label: e.name }))}
+                      placeholder={song?.era?.name || '—'}
                     />
-                    {lyricsLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center rounded-xl pointer-events-none">
-                        <div className="flex items-center gap-2 text-text-muted text-xs bg-surface-overlay/80 px-3 py-1.5 rounded-lg">
-                          <Loader2 size={13} className="animate-spin" /> Fetching from Genius…
-                        </div>
-                      </div>
-                    )}
-                    {lyricsError && (
-                      <div className="absolute bottom-2 inset-x-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-red-400 text-xs pointer-events-none">
-                        <AlertCircle size={12} className="shrink-0" /> {lyricsError}
-                      </div>
-                    )}
                   </div>
-                ) : (
-                  <textarea
-                    rows={15} value={synced} onChange={e => setSynced(e.target.value)}
-                    placeholder={"[00:00.00] Line one\n[00:05.20] Line two\n…"}
-                    className={`w-full bg-surface-overlay rounded-xl px-3.5 py-3 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
-                      synced ? 'border-accent/30' : 'border-[var(--border)]'
-                    }`}
+                </div>
+
+                {/* Submit / delete actions */}
+                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-4 space-y-2.5">
+                  <input
+                    value={edNotes} onChange={e => setEdNotes(e.target.value)}
+                    placeholder="Editor notes…"
+                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-text-primary placeholder:text-text-muted placeholder:opacity-30 focus:outline-none focus:border-accent/40 transition-colors"
                   />
+                  {submitError && (
+                    <div className="flex items-center gap-2 text-red-400 text-xs">
+                      <AlertCircle size={12} className="shrink-0" /> {submitError}
+                    </div>
+                  )}
+                  {deleteError && (
+                    <div className="flex items-center gap-2 text-red-400 text-xs">
+                      <AlertCircle size={12} className="shrink-0" /> {deleteError}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-[11px] text-text-muted opacity-65">Changes</span>
+                    <span className={`text-xs font-bold tabular-nums ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
+                      {changedCount} field{changedCount !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <button
+                    onClick={submit}
+                    disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
+                    className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+                      submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
+                      changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
+                      'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
+                    }`}>
+                    {submitState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+                    {submitState === 'submitted'  && <Check size={12} />}
+                    {submitState === 'error'      && <AlertCircle size={12} />}
+                    {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
+                    {submitState === 'submitting' && 'Submitting…'}
+                    {submitState === 'submitted'  && 'Submitted!'}
+                    {submitState === 'error'      && 'Try again'}
+                  </button>
+
+                  {/* Propose deletion — only for an existing song, not a new-song draft or an in-progress edit proposal */}
+                  {song && !isNewSongDraft && editingPropId == null && (
+                    <button
+                      onClick={submitDeletion}
+                      onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
+                      disabled={deleteState === 'submitting' || deleteState === 'submitted'}
+                      title="Propose that this song entry be deleted. Admins review before it's removed."
+                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        deleteState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+                        deleteState === 'error'     ? 'bg-red-500/20 text-red-400' :
+                        deleteState === 'confirm'   ? 'bg-red-500 text-white hover:bg-red-600' :
+                        'bg-transparent text-red-400/70 hover:text-red-400 hover:bg-red-500/10'
+                      }`}>
+                      {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+                      {deleteState === 'submitted'  && <Check size={12} />}
+                      {(deleteState === 'idle' || deleteState === 'confirm') && <Trash2 size={12} />}
+                      {deleteState === 'error'      && <AlertCircle size={12} />}
+                      {deleteState === 'idle'       && 'Propose deletion'}
+                      {deleteState === 'confirm'    && 'Click again to confirm'}
+                      {deleteState === 'submitting' && 'Submitting…'}
+                      {deleteState === 'submitted'  && 'Submitted!'}
+                      {deleteState === 'error'      && 'Try again'}
+                    </button>
+                  )}
+                </div>
+              </aside>
+
+              {/* ── Right: field cards ── */}
+              <div className="flex flex-col gap-5 min-w-0">
+
+                <Card title="Identity">
+                  <FieldGrid>
+                    <FieldRow label="Title"    value={name}     original={String(base.name || '')}    onChange={setName} />
+                    <FieldRow label="Artists"  value={artists}  original={String(base.credited_artists || '')} onChange={setArtists} />
+                    <FieldRow label="Album"    value={album}    original={String(base.album || '')}   onChange={setAlbum} />
+                    <FieldRow label="Cover URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} placeholder="https://…" mono />
+                    <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" mono span={2} />
+                    <TextareaRow
+                      label="Alt names" value={altNames}
+                      original={(Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : '')}
+                      onChange={setAltNames} rows={2} placeholder="One name per line" span={2}
+                    />
+                  </FieldGrid>
+                </Card>
+
+                {versionsEnabled && song && (
+                  <Card title="Versions">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={versionNum}
+                        onChange={(e) => setVersionNum(e.target.value)}
+                        placeholder="Version (e.g. v1, TV Mix)"
+                        className="w-36 bg-surface-overlay/70 border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent/40"
+                      />
+                      <div className="relative flex-1 min-w-0">
+                        <input
+                          type="text"
+                          value={versionTitle}
+                          onChange={(e) => setVersionTitle(e.target.value)}
+                          onFocus={() => setShowTitleSuggestions(true)}
+                          onBlur={() => setTimeout(() => setShowTitleSuggestions(false), 150)}
+                          placeholder="Version title (shared by all linked songs)"
+                          className="w-full bg-surface-overlay/70 border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent/40"
+                        />
+                        {showTitleSuggestions && titleSuggestions.length > 0 && (
+                          <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-surface border border-[var(--border)] rounded-lg shadow-2xl py-1">
+                            {titleSuggestions.map(s => (
+                              <button
+                                key={s.groupId}
+                                onMouseDown={(e) => { e.preventDefault(); handlePickTitleSuggestion(s) }}
+                                title="Joins this song into that existing version group"
+                                className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors truncate"
+                              >
+                                {s.title}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={saveVersionInfo}
+                        disabled={versionSaveStatus === 'saving'}
+                        title="Save version info (writes directly, not part of the proposal)"
+                        className={`shrink-0 p-1.5 rounded-lg transition-colors ${
+                          versionSaveStatus === 'saved' ? 'text-emerald-400' :
+                          versionSaveStatus === 'error' ? 'text-red-400' :
+                          'bg-surface-overlay border border-[var(--border)] text-text-muted hover:text-text-primary'
+                        }`}
+                      >
+                        {versionSaveStatus === 'saving' && <Loader2 size={13} className="animate-spin" />}
+                        {versionSaveStatus === 'saved'  && <Check size={13} />}
+                        {versionSaveStatus === 'error'  && <AlertCircle size={13} />}
+                        {versionSaveStatus === 'idle'    && <Check size={13} />}
+                      </button>
+                    </div>
+                    {linkError && (
+                      <p className="mt-1.5 text-red-400 text-xs">{linkError}</p>
+                    )}
+                  </Card>
                 )}
+
+                <Card title="Credits">
+                  <FieldGrid>
+                    <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} span={2} />
+                  </FieldGrid>
+                </Card>
+
+                <Card title="Dates">
+                  <FieldGrid cols={3}>
+                    <FieldRow label="Recorded"  value={recDate} original={String(base.record_dates || '')}  onChange={setRecDate} placeholder="YYYY-MM-DD" mono />
+                    <FieldRow label="Released"  value={relDate} original={String(base.release_date || '')}  onChange={setRelDate} placeholder="YYYY-MM-DD" mono />
+                    <FieldRow label="Preview"   value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
+                  </FieldGrid>
+                </Card>
+
+                {/* More fields */}
+                <button
+                  onClick={() => setShowMore(v => !v)}
+                  className="flex items-center gap-1.5 self-start text-[11px] font-semibold text-text-muted opacity-70 hover:opacity-100 transition-colors select-none">
+                  {showMore ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  {showMore ? 'Fewer fields' : 'More fields'}
+                </button>
+
+                {showMore && (
+                  <Card title="Additional details">
+                    <FieldGrid>
+                      <FieldRow label="Engineers"  value={eng}              original={String(base.engineers || '')}             onChange={setEng} />
+                      <FieldRow label="Location"   value={loc}              original={String(base.recording_locations || '')}   onChange={setLoc} placeholder="Studio / city" />
+                      <FieldRow label="Leak type"  value={leak}             original={String(base.leak_type || '')}             onChange={setLeak} placeholder="HQ, LQ, snippet…" />
+                      <FieldRow label="File names" value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
+                      <FieldRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')}       onChange={setInstrumentals} placeholder="Instrumental versions available" />
+                      <FieldRow label="Inst. names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} />
+                      <TextareaRow label="Add. info" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} span={2} />
+                      <TextareaRow label="Notes"     value={notes}   original={String(base.notes || '')}                  onChange={setNotes}   rows={2} span={2} />
+                    </FieldGrid>
+                  </Card>
+                )}
+
+                {/* LYRICS */}
+                <Card
+                  title="Lyrics"
+                  action={
+                    <div className="flex items-center gap-1">
+                      {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
+                        const active = lyricsTab === tab
+                        const dirty = tab === 'lyrics'
+                          ? lyrics !== String(base.lyrics || '')
+                          : !!synced
+                        return (
+                          <button key={tab} onClick={() => setLyricsTab(tab)}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                              active ? 'bg-surface-overlay text-text-primary' : 'text-text-muted opacity-75 hover:text-text-muted'
+                            }`}>
+                            {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
+                            {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  }
+                >
+                  {lyricsTab === 'lyrics' ? (
+                    <div className="relative">
+                      <textarea
+                        rows={15} value={lyrics} onChange={e => setLyrics(e.target.value)}
+                        onPaste={handleLyricsPaste}
+                        disabled={lyricsLoading}
+                        placeholder="Full lyrics… or paste a Genius URL"
+                        className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
+                          lyrics !== String(base.lyrics || '') ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                        } ${lyricsLoading ? 'opacity-40' : ''}`}
+                      />
+                      {lyricsLoading && (
+                        <div className="absolute inset-0 flex items-center justify-center rounded-xl pointer-events-none">
+                          <div className="flex items-center gap-2 text-text-muted text-xs bg-surface-overlay/80 px-3 py-1.5 rounded-lg">
+                            <Loader2 size={13} className="animate-spin" /> Fetching from Genius…
+                          </div>
+                        </div>
+                      )}
+                      {lyricsError && (
+                        <div className="absolute bottom-2 inset-x-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-red-400 text-xs pointer-events-none">
+                          <AlertCircle size={12} className="shrink-0" /> {lyricsError}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <textarea
+                      rows={15} value={synced} onChange={e => setSynced(e.target.value)}
+                      placeholder={"[00:00.00] Line one\n[00:05.20] Line two\n…"}
+                      className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
+                        synced ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                      }`}
+                    />
+                  )}
+                </Card>
               </div>
             </div>
-          </>
+          </div>
         )}
 
       </div>
-
-      {/* ── Sticky footer ── */}
-      {(song || isNewSongDraft) && (
-        <div className="shrink-0 border-t border-[var(--border)] bg-surface backdrop-blur-sm px-4 py-3 space-y-2.5">
-          <input
-            value={edNotes} onChange={e => setEdNotes(e.target.value)}
-            placeholder="Editor notes…"
-            className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-text-primary placeholder:text-text-muted placeholder:opacity-30 focus:outline-none focus:border-accent/40 transition-colors"
-          />
-          {submitError && (
-            <div className="flex items-center gap-2 text-red-400 text-xs">
-              <AlertCircle size={12} className="shrink-0" /> {submitError}
-            </div>
-          )}
-          {deleteError && (
-            <div className="flex items-center gap-2 text-red-400 text-xs">
-              <AlertCircle size={12} className="shrink-0" /> {deleteError}
-            </div>
-          )}
-          <div className="flex items-center gap-2.5">
-            <span className={`text-xs font-bold tabular-nums min-w-[60px] ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
-              {changedCount} field{changedCount !== 1 ? 's' : ''}
-            </span>
-            <button
-              onClick={submit}
-              disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
-                submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
-                changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
-                'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
-              }`}>
-              {submitState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-              {submitState === 'submitted'  && <Check size={12} />}
-              {submitState === 'error'      && <AlertCircle size={12} />}
-              {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
-              {submitState === 'submitting' && 'Submitting…'}
-              {submitState === 'submitted'  && 'Submitted!'}
-              {submitState === 'error'      && 'Try again'}
-            </button>
-          </div>
-
-          {/* Propose deletion — only for an existing song, not a new-song draft or an in-progress edit proposal */}
-          {song && !isNewSongDraft && editingPropId == null && (
-            <button
-              onClick={submitDeletion}
-              onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
-              disabled={deleteState === 'submitting' || deleteState === 'submitted'}
-              title="Propose that this song entry be deleted. Admins review before it's removed."
-              className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                deleteState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
-                deleteState === 'error'     ? 'bg-red-500/20 text-red-400' :
-                deleteState === 'confirm'   ? 'bg-red-500 text-white hover:bg-red-600' :
-                'bg-transparent text-red-400/70 hover:text-red-400 hover:bg-red-500/10'
-              }`}>
-              {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-              {deleteState === 'submitted'  && <Check size={12} />}
-              {(deleteState === 'idle' || deleteState === 'confirm') && <Trash2 size={12} />}
-              {deleteState === 'error'      && <AlertCircle size={12} />}
-              {deleteState === 'idle'       && 'Propose deletion'}
-              {deleteState === 'confirm'    && 'Click again to confirm'}
-              {deleteState === 'submitting' && 'Submitting…'}
-              {deleteState === 'submitted'  && 'Submitted!'}
-              {deleteState === 'error'      && 'Try again'}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -1099,35 +1115,41 @@ const ApplicationView = memo(function ApplicationView({ application, loading, on
   )
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <div className="px-4 pt-5 pb-4 shrink-0 border-b border-[var(--border)] flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
-          <Award size={18} className="text-accent" />
-        </div>
-        <div>
-          <p className="text-text-primary font-bold text-sm">Become an editor</p>
-          <p className="text-text-muted opacity-75 text-xs mt-0.5">Propose corrections. Admins review and apply them.</p>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
-        <AppField label="Display name"      value={displayName} onChange={setDisplayName} placeholder="How you want to be credited" />
-        <AppField label="Contact"           value={contact}     onChange={setContact}     placeholder="Discord, email…" />
-        <AppField label="Areas of focus"    value={areas}       onChange={setAreas}       placeholder="Lyrics, sessions, recording dates…" />
-        <AppField label="Experience"        value={experience}  onChange={setExperience}  rows={3}
-          placeholder="Other databases you've contributed to, sources you have access to…" />
-        <AppField label="Motivation"        value={motivation}  onChange={setMotivation}  rows={4} hint="min. 20 chars"
-          placeholder="Why do you want to be an editor and what can you contribute?" />
-        {error && (
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
-            <AlertCircle size={13} className="shrink-0" /> {error}
+    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+      <div className="mx-auto w-full max-w-xl px-6 py-8">
+        <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden">
+          <div className="px-6 pt-6 pb-5 border-b border-[var(--border)] flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+              <Award size={19} className="text-accent" />
+            </div>
+            <div>
+              <p className="text-text-primary font-bold text-[15px]">Become an editor</p>
+              <p className="text-text-muted opacity-75 text-xs mt-0.5">Propose corrections. Admins review and apply them.</p>
+            </div>
           </div>
-        )}
-        <button onClick={submit} disabled={submitting}
-          className="w-full py-2.5 rounded-xl bg-accent text-white hover:bg-accent/90 text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-accent/20">
-          {submitting && <Loader2 size={14} className="animate-spin" />}
-          Submit application
-        </button>
-        <button onClick={onSignOut} className="w-full text-xs text-text-muted opacity-65 hover:opacity-100 transition-colors py-1">Sign out</button>
+          <div className="px-6 py-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <AppField label="Display name"      value={displayName} onChange={setDisplayName} placeholder="How you want to be credited" />
+              <AppField label="Contact"           value={contact}     onChange={setContact}     placeholder="Discord, email…" />
+            </div>
+            <AppField label="Areas of focus"    value={areas}       onChange={setAreas}       placeholder="Lyrics, sessions, recording dates…" />
+            <AppField label="Experience"        value={experience}  onChange={setExperience}  rows={3}
+              placeholder="Other databases you've contributed to, sources you have access to…" />
+            <AppField label="Motivation"        value={motivation}  onChange={setMotivation}  rows={4} hint="min. 20 chars"
+              placeholder="Why do you want to be an editor and what can you contribute?" />
+            {error && (
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                <AlertCircle size={13} className="shrink-0" /> {error}
+              </div>
+            )}
+            <button onClick={submit} disabled={submitting}
+              className="w-full py-2.5 rounded-xl bg-accent text-white hover:bg-accent/90 text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-accent/20">
+              {submitting && <Loader2 size={14} className="animate-spin" />}
+              Submit application
+            </button>
+            <button onClick={onSignOut} className="w-full text-xs text-text-muted opacity-65 hover:opacity-100 transition-colors py-1">Sign out</button>
+          </div>
+        </div>
       </div>
     </div>
   )

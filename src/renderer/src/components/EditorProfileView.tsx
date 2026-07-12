@@ -372,8 +372,8 @@ export default function EditorProfileView(): JSX.Element {
           doesn't otherwise reserve space for them, it just draws a drag
           region behind the content. Extra top padding pushes this row
           below that band instead of overlapping it. */}
-      <div className={`px-6 pb-4 border-b border-[var(--border)] shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
-        <div className="flex items-center justify-between mb-3">
+      <div className={`px-6 pb-5 border-b border-[var(--border)] shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
+        <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => setActiveView('api-tracker')}
             className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs transition-colors"
@@ -410,17 +410,17 @@ export default function EditorProfileView(): JSX.Element {
           </div>
         </div>
 
-        <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-4">
           {account?.discord_avatar ? (
-            <img src={account.discord_avatar} alt="" className="w-12 h-12 rounded-full object-cover shrink-0 ring-2 ring-[var(--border)]" />
+            <img src={account.discord_avatar} alt="" className="w-14 h-14 rounded-full object-cover shrink-0 ring-2 ring-[var(--border)]" />
           ) : (
-            <div className="w-12 h-12 rounded-full bg-accent/20 text-accent flex items-center justify-center text-lg font-bold shrink-0">
+            <div className="w-14 h-14 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xl font-bold shrink-0">
               {(account?.display_name || account?.discord_username || '?').charAt(0).toUpperCase()}
             </div>
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-text-primary text-lg font-bold truncate">
+              <h1 className="text-text-primary text-xl font-bold truncate">
                 {account?.display_name || account?.discord_username || 'My Profile'}
               </h1>
               {account?.is_administrator && (
@@ -430,23 +430,28 @@ export default function EditorProfileView(): JSX.Element {
                 <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary text-[10px] font-semibold uppercase tracking-wide shrink-0">Editor</span>
               )}
             </div>
-            {myEntry && (
-              <p className="text-text-muted text-xs mt-0.5 flex items-center gap-1.5">
-                <Trophy size={10} className="text-accent" />
-                Rank #{myEntry.rank} · {myEntry.approved_count} approved
-              </p>
-            )}
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              {myEntry && (
+                <p className="text-text-muted text-xs flex items-center gap-1.5">
+                  <Trophy size={11} className="text-accent" />
+                  Rank #{myEntry.rank} · {myEntry.approved_count} approved
+                </p>
+              )}
+              {!loadingProposals && (
+                <p className="text-text-muted opacity-60 text-xs">{proposals.length} proposal{proposals.length !== 1 ? 's' : ''} submitted</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── Body: side by side ── */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex gap-5 overflow-hidden p-5">
 
         {/* ── Left: My Proposals ── */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden border-r border-[var(--border)]">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-surface-raised/40">
           {/* Section header */}
-          <div className="px-5 pt-4 pb-3 shrink-0">
+          <div className="px-5 pt-4 pb-3 shrink-0 border-b border-[var(--border)]">
             <div className="flex items-center gap-2 mb-3">
               <FileEdit size={13} className="text-text-muted" />
               <h2 className="text-text-secondary text-xs font-semibold uppercase tracking-widest">My Proposals</h2>
@@ -498,7 +503,7 @@ export default function EditorProfileView(): JSX.Element {
           </div>
 
           {/* Proposals list */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-3 pb-6">
+          <div className="flex-1 overflow-y-auto min-h-0 p-3">
             {loadingProposals ? (
               <div className="flex justify-center py-12">
                 <Loader2 size={18} className="animate-spin text-text-muted" />
@@ -513,19 +518,19 @@ export default function EditorProfileView(): JSX.Element {
                 </p>
               </div>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {filteredProposals.map((p) => {
                   const s = STATUS_STYLES[p.status]
                   return (
-                    <div key={p.id} className="flex items-stretch gap-0 rounded-lg overflow-hidden hover:bg-surface-overlay transition-colors group">
+                    <div key={p.id} className="flex items-stretch gap-0 rounded-xl overflow-hidden bg-surface/60 border border-[var(--border)] hover:border-accent/30 transition-colors group">
                       {/* Status bar */}
-                      <div className={`w-0.5 shrink-0 ${s.bar}`} />
-                      <div className="flex items-center gap-3 px-3 py-2.5 flex-1 min-w-0">
+                      <div className={`w-1 shrink-0 ${s.bar}`} />
+                      <div className="flex items-center gap-3 px-3.5 py-3 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <p className="text-text-primary text-sm font-medium truncate">{p.title || `Song #${p.song}`}</p>
                           <p className="text-text-muted text-xs mt-0.5">{changeTypeLabel(p.change_type)} · {formatDate(p.created_at)}</p>
                         </div>
-                        <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium ${s.badge}`}>
+                        <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${s.badge}`}>
                           {s.label}
                         </span>
                         {p.status === 'pending' && (
@@ -571,13 +576,13 @@ export default function EditorProfileView(): JSX.Element {
         </div>
 
         {/* ── Right: Leaderboard ── */}
-        <div className="w-80 flex flex-col min-h-0 overflow-hidden shrink-0">
-          <div className="px-5 pt-4 pb-3 shrink-0 flex items-center gap-2">
+        <div className="w-80 flex flex-col min-h-0 overflow-hidden shrink-0 rounded-2xl border border-[var(--border)] bg-surface-raised/40">
+          <div className="px-5 pt-4 pb-3 shrink-0 flex items-center gap-2 border-b border-[var(--border)]">
             <Trophy size={13} className="text-text-muted" />
             <h2 className="text-text-secondary text-xs font-semibold uppercase tracking-widest">Leaderboard</h2>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 px-3 pb-6">
+          <div className="flex-1 overflow-y-auto min-h-0 p-3">
             {loadingLeaderboard ? (
               <div className="flex justify-center py-12">
                 <Loader2 size={18} className="animate-spin text-text-muted" />
@@ -588,14 +593,14 @@ export default function EditorProfileView(): JSX.Element {
                 <p className="text-sm">No data</p>
               </div>
             ) : (
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {leaderboard.map((entry) => {
                   const isMe = entry.discord_username === account?.discord_username
                   const rankStyle = RANK_STYLES[entry.rank]
                   return (
                     <div
                       key={entry.user_id}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
                         isMe ? 'bg-accent/8 ring-1 ring-accent/20' : 'hover:bg-surface-overlay'
                       }`}
                     >

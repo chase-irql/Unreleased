@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
-import { SectionLabel, FieldRow } from './EditorPage'
+import { Card, FieldGrid, FieldRow } from './EditorPage'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Local-file metadata editor — the same full-page editor layout the API editor
@@ -41,7 +41,7 @@ const emptyFields = (t: LibraryTrack): MetaFields => ({
 
 export default function LocalEditorPage(): JSX.Element {
   const el = (window as any).electron
-  const { pendingLocalEditTrack: track, setPendingLocalEditTrack, updateLibraryTrack, setActiveView } = useStore()
+  const { pendingLocalEditTrack: track, setPendingLocalEditTrack, updateLibraryTrack, setActiveView } = useStorePick('pendingLocalEditTrack', 'setPendingLocalEditTrack', 'updateLibraryTrack', 'setActiveView')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -161,11 +161,11 @@ export default function LocalEditorPage(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0">
 
       {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border)]" style={el ? { paddingRight: '148px' } : undefined}>
+      <div className="shrink-0 flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]" style={el ? { paddingRight: '148px' } : undefined}>
         <button onClick={goBack} className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0">
           <ChevronLeft size={16} />
         </button>
-        <span className="flex-1 font-bold text-sm text-text-primary">Edit metadata</span>
+        <span className="flex-1 font-bold text-[15px] text-text-primary">Edit metadata</span>
         {changedCount > 0 && (
           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/20 text-accent shrink-0">
             {changedCount} change{changedCount !== 1 ? 's' : ''}
@@ -183,136 +183,151 @@ export default function LocalEditorPage(): JSX.Element {
             <Loader2 size={18} className="animate-spin text-text-muted" />
           </div>
         ) : (
-          <>
-            {/* Song header with blurred art */}
-            <div className="relative overflow-hidden shrink-0">
-              {fields.albumArt && (
-                <img src={fields.albumArt} alt=""
-                  className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.18] pointer-events-none select-none" />
-              )}
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, transparent 0%, var(--surface) 100%)' }} />
-              <div className="relative flex items-end gap-3.5 px-4 pt-7 pb-4">
-                {/* Editable album art */}
-                <div className="shrink-0">
-                  <button onClick={pickArt} title="Change album art"
-                    className="w-[76px] h-[76px] rounded-xl overflow-hidden shadow-xl ring-1 ring-white/10 relative group bg-surface-overlay flex items-center justify-center">
-                    {fields.albumArt
-                      ? <img src={fields.albumArt} alt="" className="w-full h-full object-cover" />
-                      : <Music2 size={26} className="text-text-muted" />}
-                    <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Upload size={18} className="text-white" />
+          <div className="mx-auto w-full max-w-6xl px-6 py-6">
+            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start">
+
+              {/* ── Left rail: art + actions ── */}
+              <aside className="flex flex-col gap-4 lg:sticky lg:top-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden">
+                  <div className="relative overflow-hidden">
+                    {fields.albumArt && (
+                      <img src={fields.albumArt} alt=""
+                        className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.22] pointer-events-none select-none" />
+                    )}
+                    <div className="relative flex flex-col items-center gap-3 px-5 pt-6 pb-5">
+                      <button onClick={pickArt} title="Change album art"
+                        className="w-28 h-28 rounded-xl overflow-hidden shadow-xl ring-1 ring-white/10 relative group bg-surface-overlay flex items-center justify-center">
+                        {fields.albumArt
+                          ? <img src={fields.albumArt} alt="" className="w-full h-full object-cover" />
+                          : <Music2 size={26} className="text-text-muted" />}
+                        <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Upload size={18} className="text-white" />
+                        </span>
+                      </button>
+                      <div className="min-w-0 w-full text-center">
+                        <p className="text-text-primary font-bold text-sm leading-snug truncate">
+                          {fields.title || track.title || 'Untitled'}
+                        </p>
+                        <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
+                          {fields.genre && (
+                            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-surface-overlay text-text-muted">
+                              {fields.genre}
+                            </span>
+                          )}
+                          {fields.album && <span className="text-text-muted opacity-75 text-[11px] truncate">{fields.album}</span>}
+                        </div>
+                        <p className="text-text-muted opacity-25 text-[11px] truncate mt-1">{fileName}</p>
+                      </div>
+                      {fields.albumArt && (
+                        <button onClick={() => set('albumArt', null)}
+                          className="inline-flex items-center gap-1 text-[11px] text-text-muted opacity-60 hover:opacity-100 hover:text-red-400 transition-colors">
+                          <Trash2 size={11} /> Remove art
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-4 space-y-2.5">
+                  {error && (
+                    <div className="flex items-center gap-2 text-amber-400 text-xs">
+                      <AlertCircle size={12} className="shrink-0" /> <span className="min-w-0">{error}</span>
+                    </div>
+                  )}
+                  {!error && track.ext !== 'mp3' && (
+                    <p className="text-text-muted opacity-65 text-[11px]">Note: tag writing is only supported for MP3 files.</p>
+                  )}
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-[11px] text-text-muted opacity-65">Changes</span>
+                    <span className={`text-xs font-bold tabular-nums ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
+                      {changedCount} field{changedCount !== 1 ? 's' : ''}
                     </span>
+                  </div>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || loading || changedCount === 0}
+                    className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      changedCount === 0 ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed'
+                        : 'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
+                    }`}>
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                  <button onClick={goBack}
+                    className="w-full py-2 rounded-xl text-xs font-semibold text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+                    Cancel
                   </button>
                 </div>
-                <div className="min-w-0 flex-1 pb-0.5">
-                  <p className="text-text-primary font-bold text-[15px] leading-snug truncate">
-                    {fields.title || track.title || 'Untitled'}
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    {fields.genre && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-surface-overlay text-text-muted">
-                        {fields.genre}
-                      </span>
-                    )}
-                    {fields.album && <span className="text-text-muted opacity-75 text-[11px] truncate">{fields.album}</span>}
-                    <span className="text-text-muted opacity-25 text-[11px] truncate max-w-[220px]">{fileName}</span>
-                  </div>
-                  {fields.albumArt && (
-                    <button onClick={() => set('albumArt', null)}
-                      className="mt-2 inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-red-400 transition-colors">
-                      <Trash2 size={10} /> Remove art
-                    </button>
+              </aside>
+
+              {/* ── Right: field cards ── */}
+              <div className="flex flex-col gap-5 min-w-0">
+                <Card title="Identity">
+                  <FieldGrid>
+                    <FieldRow label="Title"       value={fields.title}       original={original.title}       onChange={v => set('title', v)} />
+                    <FieldRow label="Artist"      value={fields.artist}      original={original.artist}      onChange={v => set('artist', v)} />
+                    <FieldRow label="Album"       value={fields.album}       original={original.album}       onChange={v => set('album', v)} />
+                    <FieldRow label="Alb. Artist" value={fields.albumArtist} original={original.albumArtist} onChange={v => set('albumArtist', v)} />
+                  </FieldGrid>
+                </Card>
+
+                <Card title="Credits">
+                  <FieldGrid>
+                    <FieldRow label="Composer" value={fields.composer} original={original.composer} onChange={v => set('composer', v)} />
+                    <FieldRow label="Genre"    value={fields.genre}    original={original.genre}    onChange={v => set('genre', v)} />
+                  </FieldGrid>
+                </Card>
+
+                <Card title="Numbers">
+                  <FieldGrid cols={3}>
+                    <FieldRow label="Year"    value={fields.year}        original={original.year}        onChange={v => set('year', v)}        placeholder="2019" mono />
+                    <FieldRow label="Track #" value={fields.trackNumber} original={original.trackNumber} onChange={v => set('trackNumber', v)} placeholder="1" mono />
+                    <FieldRow label="Disc #"  value={fields.discNumber}  original={original.discNumber}  onChange={v => set('discNumber', v)}  placeholder="1" mono />
+                  </FieldGrid>
+                </Card>
+
+                <Card
+                  title="Lyrics"
+                  action={
+                    <div className="flex items-center gap-1">
+                      {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
+                        const active = lyricsTab === tab
+                        const dirty = tab === 'lyrics' ? changed('lyrics') : changed('syncedLyrics')
+                        return (
+                          <button key={tab} onClick={() => setLyricsTab(tab)}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                              active ? 'bg-surface-overlay text-text-primary' : 'text-text-muted opacity-75 hover:text-text-muted'
+                            }`}>
+                            {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
+                            {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  }
+                >
+                  {lyricsTab === 'lyrics' ? (
+                    <textarea
+                      rows={14} value={fields.lyrics} onChange={e => set('lyrics', e.target.value)}
+                      placeholder="Full lyrics…"
+                      className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
+                        changed('lyrics') ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                      }`}
+                    />
+                  ) : (
+                    <textarea
+                      rows={14} value={fields.syncedLyrics} onChange={e => set('syncedLyrics', e.target.value)}
+                      placeholder={'[00:00.00] Line one\n[00:05.20] Line two\n…'}
+                      className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
+                        changed('syncedLyrics') ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                      }`}
+                    />
                   )}
-                </div>
+                </Card>
               </div>
             </div>
-
-            {/* Field sections */}
-            <div className="pb-4">
-              <SectionLabel label="Identity" />
-              <FieldRow label="Title"       value={fields.title}       original={original.title}       onChange={v => set('title', v)} />
-              <FieldRow label="Artist"      value={fields.artist}      original={original.artist}      onChange={v => set('artist', v)} />
-              <FieldRow label="Album"       value={fields.album}       original={original.album}       onChange={v => set('album', v)} />
-              <FieldRow label="Alb. Artist" value={fields.albumArtist} original={original.albumArtist} onChange={v => set('albumArtist', v)} />
-
-              <SectionLabel label="Credits" />
-              <FieldRow label="Composer" value={fields.composer} original={original.composer} onChange={v => set('composer', v)} />
-              <FieldRow label="Genre"    value={fields.genre}    original={original.genre}    onChange={v => set('genre', v)} />
-
-              <SectionLabel label="Numbers" />
-              <FieldRow label="Year"    value={fields.year}        original={original.year}        onChange={v => set('year', v)}        placeholder="2019" />
-              <FieldRow label="Track #" value={fields.trackNumber} original={original.trackNumber} onChange={v => set('trackNumber', v)} placeholder="1" />
-              <FieldRow label="Disc #"  value={fields.discNumber}  original={original.discNumber}  onChange={v => set('discNumber', v)}  placeholder="1" />
-
-              <SectionLabel label="Lyrics" />
-              <div className="flex items-center gap-1 px-4 pb-2">
-                {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
-                  const active = lyricsTab === tab
-                  const dirty = tab === 'lyrics' ? changed('lyrics') : changed('syncedLyrics')
-                  return (
-                    <button key={tab} onClick={() => setLyricsTab(tab)}
-                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        active ? 'bg-surface-overlay text-text-primary' : 'text-text-muted opacity-75 hover:text-text-muted'
-                      }`}>
-                      {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
-                      {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="px-4">
-                {lyricsTab === 'lyrics' ? (
-                  <textarea
-                    rows={14} value={fields.lyrics} onChange={e => set('lyrics', e.target.value)}
-                    placeholder="Full lyrics…"
-                    className={`w-full bg-surface-overlay rounded-xl px-3.5 py-3 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
-                      changed('lyrics') ? 'border-accent/30' : 'border-[var(--border)]'
-                    }`}
-                  />
-                ) : (
-                  <textarea
-                    rows={14} value={fields.syncedLyrics} onChange={e => set('syncedLyrics', e.target.value)}
-                    placeholder={'[00:00.00] Line one\n[00:05.20] Line two\n…'}
-                    className={`w-full bg-surface-overlay rounded-xl px-3.5 py-3 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
-                      changed('syncedLyrics') ? 'border-accent/30' : 'border-[var(--border)]'
-                    }`}
-                  />
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Sticky footer */}
-      <div className="shrink-0 border-t border-[var(--border)] bg-surface backdrop-blur-sm px-4 py-3 space-y-2.5">
-        {error && (
-          <div className="flex items-center gap-2 text-amber-400 text-xs">
-            <AlertCircle size={12} className="shrink-0" /> <span className="min-w-0">{error}</span>
           </div>
         )}
-        {!error && track.ext !== 'mp3' && (
-          <p className="text-text-muted opacity-65 text-[11px]">Note: tag writing is only supported for MP3 files.</p>
-        )}
-        <div className="flex items-center gap-2.5">
-          <span className={`text-xs font-bold tabular-nums min-w-[60px] ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
-            {changedCount} field{changedCount !== 1 ? 's' : ''}
-          </span>
-          <button onClick={goBack}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || loading || changedCount === 0}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-              changedCount === 0 ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed'
-                : 'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
-            }`}>
-            {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-            {saving ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
       </div>
     </div>
   )

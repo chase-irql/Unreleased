@@ -4,7 +4,7 @@ import {
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { getToken } from '../lib/userApi'
 import { cacheClearAll } from '../lib/apiCache'
 
@@ -107,7 +107,7 @@ export default function Settings(): JSX.Element {
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStore()
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)

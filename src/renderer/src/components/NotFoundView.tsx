@@ -1,8 +1,8 @@
 import logo from '../assets/logo.png'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 
 export default function NotFoundView(): JSX.Element {
-  const { setActiveView } = useStore()
+  const { setActiveView } = useStorePick('setActiveView')
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-5 text-center px-6">
       <img src={logo} alt="unreleased" className="w-16 h-16 object-contain opacity-40" />

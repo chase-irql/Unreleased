@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronUp, Shield, TrendingUp, MessageSquare, Calendar,
   Hash, Minus, Plus, UserCheck, FileCheck, Activity, Pencil, X as XIcon, ChevronDown as ChevronDownIcon,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } from '../lib/userApi'
 import { invalidateLyricsCache } from './Player'
@@ -189,7 +189,7 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage(): JSX.Element {
-  const { account, setActiveView, loadAccount } = useStore()
+  const { account, setActiveView, loadAccount } = useStorePick('account', 'setActiveView', 'loadAccount')
   const isAdmin    = !!account?.is_administrator
   const otpEnabled = !!account?.otp_enabled
 
