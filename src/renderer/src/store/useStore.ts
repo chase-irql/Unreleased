@@ -83,7 +83,7 @@ interface AppState {
   radioFmVote: import('../lib/radioLive').RadioVote | null
   radioFmUpNext: import('../lib/radioLive').RadioTrack | null
   radioFmQueuePreview: string[]
-  radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null } | null
+  radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
   viewMode: 'list' | 'grid'
   theme: 'dark' | 'light'
   searchQuery: string
@@ -177,7 +177,7 @@ interface AppActions {
   setRadioFmVote: (vote: import('../lib/radioLive').RadioVote | null) => void
   setRadioFmUpNext: (track: import('../lib/radioLive').RadioTrack | null) => void
   setRadioFmQueuePreview: (preview: string[]) => void
-  setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null } | null) => void
+  setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null) => void
   setShowSettings: (show: boolean) => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void

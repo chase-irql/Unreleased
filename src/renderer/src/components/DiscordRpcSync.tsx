@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { discordCoverUrl } from '../lib/juicewrldApi'
+import { eraFullName, loadEraFullNames } from '../lib/eras'
 
 // How far the live playback position is allowed to drift from what we last
 // told Discord before we resend. A seek (fast-forward/rewind) jumps
@@ -34,6 +35,15 @@ export default function DiscordRpcSync(): JSX.Element | null {
   const getCurrentTime = (): number => useStore.getState().currentTime
 
   const el = (window as any).electron
+  // Era full names (e.g. "WOD" → "WRLD On Drugs") load asynchronously from
+  // /eras/; this bumps the effect below once they arrive so an activity sent
+  // with the bare abbreviation gets re-sent with the full name.
+  const [erasReady, setErasReady] = useState(false)
+  useEffect(() => {
+    let on = true
+    loadEraFullNames().then(() => { if (on) setErasReady(true) }).catch(() => {})
+    return () => { on = false }
+  }, [])
   const lastSentKeyRef = useRef<string | null>(null)
   // What we last told Discord the position was, and when (wall-clock) — lets
   // the drift check below compute where Discord *thinks* playback is now and
@@ -52,7 +62,13 @@ export default function DiscordRpcSync(): JSX.Element | null {
         }
         return
       }
-      const key = `radio:${radioFmNowPlaying.title}:${radioFmNowPlaying.artist}`
+      // Full era name when the abbreviation is known ("WOD" → "WRLD On
+      // Drugs"), then the bare abbreviation, then stream metadata's album.
+      const era = eraFullName(radioFmMatchedSong?.era) || radioFmMatchedSong?.era || radioFmNowPlaying.album || undefined
+      // The matched song (cover + era) resolves asynchronously after the
+      // now-playing update, so it — and the resolved era — are part of the
+      // key; otherwise the resend carrying that data would be deduped away.
+      const key = `radio:${radioFmNowPlaying.title}:${radioFmNowPlaying.artist}:${radioFmMatchedSong?.songId ?? ''}:${era ?? ''}`
       if (key === lastSentKeyRef.current) return
       lastSentKeyRef.current = key
       const currentTime = (radioFmNowPlaying.elapsed_ms ?? 0) / 1000
@@ -64,7 +80,7 @@ export default function DiscordRpcSync(): JSX.Element | null {
         currentTime,
         duration: (radioFmNowPlaying.duration_ms ?? 0) / 1000,
         isRadio: true,
-        era: radioFmNowPlaying.album || undefined,
+        era,
         coverUrl: discordCoverUrl(radioFmMatchedSong?.imageUrl ?? radioFmNowPlaying.image_url, radioFmMatchedSong?.path) ?? null,
       })
       return
@@ -94,7 +110,12 @@ export default function DiscordRpcSync(): JSX.Element | null {
       return
     }
 
-    const key = `track:${currentTrack.id}:playing`
+    // Full era name for API tracks ("WOD" → "WRLD On Drugs"), the bare
+    // abbreviation until /eras/ has loaded, album for tracks without era
+    // data (local/file-browser). In the key so the full name isn't deduped
+    // away when it arrives after the first send.
+    const era = eraFullName(currentTrack.era) || currentTrack.era || currentTrack.album || undefined
+    const key = `track:${currentTrack.id}:playing:${era ?? ''}`
     if (key === lastSentKeyRef.current) return
     lastSentKeyRef.current = key
     const currentTime = getCurrentTime()
@@ -106,10 +127,10 @@ export default function DiscordRpcSync(): JSX.Element | null {
       currentTime,
       duration: currentTrack.duration,
       isRadio: false,
-      era: currentTrack.album || undefined,
+      era,
       coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
     })
-  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, currentTrack?.imageUrl, currentTrack?.path, currentTrack?.album, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl, radioFmMatchedSong?.path])
+  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, currentTrack?.imageUrl, currentTrack?.path, currentTrack?.album, currentTrack?.era, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl, radioFmMatchedSong?.path, radioFmMatchedSong?.era, erasReady])
 
   // Seek detection: periodically compare where Discord thinks playback is
   // (extrapolated from the last update) against the real live position, and
@@ -134,7 +155,7 @@ export default function DiscordRpcSync(): JSX.Element | null {
         currentTime: actual,
         duration: currentTrack.duration,
         isRadio: false,
-        era: currentTrack.album || undefined,
+        era: eraFullName(currentTrack.era) || currentTrack.era || currentTrack.album || undefined,
         coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
       })
     }, DRIFT_CHECK_MS)

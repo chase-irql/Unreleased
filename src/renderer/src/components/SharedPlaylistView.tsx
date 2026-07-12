@@ -98,7 +98,7 @@ function parseTracks(data: unknown): Track[] {
 }
 
 export default function SharedPlaylistView(): JSX.Element {
-  const { playTrack } = useStorePick('playTrack')
+  const { playTrack, playCollection } = useStorePick('playTrack', 'playCollection')
   const shareId = window.location.pathname.split('/shared/')[1]?.split('/')[0] ?? ''
 
   const [tracks, setTracks] = useState<Track[]>([])
@@ -152,7 +152,7 @@ export default function SharedPlaylistView(): JSX.Element {
       {tracks.length > 0 && (
         <div className="flex gap-3 mb-6">
           <button
-            onClick={() => playTrack(tracks[0], tracks)}
+            onClick={() => playCollection(tracks)}
             className="flex items-center gap-2 px-6 py-3 rounded-full bg-accent text-black text-sm font-bold hover:scale-105 active:scale-95 transition-transform shadow-lg"
           >
             <Play size={17} fill="currentColor" /> Play all

@@ -928,21 +928,21 @@ export default function WrldView(): JSX.Element {
                   <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-20">
                     {/* Notch sits half-embedded in the art's left edge, like it's
                         popping out of the cover itself, rather than floating
-                        beside it as a detached control. Shaped as a plain tab
-                        bump (grabber line, no icon) rather than a button with
-                        an arrow glyph. */}
+                        beside it as a detached control. Fully rounded so there's
+                        no flat edge cutting into the art, and the indicator
+                        inside is a plain straight bar, not an arrow glyph. */}
                     <button
                       onClick={() => setSongVersionMenuOpen(o => !o)}
                       title="Other versions"
-                      className={`w-4 h-9 flex items-center justify-center rounded-l-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border-y border-l shadow-lg transition-colors ${
+                      className={`w-4 h-9 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border shadow-lg transition-colors ${
                         songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-white/20 dark:border-white/10'
                       }`}
                     >
-                      <span className="w-[3px] h-4 rounded-full bg-white/50" />
+                      <span className="w-[2px] h-4 bg-white/60" />
                     </button>
                     <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} style={{ pointerEvents: songVersionMenuOpen ? 'auto' : 'none' }} />
                     <div
-                      className={`absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20 min-w-[120px] origin-right bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl transition-all duration-200 ease-out ${
+                      className={`absolute right-full top-1/2 -translate-y-1/2 mr-3 z-20 min-w-[120px] origin-right bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl transition-all duration-200 ease-out ${
                         songVersionMenuOpen
                           ? 'opacity-100 scale-100 translate-x-0'
                           : 'opacity-0 scale-90 translate-x-2 pointer-events-none'

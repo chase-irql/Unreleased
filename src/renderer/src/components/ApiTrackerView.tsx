@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import {
   Search, Play, Loader2, Music2, X, Check,
-  LayoutList, LayoutGrid, Rows3, Info, ListPlus, PanelLeft,
+  LayoutList, Rows3, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
   CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
+  AlertTriangle,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -26,7 +27,7 @@ import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
-type ViewMode = 'list' | 'grid' | 'detail'
+type ViewMode = 'list' | 'detail'
 type TrackerTab = 'songs' | 'lyrics' | 'calendar' | 'producers'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -688,8 +689,8 @@ function DetailField({ label, value, className }: {
 // dates/locations, leak info, file names…) are laid out in a fixed grid on
 // every row. The grid is a *fixed* set of cells (empty ones render "—")
 // so all rows share one height — required by the virtual window's fixed
-// stride. Mobile shows a 2-column subset; md: adds a third column and the
-// rarer fields.
+// stride. Mobile shows a 2-column subset; md: widens to 4 columns and adds
+// the rarer fields.
 const DetailedSongRow = memo(function DetailedSongRow({
   song, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
   selectMode, selected, onToggleSelect,
@@ -710,7 +711,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
 
   return (
     <div
-      className={`group flex gap-3 px-3 py-2.5 h-full overflow-hidden rounded-lg border border-[var(--border)] hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
+      className={`group flex gap-3 px-3 py-2 h-full overflow-hidden rounded-lg border border-[var(--border)] hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
       onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
@@ -724,8 +725,8 @@ const DetailedSongRow = memo(function DetailedSongRow({
       )}
 
       {/* Cover art */}
-      <div className="relative shrink-0 w-14 h-14 md:w-16 md:h-16 rounded overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={track} size={64} shimmer={false} />
+      <div className="relative shrink-0 w-12 h-12 md:w-14 md:h-14 rounded overflow-hidden bg-surface-overlay">
+        <AlbumArtThumbnail track={track} size={56} shimmer={false} />
         {canPlay && !selectMode && (
           <button
             className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
@@ -797,7 +798,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
         </p>
 
         {/* Metadata field grid — fixed cell set so every row is the same height */}
-        <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
+        <div className="mt-1.5 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1">
           <DetailField label="Producers" value={song.producers} />
           <DetailField label="Engineers" value={song.engineers} />
           <DetailField label="Recording Locations" value={song.recording_locations} className="hidden md:block" />
@@ -985,13 +986,13 @@ function VirtualSongList({
   )
 }
 
-// Detailed rows are much taller than list rows (title line + a 4-row md: /
-// 3-row mobile metadata grid), but still fixed-height — DetailedSongRow
-// clips overflow, so the stride below just has to match its natural height
-// with a little headroom.
-const DETAIL_ROW_H_DESKTOP = 178
-const DETAIL_ROW_H_MOBILE = 166
-const DETAIL_ROW_GAP = 8 // bordered card-style rows want more breathing room than the flat list's 2px
+// Detailed rows are taller than list rows (title line + a 3-row metadata
+// grid — 4 columns at md:, 2 on mobile), but still fixed-height —
+// DetailedSongRow clips overflow, so the stride below just has to match its
+// natural height with a little headroom.
+const DETAIL_ROW_H_DESKTOP = 136
+const DETAIL_ROW_H_MOBILE = 152
+const DETAIL_ROW_GAP = 6 // bordered card-style rows want more breathing room than the flat list's 2px
 
 function VirtualSongDetailList({
   scrollRef, songs, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
@@ -1019,73 +1020,6 @@ function VirtualSongDetailList({
           />
         </div>
       ))}
-    </div>
-  )
-}
-
-// Mirrors LibraryTab's virtualized grid: column count/width derived from the
-// container width (same auto-fill/minmax(140px,1fr) math the CSS grid did),
-// fixed text-block height under the square art so every row shares a stride.
-const GRID_CARD_MIN = 140
-const GRID_CARD_GAP = 12
-const GRID_CARD_TEXT_H = 82
-
-function VirtualSongGrid({
-  scrollRef, songs, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
-  selectMode, selected, onToggleSelect,
-}: VirtualSongsProps): JSX.Element {
-  const contentRef = useRef<HTMLDivElement>(null)
-  const [cols, setCols] = useState(1)
-  const [colW, setColW] = useState(GRID_CARD_MIN)
-
-  useEffect(() => {
-    const el = contentRef.current
-    if (!el) return
-    const compute = (): void => {
-      const w = el.clientWidth
-      const c = Math.max(1, Math.floor((w + GRID_CARD_GAP) / (GRID_CARD_MIN + GRID_CARD_GAP)))
-      setCols(c)
-      setColW((w - (c - 1) * GRID_CARD_GAP) / c)
-    }
-    compute()
-    const ro = new ResizeObserver(compute)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  const rowStride = colW + GRID_CARD_TEXT_H + GRID_CARD_GAP // square art + text + gap
-  const rows = Math.ceil(songs.length / cols)
-  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows, rowStride)
-
-  return (
-    <div ref={contentRef} className="mt-1" style={{ height: totalHeight, position: 'relative' }}>
-      {Array.from({ length: end - start }, (_, r) => {
-        const row = start + r
-        return (
-          <div
-            key={row}
-            style={{
-              position: 'absolute', top: row * rowStride, left: 0, right: 0,
-              display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: GRID_CARD_GAP,
-            }}
-          >
-            {songs.slice(row * cols, row * cols + cols).map((song) => (
-              <SongCard
-                key={song.id}
-                song={song}
-                onPlay={onPlay}
-                onCategoryClick={onCategoryClick}
-                onEraClick={onEraClick}
-                onInfo={onInfo}
-                onContextMenu={onContextMenu}
-                selectMode={selectMode}
-                selected={selected.has(song.id)}
-                onToggleSelect={onToggleSelect}
-              />
-            ))}
-          </div>
-        )
-      })}
     </div>
   )
 }
@@ -1264,115 +1198,6 @@ function VersionTitlePromptModal({
   )
 }
 
-// ─── Song card (grid mode) ────────────────────────────────────────────────────
-function SongCard({
-  song, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
-  selectMode, selected, onToggleSelect,
-}: {
-  song: JWApiSong
-  onPlay: (song: JWApiSong) => void
-  onCategoryClick: (cat: Category) => void
-  onEraClick: (era: string) => void
-  onInfo: (song: JWApiSong) => void
-  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
-  selectMode: boolean
-  selected: boolean
-  onToggleSelect: (song: JWApiSong) => void
-}): JSX.Element {
-  const track = songToTrack(song)
-  const title = song.name
-  const canPlay = !!song.path
-
-  return (
-    <div
-      className={`group flex flex-col rounded-xl overflow-hidden bg-surface-overlay hover:bg-surface-raised transition-colors cursor-default ${selected ? 'ring-2 ring-accent' : ''}`}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
-      onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
-    >
-      <div className="relative w-full aspect-square bg-surface-raised">
-        <AlbumArtThumbnail track={track} size={160} shimmer={false} />
-        {selectMode && (
-          <div className="absolute top-1.5 left-1.5 z-10">
-            {selected
-              ? <CheckSquare2 size={18} className="text-accent drop-shadow" />
-              : <Square size={18} className="text-white/70 drop-shadow" />}
-          </div>
-        )}
-        {canPlay && !selectMode && (
-          <button
-            className="absolute inset-0 items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
-            onClick={(e) => { e.stopPropagation(); onPlay(song) }}
-            title="Play"
-          >
-            <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center shadow-lg">
-              <Play size={18} fill="black" className="text-black ml-0.5" />
-            </div>
-          </button>
-        )}
-        {canPlay && !selectMode && (
-          <button
-            className="md:hidden absolute bottom-1.5 right-1.5 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg active:scale-95 transition-transform"
-            onClick={(e) => { e.stopPropagation(); onPlay(song) }}
-          >
-            <Play size={14} fill="black" className="text-black ml-0.5" />
-          </button>
-        )}
-        {!selectMode && (
-          <button
-            className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 md:flex hidden transition-opacity"
-            onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
-            title="More options"
-          >
-            <MoreHorizontal size={13} className="text-white" />
-          </button>
-        )}
-      </div>
-
-      {/* Fixed height so every card matches VirtualSongGrid's row stride —
-          a wrapping badge row clips instead of growing the card. */}
-      <div className="p-2.5 flex flex-col gap-1 min-w-0 overflow-hidden" style={{ height: GRID_CARD_TEXT_H }}>
-        <p className="text-text-primary text-xs font-semibold truncate leading-tight">{title}</p>
-        <p className="text-text-muted text-[10px] truncate">{song.credited_artists || 'Juice WRLD'}</p>
-        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-          {song.era?.name && (
-            <button
-              onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
-              className="text-[9px] uppercase tracking-wide text-text-muted bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate max-w-full hover:text-accent hover:border-accent/40 transition-colors"
-              title={`Filter by era: ${song.era.name}`}
-            >
-              {song.era.name}
-            </button>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); if (!selectMode) onCategoryClick(song.category as Category) }}
-            className={`text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-accent/80 bg-accent/10 border-accent/20'}`}
-          >
-            {CATEGORY_LABELS[song.category] ?? song.category}
-          </button>
-          {!selectMode && (
-          <div className="ml-auto flex items-center gap-0.5">
-            <button
-              onClick={(e) => { e.stopPropagation(); onInfo(song) }}
-              className="p-1 rounded hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
-              title="Song info"
-            >
-              <Info size={11} />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
-              className="p-1 rounded hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
-              title="More options"
-            >
-              <MoreHorizontal size={11} />
-            </button>
-          </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── Main view ────────────────────────────────────────────────────────────────
 export default function ApiTrackerView(): JSX.Element {
   const {
@@ -1402,7 +1227,8 @@ export default function ApiTrackerView(): JSX.Element {
   // Multi-select — mirrors the same pattern used in ApiFilesView's bulk select.
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Map<number, JWApiSong>>(new Map())
-  const [bulkZipStatus, setBulkZipStatus] = useState<'idle' | 'zipping' | 'done' | 'error'>('idle')
+  const [bulkZipStatus, setBulkZipStatus] = useState<'idle' | 'zipping' | 'done' | 'partial' | 'none' | 'error'>('idle')
+  const [bulkZipSkipped, setBulkZipSkipped] = useState(0)
   const [showBulkPlaylists, setShowBulkPlaylists] = useState(false)
   const [bulkLinkStatus, setBulkLinkStatus] = useState<'idle' | 'linking' | 'done' | 'error'>('idle')
   // Shown after a link completes if the resulting group still has no
@@ -1428,6 +1254,7 @@ export default function ApiTrackerView(): JSX.Element {
     setSelectMode(false)
     setSelected(new Map())
     setBulkZipStatus('idle')
+    setBulkZipSkipped(0)
     setShowBulkPlaylists(false)
   }
 
@@ -1537,9 +1364,11 @@ export default function ApiTrackerView(): JSX.Element {
   const compactViewRef = useRef(false)
   useEffect(() => { compactViewRef.current = compactView }, [compactView])
 
-  const [viewMode, setViewModeState] = useState<ViewMode>(
-    () => (localStorage.getItem(LS_TRACKER_VIEW) as ViewMode) || 'list'
-  )
+  const [viewMode, setViewModeState] = useState<ViewMode>(() => {
+    // 'grid' was a removed third view mode — treat any stale stored value as 'list'.
+    const stored = localStorage.getItem(LS_TRACKER_VIEW)
+    return stored === 'detail' ? 'detail' : 'list'
+  })
   const [showSidebar, setShowSidebarState] = useState<boolean>(
     () => localStorage.getItem(LS_TRACKER_SIDEBAR) !== 'false'
   )
@@ -1681,26 +1510,31 @@ export default function ApiTrackerView(): JSX.Element {
   // `producers` and `engineers` are both free text, often multiple names
   // separated by commas (e.g. "Nick Mira, Taz Taylor") — split so each
   // person gets their own entry instead of grouping by the exact combined
-  // string. A name credited as both producer and engineer on the same song
-  // only counts that song once.
-  const producersByName = useMemo(() => {
+  // string. Kept as two separate groupings (rather than merged) so a name
+  // that appears in both credits still shows up as distinct panels.
+  const groupByNameField = (songs: JWApiSong[], field: (s: JWApiSong) => string | null | undefined): [string, JWApiSong[]][] => {
     const map = new Map<string, JWApiSong[]>()
-    const addNames = (field: string | null | undefined, song: JWApiSong): void => {
-      if (!field) return
-      for (const raw of field.split(',')) {
-        const name = raw.trim()
+    for (const song of songs) {
+      const raw = field(song)
+      if (!raw) continue
+      for (const part of raw.split(',')) {
+        const name = part.trim()
         if (!name) continue
         if (!map.has(name)) map.set(name, [])
-        const songs = map.get(name)!
-        if (!songs.includes(song)) songs.push(song)
+        map.get(name)!.push(song)
       }
     }
-    for (const song of calendarSongs) {
-      addNames(song.producers, song)
-      addNames(song.engineers, song)
-    }
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
-  }, [calendarSongs])
+  }
+
+  const producersByName = useMemo(
+    () => groupByNameField(calendarSongs, (s) => s.producers),
+    [calendarSongs]
+  )
+  const engineersByName = useMemo(
+    () => groupByNameField(calendarSongs, (s) => s.engineers),
+    [calendarSongs]
+  )
 
   // Assigns each era a stable color by its position in `eras` (already
   // fetched for the category sidebar) — same era always maps to the same
@@ -1730,6 +1564,7 @@ export default function ApiTrackerView(): JSX.Element {
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null)
   const [selectedStudio, setSelectedStudio] = useState<string | null>(null)
   const [selectedProducer, setSelectedProducer] = useState<string | null>(null)
+  const [selectedEngineer, setSelectedEngineer] = useState<string | null>(null)
 
   const shiftCalendarMonth = (delta: number): void => {
     setCalendarMonth((prev) => {
@@ -2065,7 +1900,13 @@ export default function ApiTrackerView(): JSX.Element {
 
   const bulkDownloadZip = async (): Promise<void> => {
     const paths = selectedSongs.map(s => s.path).filter(Boolean) as string[]
-    if (paths.length === 0) return
+    const skipped = selectedSongs.length - paths.length
+    if (paths.length === 0) {
+      setBulkZipSkipped(skipped)
+      setBulkZipStatus('none')
+      setTimeout(() => setBulkZipStatus('idle'), 4000)
+      return
+    }
     setBulkZipStatus('zipping')
     try {
       const res = await fetch(`${JWAPI_BASE}/files/zip-selection/`, {
@@ -2084,11 +1925,12 @@ export default function ApiTrackerView(): JSX.Element {
         const data = await res.json()
         if (data.download_url) { const a = document.createElement('a'); a.href = data.download_url; a.download = 'songs.zip'; a.click() }
       }
-      setBulkZipStatus('done')
+      setBulkZipSkipped(skipped)
+      setBulkZipStatus(skipped > 0 ? 'partial' : 'done')
     } catch {
       setBulkZipStatus('error')
     }
-    setTimeout(() => setBulkZipStatus('idle'), 3000)
+    setTimeout(() => setBulkZipStatus('idle'), skipped > 0 ? 5000 : 3000)
   }
 
   // Links every selected song together as versions of one another — pairing
@@ -2241,13 +2083,6 @@ export default function ApiTrackerView(): JSX.Element {
                   title="List view"
                 >
                   <LayoutList size={16} />
-                </button>
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
-                  title="Grid view"
-                >
-                  <LayoutGrid size={16} />
                 </button>
                 <button
                   onClick={() => setViewMode('detail')}
@@ -2556,38 +2391,63 @@ export default function ApiTrackerView(): JSX.Element {
             <div className="flex flex-col items-center justify-center h-40 gap-2 text-center">
               <p className="text-text-muted text-sm">Failed to load: {calendarError}</p>
             </div>
-          ) : producersByName.length === 0 ? (
+          ) : producersByName.length === 0 && engineersByName.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-2">
               <Users size={32} className="text-text-muted opacity-30" />
-              <p className="text-text-muted text-sm">No producer credits found</p>
+              <p className="text-text-muted text-sm">No producer or engineer credits found</p>
             </div>
           ) : (
             <div className="flex flex-col md:flex-row gap-5 md:gap-6 items-start">
-              <div className="w-full md:w-80 shrink-0">
-                <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Producers</p>
-                <div className="flex flex-col max-h-[70vh] overflow-y-auto -mx-1">
-                  {producersByName.map(([producer, songs]) => (
-                    <button
-                      key={producer}
-                      onClick={() => setSelectedProducer(producer)}
-                      title={producer}
-                      className={`flex items-center justify-between gap-2 px-1 py-1.5 md:py-1 rounded-lg text-left text-xs transition-colors ${
-                        selectedProducer === producer
-                          ? 'text-accent font-semibold bg-accent/5'
-                          : 'text-text-secondary hover:text-text-primary active:bg-surface-overlay hover:bg-surface-overlay'
-                      }`}
-                    >
-                      <span className="truncate">{producer}</span>
-                      <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
-                    </button>
-                  ))}
-                </div>
+              <div className="w-full md:w-80 shrink-0 flex flex-col gap-4">
+                {producersByName.length > 0 && (
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Producers</p>
+                    <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
+                      {producersByName.map(([producer, songs]) => (
+                        <button
+                          key={producer}
+                          onClick={() => { setSelectedProducer(producer); setSelectedEngineer(null) }}
+                          title={producer}
+                          className={`flex items-center justify-between gap-2 px-1 py-1.5 md:py-1 rounded-lg text-left text-xs transition-colors ${
+                            selectedProducer === producer
+                              ? 'text-accent font-semibold bg-accent/5'
+                              : 'text-text-secondary hover:text-text-primary active:bg-surface-overlay hover:bg-surface-overlay'
+                          }`}
+                        >
+                          <span className="truncate">{producer}</span>
+                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {engineersByName.length > 0 && (
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Engineers</p>
+                    <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
+                      {engineersByName.map(([engineer, songs]) => (
+                        <button
+                          key={engineer}
+                          onClick={() => { setSelectedEngineer(engineer); setSelectedProducer(null) }}
+                          title={engineer}
+                          className={`flex items-center justify-between gap-2 px-1 py-1.5 md:py-1 rounded-lg text-left text-xs transition-colors ${
+                            selectedEngineer === engineer
+                              ? 'text-accent font-semibold bg-accent/5'
+                              : 'text-text-secondary hover:text-text-primary active:bg-surface-overlay hover:bg-surface-overlay'
+                          }`}
+                        >
+                          <span className="truncate">{engineer}</span>
+                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 min-w-0 w-full">
-                {!selectedProducer ? (
-                  <p className="text-text-muted text-xs py-4">Select a producer to see songs they worked on.</p>
-                ) : (
+                {selectedProducer ? (
                   <>
                     <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedProducer}>
                       Produced by {selectedProducer}
@@ -2611,6 +2471,32 @@ export default function ApiTrackerView(): JSX.Element {
                       ))}
                     </div>
                   </>
+                ) : selectedEngineer ? (
+                  <>
+                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedEngineer}>
+                      Engineered by {selectedEngineer}
+                      {' '}· {(engineersByName.find(([e]) => e === selectedEngineer)?.[1] ?? []).length}{' '}
+                      {(engineersByName.find(([e]) => e === selectedEngineer)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
+                    </p>
+                    <div className="space-y-0.5">
+                      {(engineersByName.find(([e]) => e === selectedEngineer)?.[1] ?? []).map((song) => (
+                        <SongRow
+                          key={song.id}
+                          song={song}
+                          onPlay={handlePlay}
+                          onCategoryClick={handleCategoryClick}
+                          onEraClick={handleEraClick}
+                          onInfo={handleInfo}
+                          onContextMenu={handleContextMenu}
+                          selectMode={selectMode}
+                          selected={selected.has(song.id)}
+                          onToggleSelect={toggleSelect}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-text-muted text-xs py-4">Select a producer or engineer to see songs they worked on.</p>
                 )}
               </div>
             </div>
@@ -2632,19 +2518,51 @@ export default function ApiTrackerView(): JSX.Element {
         )}
 
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Column headers — hidden in compact view: these sort the flat song
-              list (handleSort), which has no effect on the grouped compact
-              rows and just misleads. Compact view sorts via its own dropdown. */}
-          {viewMode === 'list' && !compactView && (
+          {/* Column headers. Compact view swaps in its own pair (Title /
+              Versions sorting the grouped rows) in the SAME outer slot as the
+              flat headers — same wrapper + padding, so the list below starts
+              at an identical y-offset and nothing jumps when toggling. */}
+          {viewMode === 'list' && (
             <div className="hidden md:block px-5 pb-1 shrink-0">
               <div className="flex items-center gap-3 px-3 py-1">
                 <div className="w-9 shrink-0" />
-                <SortBtn field="name" label="Title" className="flex-1" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
-                <SortBtn field="credited_artists" label="Artist" className="w-32 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
-                <SortBtn field="era__name" label="Era" className="w-36 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
-                <SortBtn field="category" label="Category" className="w-24 shrink-0 justify-center" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
-                <SortBtn field="length" label="Time" className="w-12 shrink-0 justify-end" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
-                <div className="w-14 shrink-0" />
+                {compactView ? (
+                  <>
+                    <button
+                      onClick={() => handleCompactSort('name')}
+                      className={`flex-1 flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'name' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+                    >
+                      Title
+                      {compactSort.field === 'name'
+                        ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                        : <span className="w-2.5" />}
+                    </button>
+                    {/* Static label — compact view has no category sort; sits
+                        over CompactGroupRow's w-24 category badge column. */}
+                    <span className="w-24 shrink-0 text-center text-xs font-medium uppercase tracking-wider text-text-muted">Category</span>
+                    <button
+                      onClick={() => handleCompactSort('versions')}
+                      className={`w-20 shrink-0 justify-end flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'versions' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+                    >
+                      Versions
+                      {compactSort.field === 'versions'
+                        ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                        : <span className="w-2.5" />}
+                    </button>
+                    {/* Trails the expand chevron CompactGroupRow renders at
+                        the row's right edge, keeping "Versions" over the count. */}
+                    <span className="shrink-0" style={{ width: 14 }} />
+                  </>
+                ) : (
+                  <>
+                    <SortBtn field="name" label="Title" className="flex-1" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                    <SortBtn field="credited_artists" label="Artist" className="w-32 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                    <SortBtn field="era__name" label="Era" className="w-36 shrink-0" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                    <SortBtn field="category" label="Category" className="w-24 shrink-0 justify-center" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                    <SortBtn field="length" label="Time" className="w-12 shrink-0 justify-end" orderField={orderField} orderDir={orderDir} onClick={handleSort} />
+                    <div className="w-14 shrink-0" />
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -2666,32 +2584,6 @@ export default function ApiTrackerView(): JSX.Element {
                 </p>
               </div>
             ) : (
-              <>
-              {/* Sortable headers — click "Name" or "Versions" to sort (cycles
-                  asc → desc → default), aligned over CompactGroupRow's title
-                  and count. */}
-              <div className="hidden md:flex items-center gap-3 px-3 pb-1.5">
-                <span className="shrink-0" style={{ width: 14 }} />
-                <span className="w-10 md:w-9 shrink-0" />
-                <button
-                  onClick={() => handleCompactSort('name')}
-                  className={`flex-1 flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'name' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-                >
-                  Name
-                  {compactSort.field === 'name'
-                    ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
-                    : <span className="w-2.5" />}
-                </button>
-                <button
-                  onClick={() => handleCompactSort('versions')}
-                  className={`flex items-center gap-0.5 text-xs font-medium uppercase tracking-wider transition-colors ${compactSort.field === 'versions' ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
-                >
-                  Versions
-                  {compactSort.field === 'versions'
-                    ? compactSort.dir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />
-                    : <span className="w-2.5" />}
-                </button>
-              </div>
               <CompactGroupList
                 scrollRef={listScrollRef}
                 groups={filteredCompactGroups}
@@ -2707,7 +2599,6 @@ export default function ApiTrackerView(): JSX.Element {
                 selected={selected}
                 onToggleSelect={toggleSelect}
               />
-              </>
             ) : loading && sortedSongs.length === 0 ? (
               <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
                 <Loader2 size={18} className="animate-spin" />
@@ -2736,21 +2627,8 @@ export default function ApiTrackerView(): JSX.Element {
                 selected={selected}
                 onToggleSelect={toggleSelect}
               />
-            ) : viewMode === 'detail' ? (
-              <VirtualSongDetailList
-                scrollRef={listScrollRef}
-                songs={sortedSongs}
-                onPlay={handlePlay}
-                onCategoryClick={handleCategoryClick}
-                onEraClick={handleEraClick}
-                onInfo={handleInfo}
-                onContextMenu={handleContextMenu}
-                selectMode={selectMode}
-                selected={selected}
-                onToggleSelect={toggleSelect}
-              />
             ) : (
-              <VirtualSongGrid
+              <VirtualSongDetailList
                 scrollRef={listScrollRef}
                 songs={sortedSongs}
                 onPlay={handlePlay}
@@ -2781,7 +2659,16 @@ export default function ApiTrackerView(): JSX.Element {
 
       {/* Bulk selection action bar */}
       {selectMode && (
-        <div className="shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2 relative">
+        <div className="shrink-0 border-t border-[var(--border)] bg-surface relative">
+          {(bulkZipStatus === 'partial' || bulkZipStatus === 'none') && (
+            <div className="px-4 py-2 flex items-center gap-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-500 text-xs font-medium">
+              <AlertTriangle size={14} className="shrink-0" />
+              {bulkZipStatus === 'none'
+                ? "Couldn't download — none of the selected songs have a file available yet."
+                : `${bulkZipSkipped} of ${selected.size} selected song${selected.size === 1 ? '' : 's'} ${bulkZipSkipped === 1 ? "wasn't" : "weren't"} available and ${bulkZipSkipped === 1 ? 'was' : 'were'} left out of the ZIP.`}
+            </div>
+          )}
+          <div className="px-4 py-2.5 flex items-center gap-2">
           <span className="text-sm text-text-primary font-medium flex-1">
             {selected.size} {selected.size === 1 ? 'song' : 'songs'} selected
           </span>
@@ -2877,12 +2764,25 @@ export default function ApiTrackerView(): JSX.Element {
           <button
             onClick={bulkDownloadZip}
             disabled={selected.size === 0 || bulkZipStatus === 'zipping'}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 transition-opacity hover:opacity-90"
+            title={
+              bulkZipStatus === 'partial'
+                ? `${bulkZipSkipped} of ${selected.size} selected song${selected.size === 1 ? '' : 's'} couldn't be included (no file available)`
+                : bulkZipStatus === 'none'
+                ? 'None of the selected songs have a downloadable file'
+                : undefined
+            }
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 transition-opacity hover:opacity-90 ${
+              bulkZipStatus === 'partial' || bulkZipStatus === 'none' ? 'bg-amber-500 text-white' : 'bg-accent text-white'
+            }`}
           >
             {bulkZipStatus === 'zipping' ? (
               <><Loader2 size={13} className="animate-spin" /> Zipping…</>
             ) : bulkZipStatus === 'done' ? (
               <><Check size={13} /> Done</>
+            ) : bulkZipStatus === 'partial' ? (
+              <><AlertTriangle size={13} /> {bulkZipSkipped} skipped</>
+            ) : bulkZipStatus === 'none' ? (
+              <><AlertTriangle size={13} /> No files available</>
             ) : bulkZipStatus === 'error' ? (
               <><X size={13} /> Error</>
             ) : (
@@ -2896,6 +2796,7 @@ export default function ApiTrackerView(): JSX.Element {
           >
             <X size={15} className="text-text-muted" />
           </button>
+          </div>
         </div>
       )}
 

@@ -48,9 +48,9 @@ export default function PlaylistContextMenu({ state, onClose }: {
   state: PlaylistContextMenuState
   onClose: () => void
 }): JSX.Element {
-  const { playlists, playTrack, addToQueue, refreshPlaylists, setPendingPlaylistId, setActiveView, offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore(
+  const { playlists, playCollection, addToQueue, refreshPlaylists, setPendingPlaylistId, setActiveView, offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore(
     useShallow(s => ({
-      playlists: s.playlists, playTrack: s.playTrack, addToQueue: s.addToQueue,
+      playlists: s.playlists, playCollection: s.playCollection, addToQueue: s.addToQueue,
       refreshPlaylists: s.refreshPlaylists, setPendingPlaylistId: s.setPendingPlaylistId,
       setActiveView: s.setActiveView,
       offlinePlaylists: s.offlinePlaylists, offlineSync: s.offlineSync,
@@ -73,7 +73,7 @@ export default function PlaylistContextMenu({ state, onClose }: {
   const playAll = async (): Promise<void> => {
     const d = await userApi.getPlaylist(playlist.id)
     const tracks = d.items.map(i => userApi.liteSongToTrack(i.song))
-    if (tracks.length) playTrack(tracks[0], tracks)
+    if (tracks.length) playCollection(tracks)
     onClose()
   }
 

@@ -47,7 +47,6 @@ export const CompactGroupRow = memo(function CompactGroupRow({
       onContextMenu={onContextMenu}
       className="w-full flex items-center gap-3 px-3 py-2.5 md:py-2 hover:bg-surface-overlay rounded-lg transition-colors text-left"
     >
-      {expanded ? <ChevronUp size={14} className="text-text-muted shrink-0" /> : <ChevronDown size={14} className="text-text-muted shrink-0" />}
       <div className="shrink-0 w-10 h-10 md:w-9 md:h-9 rounded overflow-hidden bg-surface-overlay">
         <AlbumArtThumbnail track={coverTrack} size={36} shimmer={false} />
       </div>
@@ -57,7 +56,10 @@ export const CompactGroupRow = memo(function CompactGroupRow({
           {categoryLabel}
         </span>
       )}
-      <span className="text-text-muted text-xs shrink-0">{count} version{count === 1 ? '' : 's'}</span>
+      {/* Fixed width so the category badges (and the count itself) line up
+          in a column regardless of how wide "N versions" renders. */}
+      <span className="text-text-muted text-xs shrink-0 w-20 text-right">{count} version{count === 1 ? '' : 's'}</span>
+      {expanded ? <ChevronUp size={14} className="text-text-muted shrink-0" /> : <ChevronDown size={14} className="text-text-muted shrink-0" />}
     </button>
   )
 }, (prev, next) =>
