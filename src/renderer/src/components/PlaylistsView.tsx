@@ -242,12 +242,12 @@ function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
 
 
 export default function PlaylistsView(): JSX.Element {
-  const { account, playlists, refreshPlaylists, playTrack, addToQueue, setShowUserAuth, likedTrackIds, setActiveView, setPendingEditorSongId,
+  const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, setActiveView, setPendingEditorSongId,
     localPlaylists, libraryTracks, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
-    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline')
+    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -982,7 +982,7 @@ export default function PlaylistsView(): JSX.Element {
               </div>
             </div>
             <div className="relative z-10 flex items-center gap-3 mt-5">
-              {localQTracks.length > 0 && <HeroPlayButton onClick={() => playTrack(localQTracks[0], localQTracks)} />}
+              {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
               {localQTracks.length > 1 && (
                 <HeroShuffleButton onClick={() => { const sh = [...localQTracks].sort(() => Math.random() - 0.5); playTrack(sh[0], sh) }} />
               )}
@@ -1055,7 +1055,7 @@ export default function PlaylistsView(): JSX.Element {
                     }
                     <CardPlayOverlay onPlay={() => {
                       const qt = lp.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter((t): t is LibraryTrack => !!t).map(libTrackToTrack)
-                      if (qt.length) playTrack(qt[0], qt)
+                      if (qt.length) playCollection(qt)
                     }} />
                   </div>
                   {plSelectMode ? (
@@ -1358,7 +1358,7 @@ export default function PlaylistsView(): JSX.Element {
 
               {/* Action row */}
               <div className="flex items-center gap-2 flex-wrap">
-                {tracks.length > 0 && <HeroPlayButton onClick={() => playTrack(tracks[0], tracks)} />}
+                {tracks.length > 0 && <HeroPlayButton onClick={() => playCollection(tracks)} />}
                 {tracks.length > 1 && <HeroShuffleButton onClick={playShuffle} />}
 
                 {/* Shared (not-owned) playlists only get "Save to library" —
@@ -1843,7 +1843,7 @@ export default function PlaylistsView(): JSX.Element {
                 {localDurLabel && <><span>·</span><span className="flex items-center gap-1"><Clock size={12} />{localDurLabel}</span></>}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {localQTracks.length > 0 && <HeroPlayButton onClick={() => playTrack(localQTracks[0], localQTracks)} />}
+                {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
                 {localQTracks.length > 1 && (
                   <HeroShuffleButton onClick={() => { const s = [...localQTracks].sort(() => Math.random() - 0.5); playTrack(s[0], s) }} />
                 )}
@@ -1997,7 +1997,7 @@ export default function PlaylistsView(): JSX.Element {
                 <CardPlayOverlay onPlay={async () => {
                   const d = await userApi.getPlaylist(p.id).catch(() => null)
                   const trks = d ? d.items.map(i => userApi.liteSongToTrack(i.song)) : []
-                  if (trks.length) playTrack(trks[0], trks)
+                  if (trks.length) playCollection(trks)
                 }} />
               </div>
               {/* Context menu button */}
@@ -2053,7 +2053,7 @@ export default function PlaylistsView(): JSX.Element {
                     }
                     <CardPlayOverlay onPlay={() => {
                       const qt = lp.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter((t): t is LibraryTrack => !!t).map(libTrackToTrack)
-                      if (qt.length) playTrack(qt[0], qt)
+                      if (qt.length) playCollection(qt)
                     }} />
                   </div>
                   {/* Local badge / selection checkbox */}
@@ -2289,7 +2289,7 @@ export default function PlaylistsView(): JSX.Element {
                 onClick={() => {
                   const tracks = cardMenu.playlist.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter(Boolean) as LibraryTrack[]
                   const q = tracks.map(libTrackToTrack)
-                  if (q.length) playTrack(q[0], q)
+                  if (q.length) playCollection(q)
                   setCardMenu(null)
                 }}
               />
@@ -2347,7 +2347,7 @@ export default function PlaylistsView(): JSX.Element {
                 onClick={async () => {
                   const d = await userApi.getPlaylist(cardMenu.playlist.id)
                   const tracks = d.items.map(i => userApi.liteSongToTrack(i.song))
-                  if (tracks.length) playTrack(tracks[0], tracks)
+                  if (tracks.length) playCollection(tracks)
                   setCardMenu(null)
                 }}
               />

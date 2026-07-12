@@ -79,6 +79,13 @@ export interface QueueSlice {
   playTrack: (track: Track, context?: Track[], filter?: QueueFilter | null, source?: 'tracker' | 'playlist' | null) => void
 
   /**
+   * Play a whole collection without a specific starting track (hero Play
+   * buttons, context-menu Play). With shuffle on, starts from a random
+   * track; otherwise starts from the first.
+   */
+  playCollection: (tracks: Track[], filter?: QueueFilter | null, source?: 'tracker' | 'playlist' | null) => void
+
+  /**
    * Start radio mode. The queue is seeded with `track` only;
    * subsequent songs come from /radio/random/ one at a time.
    */
@@ -234,6 +241,17 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     })
     if (filter?.hasMore) get()._loadMore()
     get()._maybeSwapToOg(track)
+  },
+
+  // ── playCollection ─────────────────────────────────────────────────────────
+  playCollection: (tracks, filter = null, source = null) => {
+    if (tracks.length === 0) return
+    if (get().shuffle && source !== 'tracker') {
+      const shuffled = fisherYates(tracks)
+      get().playTrack(shuffled[0], shuffled, filter, source)
+    } else {
+      get().playTrack(tracks[0], tracks, filter, source)
+    }
   },
 
   // ── stopRadio ──────────────────────────────────────────────────────────────

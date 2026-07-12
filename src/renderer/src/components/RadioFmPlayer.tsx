@@ -97,6 +97,7 @@ export default function RadioFmPlayer(): JSX.Element {
         path: song.path ?? null,
         lyrics: song.lyrics ?? null,
         syncedLyrics: song.synced_lyrics ?? null,
+        era: song.era?.name ?? null,
       })
     }
 

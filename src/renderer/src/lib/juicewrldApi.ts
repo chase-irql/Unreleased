@@ -263,6 +263,7 @@ export function songToTrack(song: JWApiSong): Track {
     title,
     artist: song.credited_artists || 'Juice WRLD',
     album: song.album || song.era?.name || '',
+    era: song.era?.name || undefined,
     albumArtist: 'Juice WRLD',
     year: null,
     trackNumber: null,

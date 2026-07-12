@@ -369,11 +369,11 @@ function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPl
 function AlbumDetail({ album, onBack, onContext }: {
   album: Album; onBack: () => void; onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
 }): JSX.Element {
-  const { playTrack } = useStorePick('playTrack')
+  const { playCollection } = useStorePick('playCollection')
   const art = useTrackArt(album.coverTrack)
   const tracks = useMemo(() => [...album.tracks].sort(byTrackNo), [album])
   const total = tracks.reduce((s, t) => s + t.duration, 0)
-  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playTrack(q[0], q) }
+  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
   return (
     <div className="flex-1 overflow-y-auto relative view-enter">
       <DetailHeader
@@ -399,11 +399,11 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
   onOpenAlbum: (a: Album) => void
   onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
 }): JSX.Element {
-  const { playTrack } = useStorePick('playTrack')
+  const { playCollection } = useStorePick('playCollection')
   const art = useTrackArt(artist.coverTrack)
   const allTracks = useMemo(() => [...artist.tracks].sort((a, b) => a.title.localeCompare(b.title)), [artist])
   const total = artist.tracks.reduce((s, t) => s + t.duration, 0)
-  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playTrack(q[0], q) }
+  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
   return (
     <div className="flex-1 overflow-y-auto relative view-enter">
       <DetailHeader
@@ -490,7 +490,7 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playNext, addToQueue, account, setActiveView, setPendingLocalEditTrack } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playNext', 'addToQueue', 'account', 'setActiveView', 'setPendingLocalEditTrack')
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, setActiveView, setPendingLocalEditTrack } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'setActiveView', 'setPendingLocalEditTrack')
 
   const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
@@ -574,7 +574,7 @@ export default function LibraryTab(): JSX.Element {
   const drillArtist = drill?.kind === 'artist' ? artists.find(a => a.name === drill.name) : undefined
   const drillArtistAlbums = drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : []
 
-  const playAll = (list: LibraryTrack[], rnd = false) => { const q2 = (rnd ? shuffled(list) : list).map(toQueueTrack); if (q2.length) playTrack(q2[0], q2) }
+  const playAll = (list: LibraryTrack[], rnd = false) => { const q2 = (rnd ? shuffled(list) : list).map(toQueueTrack); if (q2.length) playCollection(q2) }
   const playAlbum = (a: Album) => playAll([...a.tracks].sort(byTrackNo))
 
   const showEmpty = libraryTracks.length === 0 && !libraryScanning

@@ -15,9 +15,8 @@ const { ActivityType } = require('discord-api-types/v10')
 const CLIENT_ID = '1521540582558924902'
 const RECONNECT_MS = 15000
 // Key of the image uploaded under Discord Developer Portal -> your app ->
-// Rich Presence -> Art Assets. Per-track album art isn't used here — classic
-// RPC (local IPC, not the Activities/embedded-apps API) only accepts
-// pre-uploaded asset keys, not arbitrary per-track URLs.
+// Rich Presence -> Art Assets. Fallback when a track has no usable cover URL
+// (e.g. local files whose art is a base64 data URI with no public address).
 const LARGE_IMAGE_KEY = 'logo'
 
 let client = null
@@ -145,14 +144,15 @@ function setNowPlaying(info) {
     instance: false,
   }
 
-  // Per-track cover art. Classic RPC's `large_image` only accepts a
-  // pre-uploaded asset key by default, but Discord also accepts a direct
-  // external image URL via `large_url` — that's what shows the actual song
-  // cover instead of always falling back to the static app logo. Only real
-  // http(s) URLs work here; local files' covers are base64 data URIs with no
-  // public address, so those just keep the logo.
+  // Per-track cover art. Classic RPC's `large_image` (largeImageKey) accepts
+  // an external http(s) URL directly — Discord fetches it through its media
+  // proxy and shows it as the activity image. Note largeImageUrl is NOT the
+  // image source: the library maps it to `assets.large_url`, which is only
+  // the click-through link on the image. Only real http(s) URLs work here;
+  // local files' covers are base64 data URIs with no public address, so
+  // those keep the static logo.
   if (info.coverUrl && /^https?:\/\//.test(info.coverUrl)) {
-    activity.largeImageUrl = info.coverUrl
+    activity.largeImageKey = info.coverUrl
   }
 
   if (info.isPlaying && info.duration > 0) {

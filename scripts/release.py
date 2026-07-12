@@ -296,6 +296,15 @@ def step_build():
     print()
 
     # 2. Package the Electron installer from the freshly built dist/.
+    #    Clear last build's artifacts first — the web-installer stub has a
+    #    version-free name (Unreleased-Setup.exe), so a stale copy is
+    #    indistinguishable from a fresh one at upload time.
+    release_dir = ROOT / "release" / "nsis-web"
+    if release_dir.exists():
+        for pattern in ("Unreleased-Setup*.exe*", "latest.yml", "*.nsis.7z"):
+            for stale in release_dir.glob(pattern):
+                stale.unlink()
+
     info("Packaging installer (electron-builder)…")
     result = subprocess.run(
         r"node_modules\.bin\electron-builder.cmd --win --publish never",
@@ -357,20 +366,30 @@ def step_sync_web(version):
 def step_release(version, token, notes):
     section(8, TOTAL, "GitHub release")
     tag         = f"v{version}"
-    release_dir = ROOT / "release"
+    release_dir = ROOT / "release" / "nsis-web"
 
-    # Collect assets to upload
+    # Collect assets to upload. The nsis-web target produces a small
+    # version-free stub installer (stable name so the GitHub
+    # releases/latest/download/Unreleased-Setup.exe link always serves the
+    # newest release) plus a versioned .7z app package the stub downloads
+    # at install time. electron-updater also fetches the .7z, so it MUST
+    # be uploaded alongside latest.yml. (No separate .blockmap files —
+    # the block map is embedded in the .7z.)
     to_upload = []
-    for name in [
+    names = [
         "latest.yml",
-        f"Unreleased-Setup-{version}.exe.blockmap",
-        f"Unreleased-Setup-{version}.exe",
-    ]:
+        "Unreleased-Setup.exe",
+    ] + [p.name for p in release_dir.glob(f"unreleased-{version}-*.nsis.7z")]
+    for name in names:
         p = release_dir / name
         if p.exists():
             to_upload.append(p)
         else:
             warn(f"Not found (skipping): {name}")
+
+    if not any(n.endswith(".nsis.7z") for n in names):
+        die(f"No unreleased-{version}-*.nsis.7z package in {release_dir}/\n"
+            "The web installer is useless without it. Did the build succeed?")
 
     if not to_upload:
         die(f"No release assets found in {release_dir}/\nDid the build succeed?")

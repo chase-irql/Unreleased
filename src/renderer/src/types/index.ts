@@ -13,6 +13,7 @@ export interface Track {
   // API-sourced tracks
   streamUrl?: string  // if set, Player streams this URL instead of the local `path` (via toFileUrl)
   imageUrl?: string   // if set, AlbumArtThumbnail uses this instead of getAlbumArt IPC
+  era?: string        // API era abbreviation (e.g. "WOD") — shown on Discord RPC instead of album
 }
 
 export interface FullTrack extends Track {
