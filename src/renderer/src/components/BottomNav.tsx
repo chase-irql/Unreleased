@@ -1,10 +1,10 @@
 import { SearchCode, Settings, ShieldCheck, ListMusic, Disc } from 'lucide-react'
 import logo from '../assets/logo.png'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, account } = useStore()
+  const { activeView, setActiveView, setShowSettings, account } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'account')
   const isAdmin = !!account?.is_administrator
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [

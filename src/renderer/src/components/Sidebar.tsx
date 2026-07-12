@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect } from 'react'
 import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
 
@@ -9,7 +9,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId } = useStore()
+  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId')
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
 

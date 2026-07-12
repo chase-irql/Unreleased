@@ -925,32 +925,37 @@ export default function WrldView(): JSX.Element {
               <div className="relative w-full" style={{ maxWidth: 320 }}>
                 {ArtBox({ mobile: false })}
                 {!radioFmActive && songVersions.length > 0 && (
-                  <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20">
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-20">
+                    {/* Notch sits half-embedded in the art's left edge, like it's
+                        popping out of the cover itself, rather than floating
+                        beside it as a detached control. */}
                     <button
                       onClick={() => setSongVersionMenuOpen(o => !o)}
                       title="Other versions"
-                      className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border transition-colors ${
-                        songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-transparent'
+                      className={`w-7 h-7 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border shadow-lg transition-colors ${
+                        songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-white/20 dark:border-white/10'
                       }`}
                     >
                       <ChevronDown size={12} className={`text-white transition-transform duration-150 ${songVersionMenuOpen ? 'rotate-180' : '-rotate-90'}`} />
                     </button>
-                    {songVersionMenuOpen && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} />
-                        <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20 min-w-[120px] bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl">
-                          {songVersions.map((v, i) => (
-                            <button
-                              key={v.songId}
-                              onClick={() => { setSongVersionMenuOpen(false); handlePlayVersion(v.songId) }}
-                              className="w-full px-3 py-1.5 text-left text-[10px] font-medium text-white/70 hover:text-white/95 hover:bg-white/[0.08] transition-colors whitespace-nowrap"
-                            >
-                              {v.label ?? `Version ${i + 1}`}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
+                    <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} style={{ pointerEvents: songVersionMenuOpen ? 'auto' : 'none' }} />
+                    <div
+                      className={`absolute right-full top-1/2 -translate-y-1/2 mr-2 z-20 min-w-[120px] origin-right bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl transition-all duration-200 ease-out ${
+                        songVersionMenuOpen
+                          ? 'opacity-100 scale-100 translate-x-0'
+                          : 'opacity-0 scale-90 translate-x-2 pointer-events-none'
+                      }`}
+                    >
+                      {songVersions.map((v, i) => (
+                        <button
+                          key={v.songId}
+                          onClick={() => { setSongVersionMenuOpen(false); handlePlayVersion(v.songId) }}
+                          className="w-full px-3 py-1.5 text-left text-[10px] font-medium text-white/70 hover:text-white/95 hover:bg-white/[0.08] transition-colors whitespace-nowrap"
+                        >
+                          {v.label ?? `Version ${i + 1}`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

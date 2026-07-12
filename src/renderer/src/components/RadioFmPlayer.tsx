@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { RadioStreamClient, setActiveRadioClient } from '../lib/radioSocketService'
 import { fetchRadioLive } from '../lib/radioLive'
 import { apiFetch, buildImageUrl } from '../lib/juicewrldApi'
@@ -14,7 +14,7 @@ export default function RadioFmPlayer(): JSX.Element {
     radioFmNowPlaying,
     setIsPlaying,
     volume,
-  } = useStore()
+  } = useStorePick('radioFmActive', 'setRadioFmActive', 'setRadioFmIsLive', 'setRadioFmNowPlaying', 'setRadioFmVote', 'setRadioFmUpNext', 'setRadioFmQueuePreview', 'setRadioFmMatchedSong', 'radioFmNowPlaying', 'setIsPlaying', 'volume')
 
   const audioRef  = useRef<HTMLAudioElement>(null)
   const clientRef = useRef<RadioStreamClient | null>(null)

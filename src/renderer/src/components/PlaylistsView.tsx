@@ -7,7 +7,7 @@ import {
   Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, CircleArrowDown, Layers,
   CheckSquare2, Square,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import type { PlaylistDetail, PlaylistSummary } from '../lib/userApi'
 import { Track, LocalPlaylist, LibraryTrack } from '../types'
@@ -23,6 +23,7 @@ import { CompactGroupRow, CompactEmptyIcon, useExpandedGroups } from './CompactG
 import { groupItemsByVersion, filterCompactGroups } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { versionsEnabled } from '../lib/versionsApi'
+import { useVirtualWindowEl } from '../hooks/useVirtualWindow'
 
 // ── PlaylistMosaic ────────────────────────────────────────────────────────────
 
@@ -246,7 +247,7 @@ export default function PlaylistsView(): JSX.Element {
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
-    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStore()
+    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -408,6 +409,21 @@ export default function PlaylistsView(): JSX.Element {
     }
     return result
   }, [tracks, search, sort])
+
+  // Identity → original index, replacing the per-row tracks.indexOf() that
+  // made rendering the detail list O(n²). displayTracks elements are the same
+  // object references as tracks entries, so identity keys are safe.
+  const trackIndexOf = useMemo(() => new Map(tracks.map((t, i) => [t, i])), [tracks])
+
+  // ── Detail track-list virtualization ───────────────────────────────────────
+  // Large playlists rendered every row (each with decoded album art) at once.
+  // Element-state refs (not RefObjects) because the detail view mounts long
+  // after this component does — see useVirtualWindowEl.
+  const [listScrollEl, setListScrollEl] = useState<HTMLDivElement | null>(null)
+  const [listContentEl, setListContentEl] = useState<HTMLDivElement | null>(null)
+  const TRACK_ROW_H = 56 // px-4 py-2 row wrapping 40px album art
+  const { start: rowStart, end: rowEnd, totalHeight: rowsTotalHeight } =
+    useVirtualWindowEl(listScrollEl, listContentEl, displayTracks.length, TRACK_ROW_H)
 
   // groupItemsByVersion doesn't know about the search box, so without this
   // typing a query while compact view is active would just do nothing.
@@ -1208,7 +1224,7 @@ export default function PlaylistsView(): JSX.Element {
     }
 
     return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false); setShowHeroMenu(false) }}>
+      <div ref={setListScrollEl} className="relative flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false); setShowHeroMenu(false) }}>
         {/* ── Hero (shown immediately using summary data) — the backdrop now
             extends behind the back button too, instead of leaving a plain
             theme-background strip above the gradient. Text in this section
@@ -1598,8 +1614,13 @@ export default function PlaylistsView(): JSX.Element {
               <p className="text-text-muted text-sm text-center py-8">No tracks match "{search}"</p>
             )}
 
-            {displayTracks.map((track, displayIdx) => {
-              const originalIdx = tracks.indexOf(track)
+            {/* Windowed rows — absolutely positioned at displayIdx * TRACK_ROW_H
+                inside a container sized to the full list, so only the visible
+                slice is mounted (see useVirtualWindowEl). */}
+            <div ref={setListContentEl} style={{ height: rowsTotalHeight, position: 'relative' }}>
+            {displayTracks.slice(rowStart, rowEnd).map((track, sliceIdx) => {
+              const displayIdx = rowStart + sliceIdx
+              const originalIdx = trackIndexOf.get(track) ?? -1
               const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
               const isDragging = dragEnabled && dragIdx === originalIdx
               const isDropTarget = dragEnabled && dropIdx === displayIdx && dragIdx !== null && dragIdx !== displayIdx
@@ -1618,7 +1639,7 @@ export default function PlaylistsView(): JSX.Element {
                   className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
                     isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
                   }`}
-                  style={{ gridTemplateColumns: gridCols }}
+                  style={{ gridTemplateColumns: gridCols, position: 'absolute', top: displayIdx * TRACK_ROW_H, left: 0, right: 0, height: TRACK_ROW_H }}
                 >
                   {selectMode && (
                     <span className="flex items-center justify-center shrink-0">
@@ -1656,6 +1677,7 @@ export default function PlaylistsView(): JSX.Element {
                 </div>
               )
             })}
+            </div>
               </>
             )}
           </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useResizablePanel } from '../hooks/useResizablePanel'
 import { X, Music, ChevronUp, ChevronDown, Pencil, Info } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import LyricsDisplay from './LyricsDisplay'
 import SongInfoModal from './SongInfoModal'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
@@ -15,7 +15,7 @@ export default function NowPlaying(): JSX.Element {
     setPendingEditorSongId,
     setActiveView,
     showQueue,
-  } = useStore()
+  } = useStorePick('currentTrack', 'currentTrackFull', 'setShowNowPlaying', 'account', 'setPendingEditorSongId', 'setActiveView', 'showQueue')
 
   const [artCollapsed, setArtCollapsed] = useState(false)
   const [panelWidth, dragHandle] = useResizablePanel(360, 280, 520)

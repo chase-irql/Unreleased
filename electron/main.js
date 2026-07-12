@@ -732,6 +732,8 @@ ipcMain.handle('read-track-metadata', async (_, filePath) => {
     const pic = common.picture?.[0]
     // Larger cap here — this feeds the full Now Playing art, not a list thumbnail.
     const albumArt = pic ? coverToThumbDataUri(Buffer.from(pic.data), pic.format, 512) : null
+    let fileSize = null
+    try { fileSize = fs.statSync(filePath).size } catch {}
     return {
       title: common.title || '',
       artist: (common.artists || []).join(', ') || common.artist || '',
@@ -747,6 +749,9 @@ ipcMain.handle('read-track-metadata', async (_, filePath) => {
       albumArt,
       bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : null,
       sampleRate: format.sampleRate || null,
+      bitsPerSample: format.bitsPerSample || null,
+      channels: format.numberOfChannels || null,
+      fileSize,
       duration: format.duration || 0,
     }
   } catch(e) { return { error: e.message } }

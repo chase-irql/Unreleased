@@ -20,7 +20,7 @@ import {
   Info,
   Loader2,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { formatDuration } from '../lib/lyrics'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -93,7 +93,7 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId } = useStore()
+    playNext, account, updateLibraryTrack, setPendingEditorSongId } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId')
   const canEditSong = !!(account?.is_editor || account?.is_administrator)
 
   const [showContextMenu, setShowContextMenu] = useState(false)
@@ -101,9 +101,9 @@ export default function Player(): JSX.Element {
   const [songInfoData, setSongInfoData] = useState<JWApiSong | null>(null)
   const contextMenuBtnRef = useRef<HTMLButtonElement>(null)
   const currentSongId = currentTrack ? trackIdToSongId(currentTrack.id) : null
-  const { radioMode, radioNext } = useStore()
-  const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStore()
-  const { libraryTracks } = useStore()
+  const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
+  const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
+  const { libraryTracks } = useStorePick('libraryTracks')
 
 
   // FM elapsed time — ticks locally between WS updates
@@ -285,7 +285,17 @@ export default function Player(): JSX.Element {
         el.readTrackMetadata(currentTrack.path).then((meta: Record<string, any> | null) => {
           if (isStale()) return
           if (meta && !meta.error) {
-            setCurrentTrackFull(prev => prev ? { ...prev, lyrics: meta.lyrics || null, syncedLyrics: meta.syncedLyrics || null } : prev)
+            setCurrentTrackFull(prev => prev ? {
+              ...prev,
+              lyrics: meta.lyrics || null,
+              syncedLyrics: meta.syncedLyrics || null,
+              ext: currentTrack.path.split('.').pop() || prev.ext,
+              bitrate: meta.bitrate ?? prev.bitrate,
+              sampleRate: meta.sampleRate ?? prev.sampleRate,
+              bitsPerSample: meta.bitsPerSample ?? prev.bitsPerSample,
+              channels: meta.channels ?? prev.channels,
+              fileSize: meta.fileSize ?? prev.fileSize,
+            } : prev)
           }
         }).catch(() => {})
         if (!currentTrack.imageUrl) {

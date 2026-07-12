@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Music2, Unlock, EyeOff, Mic, Clock } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { apiFetch, JWApiStats, JWApiEra } from '../lib/juicewrldApi'
 
 interface CategoryCard {
@@ -48,7 +48,7 @@ const CATEGORIES: CategoryCard[] = [
 ]
 
 export default function ApiCategoryView(): JSX.Element {
-  const { setActiveView, setApiTrackerCategory, setApiTrackerEra } = useStore()
+  const { setActiveView, setApiTrackerCategory, setApiTrackerEra } = useStorePick('setActiveView', 'setApiTrackerCategory', 'setApiTrackerEra')
   const [stats, setStats] = useState<JWApiStats | null>(null)
   const [eras, setEras] = useState<JWApiEra[]>([])
   const [loadingStats, setLoadingStats] = useState(true)

@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Heart, Play, Loader2, MoreHorizontal } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import { Track, LibraryTrack } from '../types'
 import { toFileUrl } from '../lib/fileTypes'
@@ -35,7 +35,7 @@ function formatDuration(seconds: number): string {
 }
 
 export default function LikedSongsView(): JSX.Element {
-  const { account, playTrack, playNext, toggleLike, setShowUserAuth, setActiveView, setPendingEditorSongId, libraryTracks, likedTrackIds } = useStore()
+  const { account, playTrack, playNext, toggleLike, setShowUserAuth, setActiveView, setPendingEditorSongId, libraryTracks, likedTrackIds } = useStorePick('account', 'playTrack', 'playNext', 'toggleLike', 'setShowUserAuth', 'setActiveView', 'setPendingEditorSongId', 'libraryTracks', 'likedTrackIds')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
   const [apiTracks, setApiTracks] = useState<Track[]>([])
   const [loading, setLoading] = useState(true)
@@ -76,17 +76,18 @@ export default function LikedSongsView(): JSX.Element {
   // Liked local files never go through the API (toggleLike stores them purely
   // in localStorage for ids that don't resolve to a numeric song id), so they
   // have to be pulled in from the scanned library here rather than getFavorites().
-  const localLikedTracks = libraryTracks
-    .filter((t) => likedTrackIds.includes(t.id))
-    .map(libraryTrackToTrack)
+  const localLikedTracks = useMemo(() => {
+    const liked = new Set(likedTrackIds)
+    return libraryTracks.filter((t) => liked.has(t.id)).map(libraryTrackToTrack)
+  }, [libraryTracks, likedTrackIds])
 
   // Liked files from the API file browser (ApiFilesView) also skip the
   // favorites API — same as local files, their id just encodes the path
   // instead of pointing at a scanned library entry, so rebuild the track
   // straight from the id rather than needing the folder they came from.
-  const likedApiFileTracks = likedTrackIds
+  const likedApiFileTracks = useMemo(() => likedTrackIds
     .map((id) => { const path = apiFileIdToPath(id); return path ? apiFilePathToTrack(path) : null })
-    .filter((t): t is Track => t != null)
+    .filter((t): t is Track => t != null), [likedTrackIds])
 
   const visible = [...apiTracks, ...localLikedTracks, ...likedApiFileTracks]
 

@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react'
-import { useStore } from './store/useStore'
+import React, { useEffect, Suspense, lazy } from 'react'
+import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
 import { ViewType } from './types'
 
@@ -23,29 +23,33 @@ import Sidebar from './components/Sidebar'
 import BottomNav from './components/BottomNav'
 import ApiTrackerView from './components/ApiTrackerView'
 import ApiFilesView from './components/ApiFilesView'
-import ApiCategoryView from './components/ApiCategoryView'
-import EditorPage from './components/EditorPage'
-import AdminPage from './components/AdminPage'
 import LikedSongsView from './components/LikedSongsView'
 import PlaylistsView from './components/PlaylistsView'
-import SharedPlaylistView from './components/SharedPlaylistView'
-import EditorProfileView from './components/EditorProfileView'
-import NotFoundView from './components/NotFoundView'
-import DocsPage from './components/DocsPage'
 import RadioFmPlayer from './components/RadioFmPlayer'
 import DiscordRpcSync from './components/DiscordRpcSync'
-import WrldView from './components/WrldView'
-import AlbumsAdminView from './components/AlbumsAdminView'
 import UserAuthModal from './components/UserAuthModal'
 import Player from './components/Player'
 import NowPlaying from './components/NowPlaying'
 import QueuePanel from './components/QueuePanel'
-import Settings from './components/Settings'
-import DiagnosticsModal from './components/DiagnosticsModal'
 import DownloadManager from './components/DownloadManager'
 import LibraryTab from './components/LibraryTab'
-import LocalEditorPage from './components/LocalEditorPage'
 import ErrorBoundary from './components/ErrorBoundary'
+
+// Rarely-visited views load on first navigation instead of inflating the
+// startup bundle. Suspense fallback is null: these chunks are local (Electron)
+// or small (web), so a spinner would just flash.
+const ApiCategoryView = lazy(() => import('./components/ApiCategoryView'))
+const EditorPage = lazy(() => import('./components/EditorPage'))
+const AdminPage = lazy(() => import('./components/AdminPage'))
+const SharedPlaylistView = lazy(() => import('./components/SharedPlaylistView'))
+const EditorProfileView = lazy(() => import('./components/EditorProfileView'))
+const NotFoundView = lazy(() => import('./components/NotFoundView'))
+const DocsPage = lazy(() => import('./components/DocsPage'))
+const WrldView = lazy(() => import('./components/WrldView'))
+const AlbumsAdminView = lazy(() => import('./components/AlbumsAdminView'))
+const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
+const Settings = lazy(() => import('./components/Settings'))
+const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
 function hexToRgb(hex: string): [number, number, number] {
   const num = parseInt(hex.replace('#', ''), 16)
@@ -84,7 +88,8 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStore()
+  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'theme', 'accentColor', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -191,6 +196,7 @@ export default function App(): JSX.Element {
           )}
           <div className="flex-1 overflow-hidden flex">
             <ErrorBoundary>
+            <Suspense fallback={null}>
             {activeView === 'api-tracker' ? <ApiTrackerView />
               : activeView === 'api-files' ? <ApiFilesView />
               : activeView === 'api-categories' ? <ApiCategoryView />
@@ -204,9 +210,10 @@ export default function App(): JSX.Element {
               : activeView === 'wrld' ? <WrldView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />
-: activeView === 'albums-admin' ? <AlbumsAdminView />
+              : activeView === 'albums-admin' ? <AlbumsAdminView />
               : activeView === 'not-found' ? <NotFoundView />
               : <ApiTrackerView />}
+            </Suspense>
           </ErrorBoundary>
             {showNowPlaying && activeView !== 'wrld' && <ErrorBoundary><NowPlaying /></ErrorBoundary>}
             {showQueue && activeView !== 'wrld' && <ErrorBoundary><QueuePanel /></ErrorBoundary>}
@@ -217,8 +224,8 @@ export default function App(): JSX.Element {
       <RadioFmPlayer />
       <DiscordRpcSync />
       <BottomNav />
-      {showSettings && <Settings />}
-      {showDiagnostics && <DiagnosticsModal />}
+      {showSettings && <Suspense fallback={null}><Settings /></Suspense>}
+      {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <DownloadManager />
     </div>

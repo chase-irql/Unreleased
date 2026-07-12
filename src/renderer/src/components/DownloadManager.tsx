@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen, ArrowDownToLine } from 'lucide-react'
-import { useStore, DownloadItem } from '../store/useStore'
+import { useStore, useStorePick, DownloadItem } from '../store/useStore'
 
 export default function DownloadManager(): JSX.Element | null {
-  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStore()
+  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus', 'wrldFullscreen')
   const el = (window as any).electron
   const panelRef = useRef<HTMLDivElement>(null)
   // Per-download last-sample (bytes, timestamp) used to derive a live

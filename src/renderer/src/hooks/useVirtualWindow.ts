@@ -58,3 +58,46 @@ export function useVirtualWindow(
   const end = Math.min(rowCount, Math.ceil((eff + clientH) / rowStride) + overscan)
   return { start, end, totalHeight }
 }
+
+/**
+ * Same windowing as useVirtualWindow, but takes the elements directly (from
+ * callback refs held in state) instead of RefObjects. Needed when the scroll
+ * container mounts and unmounts during the component's lifetime — the
+ * RefObject version attaches its listeners once on mount, so an element that
+ * appears later (e.g. a detail view opened from a list) would never be
+ * observed.
+ */
+export function useVirtualWindowEl(
+  scrollEl: HTMLElement | null,
+  contentEl: HTMLElement | null,
+  rowCount: number,
+  rowStride: number,
+  overscan = 4,
+): VirtualWindow {
+  const [scrollTop, setScrollTop] = useState(0)
+  const [clientH, setClientH] = useState(0)
+  const [offset, setOffset] = useState(0)
+
+  useEffect(() => {
+    if (!scrollEl) return
+    const onScroll = (): void => setScrollTop(scrollEl.scrollTop)
+    const measure = (): void => {
+      setClientH(scrollEl.clientHeight)
+      setScrollTop(scrollEl.scrollTop)
+      setOffset(contentEl ? contentEl.offsetTop : 0)
+    }
+    measure()
+    scrollEl.addEventListener('scroll', onScroll, { passive: true })
+    const ro = new ResizeObserver(measure)
+    ro.observe(scrollEl)
+    if (contentEl) ro.observe(contentEl)
+    return () => { scrollEl.removeEventListener('scroll', onScroll); ro.disconnect() }
+  }, [scrollEl, contentEl])
+
+  const totalHeight = rowCount * rowStride
+  if (rowStride <= 0 || rowCount === 0) return { start: 0, end: rowCount, totalHeight }
+  const eff = Math.max(0, scrollTop - offset)
+  const start = Math.max(0, Math.floor(eff / rowStride) - overscan)
+  const end = Math.min(rowCount, Math.ceil((eff + clientH) / rowStride) + overscan)
+  return { start, end, totalHeight }
+}

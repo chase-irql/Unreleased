@@ -4,7 +4,7 @@ import {
   ChevronLeft, LayoutGrid, List, Sparkles, User,
   FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp,
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
 import { toFileUrl } from '../lib/fileTypes'
 import * as userApi from '../lib/userApi'
@@ -86,7 +86,7 @@ interface Artist {
 
 function useTrackArt(track: LibraryTrack): string | null | undefined {
   const el = (window as any).electron
-  const { updateLibraryTrack } = useStore()
+  const { updateLibraryTrack } = useStorePick('updateLibraryTrack')
   useEffect(() => {
     if (!el || track.albumArt !== undefined) return
     el.readAlbumArt(track.filePath).then((a: string | null) =>
@@ -120,7 +120,7 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
   onDragOver?: (e: React.DragEvent) => void
   onDrop?: () => void
 }): JSX.Element {
-  const { playTrack, currentTrack, isPlaying, setIsPlaying } = useStore()
+  const { playTrack, currentTrack, isPlaying, setIsPlaying } = useStorePick('playTrack', 'currentTrack', 'isPlaying', 'setIsPlaying')
   const [hover, setHover] = useState(false)
 
   const isCurrent = currentTrack?.id === track.id
@@ -369,7 +369,7 @@ function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPl
 function AlbumDetail({ album, onBack, onContext }: {
   album: Album; onBack: () => void; onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
 }): JSX.Element {
-  const { playTrack } = useStore()
+  const { playTrack } = useStorePick('playTrack')
   const art = useTrackArt(album.coverTrack)
   const tracks = useMemo(() => [...album.tracks].sort(byTrackNo), [album])
   const total = tracks.reduce((s, t) => s + t.duration, 0)
@@ -399,7 +399,7 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
   onOpenAlbum: (a: Album) => void
   onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
 }): JSX.Element {
-  const { playTrack } = useStore()
+  const { playTrack } = useStorePick('playTrack')
   const art = useTrackArt(artist.coverTrack)
   const allTracks = useMemo(() => [...artist.tracks].sort((a, b) => a.title.localeCompare(b.title)), [artist])
   const total = artist.tracks.reduce((s, t) => s + t.duration, 0)
@@ -490,7 +490,7 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playNext, addToQueue, account, setActiveView, setPendingLocalEditTrack } = useStore()
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playNext, addToQueue, account, setActiveView, setPendingLocalEditTrack } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playNext', 'addToQueue', 'account', 'setActiveView', 'setPendingLocalEditTrack')
 
   const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)

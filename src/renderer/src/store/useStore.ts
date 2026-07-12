@@ -1,4 +1,5 @@
 ﻿import { create } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 import { ViewType, SortField, SortDir, Cols, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
@@ -1048,3 +1049,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowDownloadManager: (show) => set({ showDownloadManager: show }),
   setUpdateStatus: (updateStatus) => set({ updateStatus }),
 }))
+
+// Subscribe to a shallow-compared subset of the store. A bare `useStore()`
+// re-renders the component on EVERY store write — including the ~4x/sec
+// timeupdate ticks and per-chunk download progress — so components must pick
+// only the keys they actually read. Actions are stable references, so
+// including them here never causes a re-render on its own.
+export function useStorePick<K extends keyof AppStore>(...keys: K[]): Pick<AppStore, K> {
+  return useStore(
+    useShallow((s: AppStore) => {
+      const picked = {} as Pick<AppStore, K>
+      for (const k of keys) picked[k] = s[k]
+      return picked
+    }),
+  )
+}

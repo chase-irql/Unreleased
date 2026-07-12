@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Play, Loader2, Music2, Share2, Download } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { apiFetch, buildStreamUrl, buildCoverArtUrl } from '../lib/juicewrldApi'
 import { liteSongToTrack, ApiSongLite } from '../lib/userApi'
 import { Track } from '../types'
@@ -98,7 +98,7 @@ function parseTracks(data: unknown): Track[] {
 }
 
 export default function SharedPlaylistView(): JSX.Element {
-  const { playTrack } = useStore()
+  const { playTrack } = useStorePick('playTrack')
   const shareId = window.location.pathname.split('/shared/')[1]?.split('/')[0] ?? ''
 
   const [tracks, setTracks] = useState<Track[]>([])
