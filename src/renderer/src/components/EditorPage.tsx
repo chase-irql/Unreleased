@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown,
-  ChevronUp, Award, Music2, FileText, Pencil, Plus,
+  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
@@ -237,6 +237,8 @@ export default function EditorPage(): JSX.Element {
   const [lyricsError,   setLyricsError]   = useState<string | null>(null)
   const [submitState,  setSubmitState]  = useState<SubmitState>('idle')
   const [submitError,  setSubmitError]  = useState<string | null>(null)
+  const [deleteState,  setDeleteState]  = useState<'idle' | 'confirm' | 'submitting' | 'submitted' | 'error'>('idle')
+  const [deleteError,  setDeleteError]  = useState<string | null>(null)
   const [showMore,     setShowMore]     = useState(false)
   const [editingPropId, setEditingPropId] = useState<number | null>(null)
   // True while editing a 'create' proposal (new song) — has no backing song object yet
@@ -314,6 +316,8 @@ export default function EditorPage(): JSX.Element {
     setEdNotes('')
     setSubmitState('idle')
     setSubmitError(null)
+    setDeleteState('idle')
+    setDeleteError(null)
   }, [])
 
   const loadSong = useCallback(async (id: number): Promise<void> => {
@@ -545,6 +549,24 @@ export default function EditorPage(): JSX.Element {
     }
   }
 
+  const submitDeletion = async (): Promise<void> => {
+    if (!song) return
+    if (deleteState !== 'confirm') { setDeleteState('confirm'); return }
+    setDeleteState('submitting')
+    setDeleteError(null)
+    try {
+      await userApi.createProposal({
+        song: song.id, change_type: 'delete',
+        title: name || song.name, proposed_data: {}, editor_notes: edNotes,
+      })
+      setDeleteState('submitted')
+      setTimeout(() => setDeleteState('idle'), 3000)
+    } catch (e) {
+      setDeleteState('error')
+      setDeleteError(e instanceof Error ? e.message : 'Submission failed')
+      setTimeout(() => setDeleteState('idle'), 4000)
+    }
+  }
 
   const handleLyricsPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
     const pasted = e.clipboardData.getData('text')
@@ -724,7 +746,7 @@ export default function EditorPage(): JSX.Element {
                   </div>
                 </div>
                 <button
-                  onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false) }}
+                  onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
                   className="p-1.5 rounded-lg text-text-muted opacity-30 hover:opacity-100 hover:bg-white/10 transition-colors shrink-0 mb-0.5">
                   <X size={14} />
                 </button>
@@ -945,6 +967,11 @@ export default function EditorPage(): JSX.Element {
               <AlertCircle size={12} className="shrink-0" /> {submitError}
             </div>
           )}
+          {deleteError && (
+            <div className="flex items-center gap-2 text-red-400 text-xs">
+              <AlertCircle size={12} className="shrink-0" /> {deleteError}
+            </div>
+          )}
           <div className="flex items-center gap-2.5">
             <span className={`text-xs font-bold tabular-nums min-w-[60px] ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
               {changedCount} field{changedCount !== 1 ? 's' : ''}
@@ -967,6 +994,31 @@ export default function EditorPage(): JSX.Element {
               {submitState === 'error'      && 'Try again'}
             </button>
           </div>
+
+          {/* Propose deletion — only for an existing song, not a new-song draft or an in-progress edit proposal */}
+          {song && !isNewSongDraft && editingPropId == null && (
+            <button
+              onClick={submitDeletion}
+              onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
+              disabled={deleteState === 'submitting' || deleteState === 'submitted'}
+              title="Propose that this song entry be deleted. Admins review before it's removed."
+              className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                deleteState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+                deleteState === 'error'     ? 'bg-red-500/20 text-red-400' :
+                deleteState === 'confirm'   ? 'bg-red-500 text-white hover:bg-red-600' :
+                'bg-transparent text-red-400/70 hover:text-red-400 hover:bg-red-500/10'
+              }`}>
+              {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+              {deleteState === 'submitted'  && <Check size={12} />}
+              {(deleteState === 'idle' || deleteState === 'confirm') && <Trash2 size={12} />}
+              {deleteState === 'error'      && <AlertCircle size={12} />}
+              {deleteState === 'idle'       && 'Propose deletion'}
+              {deleteState === 'confirm'    && 'Click again to confirm'}
+              {deleteState === 'submitting' && 'Submitting…'}
+              {deleteState === 'submitted'  && 'Submitted!'}
+              {deleteState === 'error'      && 'Try again'}
+            </button>
+          )}
         </div>
       )}
     </div>

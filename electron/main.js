@@ -146,7 +146,9 @@ autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} }
 autoUpdater.autoDownload = appSettings.autoDownload
 autoUpdater.autoInstallOnAppQuit = true
 
-const iconPath = path.join(__dirname, 'icon.ico')
+const iconPath = process.platform === 'linux'
+  ? path.join(__dirname, '..', 'resources', 'icon-512.png')
+  : path.join(__dirname, 'icon.ico')
 const preloadPath = path.join(__dirname, 'preload.js')
 
 let mainWindow = null
@@ -277,6 +279,25 @@ ipcMain.handle('force-update', async () => {
   const https = require('https')
   log('Force update requested')
 
+  // Linux: hand off to electron-updater. Its AppImageUpdater replaces the
+  // installed AppImage in place on quitAndInstall — the manual flow below
+  // would just run the freshly downloaded AppImage once from temp and leave
+  // the installed copy outdated (unlike Windows, where the downloaded .exe
+  // is an installer). Status updates and the restart dialog come from the
+  // shared autoUpdater event handlers at the bottom of this file.
+  if (process.platform === 'linux') {
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      if (result?.downloadPromise) await result.downloadPromise
+      else if (result?.updateInfo && result.updateInfo.version !== app.getVersion()) await autoUpdater.downloadUpdate()
+      return
+    } catch (err) {
+      log('Force update error:', err.message)
+      mainWindow?.webContents.send('update-status', { type: 'error', message: err.message })
+      throw err
+    }
+  }
+
   function fetchJson(url) {
     return new Promise((resolve, reject) => {
       const opts = new URL(url)
@@ -296,7 +317,8 @@ ipcMain.handle('force-update', async () => {
   try {
     mainWindow?.webContents.send('update-status', { type: 'checking' })
     const release = await fetchJson('https://api.github.com/repos/leanwrldd/unreleased/releases/latest')
-    const asset = release.assets.find(a => a.name.endsWith('.exe'))
+    const assetSuffix = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage'
+    const asset = release.assets.find(a => a.name.endsWith(assetSuffix))
     if (!asset) throw new Error('No installer found in latest release')
 
     const tmpPath = path.join(app.getPath('temp'), asset.name)
@@ -319,6 +341,7 @@ ipcMain.handle('force-update', async () => {
       detail: 'The app will restart and reinstall.',
     })
     if (response === 0) {
+      if (process.platform === 'linux') fs.chmodSync(tmpPath, 0o755)
       shell.openPath(tmpPath)
       app.quit()
     }
@@ -814,8 +837,11 @@ ipcMain.handle('save-wrlddata', async (_, data) => {
   return { ok: true }
 })
 ipcMain.handle('download-to-library', async (_, { url, songName, artist, songPath }) => {
-  // Determine save folder: Music/JuiceWRLD Library
-  const libraryFolder = path.join(app.getPath('music'), 'JuiceWRLD Library')
+  // Determine save folder: Music/JuiceWRLD Library. On Linux without
+  // xdg-user-dirs configured, getPath('music') throws — fall back to ~/Music.
+  let musicDir
+  try { musicDir = app.getPath('music') } catch { musicDir = path.join(app.getPath('home'), 'Music') }
+  const libraryFolder = path.join(musicDir, 'JuiceWRLD Library')
   try { fs.mkdirSync(libraryFolder, { recursive: true }) } catch {}
 
   // Build filename from songPath (keeps original extension)
