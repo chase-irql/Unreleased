@@ -1,13 +1,11 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { ViewType, SortField, SortDir, Cols, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
+import { ViewType, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { createQueueSlice, QueueSlice } from './queueSlice'
-
-type ColumnConfig = Cols
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -84,14 +82,7 @@ interface AppState {
   radioFmUpNext: import('../lib/radioLive').RadioTrack | null
   radioFmQueuePreview: string[]
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
-  viewMode: 'list' | 'grid'
   theme: 'dark' | 'light'
-  searchQuery: string
-
-  // Sort & columns
-  sortField: SortField
-  sortDir: SortDir
-  columns: ColumnConfig
 
   // Settings
   crossfadeEnabled: boolean
@@ -111,6 +102,7 @@ interface AppState {
   apiTrackerCategory: string
   apiTrackerEra: string
   apiFilesPath: string
+  apiFilesLastPath: string
 
   // Account
   account: AccountUser | null
@@ -182,13 +174,7 @@ interface AppActions {
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
-  setViewMode: (mode: 'list' | 'grid') => void
   setTheme: (theme: 'dark' | 'light') => void
-  setSearchQuery: (q: string) => void
-
-  setSort: (field: SortField, dir: SortDir) => void
-  toggleColumn: (col: keyof ColumnConfig) => void
-  setColumns: (columns: ColumnConfig) => void
 
   setCrossfade: (enabled: boolean, duration: number) => void
   setSleepTimer: (endTimestamp: number | null) => void
@@ -196,12 +182,12 @@ interface AppActions {
   setAccentColor: (color: string) => void
   setPreferOgVersion: (enabled: boolean) => void
 
-  setLikedTrackIds: (ids: string[]) => void
   toggleLike: (trackId: string) => void
 
   setApiTrackerCategory: (cat: string) => void
   setApiTrackerEra: (era: string) => void
   setApiFilesPath: (path: string) => void
+  setApiFilesLastPath: (path: string) => void
 
   setShowUserAuth: (show: boolean) => void
   loadAccount: () => Promise<void>
@@ -222,16 +208,14 @@ interface AppActions {
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
   updateLibraryTrack: (id: string, updates: Partial<LibraryTrack>) => void
-  setLibraryFolders: (folders: string[]) => void
+  applyLibraryArt: (id: string, art: string | null) => void
   addLibraryFolder: (folder: string) => void
   removeLibraryFolder: (folder: string) => void
-  setLibraryScanning: (scanning: boolean) => void
   setLibraryLastScanned: (ts: number | null) => void
   setLibraryAutoRefresh: (enabled: boolean) => void
   setDeveloperMode: (enabled: boolean) => void
   scanLibrary: () => Promise<void>
 
-  setLocalPlaylists: (playlists: LocalPlaylist[]) => void
   createLocalPlaylist: (name: string) => void
   deleteLocalPlaylist: (id: string) => void
   renameLocalPlaylist: (id: string, name: string) => void
@@ -239,7 +223,6 @@ interface AppActions {
   addToLocalPlaylist: (playlistId: string, trackId: string) => void
   removeFromLocalPlaylist: (playlistId: string, trackId: string) => void
   reorderLocalPlaylist: (playlistId: string, trackIds: string[]) => void
-  setActiveLocalPlaylistId: (id: string | null) => void
   loadLibrary: () => Promise<void>
 
   loadOfflineLibrary: () => Promise<void>
@@ -290,6 +273,11 @@ const _offlineKeyQueues = new Map<string, Promise<void>>()
 // re-downloaded the entire playlist unprompted.
 const _offlineKeyEpochs = new Map<string, number>()
 
+// Pending cover-art results awaiting a batched flush (see applyLibraryArt).
+// Covers arrive in bursts — one per visible row — and applying each through
+// its own set() meant a full libraryTracks copy and list re-render per cover.
+let _pendingArt: Map<string, string | null> | null = null
+
 // Chains `fn` behind any in-flight offline work for `key` so writers for the
 // same playlist never interleave.
 function enqueueOfflineWork(key: string, fn: () => Promise<void>): Promise<void> {
@@ -336,9 +324,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   radioFmUpNext: null,
   radioFmQueuePreview: [],
   radioFmMatchedSong: null,
-  viewMode: ls.get<'list' | 'grid'>('viewMode') ?? 'list',
   theme: ls.get<'dark' | 'light'>('theme') ?? 'dark',
-  searchQuery: '',
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
@@ -366,27 +352,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
-  setViewMode: (viewMode) => { set({ viewMode }); ls.set('viewMode', viewMode) },
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
-
-  // ── Sort & columns ────────────────────────────────────────────────────────
-  sortField: ls.get<SortField>('sortField') ?? 'default',
-  sortDir: ls.get<SortDir>('sortDir') ?? 'asc',
-  columns: ls.get<ColumnConfig>('columns') ?? {
-    art: true, artist: true, album: true, year: false, genre: false, duration: true,
-  },
-
-  setSort: (sortField, sortDir) => {
-    set({ sortField, sortDir })
-    ls.set('sortField', sortField)
-    ls.set('sortDir', sortDir)
-  },
-  toggleColumn: (col) => {
-    set((s) => ({ columns: { ...s.columns, [col]: !s.columns[col] } }))
-    ls.set('columns', get().columns)
-  },
-  setColumns: (columns) => set({ columns }),
 
   // ── Settings ──────────────────────────────────────────────────────────────
   crossfadeEnabled: ls.get<boolean>('crossfadeEnabled') ?? false,
@@ -408,8 +374,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // ── Liked songs ───────────────────────────────────────────────────────────
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],
-
-  setLikedTrackIds: (ids) => set({ likedTrackIds: ids }),
 
   toggleLike: (trackId) => {
     const { likedTrackIds, account } = get()
@@ -440,9 +404,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   apiTrackerCategory: '',
   apiTrackerEra: '',
   apiFilesPath: '',
+  apiFilesLastPath: '',
 
   setApiTrackerCategory: (cat) => set({ apiTrackerCategory: cat }),
   setApiTrackerEra: (era) => set({ apiTrackerEra: era }),
+  setApiFilesLastPath: (path) => set({ apiFilesLastPath: path }),
   setApiFilesPath: (path) => set({ apiFilesPath: path }),
 
   // ── Account ───────────────────────────────────────────────────────────────
@@ -629,9 +595,31 @@ export const useStore = create<AppStore>((set, get, store) => ({
       : s.currentTrackFull
     return { libraryTracks: newLib, queue: newQueue, currentTrack: newCurrentTrack, currentTrackFull: newCurrentTrackFull }
   }),
-  setLibraryFolders: (libraryFolders) => {
-    set({ libraryFolders })
-    ls.set('libraryFolders', libraryFolders)
+  // Batched form of updateLibraryTrack(id, { albumArt }) — collects results
+  // for a frame's worth of time and applies them in ONE set(), with the same
+  // queue/currentTrack art fan-out.
+  applyLibraryArt: (id, art) => {
+    if (!_pendingArt) {
+      _pendingArt = new Map()
+      setTimeout(() => {
+        const batch = _pendingArt
+        _pendingArt = null
+        if (!batch || batch.size === 0) return
+        set((s) => {
+          const libraryTracks = s.libraryTracks.map((t) => batch.has(t.id) ? { ...t, albumArt: batch.get(t.id) } : t)
+          const queue = s.queue.map((t) => batch.has(t.id) ? { ...t, imageUrl: batch.get(t.id) || '' } : t)
+          const curId = s.currentTrack?.id
+          const currentTrack = (curId && batch.has(curId) && s.currentTrack)
+            ? { ...s.currentTrack, imageUrl: batch.get(curId) || '' }
+            : s.currentTrack
+          const currentTrackFull = (curId && batch.has(curId) && s.currentTrackFull)
+            ? { ...s.currentTrackFull, albumArt: batch.get(curId) ?? null }
+            : s.currentTrackFull
+          return { libraryTracks, queue, currentTrack, currentTrackFull }
+        })
+      }, 40)
+    }
+    _pendingArt.set(id, art)
   },
   addLibraryFolder: (folder) => {
     const { libraryFolders } = get()
@@ -645,7 +633,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ libraryFolders: next })
     ls.set('libraryFolders', next)
   },
-  setLibraryScanning: (libraryScanning) => set({ libraryScanning }),
   setLibraryLastScanned: (ts) => {
     set({ libraryLastScanned: ts })
     ls.set('libraryLastScanned', ts)
@@ -675,12 +662,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const now = Date.now()
       set({ libraryTracks: result.tracks, libraryLastScanned: now })
       ls.set('libraryLastScanned', now)
-      await el.saveLibraryData({ tracks: result.tracks, folders: libraryFolders, lastScanned: now })
+      // Strip lazily-loaded cover art before persisting: unchanged files come
+      // back from the scanner as the same in-memory objects, art included, and
+      // saving that would bloat library.json with base64 covers (it's meant to
+      // hold metadata only — art is re-read on demand and merged in loadLibrary).
+      const diskTracks = (result.tracks as LibraryTrack[]).map((t) =>
+        t.albumArt !== undefined ? { ...t, albumArt: undefined } : t,
+      )
+      await el.saveLibraryData({ tracks: diskTracks, folders: libraryFolders, lastScanned: now })
     } catch(e) { console.error('scanLibrary error:', e) }
     finally { set({ libraryScanning: false }) }
   },
 
-  setLocalPlaylists: (localPlaylists) => set({ localPlaylists }),
   createLocalPlaylist: (name) => {
     const el = (window as any).electron
     const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name, trackIds: [], createdAt: Date.now() }
@@ -730,14 +723,25 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ localPlaylists: next })
     el?.saveLocalPlaylists(next)
   },
-  setActiveLocalPlaylistId: (activeLocalPlaylistId) => set({ activeLocalPlaylistId }),
-
   loadLibrary: async () => {
     const el = (window as any).electron
     if (!el) return
     try {
       const [libData, playlists] = await Promise.all([el.loadLibraryData(), el.loadLocalPlaylists()])
-      if (libData?.tracks) set({ libraryTracks: libData.tracks })
+      // Carry already-loaded cover art over to the reloaded track list. This
+      // runs on every Library tab mount, and the disk snapshot never has
+      // albumArt (it's read lazily per-track) — replacing the list wholesale
+      // reset every cover to "not loaded yet" and re-read them all from disk
+      // each time the tab was opened.
+      if (libData?.tracks) {
+        set((s) => {
+          const artById = new Map(s.libraryTracks.filter((t) => t.albumArt !== undefined).map((t) => [t.id, t.albumArt]))
+          const tracks = (libData.tracks as LibraryTrack[]).map((t) =>
+            t.albumArt === undefined && artById.has(t.id) ? { ...t, albumArt: artById.get(t.id) } : t,
+          )
+          return { libraryTracks: tracks }
+        })
+      }
       if (playlists) set({ localPlaylists: playlists })
     } catch(e) { console.error('loadLibrary error:', e) }
   },

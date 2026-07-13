@@ -190,7 +190,7 @@ export default function App(): JSX.Element {
         <main className="flex-1 overflow-hidden flex flex-col relative">
           {isElectron && (
             <div
-              className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]"
+              className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px] pointer-events-none"
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             />
           )}

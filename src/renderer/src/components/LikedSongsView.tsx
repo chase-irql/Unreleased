@@ -3,36 +3,12 @@ import { Heart, Play, Loader2, MoreHorizontal } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import { Track, LibraryTrack } from '../types'
-import { toFileUrl } from '../lib/fileTypes'
+import { libraryTrackToTrack } from '../lib/fileTypes'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { apiFetch, JWApiSong, apiFileIdToPath, apiFilePathToTrack } from '../lib/juicewrldApi'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
-
-function libraryTrackToTrack(t: LibraryTrack): Track {
-  return {
-    id: t.id,
-    path: t.filePath,
-    streamUrl: toFileUrl(t.filePath),
-    imageUrl: t.albumArt || '',
-    title: t.title,
-    artist: t.artist,
-    album: t.album,
-    albumArtist: t.albumArtist,
-    year: t.year,
-    trackNumber: t.trackNumber,
-    duration: t.duration,
-    genre: t.genre,
-    hasAlbumArt: t.hasAlbumArt,
-  }
-}
-
-function formatDuration(seconds: number): string {
-  if (!seconds) return ''
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${String(s).padStart(2, '0')}`
-}
+import { formatDuration } from '../lib/format'
 
 export default function LikedSongsView(): JSX.Element {
   const { account, playTrack, playCollection, playNext, toggleLike, setShowUserAuth, setActiveView, setPendingEditorSongId, libraryTracks, likedTrackIds } = useStorePick('account', 'playTrack', 'playCollection', 'playNext', 'toggleLike', 'setShowUserAuth', 'setActiveView', 'setPendingEditorSongId', 'libraryTracks', 'likedTrackIds')
@@ -156,7 +132,7 @@ export default function LikedSongsView(): JSX.Element {
                     <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
                     <p className="text-text-muted text-xs truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</p>
                   </div>
-                  <span className="text-text-muted text-xs tabular-nums shrink-0 hidden sm:block">{formatDuration(track.duration)}</span>
+                  <span className="text-text-muted text-xs tabular-nums shrink-0 hidden sm:block">{formatDuration(track.duration, '')}</span>
                   <button
                     onClick={e => { e.stopPropagation(); setCtxMenu(prev => prev?.track.id === track.id ? null : { track, songId, x: e.clientX, y: e.clientY }) }}
                     className="p-1.5 text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0"

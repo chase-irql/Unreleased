@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen, ArrowDownToLine } from 'lucide-react'
 import { useStore, useStorePick, DownloadItem } from '../store/useStore'
+import { formatBytes } from '../lib/format'
 
 export default function DownloadManager(): JSX.Element | null {
   const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus', 'wrldFullscreen')
@@ -147,13 +148,13 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
   const sizeLabel = item.type === 'playlist'
     ? [
         item.total ? `${item.received ?? 0} / ${item.total} tracks` : null,
-        item.bytesReceived ? fmtBytes(item.bytesReceived) : null,
+        item.bytesReceived ? formatBytes(item.bytesReceived) : null,
       ].filter(Boolean).join(' · ') || null
     : item.total && item.total > 0
-      ? `${fmtBytes(item.received ?? 0)} / ${fmtBytes(item.total)}`
-      : item.received ? fmtBytes(item.received) : null
+      ? `${formatBytes(item.received ?? 0)} / ${formatBytes(item.total)}`
+      : item.received ? formatBytes(item.received) : null
 
-  const speedLabel = isActive && item.speedBps ? `${fmtBytes(item.speedBps)}/s` : null
+  const speedLabel = isActive && item.speedBps ? `${formatBytes(item.speedBps)}/s` : null
 
   return (
     <div className="px-3 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors">
@@ -190,11 +191,4 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
       </div>
     </div>
   )
-}
-
-function fmtBytes(b: number): string {
-  if (b < 1024) return `${b} B`
-  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`
-  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`
-  return `${(b / 1073741824).toFixed(2)} GB`
 }

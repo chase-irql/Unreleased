@@ -65,22 +65,6 @@ export interface LocalPlaylist {
   coverImage?: string | null  // base64 data URL or null
 }
 
-export interface Playlist {
-  id: string
-  name: string
-  trackIds: string[]
-  createdAt: number
-  pinned?: boolean
-  folderId?: string
-}
-
-export interface PlaylistFolder {
-  id: string
-  name: string
-  createdAt: number
-  parentId?: string
-}
-
 // ─── Offline playlist sync (Electron only) ─────────────────────────────────
 // A downloaded API song, kept fully playable without network — the audio
 // file plus a snapshot of the song's own metadata at download time.
@@ -110,14 +94,3 @@ export interface SyncedLyricLine {
 }
 
 export type ViewType = 'api-tracker' | 'api-files' | 'api-categories' | 'editor' | 'local-editor' | 'admin' | 'liked' | 'playlists' | 'shared-playlist' | 'editor-profile' | 'docs' | 'wrld' | 'library' | 'albums-admin' | 'not-found'
-
-export type SortField = 'default' | 'title' | 'artist' | 'album' | 'year' | 'genre' | 'duration'
-export type SortDir = 'asc' | 'desc'
-export interface Cols {
-  art: boolean
-  artist: boolean
-  album: boolean
-  year: boolean
-  genre: boolean
-  duration: boolean
-}

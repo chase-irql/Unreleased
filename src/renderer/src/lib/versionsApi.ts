@@ -10,9 +10,11 @@
 // or 1 result for that song), so single-song lookups go through that instead
 // of the full list.
 //
-// Writes (POST to create a row, PATCH /versions/{song_id}/ to update one)
-// require an editor/admin auth token; there's no bulk-write endpoint, so
-// group merges/title changes touching multiple rows send one request per
+// Writes (POST to create a row, PATCH /versions/{song_id}/{version_id}/ to
+// update one — both the song id AND the row's own id are required in the
+// path, PATCH on /versions/{song_id}/ alone returns 405) require an
+// editor/admin auth token; there's no bulk-write endpoint, so group
+// merges/title changes touching multiple rows send one request per
 // affected song.
 import { JWAPI_BASE, apiFetch } from './juicewrldApi'
 import { getToken } from './userApi'
@@ -112,8 +114,8 @@ async function createRow(songId: number, groupId: number, version?: string | nul
   await writeVersions('/', 'POST', { song_id: songId, group_id: groupId, version: version ?? null, title: title ?? null })
 }
 
-async function patchRow(songId: number, body: Record<string, unknown>): Promise<void> {
-  await writeVersions(`/${songId}/`, 'PATCH', body)
+async function patchRow(songId: number, versionId: number, body: Record<string, unknown>): Promise<void> {
+  await writeVersions(`/${songId}/${versionId}/`, 'PATCH', body)
 }
 
 /** All other songs grouped with this one (excluding itself), with their
@@ -179,7 +181,7 @@ export async function linkSongVersion(songId: number, otherSongId: number): Prom
       all
         .filter(r => r.group_id === keep || r.group_id === drop)
         .filter(r => r.group_id === drop || (survivingTitle != null && r.title !== survivingTitle))
-        .map(r => patchRow(r.song_id, {
+        .map(r => patchRow(r.song_id, r.id, {
           group_id: keep,
           ...(survivingTitle != null ? { title: survivingTitle } : {}),
         }))
@@ -220,7 +222,10 @@ export async function setSongVersion(
   if (existingGroupId == null) {
     await createRow(songId, groupId, version)
   } else {
-    await patchRow(songId, { version, group_id: groupId })
+    // PATCH needs the row's own id in the path alongside the song id
+    const row = await getRow(songId)
+    if (row) await patchRow(songId, row.id, { version, group_id: groupId })
+    else await createRow(songId, groupId, version)
   }
   return groupId
 }
@@ -230,7 +235,7 @@ export async function setSongVersion(
 export async function setGroupVersionTitle(groupId: number, versionTitle: string | null): Promise<void> {
   const all = await getAllRows()
   const members = all.filter(r => r.group_id === groupId)
-  await Promise.all(members.map(row => patchRow(row.song_id, { title: versionTitle })))
+  await Promise.all(members.map(row => patchRow(row.song_id, row.id, { title: versionTitle })))
 }
 
 /** An existing version title plus the group it belongs to — picking one of
@@ -279,6 +284,6 @@ export async function joinVersionGroup(songId: number, targetGroupId: number): P
   const keep = Math.min(row.group_id, targetGroupId)
   const drop = Math.max(row.group_id, targetGroupId)
   const all = await getAllRows()
-  await Promise.all(all.filter(r => r.group_id === drop).map(r => patchRow(r.song_id, { group_id: keep })))
+  await Promise.all(all.filter(r => r.group_id === drop).map(r => patchRow(r.song_id, r.id, { group_id: keep })))
   return keep
 }

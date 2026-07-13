@@ -146,7 +146,7 @@ function urlToPath(pathname: string): string {
 }
 
 export default function ApiFilesView(): JSX.Element {
-  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike')
+  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
   // Set lookup for the per-row liked check — .includes on the array made the
   // listing O(rows × likes).
@@ -350,9 +350,18 @@ export default function ApiFilesView(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, isSearching])
 
-  // On mount: read path from URL (or apiFilesPath from store); listen for browser back/forward
+  // Remember the browsed folder in the store so switching to another tab and
+  // back restores it — the component unmounts on tab switch, so local state
+  // alone doesn't survive that round trip.
   useEffect(() => {
-    const initialPath = apiFilesPath || urlToPath(window.location.pathname)
+    setApiFilesLastPath(currentPath)
+  }, [currentPath]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On mount: read path from URL, or an explicit deep-link (apiFilesPath), or
+  // fall back to wherever the user last browsed to (apiFilesLastPath).
+  useEffect(() => {
+    const urlPath = urlToPath(window.location.pathname)
+    const initialPath = apiFilesPath || urlPath || apiFilesLastPath
     if (apiFilesPath) setApiFilesPath('')  // consume it
     navigateRef.current(initialPath, false)
 

@@ -2,7 +2,7 @@
 import { X, GripVertical, ListMusic, Trash2, History, ChevronDown, Radio } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
-import { formatDuration } from '../lib/lyrics'
+import { formatDuration } from '../lib/format'
 import { Track } from '../types'
 import { useResizablePanel } from '../hooks/useResizablePanel'
 

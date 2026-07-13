@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check, Download, History } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { parseLrc, getCurrentLineIndex, isLrcFormat, formatDuration, downloadSyncedLyrics } from '../lib/lyrics'
+import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
+import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
 import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
@@ -1661,13 +1662,6 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
     return () => clearInterval(t)
   }, [radioFmNowPlaying])
 
-  const fmt = (s: number) => {
-    if (!isFinite(s) || isNaN(s) || s < 0) return '0:00'
-    const m = Math.floor(s / 60)
-    const sec = Math.floor(s % 60)
-    return `${m}:${sec.toString().padStart(2, '0')}`
-  }
-
   const durationMs = radioFmNowPlaying?.duration_ms ?? 0
   const pct = durationMs > 0 ? Math.min(100, (elapsedMs / durationMs) * 100) : 0
 
@@ -1677,8 +1671,8 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
       </div>
       <div className="flex justify-between">
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{fmt(elapsedMs / 1000)}</span>
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{durationMs > 0 ? fmt(durationMs / 1000) : '-∞'}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{formatDuration(elapsedMs / 1000)}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{durationMs > 0 ? formatDuration(durationMs / 1000) : '-∞'}</span>
       </div>
     </div>
   )
@@ -1690,13 +1684,6 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
   // Buffer the scrub position visually while dragging — only call seekAudio
   // on release, since seeking on every mousemove makes playback glitch/stutter.
   const [dragPct, setDragPct] = useState<number | null>(null)
-
-  const fmt = (s: number) => {
-    if (!isFinite(s) || isNaN(s) || s < 0) return '0:00'
-    const m = Math.floor(s / 60)
-    const sec = Math.floor(s % 60)
-    return `${m}:${sec.toString().padStart(2, '0')}`
-  }
 
   const pctFromClientX = useCallback((clientX: number): number | null => {
     const bar = barRef.current
@@ -1742,8 +1729,8 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
         />
       </div>
       <div className="flex justify-between">
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{fmt(displayTime)}</span>
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{duration > 0 ? `-${fmt(remaining)}` : '-∞'}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{formatDuration(displayTime)}</span>
+        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{duration > 0 ? `-${formatDuration(remaining)}` : '-∞'}</span>
       </div>
     </div>
   )

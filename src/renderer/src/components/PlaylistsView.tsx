@@ -13,8 +13,9 @@ import type { PlaylistDetail, PlaylistSummary } from '../lib/userApi'
 import { Track, LocalPlaylist, LibraryTrack } from '../types'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl } from '../lib/juicewrldApi'
-import { toFileUrl } from '../lib/fileTypes'
-import { formatDuration } from '../lib/lyrics'
+import { toFileUrl, libraryTrackToTrack as libTrackToTrack } from '../lib/fileTypes'
+import { formatDuration, formatTotalDuration } from '../lib/format'
+import { fisherYates } from '../store/queueSlice'
 import LikedSongsView from './LikedSongsView'
 import { AlbumArtThumb } from './LibraryTab'
 import SongInfoModal from './SongInfoModal'
@@ -109,10 +110,7 @@ function CardPlayOverlay({ onPlay }: { onPlay: () => void }): JSX.Element {
 function totalDurationLabel(tracks: Track[]): string {
   const secs = tracks.reduce((acc, t) => acc + (t.duration ?? 0), 0)
   if (secs === 0) return ''
-  const h = Math.floor(secs / 3600)
-  const m = Math.floor((secs % 3600) / 60)
-  if (h > 0) return `${h} hr ${m} min`
-  return `${m} min`
+  return formatTotalDuration(secs)
 }
 
 // ── MenuItem helper ───────────────────────────────────────────────────────────
@@ -195,24 +193,6 @@ function SortHeader({ label, field, sort, onSort }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 // ── Local-library helpers ─────────────────────────────────────────────────────
-
-function libTrackToTrack(t: LibraryTrack): Track {
-  return {
-    id: t.id,
-    path: t.filePath,
-    streamUrl: toFileUrl(t.filePath),
-    imageUrl: t.albumArt || '',
-    title: t.title,
-    artist: t.artist,
-    album: t.album,
-    albumArtist: t.albumArtist,
-    year: t.year,
-    trackNumber: t.trackNumber,
-    duration: t.duration,
-    genre: t.genre,
-    hasAlbumArt: t.hasAlbumArt,
-  } as Track
-}
 
 function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
   trackIds: string[]; libraryTracks: LibraryTrack[]; className?: string
@@ -984,7 +964,7 @@ export default function PlaylistsView(): JSX.Element {
             <div className="relative z-10 flex items-center gap-3 mt-5">
               {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
               {localQTracks.length > 1 && (
-                <HeroShuffleButton onClick={() => { const sh = [...localQTracks].sort(() => Math.random() - 0.5); playTrack(sh[0], sh) }} />
+                <HeroShuffleButton onClick={() => { const sh = fisherYates(localQTracks); playTrack(sh[0], sh) }} />
               )}
             </div>
           </div>
@@ -1010,7 +990,7 @@ export default function PlaylistsView(): JSX.Element {
                     <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
-                    {lt.duration ? (() => { const m = Math.floor(lt.duration / 60); const s = Math.floor(lt.duration % 60); return `${m}:${s.toString().padStart(2,'0')}` })() : '--:--'}
+                    {formatDuration(lt.duration, '--:--')}
                   </span>
                 </div>
               )
@@ -1219,7 +1199,7 @@ export default function PlaylistsView(): JSX.Element {
 
     const playShuffle = () => {
       if (!tracks.length) return
-      const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+      const shuffled = fisherYates(tracks)
       playTrack(shuffled[0], shuffled)
     }
 
@@ -1666,7 +1646,7 @@ export default function PlaylistsView(): JSX.Element {
                     </p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
-                    {track.duration ? formatDuration(track.duration) : '--:--'}
+                    {formatDuration(track.duration, '--:--')}
                   </span>
                   <div className={`flex items-center justify-end transition-opacity ${selectMode ? 'opacity-0 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
                     <button onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
@@ -1845,7 +1825,7 @@ export default function PlaylistsView(): JSX.Element {
               <div className="flex items-center gap-2 flex-wrap">
                 {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
                 {localQTracks.length > 1 && (
-                  <HeroShuffleButton onClick={() => { const s = [...localQTracks].sort(() => Math.random() - 0.5); playTrack(s[0], s) }} />
+                  <HeroShuffleButton onClick={() => { const s = fisherYates(localQTracks); playTrack(s[0], s) }} />
                 )}
                 {!localRenaming && (
                   <button onClick={() => { setLocalRenameVal(localPl.name); setLocalRenaming(true) }} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Rename">
@@ -1901,7 +1881,7 @@ export default function PlaylistsView(): JSX.Element {
                     <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
-                    {lt.duration ? (() => { const m = Math.floor(lt.duration / 60); const s = Math.floor(lt.duration % 60); return `${m}:${s.toString().padStart(2,'0')}` })() : '--:--'}
+                    {formatDuration(lt.duration, '--:--')}
                   </span>
                 </div>
               )
