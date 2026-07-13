@@ -50,16 +50,6 @@ export function getCurrentLineIndex(lines: SyncedLyricLine[], currentTime: numbe
 }
 
 /**
- * Format duration in mm:ss
- */
-export function formatDuration(seconds: number): string {
-  if (!seconds || !isFinite(seconds)) return '0:00'
-  const min = Math.floor(seconds / 60)
-  const sec = Math.floor(seconds % 60)
-  return `${min}:${String(sec).padStart(2, '0')}`
-}
-
-/**
  * Save a synced (LRC) lyrics string as a local .lrc file — a plain client-side
  * Blob download, not a server fetch, since the lyrics text is already in
  * memory (loaded with the track).

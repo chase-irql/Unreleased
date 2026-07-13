@@ -25,6 +25,7 @@ import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCach
 import type { CompactGroup } from '../lib/compactGroups'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
+import { formatDuration } from '../lib/format'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'detail'
@@ -123,13 +124,6 @@ const SortBtn = ({ field, label, className, orderField, orderDir, onClick }: {
         : <span className="w-2.5" />}
     </button>
   )
-}
-
-function formatDur(secs: number): string {
-  if (!secs) return '--:--'
-  const m = Math.floor(secs / 60)
-  const s = Math.floor(secs % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 const SNIPPET_CONTEXT_CHARS = 70
@@ -623,7 +617,7 @@ const SongRow = memo(function SongRow({
           {CATEGORY_LABELS[song.category] ?? song.category}
         </button>
       )}
-      <span className="hidden md:block text-text-muted text-xs w-12 text-right shrink-0 tabular-nums">{formatDur(parseDuration(song.length))}</span>
+      <span className="hidden md:block text-text-muted text-xs w-12 text-right shrink-0 tabular-nums">{formatDuration(parseDuration(song.length), '--:--')}</span>
 
       {/* Desktop action buttons */}
       {!selectMode && (
@@ -761,7 +755,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
           >
             {CATEGORY_LABELS[song.category] ?? song.category}
           </button>
-          <span className="ml-auto text-text-muted text-xs shrink-0 tabular-nums">{formatDur(parseDuration(song.length))}</span>
+          <span className="ml-auto text-text-muted text-xs shrink-0 tabular-nums">{formatDuration(parseDuration(song.length), '--:--')}</span>
           {!selectMode && (
             <div className="hidden md:flex items-center gap-0.5 shrink-0">
               <SongActions onInfo={() => onInfo(song)} onContextMenu={(e) => onContextMenu(song, e)} />
@@ -1119,7 +1113,7 @@ const LyricResultRow = memo(function LyricResultRow({
         )}
       </div>
 
-      <span className="hidden md:block text-text-muted text-xs w-12 text-right shrink-0 tabular-nums pt-1.5">{formatDur(parseDuration(song.length))}</span>
+      <span className="hidden md:block text-text-muted text-xs w-12 text-right shrink-0 tabular-nums pt-1.5">{formatDuration(parseDuration(song.length), '--:--')}</span>
 
       {/* Desktop action buttons */}
       {!selectMode && (

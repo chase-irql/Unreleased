@@ -21,7 +21,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
-import { formatDuration } from '../lib/lyrics'
+import { formatDuration } from '../lib/format'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
 import { toFileUrl } from '../lib/fileTypes'

@@ -680,69 +680,82 @@ ipcMain.handle('scan-library', async (_, folders, previousTracks) => {
   // without reparsing an entire library just to pick up a couple of edits.
   const prevByPath = new Map((previousTracks || []).map((t) => [t.filePath, t]))
 
-  const tracks = []
-  const errors = []
-
-  async function scanDir(dirPath) {
+  // Walk first (cheap directory listing), parse after with a small worker
+  // pool — tag parsing is the expensive part, and strictly one-file-at-a-time
+  // left the disk and CPU idling in turns. Results land in indexed slots so
+  // the track order still matches the walk order exactly.
+  const files = []
+  function walk(dirPath) {
     let entries
     try { entries = fs.readdirSync(dirPath, { withFileTypes: true }) } catch { return }
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue
       const fullPath = path.join(dirPath, entry.name)
-      if (entry.isDirectory()) {
-        await scanDir(fullPath)
-      } else if (entry.isFile()) {
-        const ext = path.extname(entry.name).toLowerCase()
-        if (!AUDIO_EXTS.has(ext)) continue
-        const prev = prevByPath.get(fullPath)
-        if (prev) {
-          try {
-            const stat = fs.statSync(fullPath)
-            if (prev.fileSize === stat.size && prev.lastModified === stat.mtimeMs) {
-              tracks.push(prev)
-              continue
-            }
-          } catch {}
-        }
+      if (entry.isDirectory()) walk(fullPath)
+      else if (entry.isFile() && AUDIO_EXTS.has(path.extname(entry.name).toLowerCase())) files.push(fullPath)
+    }
+  }
+  for (const folder of folders) walk(folder)
+
+  const tracks = new Array(files.length)
+  const errors = []
+  let nextIdx = 0
+  const SCAN_CONCURRENCY = 4
+
+  async function scanWorker() {
+    while (true) {
+      const i = nextIdx++
+      if (i >= files.length) return
+      const fullPath = files[i]
+      const ext = path.extname(fullPath).toLowerCase()
+      const prev = prevByPath.get(fullPath)
+      if (prev) {
         try {
-          const metadata = await mm.parseFile(fullPath, { duration: true, skipCovers: true })
-          const common = metadata.common
-          const format = metadata.format
           const stat = fs.statSync(fullPath)
-          tracks.push({
-            id: 'local-' + fullPath,
-            filePath: fullPath,
-            ext: ext.slice(1),
-            title: common.title || entry.name.replace(/\.[^.]+$/, ''),
-            artist: (common.artists || []).join(', ') || common.artist || '',
-            album: common.album || '',
-            albumArtist: common.albumartist || '',
-            year: common.year || null,
-            trackNumber: common.track?.no || null,
-            discNumber: common.disk?.no || null,
-            composer: (common.composer || []).join(', '),
-            genre: (common.genre || []).join(', '),
-            duration: format.duration || 0,
-            bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : null,
-            sampleRate: format.sampleRate || null,
-            fileSize: stat.size,
-            lastModified: stat.mtimeMs,
-            hasAlbumArt: (common.picture && common.picture.length > 0) ? true : false,
-            addedAt: Date.now(),
-            // Not included: albumArt base64 (loaded on-demand), lyrics
-          })
-        } catch(e) {
-          errors.push({ path: fullPath, error: e.message })
+          if (prev.fileSize === stat.size && prev.lastModified === stat.mtimeMs) {
+            tracks[i] = prev
+            continue
+          }
+        } catch {}
+      }
+      try {
+        const metadata = await mm.parseFile(fullPath, { duration: true, skipCovers: true })
+        const common = metadata.common
+        const format = metadata.format
+        const stat = fs.statSync(fullPath)
+        tracks[i] = {
+          id: 'local-' + fullPath,
+          filePath: fullPath,
+          ext: ext.slice(1),
+          title: common.title || path.basename(fullPath).replace(/\.[^.]+$/, ''),
+          artist: (common.artists || []).join(', ') || common.artist || '',
+          album: common.album || '',
+          albumArtist: common.albumartist || '',
+          year: common.year || null,
+          trackNumber: common.track?.no || null,
+          discNumber: common.disk?.no || null,
+          composer: (common.composer || []).join(', '),
+          genre: (common.genre || []).join(', '),
+          duration: format.duration || 0,
+          bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : null,
+          sampleRate: format.sampleRate || null,
+          fileSize: stat.size,
+          lastModified: stat.mtimeMs,
+          hasAlbumArt: (common.picture && common.picture.length > 0) ? true : false,
+          // A re-parsed file is an *edited* file, not a new one — keep its
+          // original added date so "recently added" sorting doesn't reshuffle
+          // whenever tags change.
+          addedAt: prev?.addedAt ?? Date.now(),
+          // Not included: albumArt base64 (loaded on-demand), lyrics
         }
+      } catch(e) {
+        errors.push({ path: fullPath, error: e.message })
       }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, files.length) }, scanWorker))
 
-  for (const folder of folders) {
-    await scanDir(folder)
-  }
-
-  return { tracks, errors }
+  return { tracks: tracks.filter(Boolean), errors }
 })
 
 // Embedded album art is often full-resolution (1400px+). Returning it raw meant
@@ -765,15 +778,62 @@ function coverToThumbDataUri(rawBuffer, fallbackFormat, maxSize) {
   }
 }
 
+// ── Album-art thumbnail cache ────────────────────────────────────────────────
+// Extracting a cover means parsing the whole audio file's metadata — far too
+// expensive to redo per row per session. Thumbs are cached by
+// (path, mtime, size, maxSize): in memory for repeat asks this session, and on
+// disk (the finished data-URI string) so covers survive app restarts. An empty
+// cache file means "parsed before, no embedded art" so artless files aren't
+// re-parsed either. File edits change mtime/size → new key → stale entries are
+// simply never read again.
+const crypto = require('crypto')
+const artCacheDir = path.join(app.getPath('userData'), 'art-thumbs')
+const artMemCache = new Map() // key → data URI ('' = known artless); LRU capped
+const ART_MEM_MAX = 500
+
+function artMemPut(key, dataUri) {
+  artMemCache.delete(key)
+  artMemCache.set(key, dataUri)
+  if (artMemCache.size > ART_MEM_MAX) artMemCache.delete(artMemCache.keys().next().value)
+}
+
+function artCacheGet(key) {
+  if (artMemCache.has(key)) {
+    const hit = artMemCache.get(key)
+    artMemPut(key, hit) // refresh LRU position
+    return hit
+  }
+  try {
+    const data = fs.readFileSync(path.join(artCacheDir, key), 'utf-8')
+    artMemPut(key, data)
+    return data
+  } catch { return undefined }
+}
+
+function artCachePut(key, dataUri) {
+  artMemPut(key, dataUri)
+  try {
+    fs.mkdirSync(artCacheDir, { recursive: true })
+    fs.writeFileSync(path.join(artCacheDir, key), dataUri)
+  } catch {}
+}
+
 ipcMain.handle('read-album-art', async (_, filePath, maxSize = 256) => {
+  let st
+  try { st = fs.statSync(filePath) } catch { return null }
+  const key = crypto.createHash('sha1').update(`${filePath}|${st.mtimeMs}|${st.size}|${maxSize}`).digest('hex')
+  const cached = artCacheGet(key)
+  if (cached !== undefined) return cached || null
+
   let mm
   try { mm = require('music-metadata') } catch { return null }
   try {
     const metadata = await mm.parseFile(filePath, { skipCovers: false, duration: false })
     const pic = metadata.common.picture?.[0]
-    if (!pic) return null
-    return coverToThumbDataUri(Buffer.from(pic.data), pic.format, maxSize)
-  } catch { return null }
+    const uri = pic ? coverToThumbDataUri(Buffer.from(pic.data), pic.format, maxSize) : null
+    artCachePut(key, uri || '')
+    return uri
+  } catch { return null } // transient read/parse error — don't cache the failure
 })
 
 ipcMain.handle('read-track-metadata', async (_, filePath) => {

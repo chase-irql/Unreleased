@@ -6,10 +6,12 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
-import { toFileUrl } from '../lib/fileTypes'
+import { libraryTrackToTrack as toQueueTrack } from '../lib/fileTypes'
+import { fisherYates } from '../store/queueSlice'
 import * as userApi from '../lib/userApi'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
+import { formatDuration, formatTotalDuration } from '../lib/format'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Library — local-file browser styled like the rest of the app (solid surfaces,
@@ -27,38 +29,8 @@ const CARD_TEXT_H = 60      // fixed text block beneath square art, px
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-function fmtDur(s: number): string {
-  if (!s || isNaN(s)) return '--:--'
-  const m = Math.floor(s / 60), sec = Math.floor(s % 60)
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
-
-function fmtTotal(s: number): string {
-  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60)
-  if (h) return `${h} hr ${m} min`
-  return `${m} min`
-}
-
-function toQueueTrack(t: LibraryTrack) {
-  return {
-    id: t.id,
-    path: t.filePath,
-    streamUrl: toFileUrl(t.filePath),
-    imageUrl: t.albumArt || '',
-    title: t.title,
-    artist: t.artist,
-    album: t.album,
-    albumArtist: t.albumArtist,
-    year: t.year,
-    trackNumber: t.trackNumber,
-    duration: t.duration,
-    genre: t.genre,
-    hasAlbumArt: t.hasAlbumArt,
-  }
-}
-
 const byTrackNo = (a: LibraryTrack, b: LibraryTrack) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
-const shuffled = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random() - 0.5)
+const shuffled = fisherYates
 
 // ─── album / artist models ───────────────────────────────────────────────────
 
@@ -84,14 +56,25 @@ interface Artist {
 // This kicks off that read once and lets the store fan the result out to every
 // component showing the same track.
 
+// The same track can be visible in several places at once (song list, album
+// grid, playlist mosaic) — without this, each thumbnail fired its own
+// readAlbumArt parse before the first result landed in the store.
+const inflightArt = new Set<string>()
+
 function useTrackArt(track: LibraryTrack): string | null | undefined {
   const el = (window as any).electron
-  const { updateLibraryTrack } = useStorePick('updateLibraryTrack')
+  const { applyLibraryArt } = useStorePick('applyLibraryArt')
   useEffect(() => {
     if (!el || track.albumArt !== undefined) return
-    el.readAlbumArt(track.filePath).then((a: string | null) =>
-      updateLibraryTrack(track.id, { albumArt: a ?? null }),
-    )
+    // The scan already read this file's tags and found no embedded art —
+    // don't pay a full metadata parse just to learn null again.
+    if (!track.hasAlbumArt) { applyLibraryArt(track.id, null); return }
+    if (inflightArt.has(track.id)) return
+    inflightArt.add(track.id)
+    el.readAlbumArt(track.filePath)
+      .then((a: string | null) => applyLibraryArt(track.id, a ?? null))
+      .catch(() => {})
+      .finally(() => inflightArt.delete(track.id))
   }, [track.id, track.albumArt])
   return track.albumArt
 }
@@ -163,7 +146,7 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
           <p className="text-text-muted text-xs truncate">{track.artist || 'Unknown Artist'}</p>
         </div>
         {showAlbum && <span className="text-text-muted text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
-        <span className="text-text-muted text-xs shrink-0 tabular-nums">{fmtDur(track.duration)}</span>
+        <span className="text-text-muted text-xs shrink-0 tabular-nums">{formatDuration(track.duration, '--:--')}</span>
         <button
           onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(track, queue, r.right, r.bottom) }}
           className="w-7 h-7 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-all"
@@ -379,7 +362,7 @@ function AlbumDetail({ album, onBack, onContext }: {
       <DetailHeader
         art={art} eyebrow="Album" title={album.name}
         subtitle={`${album.artist}${album.year ? ` · ${album.year}` : ''}`}
-        meta={`${tracks.length} songs · ${fmtTotal(total)}`}
+        meta={`${tracks.length} songs · ${formatTotalDuration(total)}`}
         onBack={onBack} onPlay={() => play(tracks)} onShuffle={() => play(shuffled(tracks))}
         fallbackIcon={<Music size={48} className="text-text-muted" />}
       />
@@ -409,7 +392,7 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
       <DetailHeader
         art={art} round eyebrow="Artist" title={artist.name}
         subtitle={`${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`}
-        meta={`${artist.tracks.length} songs · ${fmtTotal(total)}`}
+        meta={`${artist.tracks.length} songs · ${formatTotalDuration(total)}`}
         onBack={onBack} onPlay={() => play(allTracks)} onShuffle={() => play(shuffled(allTracks))}
         fallbackIcon={<User size={48} className="text-text-muted" />}
       />
@@ -591,14 +574,18 @@ export default function LibraryTab(): JSX.Element {
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {/* Toolbar (grid/list sections only; detail views carry their own header) */}
         {showToolbar && !showEmpty && !libraryScanning && (
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ WebkitAppRegion: 'no-drag', paddingRight: (window as any).electron ? 188 : undefined } as React.CSSProperties}>
+          /* The whole bar must NOT be app-region:no-drag — Chromium computes drag
+             regions as flat rect math (drag minus no-drag, stacking ignored), so a
+             full-width no-drag bar here erased App's titlebar drag strip and made
+             the window unmovable on this view. Only the controls punch holes. */
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ paddingRight: (window as any).electron ? 188 : undefined }}>
             <h2 className="text-text-primary text-xl font-bold shrink-0">{title}</h2>
-            <div className="relative flex-1 min-w-[120px] max-w-xs ml-2">
+            <div className="relative flex-1 min-w-[120px] max-w-xs ml-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
               <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search library…"
                 className="w-full pl-8 pr-3 py-1.5 bg-surface-overlay border border-[var(--border)] rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-2 ml-auto" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
               {libraryTracks.length > 0 && (
                 <>
                   <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition-colors">

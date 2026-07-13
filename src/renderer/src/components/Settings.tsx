@@ -7,6 +7,7 @@ import {
 import { useStore, useStorePick } from '../store/useStore'
 import { getToken } from '../lib/userApi'
 import { cacheClearAll } from '../lib/apiCache'
+import { formatBytes } from '../lib/format'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -15,13 +16,6 @@ const ACCENT_PRESETS = [
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
 type Tab = 'appearance' | 'playback' | 'library' | 'app' | 'developer' | 'about'
-
-function fmtBytes(b: number): string {
-  if (b < 1024) return `${b} B`
-  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`
-  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`
-  return `${(b / 1073741824).toFixed(2)} GB`
-}
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -598,7 +592,7 @@ export default function Settings(): JSX.Element {
                   icon={DownloadCloud}
                   iconColor="#7c3aed"
                   label="Offline downloads"
-                  sub={offlineStatsLoading ? 'Calculating…' : offlineStats ? `${offlineStats.count} file${offlineStats.count === 1 ? '' : 's'} · ${fmtBytes(offlineStats.totalSize)}` : undefined}
+                  sub={offlineStatsLoading ? 'Calculating…' : offlineStats ? `${offlineStats.count} file${offlineStats.count === 1 ? '' : 's'} · ${formatBytes(offlineStats.totalSize)}` : undefined}
                 >
                   <button
                     onClick={loadOfflineStats}

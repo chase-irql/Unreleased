@@ -3,13 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, Music2, Pencil } from 'lucide-react'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
-
-function formatDur(secs: number): string {
-  if (!secs) return '—'
-  const m = Math.floor(secs / 60)
-  const s = Math.floor(secs % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
+import { formatDuration } from '../lib/format'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
@@ -88,7 +82,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
   const coverUrl = buildImageUrl(displaySong.image_url)
   const primaryTitle = displaySong.track_titles?.[0] || displaySong.name
   const altTitles = displaySong.track_titles?.slice(1).filter(Boolean) ?? []
-  const duration = formatDur(parseDuration(displaySong.length))
+  const duration = formatDuration(parseDuration(displaySong.length), '—')
   const catColor = CATEGORY_COLORS[displaySong.category] ?? 'bg-surface-overlay text-text-muted border-[var(--border)]'
   const catLabel = CATEGORY_LABELS[displaySong.category] ?? displaySong.category
 

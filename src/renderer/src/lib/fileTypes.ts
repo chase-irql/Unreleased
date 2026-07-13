@@ -27,3 +27,23 @@ export function toFileUrl(absPath: string): string {
   url.searchParams.set('p', absPath)
   return url.toString()
 }
+
+// Converts a scanned library file into the queue/player Track shape — the
+// single conversion every local-file play path goes through.
+export function libraryTrackToTrack(t: import('../types').LibraryTrack): import('../types').Track {
+  return {
+    id: t.id,
+    path: t.filePath,
+    streamUrl: toFileUrl(t.filePath),
+    imageUrl: t.albumArt || '',
+    title: t.title,
+    artist: t.artist,
+    album: t.album,
+    albumArtist: t.albumArtist,
+    year: t.year,
+    trackNumber: t.trackNumber,
+    duration: t.duration,
+    genre: t.genre,
+    hasAlbumArt: t.hasAlbumArt,
+  }
+}

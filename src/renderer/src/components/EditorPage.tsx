@@ -55,12 +55,15 @@ function diff(before: Record<string, unknown>, after: Record<string, unknown>): 
 }
 
 /* ── Card — grouped section container ─────────────────────────────────────── */
-export function Card({ title, icon, action, children, className = '' }: {
+export function Card({ title, icon, action, children, className = '', overflowVisible = false }: {
   title?: string; icon?: ReactNode; action?: ReactNode
   children: ReactNode; className?: string
+  // Cards clip to their rounded corners by default; opt out when a child needs
+  // to escape the bounds (e.g. the Versions title-suggestions dropdown).
+  overflowVisible?: boolean
 }): JSX.Element {
   return (
-    <section className={`rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden ${className}`}>
+    <section className={`rounded-2xl border border-[var(--border)] bg-surface-raised/50 ${overflowVisible ? '' : 'overflow-hidden'} ${className}`}>
       {title && (
         <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[var(--border)]">
           {icon && <span className="text-text-muted opacity-70 shrink-0">{icon}</span>}
@@ -234,6 +237,7 @@ export default function EditorPage(): JSX.Element {
   const [relDate,  setRelDate]  = useState('')
   const [previewDate, setPreviewDate] = useState('')
   const [leak,     setLeak]     = useState('')
+  const [dateLeaked, setDateLeaked] = useState('')
   const [lyrics,   setLyrics]   = useState('')
   const [synced,   setSynced]   = useState('')
   const [addInfo,  setAddInfo]  = useState('')
@@ -242,6 +246,8 @@ export default function EditorPage(): JSX.Element {
 
   const [imageUrl,          setImageUrl]          = useState('')
   const [filePath,          setFilePath]          = useState('')
+  const [songLength,        setSongLength]        = useState('')
+  const [bitrate,           setBitrate]           = useState('')
   const [altNames,          setAltNames]          = useState('')
   const [fileNames,         setFileNames]         = useState('')
   const [instrumentals,     setInstrumentals]     = useState('')
@@ -292,12 +298,15 @@ export default function EditorPage(): JSX.Element {
       release_date:           cleanDate(s.release_date),
       preview_date:           cleanDate(s.preview_date),
       leak_type:              s.leak_type || '',
+      date_leaked:            cleanDate(s.date_leaked),
       lyrics:                 s.lyrics || '',
       synced_lyrics:          s.synced_lyrics || '',
       additional_information: s.additional_information || '',
       notes:                  s.notes || '',
       image_url:              s.image_url || '',
       path:                   s.path || '',
+      length:                 s.length || '',
+      bitrate:                s.bitrate || '',
       track_titles:           s.track_titles || [],
       file_names:             s.file_names || '',
       instrumentals:          s.instrumentals || '',
@@ -318,12 +327,15 @@ export default function EditorPage(): JSX.Element {
     setRelDate(cleanDate(s.release_date))
     setPreviewDate(cleanDate(s.preview_date))
     setLeak(s.leak_type || '')
+    setDateLeaked(cleanDate(s.date_leaked))
     setLyrics(s.lyrics || '')
     setSynced(s.synced_lyrics || '')
     setAddInfo(s.additional_information || '')
     setNotes(s.notes || '')
     setImageUrl(s.image_url || '')
     setFilePath(s.path || '')
+    setSongLength(s.length || '')
+    setBitrate(s.bitrate || '')
     setAltNames((s.track_titles || []).join('\n'))
     setFileNames(s.file_names || '')
     setInstrumentals(s.instrumentals || '')
@@ -479,12 +491,15 @@ export default function EditorPage(): JSX.Element {
       if ('release_date' in d)           setRelDate(String(d.release_date ?? ''))
       if ('preview_date' in d)           setPreviewDate(String(d.preview_date ?? ''))
       if ('leak_type' in d)              setLeak(String(d.leak_type ?? ''))
+      if ('date_leaked' in d)            setDateLeaked(String(d.date_leaked ?? ''))
       if ('lyrics' in d)                 setLyrics(String(d.lyrics ?? ''))
       if ('synced_lyrics' in d)           setSynced(String(d.synced_lyrics ?? ''))
       if ('additional_information' in d) setAddInfo(String(d.additional_information ?? ''))
       if ('notes' in d)                  setNotes(String(d.notes ?? ''))
       if ('image_url' in d)              setImageUrl(String(d.image_url ?? ''))
       if ('path' in d)                   setFilePath(String(d.path ?? ''))
+      if ('length' in d)                 setSongLength(String(d.length ?? ''))
+      if ('bitrate' in d)                setBitrate(String(d.bitrate ?? ''))
       if ('track_titles' in d)           setAltNames(Array.isArray(d.track_titles) ? (d.track_titles as string[]).join('\n') : String(d.track_titles ?? ''))
       if ('file_names' in d)             setFileNames(String(d.file_names ?? ''))
       if ('instrumentals' in d)          setInstrumentals(String(d.instrumentals ?? ''))
@@ -518,10 +533,13 @@ export default function EditorPage(): JSX.Element {
     producers: prod, engineers: eng,
     recording_locations: loc, record_dates: recDate,
     release_date: relDate, preview_date: previewDate, leak_type: leak,
+    date_leaked: dateLeaked,
     lyrics, synced_lyrics: synced,
     additional_information: addInfo, notes,
     image_url: imageUrl,
     path: filePath,
+    length: songLength,
+    bitrate,
     track_titles: altNames ? altNames.split('\n').map(s => s.trim()).filter(Boolean) : [],
     file_names: fileNames,
     instrumentals,
@@ -671,7 +689,9 @@ export default function EditorPage(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0">
 
       {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '148px' } : undefined}>
+      {/* 188px clears the window controls (132px) plus the fixed downloads
+          trigger next to them (right: 144px + 36px wide — see DownloadManager) */}
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '188px' } : undefined}>
         <span className="flex-1 font-bold text-[15px] text-text-primary">Song editor</span>
         <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isAdmin ? 'bg-accent/20 text-accent' : 'bg-emerald-500/20 text-emerald-400'}`}>
           {isAdmin ? 'admin' : 'editor'}
@@ -872,6 +892,8 @@ export default function EditorPage(): JSX.Element {
                     <FieldRow label="Album"    value={album}    original={String(base.album || '')}   onChange={setAlbum} />
                     <FieldRow label="Cover URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} placeholder="https://…" mono />
                     <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" mono span={2} />
+                    <FieldRow label="Length"    value={songLength} original={String(base.length || '')}  onChange={setSongLength} placeholder="3:59" mono />
+                    <FieldRow label="Bitrate"   value={bitrate}  original={String(base.bitrate || '')}   onChange={setBitrate} placeholder="320 kbps" mono />
                     <TextareaRow
                       label="Alt names" value={altNames}
                       original={(Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : '')}
@@ -881,7 +903,7 @@ export default function EditorPage(): JSX.Element {
                 </Card>
 
                 {versionsEnabled && song && (
-                  <Card title="Versions">
+                  <Card title="Versions" overflowVisible>
                     <div className="flex items-center gap-1.5">
                       <input
                         type="text"
@@ -965,6 +987,7 @@ export default function EditorPage(): JSX.Element {
                     <FieldGrid>
                       <FieldRow label="Location"   value={loc}              original={String(base.recording_locations || '')}   onChange={setLoc} placeholder="Studio / city" />
                       <FieldRow label="Leak type"  value={leak}             original={String(base.leak_type || '')}             onChange={setLeak} placeholder="HQ, LQ, snippet…" />
+                      <FieldRow label="Date leaked" value={dateLeaked}      original={String(base.date_leaked || '')}           onChange={setDateLeaked} placeholder="YYYY-MM-DD" mono />
                       <FieldRow label="File names" value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
                       <FieldRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')}       onChange={setInstrumentals} placeholder="Instrumental versions available" />
                       <FieldRow label="Inst. names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} />

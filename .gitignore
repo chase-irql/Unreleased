@@ -9,6 +9,7 @@ dist-electron/
 out/
 release/
 build/
+beta-builds/
 
 # Electron builder
 *.AppImage

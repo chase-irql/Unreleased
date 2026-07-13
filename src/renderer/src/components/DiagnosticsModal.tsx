@@ -1,15 +1,9 @@
-import { useRef } from 'react'
+﻿import { useRef, useState } from 'react'
 import { X, Info, FolderOpen } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { cacheStats } from '../lib/apiCache'
 import type { Track } from '../types'
-
-function fmtBytes(b: number): string {
-  if (b < 1024) return `${b} B`
-  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`
-  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`
-  return `${(b / 1073741824).toFixed(2)} GB`
-}
+import { formatBytes } from '../lib/format'
 
 function localStorageBytes(): number {
   let bytes = 0
@@ -43,11 +37,17 @@ function filenameOf(track: Track | null): string {
   return track.title
 }
 
-function Row({ label, value }: { label: string; value: string }): JSX.Element {
+function Row({ label, value, onExpand }: { label: string; value: string; onExpand: (label: string, value: string) => void }): JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3 py-2 border-b border-[var(--border)] last:border-b-0">
       <span className="text-text-muted text-xs shrink-0">{label}</span>
-      <span className="text-text-primary text-xs font-mono text-right truncate max-w-[62%]" title={value}>{value}</span>
+      <button
+        onClick={() => onExpand(label, value)}
+        className="text-text-primary text-xs font-mono text-right truncate max-w-[62%] hover:text-accent transition-colors cursor-pointer"
+        title="Click to view full value"
+      >
+        {value}
+      </button>
     </div>
   )
 }
@@ -61,8 +61,35 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+function ValuePopup({ label, value, onClose }: { label: string; value: string; onClose: () => void }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div
+      ref={ref}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      onClick={(e) => { if (e.target === ref.current) onClose() }}
+    >
+      <div className="bg-surface border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-[420px] max-h-[70vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] shrink-0">
+          <span className="text-text-muted text-[10px] font-semibold uppercase tracking-widest">{label}</span>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="px-4 py-3 overflow-y-auto">
+          <p className="text-text-primary text-xs font-mono break-all whitespace-pre-wrap select-text">{value}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function DiagnosticsModal(): JSX.Element {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState<{ label: string; value: string } | null>(null)
+  const R = ({ label, value }: { label: string; value: string }): JSX.Element => (
+    <Row label={label} value={value} onExpand={(l, v) => setExpanded({ label: l, value: v })} />
+  )
   const {
     setShowDiagnostics, activeView, queue, queueIndex, currentTrack, currentTrackFull,
     isPlaying, progress, currentTime, shuffle, repeat, volume, playbackSpeed,
@@ -99,83 +126,83 @@ export default function DiagnosticsModal(): JSX.Element {
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <Section title="App">
-            <Row label="Version" value={`v${__APP_VERSION__}`} />
-            <Row label="Runtime" value={isElectron ? 'Electron' : 'Web'} />
-            <Row label="Platform" value={el?.platform || navigator.platform || 'unknown'} />
-            <Row label="Theme" value={`${theme} · ${accentColor}`} />
-            <Row label="Active view" value={activeView} />
-            <Row label="Online" value={navigator.onLine ? 'yes' : 'no'} />
+            <R label="Version" value={`v${__APP_VERSION__}`} />
+            <R label="Runtime" value={isElectron ? 'Electron' : 'Web'} />
+            <R label="Platform" value={el?.platform || navigator.platform || 'unknown'} />
+            <R label="Theme" value={`${theme} · ${accentColor}`} />
+            <R label="Active view" value={activeView} />
+            <R label="Online" value={navigator.onLine ? 'yes' : 'no'} />
           </Section>
 
           <Section title="Now playing">
-            <Row label="Filename" value={filenameOf(currentTrack)} />
-            <Row label="Title" value={currentTrack?.title || 'none'} />
-            <Row label="Track ID" value={currentTrack?.id || 'none'} />
-            <Row label="Source" value={currentTrack ? (currentTrack.streamUrl ? 'stream' : 'local file') : 'none'} />
-            {currentTrack?.streamUrl && <Row label="Stream URL" value={currentTrack.streamUrl} />}
-            {currentTrack?.path && <Row label="Path" value={currentTrack.path} />}
-            <Row label="Playing" value={isPlaying ? 'yes' : 'no'} />
-            <Row label="Position" value={`${currentTime.toFixed(1)}s / ${currentTrack?.duration?.toFixed(1) ?? '?'}s`} />
-            <Row label="Progress" value={`${(progress * 100).toFixed(1)}%`} />
+            <R label="Filename" value={filenameOf(currentTrack)} />
+            <R label="Title" value={currentTrack?.title || 'none'} />
+            <R label="Track ID" value={currentTrack?.id || 'none'} />
+            <R label="Source" value={currentTrack ? (currentTrack.streamUrl ? 'stream' : 'local file') : 'none'} />
+            {currentTrack?.streamUrl && <R label="Stream URL" value={currentTrack.streamUrl} />}
+            {currentTrack?.path && <R label="Path" value={currentTrack.path} />}
+            <R label="Playing" value={isPlaying ? 'yes' : 'no'} />
+            <R label="Position" value={`${currentTime.toFixed(1)}s / ${currentTrack?.duration?.toFixed(1) ?? '?'}s`} />
+            <R label="Progress" value={`${(progress * 100).toFixed(1)}%`} />
             {currentTrackFull && (
               <>
-                <Row label="Format" value={currentTrackFull.ext || (currentTrack?.streamUrl ? 'streamed' : 'unknown')} />
-                <Row label="Bitrate" value={currentTrackFull.bitrate ? `${currentTrackFull.bitrate} kbps` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
-                <Row label="Sample rate" value={currentTrackFull.sampleRate ? `${currentTrackFull.sampleRate} Hz` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
-                <Row label="Bit depth" value={currentTrackFull.bitsPerSample ? `${currentTrackFull.bitsPerSample}-bit` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
-                <Row label="Channels" value={currentTrackFull.channels ? String(currentTrackFull.channels) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
-                <Row label="File size" value={currentTrackFull.fileSize ? fmtBytes(currentTrackFull.fileSize) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <R label="Format" value={currentTrackFull.ext || (currentTrack?.streamUrl ? 'streamed' : 'unknown')} />
+                <R label="Bitrate" value={currentTrackFull.bitrate ? `${currentTrackFull.bitrate} kbps` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <R label="Sample rate" value={currentTrackFull.sampleRate ? `${currentTrackFull.sampleRate} Hz` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <R label="Bit depth" value={currentTrackFull.bitsPerSample ? `${currentTrackFull.bitsPerSample}-bit` : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <R label="Channels" value={currentTrackFull.channels ? String(currentTrackFull.channels) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
+                <R label="File size" value={currentTrackFull.fileSize ? formatBytes(currentTrackFull.fileSize) : (currentTrack?.streamUrl ? 'n/a (streamed)' : 'unknown')} />
               </>
             )}
           </Section>
 
           <Section title="Playback">
-            <Row label="Queue length" value={String(queue.length)} />
-            <Row label="Queue index" value={String(queueIndex)} />
-            <Row label="Shuffle" value={shuffle ? 'on' : 'off'} />
-            <Row label="Repeat" value={repeat} />
-            <Row label="Volume" value={`${Math.round(volume * 100)}%`} />
-            <Row label="Speed" value={`${playbackSpeed.toFixed(2)}x`} />
-            <Row label="Crossfade" value={crossfadeEnabled ? `${crossfadeDuration}s` : 'off'} />
-            <Row label="Prefer OG version" value={preferOgVersion ? 'on' : 'off'} />
-            <Row label="Lyrics offset" value={`${lyricsOffset > 0 ? '+' : ''}${lyricsOffset.toFixed(1)}s`} />
-            <Row label="Audio output" value={audioOutput || 'default'} />
-            <Row label="Radio FM active" value={radioFmActive ? 'yes' : 'no'} />
+            <R label="Queue length" value={String(queue.length)} />
+            <R label="Queue index" value={String(queueIndex)} />
+            <R label="Shuffle" value={shuffle ? 'on' : 'off'} />
+            <R label="Repeat" value={repeat} />
+            <R label="Volume" value={`${Math.round(volume * 100)}%`} />
+            <R label="Speed" value={`${playbackSpeed.toFixed(2)}x`} />
+            <R label="Crossfade" value={crossfadeEnabled ? `${crossfadeDuration}s` : 'off'} />
+            <R label="Prefer OG version" value={preferOgVersion ? 'on' : 'off'} />
+            <R label="Lyrics offset" value={`${lyricsOffset > 0 ? '+' : ''}${lyricsOffset.toFixed(1)}s`} />
+            <R label="Audio output" value={audioOutput || 'default'} />
+            <R label="Radio FM active" value={radioFmActive ? 'yes' : 'no'} />
           </Section>
 
           <Section title="Account">
-            <Row label="Logged in" value={account ? 'yes' : 'no'} />
-            {account && <Row label="User" value={account.display_name || account.discord_username} />}
-            {account && <Row label="Role" value={account.is_administrator ? 'administrator' : account.is_editor ? 'editor' : 'standard'} />}
-            <Row label="Playlists" value={String(playlists.length)} />
-            <Row label="Liked songs" value={String(likedTrackIds.length)} />
+            <R label="Logged in" value={account ? 'yes' : 'no'} />
+            {account && <R label="User" value={account.display_name || account.discord_username} />}
+            {account && <R label="Role" value={account.is_administrator ? 'administrator' : account.is_editor ? 'editor' : 'standard'} />}
+            <R label="Playlists" value={String(playlists.length)} />
+            <R label="Liked songs" value={String(likedTrackIds.length)} />
           </Section>
 
           <Section title="Storage">
-            <Row label="API cache" value={`${cache.count} entries · ${fmtBytes(cache.bytes)}`} />
-            <Row label="localStorage" value={fmtBytes(lsBytes)} />
-            {isElectron && <Row label="Library folders" value={String(libraryFolders.length)} />}
-            {isElectron && <Row label="Library tracks" value={String(libraryTracks.length)} />}
-            {isElectron && <Row label="Offline tracks" value={String(offlineCount)} />}
-            {isElectron && <Row label="Offline playlists" value={String(offlinePlaylistCount)} />}
-            {mem && <Row label="JS heap" value={`${fmtBytes(mem.usedJSHeapSize)} / ${fmtBytes(mem.totalJSHeapSize)}`} />}
+            <R label="API cache" value={`${cache.count} entries · ${formatBytes(cache.bytes)}`} />
+            <R label="localStorage" value={formatBytes(lsBytes)} />
+            {isElectron && <R label="Library folders" value={String(libraryFolders.length)} />}
+            {isElectron && <R label="Library tracks" value={String(libraryTracks.length)} />}
+            {isElectron && <R label="Offline tracks" value={String(offlineCount)} />}
+            {isElectron && <R label="Offline playlists" value={String(offlinePlaylistCount)} />}
+            {mem && <R label="JS heap" value={`${formatBytes(mem.usedJSHeapSize)} / ${formatBytes(mem.totalJSHeapSize)}`} />}
           </Section>
 
           {isElectron && (
             <Section title="Updates">
-              <Row label="Status" value={updateStatus?.type || 'idle'} />
-              {updateStatus?.version && <Row label="Version" value={updateStatus.version} />}
-              <Row label="Active downloads" value={String(downloads.filter(d => d.state === 'downloading').length)} />
-              <Row label="Downloads (session)" value={String(downloads.length)} />
+              <R label="Status" value={updateStatus?.type || 'idle'} />
+              {updateStatus?.version && <R label="Version" value={updateStatus.version} />}
+              <R label="Active downloads" value={String(downloads.filter(d => d.state === 'downloading').length)} />
+              <R label="Downloads (session)" value={String(downloads.length)} />
             </Section>
           )}
 
           <Section title="Environment">
-            <Row label="Screen" value={`${window.screen.width}×${window.screen.height}`} />
-            <Row label="Viewport" value={`${window.innerWidth}×${window.innerHeight}`} />
-            <Row label="Pixel ratio" value={String(window.devicePixelRatio)} />
-            <Row label="Language" value={navigator.language} />
-            <Row label="User agent" value={navigator.userAgent} />
+            <R label="Screen" value={`${window.screen.width}×${window.screen.height}`} />
+            <R label="Viewport" value={`${window.innerWidth}×${window.innerHeight}`} />
+            <R label="Pixel ratio" value={String(window.devicePixelRatio)} />
+            <R label="Language" value={navigator.language} />
+            <R label="User agent" value={navigator.userAgent} />
           </Section>
         </div>
 
@@ -191,6 +218,11 @@ export default function DiagnosticsModal(): JSX.Element {
           </div>
         )}
       </div>
+
+      {expanded && (
+        <ValuePopup label={expanded.label} value={expanded.value} onClose={() => setExpanded(null)} />
+      )}
     </div>
   )
 }
+
