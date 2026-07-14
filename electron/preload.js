@@ -17,17 +17,30 @@ contextBridge.exposeInMainWorld('electron', {
   },
   platform: process.platform,
 
-  // Floating pop-out windows (see main.js createFloatWindow). closeSelf closes
-  // whichever window called it — pop-outs must not use closeWindow, which
-  // targets the main window.
-  openFloatWindow: (view) => ipcRenderer.invoke('open-float-window', view),
+  // Floating pop-out windows (see main.js createFloatWindow). The *Self
+  // variants act on whichever window called them — pop-outs must not use
+  // closeWindow/minimizeWindow/maximizeWindow, which target the main window.
+  openFloatWindow: (view, params) => ipcRenderer.invoke('open-float-window', view, params),
   closeSelf:       ()     => ipcRenderer.invoke('close-self'),
+  minimizeSelf:    ()     => ipcRenderer.invoke('minimize-self'),
+  maximizeSelf:    ()     => ipcRenderer.invoke('maximize-self'),
   focusMainWindow: ()     => ipcRenderer.invoke('focus-main-window'),
+  // Mini player: panel expand/collapse resizes the window; pin toggles
+  // always-on-top and returns the new state.
+  miniPlayerSetExpanded: (expanded) => ipcRenderer.invoke('mini-player-set-expanded', expanded),
+  toggleAlwaysOnTopSelf: ()         => ipcRenderer.invoke('toggle-always-on-top-self'),
   windowSyncSend:  (msg)  => ipcRenderer.send('window-sync', msg),
   onWindowSync: (cb) => {
     const fn = (_, msg) => cb(msg)
     ipcRenderer.on('window-sync', fn)
     return () => ipcRenderer.removeListener('window-sync', fn)
+  },
+  // Fired when an already-open pop-out is asked to show something new
+  // (e.g. "Info" clicked on a different song).
+  onFloatParams: (cb) => {
+    const fn = (_, params) => cb(params)
+    ipcRenderer.on('float-params', fn)
+    return () => ipcRenderer.removeListener('float-params', fn)
   },
 
   // Local filesystem

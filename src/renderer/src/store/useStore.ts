@@ -213,6 +213,9 @@ interface AppActions {
   setPlaylistsSelectedLocalId: (id: string | null) => void
 
   setPendingEditorSongId: (id: number | null) => void
+  // "Edit this song" from anywhere — desktop opens the pop-out editor
+  // window, web navigates to the in-app editor view.
+  openSongEditor: (songId: number) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
   setPendingLocalEditTrack: (track: LibraryTrack | null) => void
 
@@ -361,7 +364,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmUpNext: (radioFmUpNext) => set({ radioFmUpNext }),
   setRadioFmQueuePreview: (radioFmQueuePreview) => set({ radioFmQueuePreview }),
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
-  setShowSettings: (showSettings) => set({ showSettings }),
+  setShowSettings: (showSettings) => {
+    // Desktop: Settings lives in its own pop-out window (see FloatApp) — every
+    // "open settings" path routes there. The in-app overlay remains only for
+    // the web build, where there are no extra OS windows.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (showSettings && el?.openFloatWindow) {
+      el.openFloatWindow('settings')
+      return
+    }
+    set({ showSettings })
+  },
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
@@ -575,6 +589,16 @@ export const useStore = create<AppStore>((set, get, store) => ({
   pendingEditProposal: null,
   pendingLocalEditTrack: null,
   setPendingEditorSongId: (pendingEditorSongId) => set({ pendingEditorSongId }),
+  openSongEditor: (songId) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (el?.openFloatWindow) {
+      el.openFloatWindow('editor', { songId })
+      return
+    }
+    set({ pendingEditorSongId: songId })
+    get().setActiveView('editor')
+  },
   setPendingEditProposal: (pendingEditProposal) => set({ pendingEditProposal }),
   setPendingLocalEditTrack: (pendingLocalEditTrack) => set({ pendingLocalEditTrack }),
 

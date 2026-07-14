@@ -149,19 +149,37 @@ function downloadFile(url, dest, onProgress) {
 autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} }
 autoUpdater.autoDownload = appSettings.autoDownload
 autoUpdater.autoInstallOnAppQuit = true
-// Beta channel: this marker enrolls the install in beta (pre-release)
-// updates. The Windows installer drops it when a valid beta access code is
-// entered on its options page (build/installer.nsh), and Settings can join
-// (code required) or leave via the IPC handlers below.
-// SHA-256 hashes of accepted codes — keep in sync with
-// UNRELEASED_BETA_CODE_HASHES in build/installer.nsh. Only hashes live in
-// the repo; keep a private note of which plaintext code maps to which hash.
-const BETA_CODE_HASHES = [
-  'BB09385C837B5821956BF3DCCDD3050028DBFAEB4C1EBAC154D4C794B18AD40E',
-]
+// Beta channel — gated server-side by juicewrldapi.com, not by anything
+// baked into this app (see build/fetch-releases.ps1 for the full endpoint
+// contract). The marker file holds the *validated code itself*, used as a
+// bearer credential on every update check, not just a yes/no flag. It's
+// dropped by the Windows installer's options page (build/installer.nsh) on
+// a valid code, or by the beta-join handler below when joined from Settings.
+const BETA_API_BASE = 'https://juicewrldapi.com/beta'
 const betaMarkerPath = path.join(app.getPath('userData'), 'beta-access')
-autoUpdater.allowPrerelease = fs.existsSync(betaMarkerPath)
-if (autoUpdater.allowPrerelease) log('Beta access marker present — pre-release updates enabled')
+
+function readBetaCode() {
+  try { return fs.readFileSync(betaMarkerPath, 'utf-8').trim() || null } catch { return null }
+}
+
+// Switches the updater between the normal stable (GitHub) feed and the
+// gated beta feed. electron-updater allows re-pointing the feed at runtime,
+// so join/leave take effect immediately, no restart needed.
+function applyUpdateFeed(code) {
+  if (code) {
+    autoUpdater.setFeedURL({ provider: 'generic', url: `${BETA_API_BASE}/update-feed`, channel: 'latest' })
+    autoUpdater.requestHeaders = { 'X-Beta-Code': code }
+    autoUpdater.allowPrerelease = true
+  } else {
+    autoUpdater.setFeedURL({ provider: 'github', owner: 'leanwrldd', repo: 'unreleased' })
+    autoUpdater.requestHeaders = null
+    autoUpdater.allowPrerelease = false
+  }
+}
+
+const initialBetaCode = readBetaCode()
+applyUpdateFeed(initialBetaCode)
+if (initialBetaCode) log('Beta access marker present — gated beta update feed enabled')
 
 const iconPath = process.platform === 'linux'
   ? path.join(__dirname, '..', 'resources', 'icon-512.png')
@@ -174,23 +192,53 @@ let isQuitting = false
 
 // ── Floating pop-out windows ──────────────────────────────────────────────────
 // Each entry is a second frameless BrowserWindow booting the same renderer
-// bundle with ?float=<view> — the renderer sees that param and mounts just
-// that one view (see src/renderer/src/FloatApp.tsx) instead of the full app.
-// One window per view: reopening focuses the existing one. Store state is
-// mirrored between windows by the 'window-sync' relay below.
-const FLOAT_VIEWS = new Set(['settings'])
+// bundle with ?float=<view> (+ any params, e.g. songId) — the renderer sees
+// that param and mounts just that one view (see src/renderer/src/FloatApp.tsx)
+// instead of the full app. One window per view: reopening focuses the existing
+// one and hands it the new params over 'float-params' (so "Info" on a second
+// song swaps the open info window's content rather than stacking windows).
+// Store state is mirrored between windows by the 'window-sync' relay below.
+const FLOAT_SIZES = {
+  settings:      { width: 860,  height: 640, minWidth: 520, minHeight: 420 },
+  'song-info':   { width: 540,  height: 760, minWidth: 420, minHeight: 480 },
+  editor:        { width: 1000, height: 760, minWidth: 700, minHeight: 520 },
+  // Compact bar height — must match MiniPlayer.tsx's h-[192px]. The window
+  // stays height-locked at this until the lyrics/queue panel expands it
+  // (see 'mini-player-set-expanded' below).
+  'mini-player': { width: 480,  height: 192, minWidth: 420, minHeight: 192 },
+}
+// Extra per-view BrowserWindow options on top of FLOAT_SIZES. The mini
+// player floats above other apps by default (its pin button toggles this).
+const FLOAT_OPTIONS = {
+  'mini-player': { alwaysOnTop: true, maximizable: false, fullscreenable: false },
+}
 const floatWindows = new Map()
 
-function createFloatWindow(view) {
+// Renderer-supplied params ride the URL / float-params events — keep them to
+// plain string/number/boolean values.
+function sanitizeFloatParams(params) {
+  const out = {}
+  if (params && typeof params === 'object') {
+    for (const [k, v] of Object.entries(params)) {
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = String(v)
+    }
+  }
+  return out
+}
+
+function createFloatWindow(view, params) {
+  const query = { float: view, ...sanitizeFloatParams(params) }
   const existing = floatWindows.get(view)
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
     existing.show()
     existing.focus()
+    existing.webContents.send('float-params', query)
     return
   }
   const win = new BrowserWindow({
-    width: 860, height: 640, minWidth: 520, minHeight: 420,
+    ...FLOAT_SIZES[view],
+    ...(FLOAT_OPTIONS[view] || {}),
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
     webPreferences: {
       nodeIntegration: false, contextIsolation: true, webSecurity: true, preload: preloadPath,
@@ -207,9 +255,9 @@ function createFloatWindow(view) {
     return { action: 'deny' }
   })
   if (isDev) {
-    win.loadURL(`http://localhost:3018/?float=${encodeURIComponent(view)}`)
+    win.loadURL(`http://localhost:3018/?${new URLSearchParams(query)}`)
   } else {
-    win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { float: view } })
+    win.loadFile(path.join(__dirname, '../dist/index.html'), { query })
   }
 }
 
@@ -256,6 +304,7 @@ function buildTrayMenu() {
     { label: liked ? 'Unlike song' : 'Like song', enabled: hasTrack, click: () => sendTrayCommand('toggle-like') },
     { type: 'separator' },
     { label: 'Open Unreleased', click: () => showMainWindow() },
+    { label: 'Open mini player', click: () => createFloatWindow('mini-player') },
     { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
   ])
 }
@@ -544,17 +593,62 @@ ipcMain.handle('set-fullscreen', (_, value) => mainWindow?.setFullScreen(!!value
 ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
 
 // ── IPC: floating pop-out windows ─────────────────────────────────────────────
-ipcMain.handle('open-float-window', (_, view) => {
-  if (FLOAT_VIEWS.has(view)) createFloatWindow(view)
+ipcMain.handle('open-float-window', (_, view, params) => {
+  if (Object.prototype.hasOwnProperty.call(FLOAT_SIZES, view)) createFloatWindow(view, params)
 })
 
-// Pop-outs are frameless and render their own close button; 'close-window'
-// closes the MAIN window specifically, so they need a sender-scoped variant.
+// Pop-outs are frameless and render their own window buttons; the
+// 'close/minimize/maximize-window' handlers target the MAIN window
+// specifically, so they need sender-scoped variants.
 ipcMain.handle('close-self', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close()
 })
+ipcMain.handle('minimize-self', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize()
+})
+// Toggles and returns the new state so the caller's restore/maximize icon
+// can track it without a second round-trip.
+ipcMain.handle('maximize-self', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return false
+  if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
+  return win.isMaximized()
+})
 
 ipcMain.handle('focus-main-window', () => showMainWindow())
+
+// Mini-player panel toggle. Compact mode locks the window height (only the
+// width resizes); expanding for the lyrics/queue panel frees vertical
+// resizing and grows the window if it's still at compact height. 100000
+// stands in for "unbounded" — Electron has no documented way to clear a
+// maximum once set.
+const MINI_EXPANDED_MIN_HEIGHT = 440
+const MINI_EXPANDED_HEIGHT = 540
+ipcMain.handle('mini-player-set-expanded', (event, expanded) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || win.isDestroyed()) return
+  const { minWidth, height: compactHeight } = FLOAT_SIZES['mini-player']
+  const [w, h] = win.getSize()
+  if (expanded) {
+    win.setMaximumSize(100000, 100000)
+    win.setMinimumSize(minWidth, MINI_EXPANDED_MIN_HEIGHT)
+    if (h < MINI_EXPANDED_HEIGHT) win.setSize(w, MINI_EXPANDED_HEIGHT)
+  } else {
+    win.setMinimumSize(minWidth, compactHeight)
+    win.setSize(w, compactHeight)
+    win.setMaximumSize(100000, compactHeight)
+  }
+})
+
+// Pin toggle for the mini player — returns the new state so the button's
+// icon can track it without a second round-trip.
+ipcMain.handle('toggle-always-on-top-self', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return false
+  win.setAlwaysOnTop(!win.isAlwaysOnTop())
+  return win.isAlwaysOnTop()
+})
 
 // Store-sync relay: a renderer broadcasts a state patch and every OTHER
 // window receives it (each window runs its own store instance — see
@@ -629,26 +723,48 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
 })
 
 // ── IPC: beta channel ─────────────────────────────────────────────────────────
-ipcMain.handle('beta-get-status', () => autoUpdater.allowPrerelease)
+// Validates against the backend itself (GET {BETA_API_BASE}/unlock?code=...
+// -> {"valid": true|false}) — see build/fetch-releases.ps1 for the full
+// contract shared with the installer. No code/hash is ever baked into the app.
+function checkBetaCode(code) {
+  return new Promise((resolve, reject) => {
+    const url = `${BETA_API_BASE}/unlock?code=${encodeURIComponent(code)}`
+    https.get(url, { headers: { 'User-Agent': 'Unreleased-App' } }, (res) => {
+      let data = ''
+      res.on('data', (c) => { data += c })
+      res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`))
+        try { resolve(!!JSON.parse(data).valid) } catch (e) { reject(e) }
+      })
+    }).on('error', reject)
+  })
+}
 
-ipcMain.handle('beta-join', (_, code) => {
-  const crypto = require('crypto')
-  const hash = crypto.createHash('sha256').update(String(code ?? '').trim()).digest('hex').toUpperCase()
-  if (!BETA_CODE_HASHES.includes(hash)) return false
+ipcMain.handle('beta-get-status', () => !!readBetaCode())
+
+ipcMain.handle('beta-join', async (_, code) => {
+  const trimmed = String(code ?? '').trim()
+  if (!trimmed) return false
   try {
-    fs.writeFileSync(betaMarkerPath, 'unlocked via settings')
+    if (!(await checkBetaCode(trimmed))) return false
+  } catch (err) {
+    log('beta-join: code check failed:', err.message)
+    return false
+  }
+  try {
+    fs.writeFileSync(betaMarkerPath, trimmed)
   } catch (err) {
     log('beta-join: marker write failed:', err.message)
     return false
   }
-  autoUpdater.allowPrerelease = true
+  applyUpdateFeed(trimmed)
   log('Beta access unlocked via Settings')
   return true
 })
 
 ipcMain.handle('beta-leave', () => {
   try { fs.rmSync(betaMarkerPath, { force: true }) } catch {}
-  autoUpdater.allowPrerelease = false
+  applyUpdateFeed(null)
   log('Left beta channel')
   return true
 })

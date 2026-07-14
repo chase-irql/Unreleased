@@ -6,7 +6,22 @@ import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from
 import { useStore } from '../store/useStore'
 import { seekAudio, getAudioCurrentTime } from './Player'
 
-export default function LyricsDisplay(): JSX.Element {
+interface LyricsDisplayProps {
+  /** Playback-clock source for synced-line highlighting. Defaults to the live
+   *  audio element — pop-out windows (no local audio) pass an interpolated
+   *  clock built from the synced currentTime instead. */
+  getTime?: () => number
+  /** Called when a synced line is clicked. Defaults to seeking the local
+   *  audio element — pop-outs send a seek command to the main window. */
+  onSeek?: (time: number) => void
+  /** Tighter type sizes/padding for small surfaces like the mini player. */
+  compact?: boolean
+  /** Show these lyrics instead of the current track's (e.g. 999 FM's matched
+   *  song, which never populates currentTrackFull). */
+  override?: { lyrics: string | null; syncedLyrics: string | null } | null
+}
+
+export default function LyricsDisplay({ getTime, onSeek, compact, override }: LyricsDisplayProps = {}): JSX.Element {
   const { currentTrackFull, account, lyricsOffset } = useStore(useShallow(s => ({
     currentTrackFull: s.currentTrackFull,
     account: s.account,
@@ -16,8 +31,8 @@ export default function LyricsDisplay(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
 
-  const lyrics = currentTrackFull?.lyrics
-  const syncedLyrics = currentTrackFull?.syncedLyrics
+  const lyrics = override ? override.lyrics : currentTrackFull?.lyrics
+  const syncedLyrics = override ? override.syncedLyrics : currentTrackFull?.syncedLyrics
 
   const rawLyrics = syncedLyrics || lyrics
   const isSynced = rawLyrics ? isLrcFormat(rawLyrics) : false
@@ -41,8 +56,9 @@ export default function LyricsDisplay(): JSX.Element {
       return
     }
     let raf = 0
+    const timeSource = getTime ?? getAudioCurrentTime
     const tick = (): void => {
-      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
+      const idx = getCurrentLineIndex(syncedLines, timeSource() - lyricsOffset)
       if (idx !== lineIdxRef.current) {
         lineIdxRef.current = idx
         setCurrentLineIdx(idx)
@@ -51,7 +67,7 @@ export default function LyricsDisplay(): JSX.Element {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isSynced, syncedLines, lyricsOffset])
+  }, [isSynced, syncedLines, lyricsOffset, getTime])
 
   useEffect(() => {
     if (activeRef.current && containerRef.current) {
@@ -117,7 +133,7 @@ export default function LyricsDisplay(): JSX.Element {
       <div
         ref={containerRef}
         onContextMenu={handleContextMenu}
-        className="h-full overflow-y-auto py-16 px-8 space-y-4"
+        className={`h-full overflow-y-auto ${compact ? 'py-10 px-5 space-y-3' : 'py-16 px-8 space-y-4'}`}
         style={{ scrollbarWidth: 'none' } as React.CSSProperties}
       >
         <style>{`::-webkit-scrollbar { display: none; }`}</style>
@@ -140,8 +156,8 @@ export default function LyricsDisplay(): JSX.Element {
             <div
               key={i}
               ref={isActive ? activeRef : undefined}
-              onClick={() => seekAudio(line.time)}
-              className="lyric-line text-left leading-snug cursor-pointer font-bold text-2xl"
+              onClick={() => (onSeek ?? seekAudio)(line.time)}
+              className={`lyric-line text-left leading-snug cursor-pointer font-bold ${compact ? 'text-lg' : 'text-2xl'}`}
               style={lineStyle}
             >
               {line.text}
@@ -155,8 +171,8 @@ export default function LyricsDisplay(): JSX.Element {
   }
 
   return (
-    <div className="h-full overflow-y-auto py-8 px-8">
-      <pre className="text-text-secondary text-sm leading-8 whitespace-pre-wrap font-sans">
+    <div className={`h-full overflow-y-auto ${compact ? 'py-6 px-5' : 'py-8 px-8'}`}>
+      <pre className={`text-text-secondary whitespace-pre-wrap font-sans ${compact ? 'text-xs leading-6' : 'text-sm leading-8'}`}>
         {rawLyrics}
       </pre>
     </div>

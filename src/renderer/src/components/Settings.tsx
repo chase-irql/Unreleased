@@ -3,7 +3,7 @@ import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
-  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, PictureInPicture2,
+  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
 import { SKINS } from '../lib/skins'
@@ -346,20 +346,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
               <span className="text-[10px] text-emerald-400">Restart to update</span>
             )}
           </div>
-          <div className="flex items-center gap-3" style={noDrag}>
-            {isElectron && !floating && el?.openFloatWindow && (
-              <button
-                onClick={() => { el.openFloatWindow('settings'); setShowSettings(false) }}
-                title="Pop out into a separate window"
-                className="text-text-muted hover:text-text-primary transition-colors"
-              >
-                <PictureInPicture2 size={16} />
-              </button>
-            )}
-            <button onClick={closeSettings} className="text-text-muted hover:text-text-primary transition-colors">
-              <X size={20} />
-            </button>
-          </div>
+          <button onClick={closeSettings} style={noDrag} className="text-text-muted hover:text-text-primary transition-colors">
+            <X size={20} />
+          </button>
         </div>
 
         {/* Mobile tab bar — the sidebar collapses below sm, so categories

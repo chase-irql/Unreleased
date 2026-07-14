@@ -16,11 +16,13 @@ import {
   ChevronUp,
   Check,
   MoreHorizontal,
+  PictureInPicture2,
   Radio,
   Info,
   Loader2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
+import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { formatDuration } from '../lib/format'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -158,6 +160,12 @@ export default function Player(): JSX.Element {
 
   // Pause-fade ramp ("smooth fade when pausing" setting)
   const pauseFadeRaf = useRef<number | null>(null)
+  // Timer backstop for the pause-fade's final audio.pause(). requestAnimationFrame
+  // is frozen while the window is hidden/occluded, so if the user pauses and
+  // immediately switches tabs/apps the RAF ramp never reaches its end and the
+  // audio would keep playing. A timer still fires in the background — use it to
+  // guarantee the element actually pauses.
+  const pauseFadeTimer = useRef<number | null>(null)
 
   // Keep a ref of volume so RAF callbacks (created once) always see the latest value
   const volumeRef = useRef(volume)
@@ -170,6 +178,7 @@ export default function Player(): JSX.Element {
 
   const cancelPauseFade = (): void => {
     if (pauseFadeRaf.current != null) { cancelAnimationFrame(pauseFadeRaf.current); pauseFadeRaf.current = null }
+    if (pauseFadeTimer.current != null) { clearTimeout(pauseFadeTimer.current); pauseFadeTimer.current = null }
   }
 
   const cancelCF = (): void => {
@@ -382,19 +391,28 @@ export default function Player(): JSX.Element {
         getNext()?.pause()
         const startVol = audio.volume
         const startTime = performance.now()
+        // Finalize the pause. Runs from whichever fires first — the RAF ramp
+        // completing, or the timer backstop below (which still fires when the
+        // window is hidden and RAF is frozen). cancelPauseFade() makes it
+        // idempotent by clearing the other pending handle.
+        const finalize = (): void => {
+          cancelPauseFade()
+          audio.pause()
+          // Restore element volume while silent so any code path that plays
+          // this slot without going through the resume ramp isn't stuck at 0.
+          audio.volume = volumeRef.current
+        }
         const tick = (): void => {
           const t = Math.min((performance.now() - startTime) / PAUSE_FADE_MS, 1)
           audio.volume = startVol * (1 - t)
           if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
-          else {
-            pauseFadeRaf.current = null
-            audio.pause()
-            // Restore element volume while silent so any code path that plays
-            // this slot without going through the resume ramp isn't stuck at 0.
-            audio.volume = volumeRef.current
-          }
+          else finalize()
         }
         pauseFadeRaf.current = requestAnimationFrame(tick)
+        // Backstop so the pause still lands if RAF is frozen (tab hidden / app
+        // backgrounded) before the ramp finishes. Small margin past the ramp so
+        // it normally loses the race to RAF and only wins when RAF is stalled.
+        pauseFadeTimer.current = window.setTimeout(finalize, PAUSE_FADE_MS + 50)
       } else {
         slotA.current?.pause()
         slotB.current?.pause()
@@ -774,22 +792,35 @@ export default function Player(): JSX.Element {
     likedTrackIds,
   ])
 
-  // Tray media commands — route through the same handlers as the on-screen
-  // controls (handleNext/handlePrev carry the repeat-one and radio-mode
-  // special cases). Handlers are recreated every render, so a ref keeps the
-  // IPC subscription itself stable while always dispatching to fresh closures.
-  const trayCommandsRef = useRef<Record<string, () => void>>({})
-  trayCommandsRef.current = {
+  // Remote media commands — the tray menu and the mini-player pop-out both
+  // route through the same handlers as the on-screen controls (handleNext/
+  // handlePrev carry the repeat-one and radio-mode special cases). Handlers
+  // are recreated every render, so a ref keeps the subscriptions themselves
+  // stable while always dispatching to fresh closures.
+  const remoteCommandsRef = useRef<Record<string, (arg?: unknown) => void>>({})
+  remoteCommandsRef.current = {
     'play-pause':  () => { if (currentTrack && !radioFmActive) setIsPlaying(!isPlaying) },
     'next':        () => { if (currentTrack && !radioFmActive) handleNext() },
     'previous':    () => { if (currentTrack && !radioFmActive) handlePrev() },
     'toggle-like': () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
+    'toggle-shuffle': () => { if (!radioFmActive) toggleShuffle() },
+    'toggle-repeat':  () => { if (!radioFmActive) toggleRepeat() },
+    'seek': (arg) => { if (typeof arg === 'number' && currentTrack && !radioFmActive) seekAudio(arg) },
+    'jump': (arg) => {
+      if (typeof arg !== 'number' || radioFmActive) return
+      const { queue: q } = useStore.getState()
+      if (q[arg]) useStore.getState().jumpToTrack(q[arg], arg)
+    },
+    'remove-queue': (arg) => { if (typeof arg === 'number') useStore.getState().removeFromQueue(arg) },
+    'clear-queue': () => useStore.getState().clearQueue(),
   }
   useEffect(() => {
     const el = (window as any).electron
     if (!el?.onTrayCommand) return
-    return el.onTrayCommand((cmd: string) => trayCommandsRef.current[cmd]?.())
+    return el.onTrayCommand((cmd: string) => remoteCommandsRef.current[cmd]?.())
   }, [])
+  // Same dispatch table, fed by pop-out windows over the window-sync channel.
+  useEffect(() => registerPlayerCommandHandler((cmd, arg) => remoteCommandsRef.current[cmd]?.(arg)), [])
 
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {
@@ -1205,6 +1236,17 @@ export default function Player(): JSX.Element {
             title="Now Playing">
             <Maximize2 size={16} />
           </button>}
+
+          {/* Desktop only: pop the compact always-on-top mini player window */}
+          {(window as any).electron?.openFloatWindow && (
+            <button
+              onClick={() => (window as any).electron.openFloatWindow('mini-player')}
+              className="text-text-secondary hover:text-text-primary transition-colors"
+              title="Pop out mini player"
+            >
+              <PictureInPicture2 size={16} />
+            </button>
+          )}
 
           {/* Volume: mute + slider + output picker */}
           <div className="flex items-center gap-1.5">

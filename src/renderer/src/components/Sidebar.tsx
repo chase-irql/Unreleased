@@ -75,9 +75,12 @@ export default function Sidebar(): JSX.Element {
     return (
       <aside className={`hidden md:flex flex-col w-full bg-sidebar shrink-0 border-[var(--border)] ${sidebarPosition === 'top' ? 'border-b' : 'border-t'}`}>
         {/* Bar touches the frameless window's top edge, so it carries the
-            drag strip that main's overlay provides in the other layouts. */}
+            drag strip that main's overlay provides in the other layouts.
+            mr-[132px] keeps the strip clear of the min/max/close buttons —
+            a drag rect under them would win the draggable-region ordering
+            and swallow their clicks (see WindowControls in App.tsx). */}
         {isElectron && sidebarPosition === 'top' && (
-          <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+          <div className="shrink-0 h-7 mr-[132px] select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         )}
         <div className="flex items-center gap-1 px-3 py-1.5 min-w-0">
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
@@ -159,8 +162,14 @@ export default function Sidebar(): JSX.Element {
     <aside
       className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 ${sidebarPosition === 'right' ? 'border-l' : 'border-r'} border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
     >
+      {/* On the right, the sidebar's top edge sits under the window buttons —
+          keep the drag strip out of their 132px corner (same ordering pitfall
+          as the top-bar strip above). */}
       {isElectron && (
-        <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+        <div
+          className={`shrink-0 h-7 select-none ${sidebarPosition === 'right' ? 'mr-[132px]' : ''}`}
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        />
       )}
       {/* Logo — collapses to zero height (redundant with the WRLD tab icon) */}
       <div

@@ -6,8 +6,8 @@ import type { ViewType } from '../types'
 // anything a pop-out can read or change has to be relayed over IPC (the main
 // process fans 'window-sync' messages out to every other window). Only plain
 // serializable keys belong here — per-window UI state (activeView,
-// showSettings, the queue, downloads…) stays local to each window, and the
-// library track list is deliberately absent: it's reloaded from disk instead
+// showSettings, downloads…) stays local to each window, and the library
+// track list is deliberately absent: it's reloaded from disk instead
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition',
@@ -16,6 +16,16 @@ const SYNC_KEYS = [
   'likedTrackIds', 'account', 'playlists',
   'libraryFolders', 'libraryAutoRefresh', 'libraryScanning', 'libraryLastScanned',
   'developerMode', 'updateStatus',
+  // Playback mirror for the mini-player pop-out. The MAIN window owns the
+  // audio elements and all queue logic — pop-outs treat these keys as
+  // read-only display state and send playback *commands* back instead of
+  // mutating them (see sendPlayerCommand below). `volume` is the one
+  // exception: the main Player's [volume] effect applies remote changes to
+  // the audio element, so pop-outs may call setVolume directly.
+  'currentTrack', 'currentTrackFull', 'isPlaying', 'progress', 'currentTime',
+  'queue', 'queueIndex', 'shuffle', 'repeat', 'volume',
+  'radioMode', 'radioNext', 'queueLoadingMore',
+  'radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong', 'radioFmUpNext', 'radioFmQueuePreview',
 ] as const satisfies readonly (keyof AppStore)[]
 
 type SyncKey = (typeof SYNC_KEYS)[number]
@@ -26,6 +36,26 @@ type SyncMessage =
   | { type: 'snapshot'; payload: SyncPatch }
   | { type: 'request' }
   | { type: 'navigate'; view: ViewType }
+  | { type: 'command'; cmd: string; arg?: unknown }
+
+// Playback commands from pop-outs land here — the main window's Player
+// registers its dispatch table (the same one the tray menu uses) so remote
+// controls go through the exact same code paths as the on-screen buttons.
+let playerCommandHandler: ((cmd: string, arg?: unknown) => void) | null = null
+
+export function registerPlayerCommandHandler(handler: (cmd: string, arg?: unknown) => void): () => void {
+  playerCommandHandler = handler
+  return () => { if (playerCommandHandler === handler) playerCommandHandler = null }
+}
+
+// Ask the main window to perform a playback action (play-pause, next, seek…).
+// Pop-outs never drive the queue/audio themselves — the main window executes
+// the command and the resulting state syncs back through the patch channel.
+export function sendPlayerCommand(cmd: string, arg?: unknown): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const el = (window as any).electron
+  el?.windowSyncSend?.({ type: 'command', cmd, arg })
+}
 
 // True while applying a remote patch, so the store subscription below doesn't
 // echo it straight back and ping-pong between windows forever.
@@ -64,6 +94,8 @@ export function initWindowSync(isFloat: boolean): void {
       // Pop-outs boot with localStorage-persisted values only; the main
       // window answers with the live session state (account, update status…).
       if (!isFloat) el.windowSyncSend({ type: 'snapshot', payload: snapshot() })
+    } else if (msg.type === 'command') {
+      if (!isFloat) playerCommandHandler?.(msg.cmd, msg.arg)
     } else if (msg.type === 'navigate') {
       if (!isFloat) useStore.getState().setActiveView(msg.view)
     }

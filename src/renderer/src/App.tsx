@@ -162,7 +162,6 @@ export default function App(): JSX.Element {
 
   return (
     <div className="flex flex-col h-dvh bg-surface overflow-hidden">
-      {isElectron && !wrldFullscreen && <WindowControls />}
       {/* Sidebar stays first in the DOM; reverse variants place it visually
           on the right/bottom without reordering focus/tab order. */}
       <div className={`flex flex-1 overflow-hidden ${
@@ -216,6 +215,13 @@ export default function App(): JSX.Element {
       {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <DownloadManager />
+      {/* Rendered last on purpose: Chromium builds the frameless window's
+          draggable region in DOM order (drag rects unite, no-drag rects
+          subtract, later entries win). The buttons' no-drag carve-out must
+          come after any drag strip that can extend under them — with the nav
+          on top/right, the sidebar's strip does, and when this rendered first
+          clicking min/max/close dragged the window instead. */}
+      {isElectron && !wrldFullscreen && <WindowControls />}
     </div>
   )
 }

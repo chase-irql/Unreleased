@@ -775,6 +775,7 @@ export default function WrldView(): JSX.Element {
                   <ListMusic size={18} />
                 </button>
               )}
+              <FmLikeButton light={textIsDark} />
               <SongMenu light={textIsDark} />
             </div>
 
@@ -986,6 +987,7 @@ export default function WrldView(): JSX.Element {
                       <ListMusic size={18} />
                     </button>
                   )}
+                  <FmLikeButton light={textIsDark} />
                   <SongMenu light={textIsDark} />
                 </div>
               </div>
@@ -1310,6 +1312,39 @@ export default function WrldView(): JSX.Element {
 import { memo as _memo2, useRef as _useRef2, useCallback as _cb2 } from 'react'
 // (re-exports already imported above; using same imports)
 
+// One-click "like" for the 999 FM now-playing track. FM is server-driven and
+// only hands us title/artist, so the likeable target is the resolved song id
+// (stream metadata's song_id, or RadioFmPlayer's title-search fallback match).
+// Reuses the same `jw-<id>` track id / toggleLike path as every other API song,
+// so it lands in Liked Songs identically. Rendered in the WRLD header next to
+// SongMenu; self-hides off FM or until the broadcast resolves to a known song.
+const FmLikeButton = memo(function FmLikeButton({ light }: { light: boolean }): JSX.Element {
+  const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike } = useStore(useShallow(s => ({
+    radioFmActive: s.radioFmActive,
+    radioFmNowPlaying: s.radioFmNowPlaying,
+    radioFmMatchedSong: s.radioFmMatchedSong,
+    likedTrackIds: s.likedTrackIds,
+    toggleLike: s.toggleLike,
+  })))
+
+  const fmSongId = radioFmActive ? (radioFmNowPlaying?.song_id ?? radioFmMatchedSong?.songId ?? null) : null
+  if (fmSongId == null) return <></>
+
+  const liked = likedTrackIds.includes(`jw-${fmSongId}`)
+  return (
+    <button
+      onClick={() => toggleLike(`jw-${fmSongId}`)}
+      title={liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
+      aria-label={liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
+      aria-pressed={liked}
+      className="p-1.5 rounded-full transition-colors hover:bg-white/10 shrink-0"
+      style={{ color: liked ? 'var(--accent)' : (light ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)') }}
+    >
+      <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
+    </button>
+  )
+})
+
 // Apple Music-style "···" context menu for the current track. Module-level
 // (like LyricsPanel/FmProgressBar) so it reads the store directly instead of
 // drilling props from WrldView.
@@ -1394,6 +1429,8 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
           onClose={() => setOpen(false)}
           canEdit={canEdit}
           onInfo={() => openInfo(fmSongId)}
+          liked={likedTrackIds.includes(`jw-${fmSongId}`)}
+          onToggleLike={() => toggleLike(`jw-${fmSongId}`)}
           disableChangeVersion
         />,
         document.body

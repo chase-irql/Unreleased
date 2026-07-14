@@ -92,7 +92,7 @@ export default function NowPlaying(): JSX.Element {
             )}
             {jwMatch && canEdit && (
               <button
-                onClick={() => { setPendingEditorSongId(parseInt(jwMatch[1])); setActiveView('editor') }}
+                onClick={() => useStore.getState().openSongEditor(parseInt(jwMatch[1]))}
                 className="text-text-muted hover:text-text-primary transition-colors"
                 title="Edit this song"
               >

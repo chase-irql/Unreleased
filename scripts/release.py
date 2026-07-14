@@ -8,15 +8,19 @@ All prompts are asked up front, then everything else runs unattended:
   1. Pick a version (bump patch / minor / major, or keep / custom)
   2. Enter a commit message (only if the tree is dirty)
   3. Enter release notes (blank = auto-generate from commits)
-     and choose stable or beta (beta = GitHub pre-release, only visible
-     to installs unlocked with the beta access code)
+     and choose stable or beta. Betas are NEVER uploaded to GitHub —
+     they're privately published to juicewrldapi.com's gated backend,
+     only reachable with a beta access code (see build/fetch-releases.ps1
+     for the endpoint contract). Stable releases are unaffected.
   ── nothing left to answer past this point ──
   4. Commit all changes to the desktop branch (app)
   5. Build the renderer + Electron installers (offline + web)
   6. Push the desktop branch to GitHub
   7. Sync the web branch (copies src/ + package.json from app, skips
      electron/) — skipped for beta releases, betas are desktop-only
-  8. Create the GitHub release and upload all assets
+  8. Stable: create the GitHub release and upload all assets.
+     Beta: publish privately to the gated backend instead (needs
+     BETA_ADMIN_TOKEN in .env.local).
 """
 
 import os, sys, re, json, subprocess, time, urllib.request, urllib.error, urllib.parse
@@ -37,6 +41,7 @@ APP_BRANCH   = "app"
 WEB_BRANCH   = "web"
 API_BASE     = "https://api.github.com"
 UPLOAD_BASE  = "https://uploads.github.com"
+BETA_API_BASE = "https://juicewrldapi.com/beta"
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 RST  = "\033[0m"
@@ -149,6 +154,19 @@ def get_token():
                 return line.split("=", 1)[1].strip()
     die("GH_TOKEN not found.\nSet it as an environment variable or add GH_TOKEN=xxx to .env.local")
 
+def get_beta_admin_token():
+    t = os.environ.get("BETA_ADMIN_TOKEN")
+    if t: return t
+    env = ROOT / ".env.local"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("BETA_ADMIN_TOKEN="):
+                val = line.split("=", 1)[1].strip()
+                if val: return val
+    die("BETA_ADMIN_TOKEN not found.\nAdd BETA_ADMIN_TOKEN=xxx to .env.local — this is the admin secret\n"
+        "for juicewrldapi.com's POST /beta/admin/publish endpoint, separate\n"
+        "from GH_TOKEN. Only needed for beta releases.")
+
 def api(method, path, token, data=None):
     url  = f"{API_BASE}{path}"
     hdrs = {
@@ -207,6 +225,90 @@ def upload_asset(release_id, filepath, token):
     finally:
         wrap.close()
 
+# ── Beta publish (private — never touches GitHub) ─────────────────────────────
+# Streams a multipart/form-data body (fields + files) without loading the
+# whole installer into memory at once, same idea as _ProgressFile above but
+# composed from multiple segments (boundary text + one or more files).
+
+class _MultipartUpload:
+    def __init__(self, boundary, fields, files):
+        self._segments = []  # ('bytes', b'...') | ('file', Path)
+        for name, value in fields.items():
+            self._segments.append(("bytes",
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")))
+        for name, path in files.items():
+            header = (f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{path.name}"\r\n'
+                      f'Content-Type: application/octet-stream\r\n\r\n').encode("utf-8")
+            self._segments.append(("bytes", header))
+            self._segments.append(("file", path))
+            self._segments.append(("bytes", b"\r\n"))
+        self._segments.append(("bytes", f"--{boundary}--\r\n".encode("utf-8")))
+
+        self._size = sum(len(d) if k == "bytes" else d.stat().st_size for k, d in self._segments)
+        self._idx = 0
+        self._fh = None
+        self._done = 0
+
+    def __len__(self):
+        return self._size
+
+    def _report(self):
+        pct = self._done * 100 // self._size if self._size else 100
+        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
+        mb_d, mb_t = self._done / 1_048_576, self._size / 1_048_576
+        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
+
+    def read(self, n=-1):
+        while self._idx < len(self._segments):
+            kind, data = self._segments[self._idx]
+            if kind == "bytes":
+                self._idx += 1
+                if data:
+                    self._done += len(data)
+                    self._report()
+                    return data
+                continue
+            if self._fh is None:
+                self._fh = open(data, "rb")
+            chunk = self._fh.read(n if n and n > 0 else 1_048_576)
+            if chunk:
+                self._done += len(chunk)
+                self._report()
+                return chunk
+            self._fh.close()
+            self._fh = None
+            self._idx += 1
+        return b""
+
+    def close(self):
+        if self._fh:
+            self._fh.close()
+
+def upload_beta(url, token, fields, files):
+    boundary = f"----unreleased-{int(time.time())}"
+    wrap = _MultipartUpload(boundary, fields, files)
+    print(f"\n  Uploading: {_c(', '.join(p.name for p in files.values()), WHT, BOLD)}  ({len(wrap)/1_048_576:.1f} MB)")
+    req = urllib.request.Request(url, data=wrap, method="POST", headers={
+        "Authorization":  f"Bearer {token}",
+        "Content-Type":   f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(wrap)),
+        "User-Agent":     "release.py",
+    })
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print()
+            return resp.read()
+    finally:
+        wrap.close()
+
+def sha512_base64(path):
+    import hashlib, base64
+    h = hashlib.sha512()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1_048_576), b""):
+            h.update(chunk)
+    return base64.b64encode(h.digest()).decode("ascii")
+
 # ── Prompts (collected up front, before any build/deploy/commit) ──────────────
 
 TOTAL = 8
@@ -261,10 +363,10 @@ def prompt_commit_message(version):
 def prompt_release_notes():
     section(3, TOTAL, "Release notes")
     notes = ask("Release notes  (blank = auto-generate from commits)", default="")
-    # Beta builds are published as GitHub pre-releases: regular users never
-    # see them (the /latest link and stable auto-updates skip pre-releases),
-    # only installs unlocked with the beta access code do.
-    is_beta = confirm("Mark as pre-release (beta)?", default=False)
+    # Beta builds are NEVER uploaded to GitHub — they're published privately
+    # to the gated backend (see step_publish_beta), reachable only with a
+    # beta access code. Regular users and stable auto-updates never see them.
+    is_beta = confirm("Publish as beta (gated — not a public GitHub release)?", default=False)
     return notes, is_beta
 
 
@@ -383,8 +485,56 @@ def step_sync_web(version, is_beta=False):
             run(f"git checkout {original}")
 
 
-def step_release(version, token, notes, is_beta=False):
-    section(8, TOTAL, "GitHub release" + ("  (beta / pre-release)" if is_beta else ""))
+def step_publish_beta(version, notes):
+    section(8, TOTAL, "Beta publish  (gated backend, not GitHub)")
+    tag = f"v{version}"
+    token = get_beta_admin_token()
+
+    exe = ROOT / "release" / f"Unreleased-Setup-{version}.exe"
+    if not exe.exists():
+        die(f"No {exe.name} in release/\nDid the build succeed?")
+
+    info("Computing checksum…")
+    sha512 = sha512_base64(exe)
+    size = exe.stat().st_size
+    yml_path = ROOT / "release" / "latest-beta.yml"
+    yml_path.write_text(
+        f"version: {version}\n"
+        f"path: {exe.name}\n"
+        f"sha512: {sha512}\n"
+        f"files:\n"
+        f"  - url: {exe.name}\n"
+        f"    sha512: {sha512}\n"
+        f"    size: {size}\n"
+        f"releaseDate: '{time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())}'\n",
+        "utf-8",
+    )
+
+    if not notes:
+        notes = capture(
+            f'git log $(git describe --tags --abbrev=0 2>nul)..HEAD --pretty="- %s" --no-merges 2>nul'
+            if sys.platform == "win32" else
+            f'git log $(git describe --tags --abbrev=0 2>/dev/null)..HEAD --pretty="- %s" --no-merges 2>/dev/null'
+        ) or f"Beta {tag}"
+
+    info(f"Publishing {_c(tag, WHT, BOLD)} to {BETA_API_BASE}/admin/publish …")
+    try:
+        upload_beta(
+            f"{BETA_API_BASE}/admin/publish", token,
+            fields={"version": version, "tag": tag, "notes": notes},
+            files={"installer": exe, "latest_yml": yml_path},
+        )
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        die(f"Beta publish failed: HTTP {e.code}\n{body[:300]}")
+
+    ok("Beta build published — private, not a public GitHub release")
+    print()
+    print(_c(f"  🧪  Beta {tag} is live for code holders only.", GRN, BOLD))
+
+
+def step_release(version, token, notes):
+    section(8, TOTAL, "GitHub release")
     tag         = f"v{version}"
     release_dir = ROOT / "release" / "nsis-web"
 
@@ -436,17 +586,15 @@ def step_release(version, token, notes, is_beta=False):
             f"/repos/{REPO_OWNER}/{REPO_NAME}/releases", token,
             {"tag_name": tag, "name": tag, "body": notes,
              "target_commitish": APP_BRANCH,
-             "draft": False, "prerelease": is_beta})
+             "draft": False, "prerelease": False})
         ok(f"Release created  (id={release['id']})")
     except urllib.error.HTTPError as e:
         if e.code == 422:
             release = api("GET",
                 f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}", token)
-            # Re-running for an existing tag also syncs the beta flag and
-            # notes — this is how a beta gets promoted to stable in place.
             api("PATCH",
                 f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release['id']}", token,
-                {"prerelease": is_beta, "body": notes})
+                {"prerelease": False, "body": notes})
             ok(f"Release already exists — updated  (id={release['id']})")
         else:
             raise
@@ -491,7 +639,10 @@ def main():
         step_build()
         step_push_app()
         step_sync_web(version, is_beta)
-        step_release(version, token, release_notes, is_beta)
+        if is_beta:
+            step_publish_beta(version, release_notes)
+        else:
+            step_release(version, token, release_notes)
 
         print()
         print(_c("  " + "═" * 46, GRN, BOLD))

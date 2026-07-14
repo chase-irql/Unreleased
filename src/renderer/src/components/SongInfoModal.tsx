@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Music2, Pencil } from 'lucide-react'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch } from '../lib/juicewrldApi'
@@ -34,10 +34,29 @@ interface Props {
   song: JWApiSong | null
   onClose: () => void
   onEdit?: (songId: number) => void
+  // Rendered as the sole content of a pop-out BrowserWindow (see FloatApp):
+  // the panel fills the window, the hero doubles as the drag handle, and
+  // closing closes the OS window (via the caller's onClose).
+  floating?: boolean
 }
 
-export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Element | null {
+export default function SongInfoModal({ song, onClose, onEdit, floating = false }: Props): JSX.Element | null {
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // Desktop: song info lives in its own pop-out window — every existing
+  // in-app <SongInfoModal> caller redirects there instead of rendering the
+  // overlay. The overlay remains for the web build (and for the pop-out
+  // itself, which mounts this with floating=true).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const el = (window as any).electron
+  const redirectToFloat = !floating && !!el?.openFloatWindow
+  useEffect(() => {
+    if (redirectToFloat && song) {
+      el.openFloatWindow('song-info', { songId: song.id })
+      onClose()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redirectToFloat, song?.id])
 
   // Clicking a linked version swaps the displayed song in place, without the
   // caller needing to manage that — falls back to the `song` prop otherwise.
@@ -77,7 +96,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
     } catch {}
   }
 
-  if (!displaySong) return null
+  if (redirectToFloat || !displaySong) return null
 
   const coverUrl = buildImageUrl(displaySong.image_url)
   const primaryTitle = displaySong.track_titles?.[0] || displaySong.name
@@ -115,13 +134,20 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
   return createPortal(
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
+      className={`fixed inset-0 z-50 flex ${floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'}`}
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
-      <div className="select-text bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh] flex flex-col overflow-hidden">
+      <div className={`select-text bg-surface flex flex-col overflow-hidden ${floating
+        ? 'w-full h-full'
+        : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh]'}`}
+      >
 
-        {/* Hero */}
-        <div className="relative shrink-0 overflow-hidden">
+        {/* Hero — in a pop-out it doubles as the frameless window's drag
+            handle; the buttons opt back out below or they'd be undraggable. */}
+        <div
+          className="relative shrink-0 overflow-hidden"
+          style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
+        >
           {coverUrl && (
             <div
               className="absolute inset-0 bg-cover bg-center scale-110"
@@ -132,6 +158,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
           {onEdit && (
             <button
               onClick={() => { onEdit(displaySong.id); onClose() }}
+              style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
               className="absolute top-3 right-12 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
               title="Edit song info"
             >
@@ -140,6 +167,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
           )}
           <button
             onClick={onClose}
+            style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
             className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
           >
             <X size={15} />
