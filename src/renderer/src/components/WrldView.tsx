@@ -14,6 +14,7 @@ import * as userApi from '../lib/userApi'
 import SongInfoModal from './SongInfoModal'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import SongContextMenu from './SongContextMenu'
+import { getSkin } from '../lib/skins'
 
 // ── WrldData types ────────────────────────────────────────────────────────────
 
@@ -64,6 +65,10 @@ export default function WrldView(): JSX.Element {
     audioOutput: s.audioOutput,
     setAudioOutput: s.setAudioOutput,
   })))
+
+  // Skins beyond the classic pair mean `theme === 'dark'` no longer covers
+  // "is this a dark look" — Ocean, Mocha, etc. need the dark treatment too.
+  const isDarkSkin = getSkin(theme).dark
 
   const containerRef = useRef<HTMLDivElement>(null)
   const activeRef    = useRef<HTMLDivElement>(null)
@@ -277,7 +282,7 @@ export default function WrldView(): JSX.Element {
 
   useEffect(() => {
     if (!artSrc || artError) {
-      setTextIsDark(theme === 'light' && !radioFmActive)
+      setTextIsDark(!isDarkSkin && !radioFmActive)
       return
     }
     const img = new Image()
@@ -294,13 +299,13 @@ export default function WrldView(): JSX.Element {
         for (let i = 0; i < data.length; i += 4)
           sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
         const avg = sum / (data.length / 4)
-        const factor = theme === 'dark' ? 0.22 : 0.45
+        const factor = isDarkSkin ? 0.22 : 0.45
         setTextIsDark(avg * factor > 90)
       } catch { setTextIsDark(false) }
     }
     img.onerror = () => setTextIsDark(false)
     img.src = artSrc
-  }, [artSrc, artError, theme, radioFmActive])
+  }, [artSrc, artError, isDarkSkin, radioFmActive])
 
   const rawLyrics = radioFmActive
     ? (radioFmMatchedSong?.syncedLyrics || radioFmMatchedSong?.lyrics || null)
@@ -505,7 +510,7 @@ export default function WrldView(): JSX.Element {
                 {suggestResults.map(song => (
                   <button key={song.id} onClick={() => handlePropose(song)}
                     className="text-left px-3 py-2 rounded-xl hover:bg-white/10 transition-colors group">
-                    <p className="text-white/70 text-sm truncate group-hover:text-white/90 transition-colors">
+                    <p className="text-white/70 text-sm truncate group-hover:text-white/90 transition-colors" title={song.track_titles?.[0] || song.name}>
                       {song.track_titles?.[0] || song.name}
                     </p>
                     <p className="text-white/35 text-xs truncate">{song.credited_artists}</p>
@@ -522,7 +527,7 @@ export default function WrldView(): JSX.Element {
         <div className="flex flex-col gap-2">
           <p className="text-white/40 text-[11px] font-semibold uppercase tracking-widest">Up next</p>
           <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-            <p className="text-white/80 text-sm font-medium truncate">{radioFmUpNext.title}</p>
+            <p className="text-white/80 text-sm font-medium truncate" title={radioFmUpNext.title}>{radioFmUpNext.title}</p>
             {radioFmUpNext.artist && <p className="text-white/40 text-xs mt-0.5">{radioFmUpNext.artist}</p>}
           </div>
         </div>
@@ -536,7 +541,7 @@ export default function WrldView(): JSX.Element {
             {radioFmQueuePreview.map((title, i) => (
               <div key={i} className="flex items-center gap-3 px-1 py-1.5 rounded-lg">
                 <span className="text-white/20 text-xs w-4 text-right shrink-0">{i + 1}</span>
-                <p className="text-white/50 text-sm truncate">{title}</p>
+                <p className="text-white/50 text-sm truncate" title={title}>{title}</p>
               </div>
             ))}
           </div>
@@ -681,6 +686,7 @@ export default function WrldView(): JSX.Element {
                       ? 'text-[var(--accent)] font-semibold'
                       : 'text-white/70 group-hover/song:text-white/95'
                   }`}
+                  title={song.name}
                 >
                   {song.name}
                 </span>
@@ -738,7 +744,7 @@ export default function WrldView(): JSX.Element {
             {artSrc && !artError ? (
               <img src={artSrc} alt=""
                 className="absolute inset-0 w-full h-full object-cover"
-                style={{ filter: `blur(60px) brightness(${theme === 'dark' ? 0.22 : 0.45}) saturate(${theme === 'dark' ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
+                style={{ filter: `blur(60px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
                 onError={() => setArtError(true)}
               />
             ) : (
@@ -754,7 +760,7 @@ export default function WrldView(): JSX.Element {
             <div className="flex items-center gap-3 px-4 pt-12 pb-3 shrink-0">
               {ArtBox({ mobile: true })}
               <div className="flex-1 min-w-0">
-                {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }}>{displayTitle}</p>}
+                {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
                 {displayArtist && <p className="text-xs mt-0.5 truncate" style={{ color: txtSec }}>{displayArtist}</p>}
                 {displayAlbum  && <p className="text-xs mt-0.5 truncate" style={{ color: txtTer }}>{displayAlbum}</p>}
                 {radioFmActive && !radioFmNowPlaying && <p className="text-xs mt-0.5" style={{ color: txtTer }}>Tuning in…</p>}
@@ -926,16 +932,15 @@ export default function WrldView(): JSX.Element {
               <div className="relative w-full" style={{ maxWidth: 320 }}>
                 {ArtBox({ mobile: false })}
                 {!radioFmActive && songVersions.length > 0 && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-20">
-                    {/* Notch sits half-embedded in the art's left edge, like it's
-                        popping out of the cover itself, rather than floating
-                        beside it as a detached control. Fully rounded so there's
-                        no flat edge cutting into the art, and the indicator
-                        inside is a plain straight bar, not an arrow glyph. */}
+                  <div className="absolute right-full top-1/2 -translate-y-1/2 z-20">
+                    {/* Flush against the art's left edge rather than centered
+                        on it — only the half that pokes out past the cover is
+                        drawn (rounded-l-full, flat edge against the art),
+                        instead of a full pill floating half on top of it. */}
                     <button
                       onClick={() => setSongVersionMenuOpen(o => !o)}
                       title="Other versions"
-                      className={`w-4 h-9 flex items-center justify-center rounded-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border shadow-lg transition-colors ${
+                      className={`w-4 h-9 flex items-center justify-center rounded-l-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border-y border-l shadow-lg transition-colors ${
                         songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-white/20 dark:border-white/10'
                       }`}
                     >
@@ -967,7 +972,7 @@ export default function WrldView(): JSX.Element {
               <div className="w-full px-1" style={{ maxWidth: 320 }}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    {displayTitle  && <p className="font-bold text-xl leading-tight truncate" style={{ color: txtPri }}>{displayTitle}</p>}
+                    {displayTitle  && <p className="font-bold text-xl leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
                     {displayArtist && <p className="text-sm mt-0.5 truncate" style={{ color: txtSec }}>{displayArtist}</p>}
                     {radioFmActive && !radioFmNowPlaying && <p className="text-sm mt-0.5" style={{ color: txtTer }}>Tuning in…</p>}
                   </div>
@@ -1619,7 +1624,7 @@ function WrldQueueRow({ track, isActive, isPlaying, showDrag, onPlay, onRemove }
         <AlbumArtThumbnail track={track} size={36} className="w-full h-full" shimmer={false} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-white/85'}`}>{track.title}</p>
+        <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-white/85'}`} title={track.title}>{track.title}</p>
         <p className="text-[10px] text-white/40 truncate mt-0.5">{track.artist}</p>
       </div>
       <div className="flex items-center gap-1 shrink-0">

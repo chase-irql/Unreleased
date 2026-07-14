@@ -9,7 +9,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId')
+  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition')
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
 
@@ -59,9 +59,105 @@ export default function Sidebar(): JSX.Element {
     { icon: <ListMusic size={18} />, label: 'Playlists', view: 'playlists' },
   ]
 
+  const navClick = (view: ViewType): void => {
+    if (activeView === view && view === 'playlists') {
+      window.dispatchEvent(new CustomEvent('playlists:back'))
+    } else {
+      setActiveView(view)
+    }
+  }
+
+  // ── Horizontal bar (Settings → Appearance → Navigation position: top/bottom).
+  // Nav items keep icon+label; the account/admin/settings cluster goes
+  // icon-only, and the collapse toggle + inline playlist tree don't apply.
+  if (sidebarPosition === 'top' || sidebarPosition === 'bottom') {
+    const iconBtn = 'flex items-center justify-center w-8 h-8 rounded text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors shrink-0'
+    return (
+      <aside className={`hidden md:flex flex-col w-full bg-sidebar shrink-0 border-[var(--border)] ${sidebarPosition === 'top' ? 'border-b' : 'border-t'}`}>
+        {/* Bar touches the frameless window's top edge, so it carries the
+            drag strip that main's overlay provides in the other layouts. */}
+        {isElectron && sidebarPosition === 'top' && (
+          <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+        )}
+        <div className="flex items-center gap-1 px-3 py-1.5 min-w-0">
+          <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+            {items.map(({ icon, label, view }) => (
+              <button
+                key={view}
+                onClick={() => navClick(view)}
+                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors ${
+                  activeView === view
+                    ? 'bg-surface-raised text-text-primary'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+                }`}
+              >
+                <span className="w-6 h-6 shrink-0 flex items-center justify-center">{icon}</span>
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="flex items-center gap-1 shrink-0">
+            {account ? (
+              <>
+                <button
+                  onClick={() => setActiveView('editor-profile')}
+                  title={account.display_name || account.discord_username}
+                  className={`${iconBtn} hover:bg-transparent hover:opacity-80`}
+                >
+                  {account.discord_avatar ? (
+                    <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">
+                      {(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </button>
+                <button onClick={() => logoutAccount()} title="Log out" className={iconBtn}>
+                  <LogOut size={16} />
+                </button>
+              </>
+            ) : (
+              <button onClick={() => setShowUserAuth(true)} title="Log in" className={iconBtn}>
+                <LogIn size={18} />
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => setActiveView('admin')}
+                title="Admin"
+                className={`${iconBtn} ${activeView === 'admin' ? 'bg-surface-raised !text-text-primary' : ''}`}
+              >
+                <ShieldCheck size={18} />
+              </button>
+            )}
+            {!isElectron && (
+              <a
+                href="https://github.com/leanwrldd/unreleased/releases/latest"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Download desktop app"
+                className={iconBtn}
+              >
+                <Download size={18} />
+              </a>
+            )}
+            {developerMode && (
+              <button onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={iconBtn}>
+                <Info size={18} />
+              </button>
+            )}
+            <button onClick={() => setShowSettings(true)} title="Settings" className={iconBtn}>
+              <Settings size={18} />
+            </button>
+          </div>
+        </div>
+      </aside>
+    )
+  }
+
   return (
     <aside
-      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 border-r border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
+      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 ${sidebarPosition === 'right' ? 'border-l' : 'border-r'} border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
     >
       {isElectron && (
         <div className="shrink-0 h-7 w-full select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
@@ -94,13 +190,7 @@ export default function Sidebar(): JSX.Element {
               }`}
             >
               <button
-                onClick={() => {
-                  if (activeView === view && view === 'playlists') {
-                    window.dispatchEvent(new CustomEvent('playlists:back'))
-                  } else {
-                    setActiveView(view)
-                  }
-                }}
+                onClick={() => navClick(view)}
                 title={collapsed ? label : undefined}
                 className="flex items-center flex-1 min-w-0 py-2 pl-2 gap-3"
               >
@@ -230,7 +320,11 @@ export default function Sidebar(): JSX.Element {
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className="flex items-center w-full py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >
-          <span className="w-6 h-6 flex items-center justify-center shrink-0">{collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}</span>
+          {/* Chevron points where the edge will move — mirrored when the
+              sidebar sits on the right. */}
+          <span className="w-6 h-6 flex items-center justify-center shrink-0">
+            {collapsed !== (sidebarPosition === 'right') ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          </span>
           <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Collapse</span>
         </button>
       </div>

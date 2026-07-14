@@ -6,6 +6,7 @@ import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { createQueueSlice, QueueSlice } from './queueSlice'
+import { getSkin, type SkinId } from '../lib/skins'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -53,6 +54,10 @@ export interface DownloadItem {
   speedBps?: number
 }
 
+// Where the desktop nav menu sits — classic left sidebar, mirrored right, or a
+// horizontal bar above/below the content. Mobile always uses the bottom tab bar.
+export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
+
 // ─── Non-queue state ──────────────────────────────────────────────────────────
 
 interface AppState {
@@ -82,11 +87,15 @@ interface AppState {
   radioFmUpNext: import('../lib/radioLive').RadioTrack | null
   radioFmQueuePreview: string[]
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
-  theme: 'dark' | 'light'
+  theme: SkinId
+  sidebarPosition: SidebarPosition
 
   // Settings
   crossfadeEnabled: boolean
   crossfadeDuration: number
+  // Ramp volume down briefly on pause (and back up on resume) instead of
+  // cutting the audio off instantly.
+  pauseFadeEnabled: boolean
   sleepTimerEnd: number | null
   audioOutput: string
   accentColor: string
@@ -174,9 +183,11 @@ interface AppActions {
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
-  setTheme: (theme: 'dark' | 'light') => void
+  setTheme: (theme: SkinId) => void
+  setSidebarPosition: (position: SidebarPosition) => void
 
   setCrossfade: (enabled: boolean, duration: number) => void
+  setPauseFade: (enabled: boolean) => void
   setSleepTimer: (endTimestamp: number | null) => void
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
@@ -324,7 +335,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   radioFmUpNext: null,
   radioFmQueuePreview: [],
   radioFmMatchedSong: null,
-  theme: ls.get<'dark' | 'light'>('theme') ?? 'dark',
+  // getSkin() maps unknown persisted ids (renamed/removed skins) back to dark.
+  theme: getSkin(ls.get<string>('theme') ?? 'dark').id,
+  sidebarPosition: ls.get<SidebarPosition>('sidebarPosition') ?? 'left',
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
@@ -353,10 +366,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowQueue: (showQueue) => set({ showQueue }),
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
+  setSidebarPosition: (sidebarPosition) => { set({ sidebarPosition }); ls.set('sidebarPosition', sidebarPosition) },
 
   // ── Settings ──────────────────────────────────────────────────────────────
   crossfadeEnabled: ls.get<boolean>('crossfadeEnabled') ?? false,
   crossfadeDuration: ls.get<number>('crossfadeDuration') ?? 5,
+  pauseFadeEnabled: ls.get<boolean>('pauseFadeEnabled') ?? false,
   sleepTimerEnd: null,
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
@@ -367,6 +382,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('crossfadeEnabled', enabled)
     ls.set('crossfadeDuration', duration)
   },
+  setPauseFade: (enabled) => { set({ pauseFadeEnabled: enabled }); ls.set('pauseFadeEnabled', enabled) },
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },

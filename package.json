@@ -1,6 +1,6 @@
 {
   "name": "unreleased",
-  "version": "1.14.8",
+  "version": "1.15.0",
   "description": "A music player for Juice WRLD",
   "main": "electron/main.js",
   "scripts": {
@@ -80,6 +80,12 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "nsis-web",
           "arch": [
             "x64"
@@ -89,7 +95,8 @@
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
-      "include": "build/installer.nsh"
+      "include": "build/installer.nsh",
+      "oneClick": false
     },
     "nsisWeb": {
       "artifactName": "${productName}-Setup.${ext}"

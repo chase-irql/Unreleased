@@ -254,26 +254,53 @@ function StatsBar({ stats }: { stats: JWApiStats | null }): JSX.Element {
 }
 
 // ─── Category sidebar ─────────────────────────────────────────────────────────
-const CAT_SIDEBAR = [
-  { key: '' as Category,                label: 'All' },
-  { key: 'released' as Category,        label: 'Released' },
-  { key: 'unreleased' as Category,      label: 'Unreleased' },
-  { key: 'unsurfaced' as Category,      label: 'Unsurfaced' },
-  { key: 'recording_session' as Category, label: 'Sessions' },
+// Category/era are checkbox multi-selects (OR'd within each group) rather
+// than the old radio-style single pick — "All" / "All eras" just clears the
+// respective set instead of being one more option inside it.
+const CAT_SIDEBAR: { key: Exclude<Category, ''>; label: string }[] = [
+  { key: 'released',          label: 'Released' },
+  { key: 'unreleased',        label: 'Unreleased' },
+  { key: 'unsurfaced',        label: 'Unsurfaced' },
+  { key: 'recording_session', label: 'Sessions' },
 ]
 
+function SidebarCheckRow({ label, count, checked, onClick }: {
+  label: string
+  count?: number
+  checked: boolean
+  onClick: () => void
+}): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-3 py-1.5 text-sm transition-colors text-left ${
+        checked ? 'text-accent font-semibold bg-accent/5' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+      }`}
+    >
+      {checked
+        ? <CheckSquare2 size={13} className="text-accent shrink-0" />
+        : <Square size={13} className="text-text-muted opacity-50 shrink-0" />}
+      <span className="flex-1 truncate">{label}</span>
+      {count !== undefined && (
+        <span className="text-text-muted text-[10px] tabular-nums ml-1">{count.toLocaleString()}</span>
+      )}
+    </button>
+  )
+}
+
 function CategorySidebar({
-  stats, eras, selectedCategory, selectedEra, onCategory, onEra,
+  stats, eras, selectedCategories, selectedEras, onCategory, onEra, onClearCategories, onClearEras,
 }: {
   stats: JWApiStats | null
   eras: JWApiEra[]
-  selectedCategory: Category
-  selectedEra: string
+  selectedCategories: Set<Category>
+  selectedEras: Set<string>
   onCategory: (c: Category) => void
   onEra: (e: string) => void
+  onClearCategories: () => void
+  onClearEras: () => void
 }): JSX.Element {
   const counts: Record<string, number | undefined> = {
-    '':                stats?.total_songs,
     released:          stats?.category_stats.released,
     unreleased:        stats?.category_stats.unreleased,
     unsurfaced:        stats?.category_stats.unsurfaced,
@@ -283,44 +310,33 @@ function CategorySidebar({
   return (
     <div className="w-44 shrink-0 border-r border-[var(--border)] overflow-y-auto flex flex-col py-2">
       <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted px-3 pt-1 pb-2">Category</p>
+      <SidebarCheckRow
+        label="All"
+        count={stats?.total_songs}
+        checked={selectedCategories.size === 0}
+        onClick={onClearCategories}
+      />
       {CAT_SIDEBAR.map((cat) => (
-        <button
+        <SidebarCheckRow
           key={cat.key}
+          label={cat.label}
+          count={counts[cat.key]}
+          checked={selectedCategories.has(cat.key)}
           onClick={() => onCategory(cat.key)}
-          className={`flex items-center justify-between px-3 py-1.5 text-sm transition-colors text-left ${
-            selectedCategory === cat.key
-              ? 'text-accent font-semibold bg-accent/5'
-              : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-          }`}
-        >
-          <span className="truncate">{cat.label}</span>
-          {counts[cat.key] !== undefined && (
-            <span className="text-text-muted text-[10px] tabular-nums ml-1">{counts[cat.key]!.toLocaleString()}</span>
-          )}
-        </button>
+        />
       ))}
 
       {eras.length > 0 && (
         <>
           <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted px-3 pt-4 pb-2">Era</p>
-          <button
-            onClick={() => onEra('')}
-            className={`flex items-center px-3 py-1.5 text-sm transition-colors text-left ${
-              !selectedEra ? 'text-accent font-semibold bg-accent/5' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-            }`}
-          >
-            All eras
-          </button>
+          <SidebarCheckRow label="All eras" checked={selectedEras.size === 0} onClick={onClearEras} />
           {eras.map((era) => (
-            <button
+            <SidebarCheckRow
               key={era.id}
+              label={era.name}
+              checked={selectedEras.has(era.name)}
               onClick={() => onEra(era.name)}
-              className={`flex items-center px-3 py-1.5 text-sm transition-colors text-left ${
-                selectedEra === era.name ? 'text-accent font-semibold bg-accent/5' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-              }`}
-            >
-              <span className="truncate">{era.name}</span>
-            </button>
+            />
           ))}
         </>
       )}
@@ -523,7 +539,7 @@ function SongActions({
 // ─── Song row (list mode) ─────────────────────────────────────────────────────
 const SongRow = memo(function SongRow({
   song, onPlay, onCategoryClick, onEraClick, onInfo, onContextMenu,
-  selectMode, selected, onToggleSelect, versionLabel,
+  selectMode, selected, onToggleSelect, versionLabel, compact,
 }: {
   song: JWApiSong
   onPlay: (song: JWApiSong) => void
@@ -537,6 +553,11 @@ const SongRow = memo(function SongRow({
   /** Shown next to the title when this row is a member of a compact-view
    *  group (e.g. "v1", "TV Mix") — this song's own label within the group. */
   versionLabel?: string | null
+  /** Compact-view member row: hides the Artist/Era columns (the compact
+   *  header has no columns for them) so the Category badge lines up under
+   *  the same header cell whether the row above it is a collapsed group
+   *  or an expanded version. */
+  compact?: boolean
 }): JSX.Element {
   const track = songToTrack(song)
   const title = song.name
@@ -587,22 +608,27 @@ const SongRow = memo(function SongRow({
         )}
       </div>
 
-      {/* Desktop-only columns */}
-      <span className="hidden md:block text-text-muted text-xs truncate w-32 shrink-0">{song.credited_artists || 'Juice WRLD'}</span>
-      {song.era?.name ? (
-        selectMode ? (
-          <span className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0">{song.era.name}</span>
-        ) : (
-          <button
-            onClick={() => onEraClick(song.era!.name)}
-            className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0 text-left hover:text-accent transition-colors"
-            title={`Filter by era: ${song.era.name}`}
-          >
-            {song.era.name}
-          </button>
-        )
-      ) : (
-        <span className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0">—</span>
+      {/* Desktop-only columns — omitted in compact view, which has no
+          Artist/Era header cells for them to line up under. */}
+      {!compact && (
+        <>
+          <span className="hidden md:block text-text-muted text-xs truncate w-32 shrink-0">{song.credited_artists || 'Juice WRLD'}</span>
+          {song.era?.name ? (
+            selectMode ? (
+              <span className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0">{song.era.name}</span>
+            ) : (
+              <button
+                onClick={() => onEraClick(song.era!.name)}
+                className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0 text-left hover:text-accent transition-colors"
+                title={`Filter by era: ${song.era.name}`}
+              >
+                {song.era.name}
+              </button>
+            )
+          ) : (
+            <span className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0">—</span>
+          )}
+        </>
       )}
       {selectMode ? (
         <span className={`hidden md:block text-xs px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
@@ -922,6 +948,7 @@ function CompactGroupList({
               selected={selected.has(row.item.id)}
               onToggleSelect={onToggleSelect}
               versionLabel={row.meta.version}
+              compact
             />
           </div>
         )
@@ -1399,12 +1426,46 @@ export default function ApiTrackerView(): JSX.Element {
 
   const [search, setSearch] = useState(getInitialSearch)
   const [debouncedSearch, setDebouncedSearch] = useState(getInitialSearch)
-  const [category, setCategory] = useState<Category>('')
-  const [era, setEra] = useState('')
+  // Sets rather than single values so "Search Settings" can filter by more
+  // than one category/era at once (OR'd within each dimension, AND'd across
+  // dimensions). The API itself only accepts one `category`/`era` value per
+  // request, so anything beyond a single selection in either dimension has
+  // to fall back to fetching everything and filtering client-side — see the
+  // fetchAllMode fetch effect below.
+  const [categoryFilter, setCategoryFilter] = useState<Set<Category>>(new Set())
+  const [eraFilter, setEraFilter] = useState<Set<string>>(new Set())
+  const multiFilterActive = categoryFilter.size > 1 || eraFilter.size > 1
+  // Single-value form for the fast (server-side-filtered) path — only
+  // meaningful when multiFilterActive is false, which is exactly when each
+  // set has at most one member.
+  const categoryParam: Category = categoryFilter.size === 1 ? [...categoryFilter][0] : ''
+  const eraParam = eraFilter.size === 1 ? [...eraFilter][0] : ''
+
+  const toggleCategoryFilter = useCallback((cat: Category) => {
+    setCategoryFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }, [])
+  const toggleEraFilter = useCallback((eraName: string) => {
+    setEraFilter(prev => {
+      const next = new Set(prev)
+      if (next.has(eraName)) next.delete(eraName)
+      else next.add(eraName)
+      return next
+    })
+  }, [])
+  const matchesFilters = useCallback((song: JWApiSong): boolean => {
+    if (categoryFilter.size > 0 && !categoryFilter.has(song.category as Category)) return false
+    if (eraFilter.size > 0 && !(song.era && eraFilter.has(song.era.name))) return false
+    return true
+  }, [categoryFilter, eraFilter])
 
   useEffect(() => {
-    if (apiTrackerCategory) { setCategory(apiTrackerCategory as Category); setApiTrackerCategory('') }
-    if (apiTrackerEra) { setEra(apiTrackerEra); setApiTrackerEra('') }
+    if (apiTrackerCategory) { setCategoryFilter(new Set([apiTrackerCategory as Category])); setApiTrackerCategory('') }
+    if (apiTrackerEra) { setEraFilter(new Set([apiTrackerEra])); setApiTrackerEra('') }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Lyric search (separate tab) — its own query/results, independent of
@@ -1571,8 +1632,10 @@ export default function ApiTrackerView(): JSX.Element {
     })
   }
 
-  const handleCategoryClick = useCallback((cat: Category) => { setCategory(cat); resetSongs() }, [resetSongs])
-  const handleEraClick = useCallback((eraName: string) => { setEra(eraName); resetSongs() }, [resetSongs])
+  // Clicking a badge on a song row jumps to "just this one" rather than
+  // adding to the current multi-select, matching the old single-filter UX.
+  const handleCategoryClick = useCallback((cat: Category) => { setCategoryFilter(new Set(cat ? [cat] : [])); resetSongs() }, [resetSongs])
+  const handleEraClick = useCallback((eraName: string) => { setEraFilter(new Set(eraName ? [eraName] : [])); resetSongs() }, [resetSongs])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isFirstDebounce = useRef(true)
 
@@ -1625,24 +1688,32 @@ export default function ApiTrackerView(): JSX.Element {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search, resetSongs])
 
-  // ── SORT MODE: load the entire library, sort client-side ──────────────────
-  // The API has no ordering param, so we fetch all pages and sort in memory.
-  // Keyed on sortModeActive rather than orderField — switching which column
-  // is active only changes how the already-fetched songs are sorted (see the
-  // sortedSongs memo below), so it must not re-trigger this fetch.
+  // ── FETCH-ALL MODE: load the entire (server-filtered) result set, then sort
+  // and/or filter client-side ─────────────────────────────────────────────────
+  // The API has no ordering param and only accepts one category/era value per
+  // request, so both "sort by column" and "more than one category/era
+  // selected" fall back to fetching every matching page up front. category/
+  // era are still passed server-side when there's exactly one value selected
+  // (categoryParam/eraParam) to shrink the payload — matchesFilters then
+  // covers whichever dimension has 2+ values, which the server can't do.
+  // Keyed on sortModeActive/multiFilterActive rather than orderField directly
+  // — switching which column is active only changes how the already-fetched
+  // songs are sorted (see the sortedSongs memo below), so it must not
+  // re-trigger this fetch.
+  const fetchAllMode = sortModeActive || multiFilterActive
   useEffect(() => {
-    if (!sortModeActive) return
+    if (!fetchAllMode) return
     let cancelled = false
     loadingRef.current = true
     setLoading(true); setError(null); setSongs([]); setHasMore(false); setCount(0)
     const t0 = performance.now()
     const PAGE_SIZE_SORT = 200 // bigger batches to reduce round-trips
     const CONCURRENCY = 6 // fetch several pages in parallel instead of one at a time
-    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${category || '-'} era=${era || '-'}`)
+    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive}`)
     const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
       searchall: debouncedSearch || undefined,
-      category: category || undefined,
-      era: era || undefined,
+      category: categoryParam || undefined,
+      era: eraParam || undefined,
       page: p,
       page_size: PAGE_SIZE_SORT,
     })
@@ -1651,7 +1722,7 @@ export default function ApiTrackerView(): JSX.Element {
         const first = await fetchPage(1)
         if (cancelled) return
         const all: JWApiSong[] = [...first.results]
-        setSongs([...all])
+        setSongs(all.filter(matchesFilters))
         setCount(first.count)
         runLog('tracker-sort', `page 1 loaded, accumulated ${all.length}/${first.count}`)
 
@@ -1664,12 +1735,18 @@ export default function ApiTrackerView(): JSX.Element {
             const data = await fetchPage(p)
             if (cancelled) return
             all.push(...data.results)
-            setSongs([...all]) // progressive display while loading
+            setSongs(all.filter(matchesFilters)) // progressive display while loading
             runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${first.count}`)
           }
         }
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
-        if (!cancelled) runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
+        if (!cancelled) {
+          // Once everything is in, the real total is however many actually
+          // pass the (possibly multi-value) filter, not the server's raw
+          // category/era-agnostic-or-partial count.
+          setCount(all.filter(matchesFilters).length)
+          runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
+        }
       } catch (e) {
         if (!cancelled) { setError((e as Error).message); runLog('tracker-sort', 'ERROR', e as Error) }
       } finally {
@@ -1677,18 +1754,18 @@ export default function ApiTrackerView(): JSX.Element {
       }
     })()
     return () => { cancelled = true }
-  }, [sortModeActive, debouncedSearch, category, era])
+  }, [fetchAllMode, debouncedSearch, categoryParam, eraParam, matchesFilters])
 
   // ── SCROLL MODE: infinite scroll, accumulates pages ──────────────────────────
   useEffect(() => {
-    if (orderField) return // sort mode handles fetching
+    if (fetchAllMode) return // fetch-all mode handles fetching
     let cancelled = false
     loadingRef.current = true
     setLoading(true); setError(null)
     apiFetch<JWApiPaginatedResponse>('/songs/', {
       searchall: debouncedSearch || undefined,
-      category: category || undefined,
-      era: era || undefined,
+      category: categoryParam || undefined,
+      era: eraParam || undefined,
       page,
       page_size: PAGE_SIZE,
     })
@@ -1712,7 +1789,7 @@ export default function ApiTrackerView(): JSX.Element {
         }
       })
     return () => { cancelled = true }
-  }, [debouncedSearch, category, era, page, orderField])
+  }, [debouncedSearch, categoryParam, eraParam, page, fetchAllMode])
 
   // Observe sentinel for infinite scroll
   useEffect(() => {
@@ -1769,10 +1846,17 @@ export default function ApiTrackerView(): JSX.Element {
   // title/artist here made legitimate searches (e.g. by producer) come up
   // empty even though the normal (non-compact) list found them fine.
   const filteredCompactGroups = useMemo(() => {
-    const filtered = filterCompactGroups(compactGroups, debouncedSearch, s => [
+    let filtered = filterCompactGroups(compactGroups, debouncedSearch, s => [
       s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
       s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
     ].filter(Boolean).join(' '))
+    // Category/era filters aren't sent server-side for compact view (the
+    // whole catalog is always fetched — see fetchAllCompactGroups above), so
+    // apply them here instead. A group counts as a match if any of its
+    // versions does, same as clicking a member's own category/era badge.
+    if (categoryFilter.size > 0 || eraFilter.size > 0) {
+      filtered = filtered.filter(g => g.members.some(m => matchesFilters(m.item)))
+    }
     if (!compactSort.field) return filtered
     // Copy before sorting — filterCompactGroups may return the input array.
     const sorted = [...filtered]
@@ -1784,27 +1868,27 @@ export default function ApiTrackerView(): JSX.Element {
       sorted.sort((a, b) => (a.members.length - b.members.length) * dir || a.title.localeCompare(b.title))
     }
     return sorted
-  }, [compactGroups, debouncedSearch, compactSort])
+  }, [compactGroups, debouncedSearch, compactSort, categoryFilter, eraFilter, matchesFilters])
 
   const handlePlay = useCallback((song: JWApiSong) => {
     const track = songToTrack(song)
     // If shuffle is already on, start radio mode from this track instead of
     // loading the visible page into the queue.
     if (shuffle) {
-      const rf = (!orderField && hasMore)
-        ? { category, era, search: debouncedSearch, total: count }
+      const rf = (!fetchAllMode && hasMore)
+        ? { category: categoryParam, era: eraParam, search: debouncedSearch, total: count }
         : null
       startRadio(track, rf)
       return
     }
     const playable = sortedSongs.filter((s) => !!s.path)
     const context = playable.map(songToTrack)
-    const needsLazy = !orderField && hasMore
+    const needsLazy = !fetchAllMode && hasMore
     playTrack(track, context.length > 0 ? context : [track], needsLazy ? {
-      category, era, search: debouncedSearch,
+      category: categoryParam, era: eraParam, search: debouncedSearch,
       page: page + 1, hasMore: true, total: count,
     } : null, 'tracker')
-  }, [playTrack, startRadio, shuffle, sortedSongs, category, era, debouncedSearch, count, hasMore, orderField, page])
+  }, [playTrack, startRadio, shuffle, sortedSongs, categoryParam, eraParam, debouncedSearch, count, hasMore, fetchAllMode, page])
 
   const handleInfo = useCallback((song: JWApiSong) => { setSelectedSong(song) }, [])
   const handleQueue = useCallback((track: Track) => { addToQueue(track) }, [addToQueue])
@@ -2043,11 +2127,11 @@ export default function ApiTrackerView(): JSX.Element {
             </button>
 
             <select
-              value={category}
-              onChange={(e) => { setCategory(e.target.value as Category); resetSongs() }}
+              value={categoryParam}
+              onChange={(e) => { setCategoryFilter(new Set(e.target.value ? [e.target.value as Category] : [])); resetSongs() }}
               className="md:hidden flex-1 min-w-0 bg-surface-overlay text-text-primary text-sm px-3 py-2.5 rounded-lg outline-none border border-transparent focus:ring-1 ring-accent focus:border-accent/40 cursor-pointer"
             >
-              <option value="">All categories</option>
+              <option value="">{categoryFilter.size > 1 ? `${categoryFilter.size} categories` : 'All categories'}</option>
               <option value="released">Released</option>
               <option value="unreleased">Unreleased</option>
               <option value="unsurfaced">Unsurfaced</option>
@@ -2089,27 +2173,31 @@ export default function ApiTrackerView(): JSX.Element {
             )}
           </div>
 
-          {/* Active filter chips */}
-          {(category || era) && (
+          {/* Active filter chips — one per selected category/era, each
+              individually removable so multi-select filters can be trimmed
+              down one at a time instead of all-or-nothing. */}
+          {(categoryFilter.size > 0 || eraFilter.size > 0) && (
             <div className="flex gap-1.5 flex-wrap">
-              {category && (
+              {[...categoryFilter].map((cat) => (
                 <button
-                  onClick={() => { setCategory(''); resetSongs() }}
+                  key={cat}
+                  onClick={() => { toggleCategoryFilter(cat); resetSongs() }}
                   className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium"
                 >
-                  {CATEGORY_LABELS[category] ?? category}
+                  {CATEGORY_LABELS[cat] ?? cat}
                   <X size={10} />
                 </button>
-              )}
-              {era && (
+              ))}
+              {[...eraFilter].map((eraName) => (
                 <button
-                  onClick={() => { setEra(''); resetSongs() }}
+                  key={eraName}
+                  onClick={() => { toggleEraFilter(eraName); resetSongs() }}
                   className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium"
                 >
-                  {era}
+                  {eraName}
                   <X size={10} />
                 </button>
-              )}
+              ))}
             </div>
           )}
         </div>}
@@ -2503,10 +2591,12 @@ export default function ApiTrackerView(): JSX.Element {
             <CategorySidebar
               stats={stats}
               eras={eras}
-              selectedCategory={category}
-              selectedEra={era}
-              onCategory={(c) => { setCategory(c); resetSongs() }}
-              onEra={(e) => { setEra(e); resetSongs() }}
+              selectedCategories={categoryFilter}
+              selectedEras={eraFilter}
+              onCategory={(c) => { toggleCategoryFilter(c); resetSongs() }}
+              onEra={(e) => { toggleEraFilter(e); resetSongs() }}
+              onClearCategories={() => { setCategoryFilter(new Set()); resetSongs() }}
+              onClearEras={() => { setEraFilter(new Set()); resetSongs() }}
             />
           </div>
         )}
@@ -2640,7 +2730,7 @@ export default function ApiTrackerView(): JSX.Element {
             {loading && sortedSongs.length > 0 && (
               <div className="flex items-center justify-center gap-2 py-4 text-text-muted">
                 <Loader2 size={16} className="animate-spin" />
-                {orderField && <span className="text-xs">{sortedSongs.length.toLocaleString()} / {count.toLocaleString()} loaded</span>}
+                {fetchAllMode && <span className="text-xs">{sortedSongs.length.toLocaleString()} / {count.toLocaleString()} loaded</span>}
               </div>
             )}
             {!loading && !hasMore && sortedSongs.length > 0 && (

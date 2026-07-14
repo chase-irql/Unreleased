@@ -986,7 +986,7 @@ export default function PlaylistsView(): JSX.Element {
                     <AlbumArtThumb track={lt} size={40} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-text-primary text-sm font-medium truncate">{lt.title}</p>
+                    <p className="text-text-primary text-sm font-medium truncate" title={lt.title}>{lt.title}</p>
                     <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">
@@ -1540,7 +1540,7 @@ export default function PlaylistsView(): JSX.Element {
                               >
                                 <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} />
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-text-primary text-sm font-medium truncate">
+                                  <p className="text-text-primary text-sm font-medium truncate" title={track.title}>
                                     {track.title}
                                     {meta.version && <span className="text-text-muted"> ({meta.version})</span>}
                                   </p>
@@ -1635,7 +1635,7 @@ export default function PlaylistsView(): JSX.Element {
                   </button>
                   <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} />
                   <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
-                    <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
+                    <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
                     <p className="text-text-muted text-xs truncate flex items-center gap-1">
                       {!!track.id && offlineTracks[track.id] && (
                         <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
@@ -1877,7 +1877,7 @@ export default function PlaylistsView(): JSX.Element {
                     <AlbumArtThumb track={lt} size={40} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-text-primary text-sm font-medium truncate">{lt.title}</p>
+                    <p className="text-text-primary text-sm font-medium truncate" title={lt.title}>{lt.title}</p>
                     <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums text-center">

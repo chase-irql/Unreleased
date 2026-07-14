@@ -1,6 +1,7 @@
 import React, { useEffect, Suspense, lazy } from 'react'
 import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
+import { useThemeEffects } from './lib/themeEffects'
 import { ViewType } from './types'
 
 function getViewFromPath(pathname: string): ViewType {
@@ -51,16 +52,6 @@ const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
-function hexToRgb(hex: string): [number, number, number] {
-  const num = parseInt(hex.replace('#', ''), 16)
-  return [(num >> 16) & 0xff, (num >> 8) & 0xff, num & 0xff]
-}
-
-function lightenHex(hex: string, amount: number): string {
-  const [r, g, b] = hexToRgb(hex)
-  return `#${Math.min(255, r + amount).toString(16).padStart(2, '0')}${Math.min(255, g + amount).toString(16).padStart(2, '0')}${Math.min(255, b + amount).toString(16).padStart(2, '0')}`
-}
-
 function WindowControls(): JSX.Element {
   const [maximized, setMaximized] = React.useState(false)
   const el = (window as any).electron
@@ -88,8 +79,9 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, theme, accentColor, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'theme', 'accentColor', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
+  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
+  useThemeEffects()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -166,31 +158,27 @@ export default function App(): JSX.Element {
   // needed), so those views are ready before the user first opens them.
   useEffect(() => { prefetchApiData() }, [prefetchApiData])
 
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-  }, [theme])
-
-  useEffect(() => {
-    const [r, g, b] = hexToRgb(accentColor)
-    const hover = lightenHex(accentColor, 20)
-    const [hr, hg, hb] = hexToRgb(hover)
-    document.documentElement.style.setProperty('--accent', accentColor)
-    document.documentElement.style.setProperty('--accent-rgb', `${r} ${g} ${b}`)
-    document.documentElement.style.setProperty('--accent-hover', hover)
-    document.documentElement.style.setProperty('--accent-hover-rgb', `${hr} ${hg} ${hb}`)
-  }, [accentColor])
-
   const isElectron = navigator.userAgent.includes("Electron")
 
   return (
     <div className="flex flex-col h-dvh bg-surface overflow-hidden">
       {isElectron && !wrldFullscreen && <WindowControls />}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Sidebar stays first in the DOM; reverse variants place it visually
+          on the right/bottom without reordering focus/tab order. */}
+      <div className={`flex flex-1 overflow-hidden ${
+        sidebarPosition === 'right' ? 'flex-row-reverse'
+          : sidebarPosition === 'top' ? 'flex-col'
+          : sidebarPosition === 'bottom' ? 'flex-col-reverse'
+          : 'flex-row'
+      }`}>
         <Sidebar />
         <main className="flex-1 overflow-hidden flex flex-col relative">
+          {/* Frameless-window drag strip — when the nav bar sits on top (md+
+              only; it's hidden on narrow windows) the bar touches the window
+              edge instead and carries its own strip. */}
           {isElectron && (
             <div
-              className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px] pointer-events-none"
+              className={`absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px] pointer-events-none ${sidebarPosition === 'top' ? 'md:hidden' : ''}`}
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             />
           )}

@@ -184,7 +184,7 @@ export default function SharedPlaylistView(): JSX.Element {
                 <Play size={12} fill="white" className="text-white ml-0.5" />
               </div>
             </div>
-            <span className="text-text-primary text-sm flex-1 truncate">{t.title}</span>
+            <span className="text-text-primary text-sm flex-1 truncate" title={t.title}>{t.title}</span>
             <a
               href={buildStreamUrl(t.path)}
               download={`${t.title}.mp3`}

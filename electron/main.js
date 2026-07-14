@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -39,6 +39,10 @@ let appSettings = {
   downloadPath: app.getPath('downloads'),
   autoDownload: true,
   minimizeToTray: false,
+  // 'taskbar' | 'tray' | 'notification' — where minimizing sends the window.
+  // 'tray' hides to the tray icon silently; 'notification' also pops a
+  // "still running" toast in the notification area.
+  minimizeTo: 'taskbar',
   startupView: 'api-tracker',
   discordRpcEnabled: true,
   offlineLibraryPath: path.join(app.getPath('userData'), 'offline-audio'),
@@ -145,6 +149,19 @@ function downloadFile(url, dest, onProgress) {
 autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} }
 autoUpdater.autoDownload = appSettings.autoDownload
 autoUpdater.autoInstallOnAppQuit = true
+// Beta channel: this marker enrolls the install in beta (pre-release)
+// updates. The Windows installer drops it when a valid beta access code is
+// entered on its options page (build/installer.nsh), and Settings can join
+// (code required) or leave via the IPC handlers below.
+// SHA-256 hashes of accepted codes — keep in sync with
+// UNRELEASED_BETA_CODE_HASHES in build/installer.nsh. Only hashes live in
+// the repo; keep a private note of which plaintext code maps to which hash.
+const BETA_CODE_HASHES = [
+  'BB09385C837B5821956BF3DCCDD3050028DBFAEB4C1EBAC154D4C794B18AD40E',
+]
+const betaMarkerPath = path.join(app.getPath('userData'), 'beta-access')
+autoUpdater.allowPrerelease = fs.existsSync(betaMarkerPath)
+if (autoUpdater.allowPrerelease) log('Beta access marker present — pre-release updates enabled')
 
 const iconPath = process.platform === 'linux'
   ? path.join(__dirname, '..', 'resources', 'icon-512.png')
@@ -154,6 +171,63 @@ const preloadPath = path.join(__dirname, 'preload.js')
 let mainWindow = null
 let tray = null
 let isQuitting = false
+
+// ── Floating pop-out windows ──────────────────────────────────────────────────
+// Each entry is a second frameless BrowserWindow booting the same renderer
+// bundle with ?float=<view> — the renderer sees that param and mounts just
+// that one view (see src/renderer/src/FloatApp.tsx) instead of the full app.
+// One window per view: reopening focuses the existing one. Store state is
+// mirrored between windows by the 'window-sync' relay below.
+const FLOAT_VIEWS = new Set(['settings'])
+const floatWindows = new Map()
+
+function createFloatWindow(view) {
+  const existing = floatWindows.get(view)
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return
+  }
+  const win = new BrowserWindow({
+    width: 860, height: 640, minWidth: 520, minHeight: 420,
+    backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
+    webPreferences: {
+      nodeIntegration: false, contextIsolation: true, webSecurity: true, preload: preloadPath,
+    },
+    show: false,
+  })
+  floatWindows.set(view, win)
+  win.once('ready-to-show', () => win.show())
+  win.on('closed', () => {
+    if (floatWindows.get(view) === win) floatWindows.delete(view)
+  })
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  if (isDev) {
+    win.loadURL(`http://localhost:3018/?float=${encodeURIComponent(view)}`)
+  } else {
+    win.loadFile(path.join(__dirname, '../dist/index.html'), { query: { float: view } })
+  }
+}
+
+function closeAllFloatWindows() {
+  for (const win of floatWindows.values()) {
+    if (!win.isDestroyed()) win.close()
+  }
+  floatWindows.clear()
+}
+
+// Send to every window (main + floats). Used for events any window might be
+// showing UI for — e.g. update-status feeds the Settings header, which can
+// live in a pop-out.
+function broadcastToWindows(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
 
 // ── Tray ──────────────────────────────────────────────────────────────────────
 // Playback state mirrored from the renderer (via 'tray-playback-state') so the
@@ -191,6 +265,25 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+}
+
+// 'notification' mode pops a "still running" toast the first time the window
+// hides so users know where it went; once per run is enough — after that the
+// destination is expected and repeat toasts would just nag.
+let trayNoticeShown = false
+
+function hideWindowToTray(notify) {
+  if (!mainWindow) return
+  mainWindow.hide()
+  if (!notify || trayNoticeShown) return
+  trayNoticeShown = true
+  const title = 'Unreleased is still running'
+  const body = 'The app was minimized to the notification area. Click the tray icon to reopen it.'
+  if (process.platform === 'win32' && tray) {
+    tray.displayBalloon({ iconType: 'info', icon: iconPath, title, content: body })
+  } else if (Notification.isSupported()) {
+    new Notification({ title, body, icon: iconPath }).show()
+  }
 }
 
 function updateTray() {
@@ -259,6 +352,27 @@ function createWindow() {
       e.preventDefault()
       mainWindow.hide()
     }
+  })
+
+  // The titlebar button goes through the 'minimize-window' IPC handler, but
+  // the window can also be minimized natively (Win+Down, clicking the taskbar
+  // preview, shake gestures) — catch those too so "minimize to tray" holds no
+  // matter how the minimize happened. preventDefault stops the native
+  // minimize where supported; where it doesn't, hiding a minimized window
+  // still works, and showMainWindow() restores from either state.
+  mainWindow.on('minimize', (e) => {
+    if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
+      e.preventDefault()
+      hideWindowToTray(appSettings.minimizeTo === 'notification')
+    }
+  })
+
+  // Pop-outs can't outlive the main window — leaving one open would keep the
+  // app running headless (window-all-closed never fires) with handlers still
+  // pointed at a destroyed mainWindow.
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    closeAllFloatWindows()
   })
 
   if (isDev) {
@@ -347,7 +461,7 @@ ipcMain.handle('force-update', async () => {
       return
     } catch (err) {
       log('Force update error:', err.message)
-      mainWindow?.webContents.send('update-status', { type: 'error', message: err.message })
+      broadcastToWindows('update-status', { type: 'error', message: err.message })
       throw err
     }
   }
@@ -369,7 +483,7 @@ ipcMain.handle('force-update', async () => {
   }
 
   try {
-    mainWindow?.webContents.send('update-status', { type: 'checking' })
+    broadcastToWindows('update-status', { type: 'checking' })
     const release = await fetchJson('https://api.github.com/repos/leanwrldd/unreleased/releases/latest')
     const assetSuffix = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage'
     const asset = release.assets.find(a => a.name.endsWith(assetSuffix))
@@ -377,14 +491,14 @@ ipcMain.handle('force-update', async () => {
 
     const tmpPath = path.join(app.getPath('temp'), asset.name)
     log('Force-downloading installer:', asset.name, 'to', tmpPath)
-    mainWindow?.webContents.send('update-status', { type: 'downloading', percent: 0, version: release.tag_name.replace(/^v/, '') })
+    broadcastToWindows('update-status', { type: 'downloading', percent: 0, version: release.tag_name.replace(/^v/, '') })
 
     await downloadFile(asset.browser_download_url, tmpPath, (percent) => {
-      mainWindow?.webContents.send('update-status', { type: 'downloading', percent, version: release.tag_name.replace(/^v/, '') })
+      broadcastToWindows('update-status', { type: 'downloading', percent, version: release.tag_name.replace(/^v/, '') })
     })
 
     log('Force update installer ready:', tmpPath)
-    mainWindow?.webContents.send('update-status', { type: 'downloaded', version: release.tag_name.replace(/^v/, '') })
+    broadcastToWindows('update-status', { type: 'downloaded', version: release.tag_name.replace(/^v/, '') })
 
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -401,7 +515,7 @@ ipcMain.handle('force-update', async () => {
     }
   } catch (err) {
     log('Force update error:', err.message)
-    mainWindow?.webContents.send('update-status', { type: 'error', message: err.message })
+    broadcastToWindows('update-status', { type: 'error', message: err.message })
     throw err
   }
 })
@@ -410,7 +524,13 @@ ipcMain.handle('check-for-updates', () => {
   log('Manual update check triggered')
   return autoUpdater.checkForUpdatesAndNotify()
 })
-ipcMain.handle('minimize-window', () => mainWindow?.minimize())
+ipcMain.handle('minimize-window', () => {
+  if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
+    hideWindowToTray(appSettings.minimizeTo === 'notification')
+  } else {
+    mainWindow?.minimize()
+  }
+})
 ipcMain.handle('maximize-window', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize()
   else mainWindow?.maximize()
@@ -422,6 +542,30 @@ ipcMain.handle('close-window', () => {
 ipcMain.handle('is-maximized', () => mainWindow?.isMaximized() ?? false)
 ipcMain.handle('set-fullscreen', (_, value) => mainWindow?.setFullScreen(!!value))
 ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
+
+// ── IPC: floating pop-out windows ─────────────────────────────────────────────
+ipcMain.handle('open-float-window', (_, view) => {
+  if (FLOAT_VIEWS.has(view)) createFloatWindow(view)
+})
+
+// Pop-outs are frameless and render their own close button; 'close-window'
+// closes the MAIN window specifically, so they need a sender-scoped variant.
+ipcMain.handle('close-self', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+
+ipcMain.handle('focus-main-window', () => showMainWindow())
+
+// Store-sync relay: a renderer broadcasts a state patch and every OTHER
+// window receives it (each window runs its own store instance — see
+// src/renderer/src/lib/windowSync.ts for what gets mirrored and why).
+ipcMain.on('window-sync', (event, msg) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && win.webContents.id !== event.sender.id) {
+      win.webContents.send('window-sync', msg)
+    }
+  }
+})
 
 // ── IPC: local file browsing ──────────────────────────────────────────────────
 ipcMain.handle('browse-local', async (_, dirPath) => {
@@ -454,8 +598,10 @@ ipcMain.handle('browse-local', async (_, dirPath) => {
   }
 })
 
-ipcMain.handle('pick-folder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+// Parent the dialog to whichever window asked (Settings can live in a
+// pop-out) — falling back to the main window for safety.
+ipcMain.handle('pick-folder', async (event) => {
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender) ?? mainWindow, {
     properties: ['openDirectory'],
     title: 'Select folder',
   })
@@ -479,6 +625,31 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
+  return true
+})
+
+// ── IPC: beta channel ─────────────────────────────────────────────────────────
+ipcMain.handle('beta-get-status', () => autoUpdater.allowPrerelease)
+
+ipcMain.handle('beta-join', (_, code) => {
+  const crypto = require('crypto')
+  const hash = crypto.createHash('sha256').update(String(code ?? '').trim()).digest('hex').toUpperCase()
+  if (!BETA_CODE_HASHES.includes(hash)) return false
+  try {
+    fs.writeFileSync(betaMarkerPath, 'unlocked via settings')
+  } catch (err) {
+    log('beta-join: marker write failed:', err.message)
+    return false
+  }
+  autoUpdater.allowPrerelease = true
+  log('Beta access unlocked via Settings')
+  return true
+})
+
+ipcMain.handle('beta-leave', () => {
+  try { fs.rmSync(betaMarkerPath, { force: true }) } catch {}
+  autoUpdater.allowPrerelease = false
+  log('Left beta channel')
   return true
 })
 
@@ -1173,22 +1344,22 @@ app.on('window-all-closed', () => {
 // ── Auto-updater events ───────────────────────────────────────────────────────
 autoUpdater.on('checking-for-update', () => {
   log('Checking for update...')
-  mainWindow?.webContents.send('update-status', { type: 'checking' })
+  broadcastToWindows('update-status', { type: 'checking' })
 })
 
 autoUpdater.on('update-available', (info) => {
   log('Update available:', info.version)
-  mainWindow?.webContents.send('update-status', { type: 'available', version: info.version })
+  broadcastToWindows('update-status', { type: 'available', version: info.version })
 })
 
 autoUpdater.on('update-not-available', (info) => {
   log('Up to date:', info.version)
-  mainWindow?.webContents.send('update-status', { type: 'not-available', version: info.version })
+  broadcastToWindows('update-status', { type: 'not-available', version: info.version })
 })
 
 autoUpdater.on('download-progress', (p) => {
   log(`Downloading update: ${Math.round(p.percent)}%`)
-  mainWindow?.webContents.send('update-status', {
+  broadcastToWindows('update-status', {
     type: 'downloading',
     percent: Math.round(p.percent),
     bytesPerSecond: Math.round(p.bytesPerSecond),
@@ -1197,7 +1368,7 @@ autoUpdater.on('download-progress', (p) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   log('Update downloaded:', info.version)
-  mainWindow?.webContents.send('update-status', { type: 'downloaded', version: info.version })
+  broadcastToWindows('update-status', { type: 'downloaded', version: info.version })
   dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Update ready',
@@ -1206,11 +1377,14 @@ autoUpdater.on('update-downloaded', (info) => {
     buttons: ['Restart now', 'Later'],
     defaultId: 0,
   }).then(({ response }) => {
-    if (response === 0) autoUpdater.quitAndInstall()
+    // isSilent + isForceRunAfter: install without showing the installer UI and
+    // relaunch. The Windows installer is an assisted (wizard) installer now, so
+    // a non-silent run here would pop the wizard mid-update.
+    if (response === 0) autoUpdater.quitAndInstall(true, true)
   })
 })
 
 autoUpdater.on('error', (err) => {
   log('Auto-updater error:', err.message)
-  mainWindow?.webContents.send('update-status', { type: 'error', message: err.message })
+  broadcastToWindows('update-status', { type: 'error', message: err.message })
 })

@@ -4,7 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Light theme ────────────────────────────────────────────────────────────── */
+/* ─── Light theme ────────────────────────────────────────────────────────────────
+   NOTE: these :root/.dark blocks are only the first-paint fallback (and the
+   values Tailwind's color-scheme relies on before React mounts). The live
+   palette — including these two classic themes and every other skin — is
+   defined in lib/skins.ts and written onto <html> as inline vars by App.tsx.
+   Change palettes there, not here. */
 :root {
   /* Without this, native controls (mainly <select> dropdown popups) follow
      the OS's own dark/light preference instead of this app's theme toggle —

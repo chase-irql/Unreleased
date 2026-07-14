@@ -8,11 +8,14 @@ All prompts are asked up front, then everything else runs unattended:
   1. Pick a version (bump patch / minor / major, or keep / custom)
   2. Enter a commit message (only if the tree is dirty)
   3. Enter release notes (blank = auto-generate from commits)
+     and choose stable or beta (beta = GitHub pre-release, only visible
+     to installs unlocked with the beta access code)
   ── nothing left to answer past this point ──
   4. Commit all changes to the desktop branch (app)
-  5. Build the renderer + Electron installer
+  5. Build the renderer + Electron installers (offline + web)
   6. Push the desktop branch to GitHub
-  7. Sync the web branch (copies src/ + package.json from app, skips electron/)
+  7. Sync the web branch (copies src/ + package.json from app, skips
+     electron/) — skipped for beta releases, betas are desktop-only
   8. Create the GitHub release and upload all assets
 """
 
@@ -128,7 +131,8 @@ def set_version(new_ver):
     path.write_text(new_text, "utf-8")
 
 def bump(v, part):
-    maj, mn, pat = map(int, v.split("."))
+    # a current version like 1.15.0-beta.1 bumps from its 1.15.0 base
+    maj, mn, pat = map(int, v.split("-")[0].split("."))
     if part == "major": return f"{maj+1}.0.0"
     if part == "minor": return f"{maj}.{mn+1}.0"
     return f"{maj}.{mn}.{pat+1}"
@@ -229,9 +233,10 @@ def prompt_version():
 
     _, part, new_ver, _ = entry
     if part == "custom":
-        new_ver = ask("Version (e.g. 2.0.0)")
-        if not re.fullmatch(r"\d+\.\d+\.\d+", new_ver):
-            die("Invalid format. Use major.minor.patch")
+        new_ver = ask("Version (e.g. 2.0.0 or 1.15.0-beta.1)")
+        if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", new_ver):
+            die("Invalid format. Use major.minor.patch, optionally with a\n"
+                "pre-release suffix (e.g. 1.15.0-beta.1)")
     elif part == "keep":
         ok(f"Keeping {_c(cur, WHT, BOLD)}")
         return cur
@@ -255,7 +260,12 @@ def prompt_commit_message(version):
 
 def prompt_release_notes():
     section(3, TOTAL, "Release notes")
-    return ask("Release notes  (blank = auto-generate from commits)", default="")
+    notes = ask("Release notes  (blank = auto-generate from commits)", default="")
+    # Beta builds are published as GitHub pre-releases: regular users never
+    # see them (the /latest link and stable auto-updates skip pre-releases),
+    # only installs unlocked with the beta access code do.
+    is_beta = confirm("Mark as pre-release (beta)?", default=False)
+    return notes, is_beta
 
 
 # ── Steps (run only after every prompt above has been answered) ──────────────
@@ -295,15 +305,18 @@ def step_build():
     ok("Renderer compiled → dist/")
     print()
 
-    # 2. Package the Electron installer from the freshly built dist/.
-    #    Clear last build's artifacts first — the web-installer stub has a
-    #    version-free name (Unreleased-Setup.exe), so a stale copy is
-    #    indistinguishable from a fresh one at upload time.
-    release_dir = ROOT / "release" / "nsis-web"
-    if release_dir.exists():
-        for pattern in ("Unreleased-Setup*.exe*", "latest.yml", "*.nsis.7z"):
-            for stale in release_dir.glob(pattern):
-                stale.unlink()
+    # 2. Package the Electron installers (offline nsis + web nsis-web) from the
+    #    freshly built dist/. Clear last build's artifacts first — the
+    #    web-installer stub has a version-free name (Unreleased-Setup.exe), so
+    #    a stale copy is indistinguishable from a fresh one at upload time.
+    for directory, patterns in (
+        (ROOT / "release" / "nsis-web", ("Unreleased-Setup*.exe*", "latest.yml", "*.nsis.7z")),
+        (ROOT / "release", ("Unreleased-Setup*.exe*", "latest.yml")),
+    ):
+        if directory.exists():
+            for pattern in patterns:
+                for stale in directory.glob(pattern):
+                    stale.unlink()
 
     info("Packaging installer (electron-builder)…")
     result = subprocess.run(
@@ -322,7 +335,14 @@ def step_push_app():
     ok(f"Pushed to origin/{APP_BRANCH}")
 
 
-def step_sync_web(version):
+def step_sync_web(version, is_beta=False):
+    if is_beta:
+        # The web branch is the live site (Vercel) — beta builds are
+        # desktop-only and must never deploy there.
+        section(7, TOTAL, f"Sync → {WEB_BRANCH}  (skipped)")
+        info("Beta release — desktop-only, web branch left untouched.")
+        return
+
     section(7, TOTAL, f"Sync → {WEB_BRANCH}  (electron/ excluded)")
 
     original = git_branch()
@@ -363,8 +383,8 @@ def step_sync_web(version):
             run(f"git checkout {original}")
 
 
-def step_release(version, token, notes):
-    section(8, TOTAL, "GitHub release")
+def step_release(version, token, notes, is_beta=False):
+    section(8, TOTAL, "GitHub release" + ("  (beta / pre-release)" if is_beta else ""))
     tag         = f"v{version}"
     release_dir = ROOT / "release" / "nsis-web"
 
@@ -375,19 +395,26 @@ def step_release(version, token, notes):
     # at install time. electron-updater also fetches the .7z, so it MUST
     # be uploaded alongside latest.yml. (No separate .blockmap files —
     # the block map is embedded in the .7z.)
+    # The nsis target additionally produces a full offline installer
+    # (Unreleased-Setup-<version>.exe at release/ root) — a standalone
+    # download that the maintenance page's version picker also prefers.
+    # latest.yml comes from nsis-web (its root nsis twin points at the
+    # offline exe and must NOT be uploaded, or updates would fetch the
+    # full exe instead of the differential .7z).
     to_upload = []
-    names = [
-        "latest.yml",
-        "Unreleased-Setup.exe",
-    ] + [p.name for p in release_dir.glob(f"unreleased-{version}-*.nsis.7z")]
-    for name in names:
-        p = release_dir / name
+    candidates = [
+        release_dir / "latest.yml",
+        release_dir / "Unreleased-Setup.exe",
+        *sorted(release_dir.glob(f"unreleased-{version}-*.nsis.7z")),
+        ROOT / "release" / f"Unreleased-Setup-{version}.exe",
+    ]
+    for p in candidates:
         if p.exists():
             to_upload.append(p)
         else:
-            warn(f"Not found (skipping): {name}")
+            warn(f"Not found (skipping): {p.name}")
 
-    if not any(n.endswith(".nsis.7z") for n in names):
+    if not any(p.name.endswith(".nsis.7z") for p in to_upload):
         die(f"No unreleased-{version}-*.nsis.7z package in {release_dir}/\n"
             "The web installer is useless without it. Did the build succeed?")
 
@@ -409,13 +436,18 @@ def step_release(version, token, notes):
             f"/repos/{REPO_OWNER}/{REPO_NAME}/releases", token,
             {"tag_name": tag, "name": tag, "body": notes,
              "target_commitish": APP_BRANCH,
-             "draft": False, "prerelease": False})
+             "draft": False, "prerelease": is_beta})
         ok(f"Release created  (id={release['id']})")
     except urllib.error.HTTPError as e:
         if e.code == 422:
             release = api("GET",
                 f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}", token)
-            ok(f"Release already exists  (id={release['id']})")
+            # Re-running for an existing tag also syncs the beta flag and
+            # notes — this is how a beta gets promoted to stable in place.
+            api("PATCH",
+                f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release['id']}", token,
+                {"prerelease": is_beta, "body": notes})
+            ok(f"Release already exists — updated  (id={release['id']})")
         else:
             raise
 
@@ -453,13 +485,13 @@ def main():
         version = prompt_version()
         step_apply_version(version)
         commit_msg = prompt_commit_message(version)
-        release_notes = prompt_release_notes()
+        release_notes, is_beta = prompt_release_notes()
 
         step_commit(version, commit_msg)
         step_build()
         step_push_app()
-        step_sync_web(version)
-        step_release(version, token, release_notes)
+        step_sync_web(version, is_beta)
+        step_release(version, token, release_notes, is_beta)
 
         print()
         print(_c("  " + "═" * 46, GRN, BOLD))

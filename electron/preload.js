@@ -17,6 +17,19 @@ contextBridge.exposeInMainWorld('electron', {
   },
   platform: process.platform,
 
+  // Floating pop-out windows (see main.js createFloatWindow). closeSelf closes
+  // whichever window called it — pop-outs must not use closeWindow, which
+  // targets the main window.
+  openFloatWindow: (view) => ipcRenderer.invoke('open-float-window', view),
+  closeSelf:       ()     => ipcRenderer.invoke('close-self'),
+  focusMainWindow: ()     => ipcRenderer.invoke('focus-main-window'),
+  windowSyncSend:  (msg)  => ipcRenderer.send('window-sync', msg),
+  onWindowSync: (cb) => {
+    const fn = (_, msg) => cb(msg)
+    ipcRenderer.on('window-sync', fn)
+    return () => ipcRenderer.removeListener('window-sync', fn)
+  },
+
   // Local filesystem
   browseLocal: (dirPath) => ipcRenderer.invoke('browse-local', dirPath),
   pickFolder:  ()        => ipcRenderer.invoke('pick-folder'),
@@ -27,6 +40,11 @@ contextBridge.exposeInMainWorld('electron', {
   // App settings
   getAppSettings:  ()           => ipcRenderer.invoke('get-app-settings'),
   setAppSetting:   (key, value) => ipcRenderer.invoke('set-app-setting', key, value),
+
+  // Beta channel
+  betaGetStatus: ()     => ipcRenderer.invoke('beta-get-status'),
+  betaJoin:      (code) => ipcRenderer.invoke('beta-join', code),
+  betaLeave:     ()     => ipcRenderer.invoke('beta-leave'),
 
   // Run/crash logging — fire-and-forget breadcrumbs into the run log
   runLog:        (scope, message) => ipcRenderer.send('run-log', scope, message),
