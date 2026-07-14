@@ -105,7 +105,7 @@ npm run electron:build
 ### Branches
 
 - **`app`** — desktop/Electron source of truth; all development happens here
-- **`web`** — deployed web build ([Vercel](https://player.juicewrldapi.com)); synced from `app` on release
+- **`web`** — deployed web build, served directly at [player.juicewrldapi.com](https://player.juicewrldapi.com); synced from `app` on release
 
 ---
 
