@@ -1131,7 +1131,7 @@ export default function ApiFilesView(): JSX.Element {
                     try {
                       const data = await apiFetch<JWApiPaginatedResponse>('/songs/', { search: title, page_size: 1 })
                       const id = data.results[0]?.id
-                      if (id) { setPendingEditorSongId(id); setActiveView('editor') }
+                      if (id) useStore.getState().openSongEditor(id)
                     } catch {}
                   }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                     <Pencil size={14} className="text-text-muted" /> Edit

@@ -129,7 +129,7 @@ export default function LikedSongsView(): JSX.Element {
                     </span>
                   </button>
                   <div className="min-w-0 flex-1 cursor-pointer" onClick={() => playTrack(track, visible)}>
-                    <p className="text-text-primary text-sm font-medium truncate">{track.title}</p>
+                    <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
                     <p className="text-text-muted text-xs truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</p>
                   </div>
                   <span className="text-text-muted text-xs tabular-nums shrink-0 hidden sm:block">{formatDuration(track.duration, '')}</span>

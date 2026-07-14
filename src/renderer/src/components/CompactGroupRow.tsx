@@ -50,7 +50,7 @@ export const CompactGroupRow = memo(function CompactGroupRow({
       <div className="shrink-0 w-10 h-10 md:w-9 md:h-9 rounded overflow-hidden bg-surface-overlay">
         <AlbumArtThumbnail track={coverTrack} size={36} shimmer={false} />
       </div>
-      <span className="flex-1 min-w-0 text-text-primary text-sm font-medium truncate">{title}</span>
+      <span className="flex-1 min-w-0 text-text-primary text-sm font-medium truncate" title={title}>{title}</span>
       {categoryLabel && (
         <span className={`hidden md:block text-xs px-1.5 py-0.5 rounded border shrink-0 w-24 text-center ${categoryClassName ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
           {categoryLabel}

@@ -16,11 +16,13 @@ import {
   ChevronUp,
   Check,
   MoreHorizontal,
+  PictureInPicture2,
   Radio,
   Info,
   Loader2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
+import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { formatDuration } from '../lib/format'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -38,6 +40,9 @@ function resolvePlaybackUrl(track: { id: string; streamUrl?: string; path: strin
   return track.streamUrl ?? toFileUrl(track.path)
 }
 
+// How long the pause-fade ramps volume when "smooth fade when pausing" is on.
+const PAUSE_FADE_MS = 400
+
 let _seek: ((t: number) => void) | null = null
 let _getAudioDuration: (() => number) | null = null
 let _getAudioCurrentTime: (() => number) | null = null
@@ -48,12 +53,14 @@ export function getAudioDuration(): number { return _getAudioDuration?.() ?? 0 }
 // synced-lyrics highlighting instead of choppy ~250ms jumps.
 export function getAudioCurrentTime(): number { return _getAudioCurrentTime?.() ?? 0 }
 
-// Session cache of the API-derived lyrics for tracker songs, keyed by numeric
-// song id. The metadata-load effect runs on every track change; without this,
+// Cache of the API-derived lyrics for tracker songs, keyed by numeric song
+// id. The metadata-load effect runs on every track change; without this,
 // replaying or revisiting a song re-hits `/songs/{id}/` every single time.
-// Cached per session — cleared on reload, which is fine since lyrics rarely
-// change mid-session.
-const lyricsCache = new Map<number, { lyrics: string | null; syncedLyrics: string | null }>()
+// Entries expire after LYRICS_CACHE_TTL_MS so lyrics edited on the backend
+// (outside this app, where invalidateLyricsCache never fires) still show up
+// within a bounded time instead of staying stale for the rest of the session.
+const LYRICS_CACHE_TTL_MS = 2 * 60 * 1000
+const lyricsCache = new Map<number, { lyrics: string | null; syncedLyrics: string | null; ts: number }>()
 export function invalidateLyricsCache(songId: number): void { lyricsCache.delete(songId) }
 
 export default function Player(): JSX.Element {
@@ -151,6 +158,15 @@ export default function Player(): JSX.Element {
   const cfInRaf      = useRef<number | null>(null)
   const skipNextLoad = useRef(false)
 
+  // Pause-fade ramp ("smooth fade when pausing" setting)
+  const pauseFadeRaf = useRef<number | null>(null)
+  // Timer backstop for the pause-fade's final audio.pause(). requestAnimationFrame
+  // is frozen while the window is hidden/occluded, so if the user pauses and
+  // immediately switches tabs/apps the RAF ramp never reaches its end and the
+  // audio would keep playing. A timer still fires in the background — use it to
+  // guarantee the element actually pauses.
+  const pauseFadeTimer = useRef<number | null>(null)
+
   // Keep a ref of volume so RAF callbacks (created once) always see the latest value
   const volumeRef = useRef(volume)
   useEffect(() => { volumeRef.current = volume }, [volume])
@@ -159,6 +175,11 @@ export default function Player(): JSX.Element {
     activeSlot.current === 'A' ? slotA.current : slotB.current
   const getNext = (): HTMLAudioElement | null =>
     activeSlot.current === 'A' ? slotB.current : slotA.current
+
+  const cancelPauseFade = (): void => {
+    if (pauseFadeRaf.current != null) { cancelAnimationFrame(pauseFadeRaf.current); pauseFadeRaf.current = null }
+    if (pauseFadeTimer.current != null) { clearTimeout(pauseFadeTimer.current); pauseFadeTimer.current = null }
+  }
 
   const cancelCF = (): void => {
     if (cfOutRaf.current != null) { cancelAnimationFrame(cfOutRaf.current); cfOutRaf.current = null }
@@ -258,7 +279,7 @@ export default function Player(): JSX.Element {
       // Serve from session cache to avoid re-hitting /songs/ when replaying
       // or revisiting a song.
       const cached = lyricsCache.get(songId)
-      if (cached) {
+      if (cached && Date.now() - cached.ts < LYRICS_CACHE_TTL_MS) {
         setCurrentTrackFull({ ...synthetic, lyrics: cached.lyrics, syncedLyrics: cached.syncedLyrics })
       } else {
         // Show the offline-downloaded snapshot immediately (if any) so a
@@ -272,7 +293,7 @@ export default function Player(): JSX.Element {
           .then((song) => {
             const syncedLyrics = song.synced_lyrics || null
             const lyrics = song.lyrics || null
-            lyricsCache.set(songId, { lyrics, syncedLyrics })
+            lyricsCache.set(songId, { lyrics, syncedLyrics, ts: Date.now() })
             if (isStale()) return
             setCurrentTrackFull({ ...synthetic, lyrics, syncedLyrics })
           })
@@ -324,6 +345,7 @@ export default function Player(): JSX.Element {
     }
 
     cancelCF()
+    cancelPauseFade()
     const fileUrl = resolvePlaybackUrl(currentTrack)
     audio.src = fileUrl
     audio.volume = volumeRef.current
@@ -335,8 +357,27 @@ export default function Player(): JSX.Element {
   useEffect(() => {
     const audio = getActive()
     if (!audio) return
+    cancelPauseFade()
+    const smoothFade = useStore.getState().pauseFadeEnabled && !cfActive.current
     if (isPlaying) {
-      audio.play().catch(console.error)
+      if (smoothFade) {
+        // Ramp back up — from 0 on a normal resume, or from wherever a
+        // still-running fade-out left the volume when it got cancelled above.
+        const from = audio.paused ? 0 : audio.volume
+        audio.volume = from
+        audio.play().catch(console.error)
+        const startTime = performance.now()
+        const tick = (): void => {
+          const t = Math.min((performance.now() - startTime) / PAUSE_FADE_MS, 1)
+          // volumeRef read per-frame so slider moves mid-ramp still land
+          audio.volume = from + (volumeRef.current - from) * t
+          if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
+          else pauseFadeRaf.current = null
+        }
+        pauseFadeRaf.current = requestAnimationFrame(tick)
+      } else {
+        audio.play().catch(console.error)
+      }
     } else {
       // Pause must stop BOTH slots. Mid-crossfade the incoming slot is also
       // playing, and a boundary race (the outgoing's `ended` firing around the
@@ -344,8 +385,38 @@ export default function Player(): JSX.Element {
       // cancelCF() alone to stop the incoming element isn't race-proof.
       // Pausing both elements unconditionally guarantees nothing keeps playing.
       if (cfActive.current) cancelCF()
-      slotA.current?.pause()
-      slotB.current?.pause()
+      if (smoothFade && !audio.paused && !audio.ended) {
+        // Fade only the active slot; the inactive one is silenced immediately
+        // (it should never be audible outside a crossfade anyway).
+        getNext()?.pause()
+        const startVol = audio.volume
+        const startTime = performance.now()
+        // Finalize the pause. Runs from whichever fires first — the RAF ramp
+        // completing, or the timer backstop below (which still fires when the
+        // window is hidden and RAF is frozen). cancelPauseFade() makes it
+        // idempotent by clearing the other pending handle.
+        const finalize = (): void => {
+          cancelPauseFade()
+          audio.pause()
+          // Restore element volume while silent so any code path that plays
+          // this slot without going through the resume ramp isn't stuck at 0.
+          audio.volume = volumeRef.current
+        }
+        const tick = (): void => {
+          const t = Math.min((performance.now() - startTime) / PAUSE_FADE_MS, 1)
+          audio.volume = startVol * (1 - t)
+          if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
+          else finalize()
+        }
+        pauseFadeRaf.current = requestAnimationFrame(tick)
+        // Backstop so the pause still lands if RAF is frozen (tab hidden / app
+        // backgrounded) before the ramp finishes. Small margin past the ramp so
+        // it normally loses the race to RAF and only wins when RAF is stalled.
+        pauseFadeTimer.current = window.setTimeout(finalize, PAUSE_FADE_MS + 50)
+      } else {
+        slotA.current?.pause()
+        slotB.current?.pause()
+      }
     }
   }, [isPlaying])
 
@@ -377,11 +448,12 @@ export default function Player(): JSX.Element {
     }
   }, [isPlaying])
 
-  // Volume — only change if not mid-crossfade
+  // Volume — only change if not mid-crossfade or mid-pause-fade (the resume
+  // ramp reads volumeRef per-frame, so slider moves still apply through it)
   useEffect(() => {
     const audio = getActive()
     if (!audio) return
-    if (!cfActive.current) audio.volume = volume
+    if (!cfActive.current && pauseFadeRaf.current == null) audio.volume = volume
   }, [volume])
 
   // Playback speed — apply to both audio slots
@@ -720,22 +792,35 @@ export default function Player(): JSX.Element {
     likedTrackIds,
   ])
 
-  // Tray media commands — route through the same handlers as the on-screen
-  // controls (handleNext/handlePrev carry the repeat-one and radio-mode
-  // special cases). Handlers are recreated every render, so a ref keeps the
-  // IPC subscription itself stable while always dispatching to fresh closures.
-  const trayCommandsRef = useRef<Record<string, () => void>>({})
-  trayCommandsRef.current = {
+  // Remote media commands — the tray menu and the mini-player pop-out both
+  // route through the same handlers as the on-screen controls (handleNext/
+  // handlePrev carry the repeat-one and radio-mode special cases). Handlers
+  // are recreated every render, so a ref keeps the subscriptions themselves
+  // stable while always dispatching to fresh closures.
+  const remoteCommandsRef = useRef<Record<string, (arg?: unknown) => void>>({})
+  remoteCommandsRef.current = {
     'play-pause':  () => { if (currentTrack && !radioFmActive) setIsPlaying(!isPlaying) },
     'next':        () => { if (currentTrack && !radioFmActive) handleNext() },
     'previous':    () => { if (currentTrack && !radioFmActive) handlePrev() },
     'toggle-like': () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
+    'toggle-shuffle': () => { if (!radioFmActive) toggleShuffle() },
+    'toggle-repeat':  () => { if (!radioFmActive) toggleRepeat() },
+    'seek': (arg) => { if (typeof arg === 'number' && currentTrack && !radioFmActive) seekAudio(arg) },
+    'jump': (arg) => {
+      if (typeof arg !== 'number' || radioFmActive) return
+      const { queue: q } = useStore.getState()
+      if (q[arg]) useStore.getState().jumpToTrack(q[arg], arg)
+    },
+    'remove-queue': (arg) => { if (typeof arg === 'number') useStore.getState().removeFromQueue(arg) },
+    'clear-queue': () => useStore.getState().clearQueue(),
   }
   useEffect(() => {
     const el = (window as any).electron
     if (!el?.onTrayCommand) return
-    return el.onTrayCommand((cmd: string) => trayCommandsRef.current[cmd]?.())
+    return el.onTrayCommand((cmd: string) => remoteCommandsRef.current[cmd]?.())
   }, [])
+  // Same dispatch table, fed by pop-out windows over the window-sync channel.
+  useEffect(() => registerPlayerCommandHandler((cmd, arg) => remoteCommandsRef.current[cmd]?.(arg)), [])
 
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {
@@ -899,7 +984,10 @@ export default function Player(): JSX.Element {
             )}
           </button>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-text-primary truncate">
+            <p
+              className="text-sm font-medium text-text-primary truncate"
+              title={radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.title : (currentTrack?.title || undefined)}
+            >
               {radioFmActive && radioFmNowPlaying
                 ? radioFmNowPlaying.title
                 : (currentTrack?.title || 'Not playing')}
@@ -967,7 +1055,10 @@ export default function Player(): JSX.Element {
           <div className="min-w-0 flex-1">
             {/* Title + heart + 3-dot inline */}
             <div className="flex items-center gap-1 min-w-0">
-              <p className="text-text-primary text-sm font-medium truncate min-w-0">
+              <p
+                className="text-text-primary text-sm font-medium truncate min-w-0"
+                title={radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.title : (currentTrack?.title || undefined)}
+              >
                 {radioFmActive && radioFmNowPlaying
                   ? radioFmNowPlaying.title
                   : (currentTrack?.title || 'Not playing')}
@@ -999,7 +1090,7 @@ export default function Player(): JSX.Element {
                       <div className="fixed inset-0 z-40" onClick={() => setShowContextMenu(false)} />
                       <div className="absolute bottom-7 left-0 z-50 w-48 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-hidden">
                         <div className="px-3 py-2 border-b border-[var(--border)] mb-1">
-                          <p className="text-text-primary text-xs font-semibold truncate">{radioFmNowPlaying.title}</p>
+                          <p className="text-text-primary text-xs font-semibold truncate" title={radioFmNowPlaying.title}>{radioFmNowPlaying.title}</p>
                           <p className="text-text-muted text-[10px] truncate">{radioFmNowPlaying.artist}</p>
                         </div>
                         {radioFmNowPlaying.song_id != null && (
@@ -1145,6 +1236,17 @@ export default function Player(): JSX.Element {
             title="Now Playing">
             <Maximize2 size={16} />
           </button>}
+
+          {/* Desktop only: pop the compact always-on-top mini player window */}
+          {(window as any).electron?.openFloatWindow && (
+            <button
+              onClick={() => (window as any).electron.openFloatWindow('mini-player')}
+              className="text-text-secondary hover:text-text-primary transition-colors"
+              title="Pop out mini player"
+            >
+              <PictureInPicture2 size={16} />
+            </button>
+          )}
 
           {/* Volume: mute + slider + output picker */}
           <div className="flex items-center gap-1.5">

@@ -279,7 +279,7 @@ function QueueRow({
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-text-primary'}`}>
+        <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-text-primary'}`} title={track.title}>
           {track.title}
         </p>
         <p className="text-[10px] text-text-muted truncate mt-0.5">{track.artist}</p>

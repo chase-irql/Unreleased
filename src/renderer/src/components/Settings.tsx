@@ -1,17 +1,28 @@
-import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
+import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } from 'react'
 import {
-  X, Moon, Sun, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
+  X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
+  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves,
 } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
+import { SKINS } from '../lib/skins'
 import { getToken } from '../lib/userApi'
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
+import { navigateMainWindow } from '../lib/windowSync'
+import type { ViewType } from '../types'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
   '#ea580c', '#d97706', '#059669', '#db2777',
+]
+
+const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[] = [
+  { id: 'left', label: 'Left', icon: PanelLeft },
+  { id: 'right', label: 'Right', icon: PanelRight },
+  { id: 'top', label: 'Top', icon: PanelTop },
+  { id: 'bottom', label: 'Bottom', icon: PanelBottom },
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
@@ -77,12 +88,17 @@ interface AppSettings {
   downloadPath: string
   autoDownload: boolean
   minimizeToTray: boolean
+  minimizeTo: 'taskbar' | 'tray' | 'notification'
   startupView: string
   discordRpcEnabled: boolean
   offlineLibraryPath: string
 }
 
-export default function Settings(): JSX.Element {
+// `floating` — rendered as the sole content of a pop-out BrowserWindow (see
+// FloatApp) rather than as an in-app overlay: the panel fills the window, the
+// header doubles as the window's drag handle, closing closes the OS window,
+// and view links (Docs, Editor) navigate the MAIN window instead.
+export default function Settings({ floating = false }: { floating?: boolean }): JSX.Element {
   const [showToken, setShowToken] = useState(false)
   const [tokenCopied, setTokenCopied] = useState(false)
   const [openAbout, setOpenAbout] = useState<string | null>(null)
@@ -91,8 +107,10 @@ export default function Settings(): JSX.Element {
     account,
     theme, setTheme,
     accentColor, setAccentColor,
+    sidebarPosition, setSidebarPosition,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
+    pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
     playbackSpeed, setPlaybackSpeed,
     lyricsOffset, setLyricsOffset,
@@ -101,7 +119,7 @@ export default function Settings(): JSX.Element {
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -114,10 +132,23 @@ export default function Settings(): JSX.Element {
   const isElectron = navigator.userAgent.includes('Electron')
   const el = (window as any).electron
 
+  const closeSettings = (): void => {
+    if (floating) el?.closeSelf?.()
+    else setShowSettings(false)
+  }
+  const openMainView = (view: ViewType): void => {
+    if (floating) navigateMainWindow(view)
+    else { setShowSettings(false); setActiveView(view) }
+  }
+  // Interactive elements inside the floating header must opt back out of the
+  // drag region or they'd be unclickable.
+  const noDrag = floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined
+
   const [appSettings, setAppSettings] = useState<AppSettings>({
     downloadPath: '',
     autoDownload: true,
     minimizeToTray: false,
+    minimizeTo: 'taskbar',
     startupView: 'api-tracker',
     discordRpcEnabled: true,
     offlineLibraryPath: '',
@@ -192,6 +223,31 @@ export default function Settings(): JSX.Element {
     await el.setAppSetting(key, value)
   }
 
+  // ── Beta channel — join needs a valid access code (verified in main.js
+  // against the same hash list the installer uses); leaving is always free ──
+  const [betaEnabled, setBetaEnabled] = useState(false)
+  const [betaCode, setBetaCode] = useState('')
+  const [betaMsg, setBetaMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isElectron || !el?.betaGetStatus) return
+    el.betaGetStatus().then((on: boolean) => setBetaEnabled(!!on)).catch(() => {})
+  }, [isElectron, el])
+
+  const joinBeta = async () => {
+    if (!el?.betaJoin || !betaCode.trim()) return
+    const ok = await el.betaJoin(betaCode)
+    if (ok) { setBetaEnabled(true); setBetaCode(''); setBetaMsg(null) }
+    else setBetaMsg('Invalid code — double-check it and try again')
+  }
+
+  const leaveBeta = async () => {
+    if (!el?.betaLeave) return
+    await el.betaLeave()
+    setBetaEnabled(false)
+    setBetaMsg(null)
+  }
+
   const pickDownloadFolder = async () => {
     if (!el) return
     const picked = await el.pickFolder()
@@ -231,13 +287,19 @@ export default function Settings(): JSX.Element {
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === overlayRef.current) setShowSettings(false) }}
+      className={`fixed inset-0 z-50 flex items-center justify-center ${floating ? '' : 'bg-black/60 backdrop-blur-sm'}`}
+      onClick={(e) => { if (e.target === overlayRef.current) closeSettings() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
-          <div className="flex items-center gap-2">
+      <div className={`bg-surface flex flex-col overflow-hidden ${floating
+        ? 'w-full h-full'
+        : 'border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh]'}`}
+      >
+        {/* Header — in a pop-out it doubles as the frameless window's drag strip */}
+        <div
+          className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0 select-none"
+          style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
+        >
+          <div className="flex items-center gap-2" style={noDrag}>
             <h2 className="text-text-primary font-black text-xl tracking-tight">Settings</h2>
             {isElectron && (
               <button
@@ -284,7 +346,7 @@ export default function Settings(): JSX.Element {
               <span className="text-[10px] text-emerald-400">Restart to update</span>
             )}
           </div>
-          <button onClick={() => setShowSettings(false)} className="text-text-muted hover:text-text-primary transition-colors">
+          <button onClick={closeSettings} style={noDrag} className="text-text-muted hover:text-text-primary transition-colors">
             <X size={20} />
           </button>
         </div>
@@ -330,22 +392,58 @@ export default function Settings(): JSX.Element {
             {tab === 'appearance' && (
               <div>
                 <h3 className="text-text-primary text-lg font-bold mb-4">Appearance</h3>
-                <Row icon={theme === 'dark' ? Moon : Sun} iconColor="#4b5563" label="Theme">
-                  <div className="flex rounded-lg bg-[var(--surface-overlay)] p-0.5 gap-0.5">
-                    {(['dark', 'light'] as const).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setTheme(t)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                          theme === t ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'
-                        }`}
-                      >
-                        {t === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </button>
-                    ))}
+                <div className="py-3 border-b border-[var(--border)]">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#4b5563' }}>
+                      <Brush size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">Skin</span>
+                      <p className="text-text-muted text-[11px]">Skins with a signature color also set the accent — customize it below anytime</p>
+                    </div>
                   </div>
-                </Row>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                    {SKINS.map((skin) => {
+                      const active = theme === skin.id
+                      return (
+                        <button
+                          key={skin.id}
+                          onClick={() => {
+                            setTheme(skin.id)
+                            if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
+                          }}
+                          className="group text-left"
+                          title={skin.name}
+                        >
+                          {/* Mini app mock: sidebar strip, two "text" lines, and a
+                              player bar with the skin's accent — a live swatch of
+                              the actual palette values, not approximations. */}
+                          <div
+                            className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
+                            style={{
+                              background: skin.vars['--surface'],
+                              borderColor: active ? 'var(--accent)' : 'var(--border)',
+                              boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
+                            }}
+                          >
+                            <div className="w-1/4 h-full border-r" style={{ background: skin.vars['--sidebar'], borderColor: skin.vars['--border'] }} />
+                            <div className="flex-1 p-1.5 flex flex-col gap-1 min-w-0">
+                              <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
+                              <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
+                              <div className="mt-auto flex items-center gap-1">
+                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: skin.accent ?? accentColor }} />
+                                <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
+                              </div>
+                            </div>
+                          </div>
+                          <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
+                            {skin.name}
+                          </p>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ec4899' }}>
@@ -373,6 +471,36 @@ export default function Settings(): JSX.Element {
                       className="w-7 h-7 rounded-full cursor-pointer border-0 p-0 bg-transparent"
                       title="Custom color"
                     />
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0d9488' }}>
+                      <PanelLeft size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">Navigation position</span>
+                      <p className="text-text-muted text-[11px]">Where the nav menu sits on desktop — phones keep the bottom tabs</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                    {NAV_POSITIONS.map(({ id, label, icon: PosIcon }) => {
+                      const active = sidebarPosition === id
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => setSidebarPosition(id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            active
+                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
+                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          <PosIcon size={14} className="shrink-0" />
+                          {label}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
@@ -455,6 +583,13 @@ export default function Settings(): JSX.Element {
                     </div>
                   )}
                 </Row>
+                <Row
+                  icon={Waves}
+                  iconColor="#0ea5e9"
+                  label="Smooth fade when pausing"
+                  sub="Briefly ramp the volume instead of cutting off instantly"
+                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={pauseFadeEnabled} onClick={() => setPauseFade(!pauseFadeEnabled)} /></div>}
+                />
                 <Row
                   icon={FileText}
                   iconColor="#059669"
@@ -619,6 +754,58 @@ export default function Settings(): JSX.Element {
                 <Row icon={BellOff} iconColor="#16a34a" label="Auto-download updates">
                   <Toggle on={appSettings.autoDownload} onClick={() => setSetting('autoDownload', !appSettings.autoDownload)} />
                 </Row>
+                {isElectron && (
+                  <Row
+                    icon={FlaskConical}
+                    iconColor="#f59e0b"
+                    label="Beta updates"
+                    sub={betaEnabled
+                      ? 'This install receives beta (pre-release) builds'
+                      : betaMsg ?? 'Have an access code? Enter it to receive beta builds'}
+                  >
+                    {betaEnabled ? (
+                      <Toggle on={betaEnabled} onClick={leaveBeta} />
+                    ) : (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <input
+                          type="text"
+                          value={betaCode}
+                          onChange={(e) => { setBetaCode(e.target.value); setBetaMsg(null) }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') joinBeta() }}
+                          placeholder="Access code"
+                          className="w-32 bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)] placeholder:text-text-muted"
+                        />
+                        <button
+                          onClick={joinBeta}
+                          disabled={!betaCode.trim()}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50"
+                        >
+                          Join
+                        </button>
+                      </div>
+                    )}
+                  </Row>
+                )}
+                <Row
+                  icon={Minus}
+                  iconColor="#6b7280"
+                  label="Minimize to"
+                  sub={{
+                    taskbar: 'Minimize keeps the window on the taskbar',
+                    tray: 'Minimize hides the window to the tray icon',
+                    notification: 'Hides to the tray and shows a notification',
+                  }[appSettings.minimizeTo]}
+                >
+                  <select
+                    value={appSettings.minimizeTo}
+                    onChange={(e) => setSetting('minimizeTo', e.target.value)}
+                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                  >
+                    <option value="taskbar">Taskbar</option>
+                    <option value="tray">Tray</option>
+                    <option value="notification">Notification tray</option>
+                  </select>
+                </Row>
                 <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">
                   <Toggle on={appSettings.minimizeToTray} onClick={() => setSetting('minimizeToTray', !appSettings.minimizeToTray)} />
                 </Row>
@@ -698,7 +885,7 @@ export default function Settings(): JSX.Element {
 
                 {(!account || (!account.is_editor && !account.is_administrator)) && (
                   <button
-                    onClick={() => { setShowSettings(false); setActiveView('editor') }}
+                    onClick={() => openMainView('editor')}
                     className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 border border-accent/25 text-accent text-sm font-medium transition-colors mt-2"
                   >
                     <PenLine size={15} />
@@ -740,7 +927,7 @@ export default function Settings(): JSX.Element {
                 )}
 
                 <button
-                  onClick={() => { setShowSettings(false); setActiveView('docs') }}
+                  onClick={() => openMainView('docs')}
                   className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors mt-2"
                 >
                   <BookOpen size={15} />
@@ -780,7 +967,7 @@ export default function Settings(): JSX.Element {
                           <p className="text-text-muted text-xs leading-relaxed">{a}</p>
                           {link && (
                             <button
-                              onClick={() => { setShowSettings(false); setActiveView('docs') }}
+                              onClick={() => openMainView('docs')}
                               className="mt-1.5 inline-block text-xs text-accent hover:underline">
                               {link.text}
                             </button>

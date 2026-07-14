@@ -110,11 +110,10 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
-  const { playlists, account, refreshPlaylists, setShowUserAuth, setPendingEditorSongId, setActiveView, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
-      setShowUserAuth: s.setShowUserAuth, setPendingEditorSongId: s.setPendingEditorSongId,
-      setActiveView: s.setActiveView, playTrack: s.playTrack,
+      setShowUserAuth: s.setShowUserAuth, playTrack: s.playTrack,
       localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
       offlineTracks: s.offlineTracks, removeOfflineTrack: s.removeOfflineTrack, downloadTrackOffline: s.downloadTrackOffline,
       autoDownloadIfOffline: s.autoDownloadIfOffline,
@@ -396,7 +395,7 @@ export default function SongContextMenu({
             <MenuItem icon={<Folder size={14} />} label="Show in Files" onClick={() => { onShowInFiles(); onClose() }} />
           )}
           {canEdit && songId != null && songId > 0 && (
-            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setPendingEditorSongId(songId); setActiveView('editor'); onClose() }} />
+            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { useStore.getState().openSongEditor(songId); onClose() }} />
           )}
           {onEditLocalMetadata && (
             <MenuItem icon={<Pencil size={14} />} label="Edit metadata" onClick={() => { onEditLocalMetadata(); onClose() }} />

@@ -142,7 +142,7 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
           <AlbumArtThumb track={track} size={40} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm truncate ${isCurrent ? 'text-accent font-medium' : 'text-text-primary'}`}>{track.title}</p>
+          <p className={`text-sm truncate ${isCurrent ? 'text-accent font-medium' : 'text-text-primary'}`} title={track.title}>{track.title}</p>
           <p className="text-text-muted text-xs truncate">{track.artist || 'Unknown Artist'}</p>
         </div>
         {showAlbum && <span className="text-text-muted text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
