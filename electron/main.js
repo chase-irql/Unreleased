@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification, globalShortcut } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification, globalShortcut, screen } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -46,6 +46,14 @@ let appSettings = {
   startupView: 'api-tracker',
   discordRpcEnabled: true,
   offlineLibraryPath: path.join(app.getPath('userData'), 'offline-audio'),
+  // When on, opening the mini player hides every other window (main + other
+  // pop-outs); they're restored when the mini player closes.
+  miniPlayerHidesWindows: false,
+  // Prompt "a song is still playing — quit?" when a close would fully exit the
+  // app (not a minimize-to-tray) while audio is playing. Guards only the direct
+  // window close (X button / Alt+F4); deliberate quits skip it (see
+  // skipCloseConfirm + the before-quit handler).
+  confirmCloseWhilePlaying: true,
 }
 try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
@@ -189,6 +197,11 @@ const preloadPath = path.join(__dirname, 'preload.js')
 let mainWindow = null
 let tray = null
 let isQuitting = false
+// Deliberate/programmatic quits (tray "Quit", restart, update install, OS
+// shutdown) all route through app.quit() → 'before-quit', which sets this
+// before any window 'close' fires. A direct window close (X button, Alt+F4)
+// does not, so that's the only path the "song still playing" prompt guards.
+let skipCloseConfirm = false
 
 // ── Floating pop-out windows ──────────────────────────────────────────────────
 // Each entry is a second frameless BrowserWindow booting the same renderer
@@ -226,6 +239,22 @@ function sanitizeFloatParams(params) {
   return out
 }
 
+// A new BrowserWindow with no x/y lands centered on the PRIMARY display, so a
+// pop-out opened while the app sits on a second monitor would jump to the main
+// screen. Center it on whichever display currently holds the app instead —
+// preferring the focused window (the pop-out could be opened from another
+// pop-out), falling back to the main window.
+function centerOnActiveDisplay(view) {
+  const ref = BrowserWindow.getFocusedWindow() || mainWindow
+  if (!ref || ref.isDestroyed()) return {}
+  const { width, height } = FLOAT_SIZES[view]
+  const { workArea } = screen.getDisplayMatching(ref.getBounds())
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+  }
+}
+
 function createFloatWindow(view, params) {
   const query = { float: view, ...sanitizeFloatParams(params) }
   const existing = floatWindows.get(view)
@@ -234,10 +263,12 @@ function createFloatWindow(view, params) {
     existing.show()
     existing.focus()
     existing.webContents.send('float-params', query)
+    if (view === 'mini-player' && appSettings.miniPlayerHidesWindows) hideWindowsForMiniPlayer()
     return
   }
   const win = new BrowserWindow({
     ...FLOAT_SIZES[view],
+    ...centerOnActiveDisplay(view),
     ...(FLOAT_OPTIONS[view] || {}),
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
     webPreferences: {
@@ -246,9 +277,17 @@ function createFloatWindow(view, params) {
     show: false,
   })
   floatWindows.set(view, win)
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => {
+    win.show()
+    // Hide the other windows only once the mini player is actually on screen,
+    // so there's never a moment with no visible window.
+    if (view === 'mini-player' && appSettings.miniPlayerHidesWindows) hideWindowsForMiniPlayer()
+  })
   win.on('closed', () => {
     if (floatWindows.get(view) === win) floatWindows.delete(view)
+    // Always restore on close (even if the setting was turned off meanwhile) so
+    // hidden windows can never be stranded.
+    if (view === 'mini-player') restoreWindowsAfterMiniPlayer()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -266,6 +305,31 @@ function closeAllFloatWindows() {
     if (!win.isDestroyed()) win.close()
   }
   floatWindows.clear()
+}
+
+// ── Mini-player "solo" mode (setting: miniPlayerHidesWindows) ─────────────────
+// When enabled, opening the mini player hides every other currently-visible
+// window (the main window + any other pop-outs), leaving just the compact bar;
+// closing the mini player brings them back. Only windows that were actually
+// visible are remembered, so a window the user had already hidden (e.g. to the
+// tray) isn't force-revealed on restore.
+let miniPlayerHiddenWindows = []
+
+function hideWindowsForMiniPlayer() {
+  const mini = floatWindows.get('mini-player')
+  miniPlayerHiddenWindows = []
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win === mini || win.isDestroyed() || !win.isVisible()) continue
+    miniPlayerHiddenWindows.push(win)
+    win.hide()
+  }
+}
+
+function restoreWindowsAfterMiniPlayer() {
+  for (const win of miniPlayerHiddenWindows) {
+    if (win && !win.isDestroyed()) win.show()
+  }
+  miniPlayerHiddenWindows = []
 }
 
 // Send to every window (main + floats). Used for events any window might be
@@ -397,9 +461,50 @@ function createWindow() {
   })
 
   mainWindow.on('close', (e) => {
+    // Minimize-to-tray close: hide instead of quitting. The app (and playback)
+    // keeps running, so there's nothing to confirm.
     if (!isQuitting && appSettings.minimizeToTray && tray) {
       e.preventDefault()
       mainWindow.hide()
+      return
+    }
+    // Otherwise the window is really closing and the app will exit — which stops
+    // playback. If a song is playing, confirm first. macOS keeps running after a
+    // window close (window-all-closed doesn't quit there), so nothing is
+    // interrupted and there's no prompt; deliberate quits skip it too.
+    if (
+      !skipCloseConfirm &&
+      process.platform !== 'darwin' &&
+      appSettings.confirmCloseWhilePlaying &&
+      trayPlayback.isPlaying
+    ) {
+      e.preventDefault()
+      dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Quit', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+        title: 'Quit Unreleased?',
+        message: 'A song is still playing.',
+        detail: 'Quit anyway? Playback will stop.',
+        checkboxLabel: "Don't ask me again",
+        checkboxChecked: false,
+      }).then(({ response, checkboxChecked }) => {
+        if (checkboxChecked) {
+          appSettings.confirmCloseWhilePlaying = false
+          saveSettings()
+        }
+        if (response === 0) {
+          // Confirmed — re-issue the close, this time past the guard.
+          skipCloseConfirm = true
+          mainWindow?.close()
+        } else {
+          // Cancelled — drop back to the normal state so a later close still
+          // honors the minimize-to-tray setting instead of force-quitting.
+          isQuitting = false
+        }
+      })
     }
   })
 
@@ -1486,7 +1591,7 @@ app.on('second-instance', () => {
   }
 })
 
-app.on('before-quit', () => { isQuitting = true; discordRpc.setEnabled(false); globalShortcut.unregisterAll() })
+app.on('before-quit', () => { isQuitting = true; skipCloseConfirm = true; discordRpc.setEnabled(false); globalShortcut.unregisterAll() })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

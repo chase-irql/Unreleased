@@ -194,27 +194,30 @@ function SortHeader({ label, field, sort, onSort }: {
 
 // ── Local-library helpers ─────────────────────────────────────────────────────
 
-function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
-  trackIds: string[]; libraryTracks: LibraryTrack[]; className?: string
+function LocalPlaylistMosaic({ trackIds, className = '' }: {
+  trackIds: string[]; className?: string
 }): JSX.Element {
-  const artTracks = trackIds
-    .map(id => libraryTracks.find(t => t.id === id))
-    .filter((t): t is LibraryTrack => !!t?.albumArt)
+  // Covers live in the store's libraryArt map (keyed by track id), populated as
+  // tracks are viewed in the Library tab — read them straight from there.
+  const libraryArt = useStore(s => s.libraryArt)
+  const covers = trackIds
+    .map(id => libraryArt[id])
+    .filter((a): a is string => !!a)
     .slice(0, 4)
-  if (artTracks.length === 0) {
+  if (covers.length === 0) {
     return (
       <div className={`bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center ${className}`}>
         <HardDrive size={32} className="text-accent/50" />
       </div>
     )
   }
-  if (artTracks.length < 4) {
-    return <img src={artTracks[0].albumArt!} alt="" className={`object-cover ${className}`} />
+  if (covers.length < 4) {
+    return <img src={covers[0]} alt="" className={`object-cover ${className}`} />
   }
   return (
     <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
-      {artTracks.map((t, i) => (
-        <img key={i} src={t.albumArt!} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
+      {covers.map((src, i) => (
+        <img key={i} src={src} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
       ))}
     </div>
   )
@@ -223,11 +226,11 @@ function LocalPlaylistMosaic({ trackIds, libraryTracks, className = '' }: {
 
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, setActiveView, setPendingEditorSongId,
-    localPlaylists, libraryTracks, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
+    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
-    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline')
+    offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -942,7 +945,7 @@ export default function PlaylistsView(): JSX.Element {
       return (
         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
           <div className="relative overflow-hidden px-6 pb-6 shrink-0">
-            <HeroBackdrop src={localPl.coverImage ?? localTracks.find(t => t.albumArt)?.albumArt ?? null} />
+            <HeroBackdrop src={localPl.coverImage ?? localTracks.map(t => libraryArt[t.id]).find(a => !!a) ?? null} />
             <div className="relative z-10 pt-5">
               <button onClick={() => setLocalSelectedId(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
                 <ArrowLeft size={15} /> Playlists
@@ -952,7 +955,7 @@ export default function PlaylistsView(): JSX.Element {
               <div className="shrink-0 rounded-xl shadow-2xl overflow-hidden bg-surface-overlay flex items-center justify-center" style={{ width: 180, height: 180 }}>
                 {localPl.coverImage
                   ? <img src={localPl.coverImage} alt="" className="w-full h-full object-cover" />
-                  : <LocalPlaylistMosaic trackIds={localPl.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                  : <LocalPlaylistMosaic trackIds={localPl.trackIds} className="w-full h-full" />
                 }
               </div>
               <div className="pb-2">
@@ -1031,7 +1034,7 @@ export default function PlaylistsView(): JSX.Element {
                   <div className={`relative aspect-square rounded-xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 group-hover:scale-[1.03] transition-transform shadow-md ${plSelected ? 'ring-2 ring-accent' : ''}`}>
                     {lp.coverImage
                       ? <img src={lp.coverImage} alt="" className="w-full h-full object-cover" />
-                      : <LocalPlaylistMosaic trackIds={lp.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                      : <LocalPlaylistMosaic trackIds={lp.trackIds} className="w-full h-full" />
                     }
                     <CardPlayOverlay onPlay={() => {
                       const qt = lp.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter((t): t is LibraryTrack => !!t).map(libTrackToTrack)
@@ -1776,7 +1779,7 @@ export default function PlaylistsView(): JSX.Element {
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
         {/* Hero */}
         <div className="relative overflow-hidden px-6 pb-6 shrink-0">
-          <HeroBackdrop src={localPl.coverImage ?? localTracks.find(t => t.albumArt)?.albumArt ?? null} />
+          <HeroBackdrop src={localPl.coverImage ?? localTracks.map(t => libraryArt[t.id]).find(a => !!a) ?? null} />
           <div className="relative z-10 pt-5">
             <button onClick={() => setLocalSelectedId(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
               <ArrowLeft size={15} /> Playlists
@@ -1796,7 +1799,7 @@ export default function PlaylistsView(): JSX.Element {
             >
               {localPl.coverImage
                 ? <img src={localPl.coverImage} alt="" className="w-full h-full object-cover" />
-                : <LocalPlaylistMosaic trackIds={localPl.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                : <LocalPlaylistMosaic trackIds={localPl.trackIds} className="w-full h-full" />
               }
               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
                 <ImageOff size={22} className="text-white" />
@@ -2029,7 +2032,7 @@ export default function PlaylistsView(): JSX.Element {
                   <div className={`relative aspect-square rounded-2xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 shadow-md group-hover:shadow-xl group-hover:-translate-y-1 transition-all duration-200 ${plSelected ? 'ring-2 ring-accent' : ''}`}>
                     {lp.coverImage
                       ? <img src={lp.coverImage} alt="" className="w-full h-full object-cover" />
-                      : <LocalPlaylistMosaic trackIds={lp.trackIds} libraryTracks={libraryTracks} className="w-full h-full" />
+                      : <LocalPlaylistMosaic trackIds={lp.trackIds} className="w-full h-full" />
                     }
                     <CardPlayOverlay onPlay={() => {
                       const qt = lp.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter((t): t is LibraryTrack => !!t).map(libTrackToTrack)

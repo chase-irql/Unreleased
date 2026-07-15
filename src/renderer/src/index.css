@@ -207,3 +207,39 @@ input[type='range']:active::-webkit-slider-thumb {
 .view-enter {
   animation: fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+/* ─── WRLD queue panel ───────────────────────────────────────────────────────── */
+
+/* Whole-panel entrance: rises + fades + settles from a hair under scale */
+@keyframes wrld-queue-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.animate-wrld-queue-in {
+  animation: wrld-queue-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Per-row reveal, staggered — layered on top of the panel entrance so the
+   list cascades in. `backwards` (not `both`) so the fill state is dropped
+   once the animation ends, leaving the drag-reorder transforms free to apply. */
+@keyframes wrld-row-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.wrld-q-row { animation: wrld-row-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.wrld-q-row:nth-child(1)   { animation-delay:  40ms; }
+.wrld-q-row:nth-child(2)   { animation-delay:  62ms; }
+.wrld-q-row:nth-child(3)   { animation-delay:  82ms; }
+.wrld-q-row:nth-child(4)   { animation-delay: 100ms; }
+.wrld-q-row:nth-child(5)   { animation-delay: 116ms; }
+.wrld-q-row:nth-child(6)   { animation-delay: 130ms; }
+.wrld-q-row:nth-child(7)   { animation-delay: 142ms; }
+.wrld-q-row:nth-child(8)   { animation-delay: 152ms; }
+.wrld-q-row:nth-child(9)   { animation-delay: 160ms; }
+.wrld-q-row:nth-child(10)  { animation-delay: 166ms; }
+.wrld-q-row:nth-child(n+11) { animation-delay: 172ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-wrld-queue-in,
+  .wrld-q-row { animation-duration: 0.01ms; animation-delay: 0ms; }
+}

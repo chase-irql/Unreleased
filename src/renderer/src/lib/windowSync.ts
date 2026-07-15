@@ -10,7 +10,7 @@ import type { ViewType } from '../types'
 // track list is deliberately absent: it's reloaded from disk instead
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
-  'theme', 'accentColor', 'sidebarPosition',
+  'theme', 'accentColor', 'sidebarPosition', 'navOrder',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',

@@ -1,3 +1,5 @@
+import { useStore } from '../store/useStore'
+
 export const AUDIO_EXTS = new Set(['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus', '.wma', '.alac', '.caf', '.aiff', '.aif'])
 export const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif'])
 export const VIDEO_EXTS = new Set(['.mp4', '.mov', '.webm', '.m4v', '.mkv', '.avi'])
@@ -29,13 +31,17 @@ export function toFileUrl(absPath: string): string {
 }
 
 // Converts a scanned library file into the queue/player Track shape — the
-// single conversion every local-file play path goes through.
+// single conversion every local-file play path goes through. Cover art lives in
+// the store's libraryArt map (not on the track), so seed the queue thumbnail
+// from there if it's already been read; covers read later stream in via
+// applyLibraryArt's queue fan-out.
 export function libraryTrackToTrack(t: import('../types').LibraryTrack): import('../types').Track {
+  const art = useStore.getState().libraryArt[t.id]
   return {
     id: t.id,
     path: t.filePath,
     streamUrl: toFileUrl(t.filePath),
-    imageUrl: t.albumArt || '',
+    imageUrl: art || '',
     title: t.title,
     artist: t.artist,
     album: t.album,

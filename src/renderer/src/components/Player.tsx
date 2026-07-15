@@ -14,6 +14,7 @@ import {
   ListOrdered,
   Heart,
   ChevronUp,
+  ChevronDown,
   Check,
   MoreHorizontal,
   PictureInPicture2,
@@ -87,6 +88,8 @@ export default function Player(): JSX.Element {
     showNowPlaying,
     showQueue,
     setShowQueue,
+    playerCollapsed,
+    setPlayerCollapsed,
     queue,
     queueIndex,
     crossfadeEnabled,
@@ -101,10 +104,13 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId')
+    playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows')
   const canEditSong = !!(account?.is_editor || account?.is_administrator)
 
   const [showContextMenu, setShowContextMenu] = useState(false)
+  // Cursor position for a right-click-spawned menu. null → menu was opened via
+  // the 3-dot button, so it anchors to the button rect instead.
+  const [ctxMenuPos, setCtxMenuPos] = useState<{ x: number; y: number } | null>(null)
   const [showSongInfo, setShowSongInfo] = useState(false)
   const [songInfoData, setSongInfoData] = useState<JWApiSong | null>(null)
   const contextMenuBtnRef = useRef<HTMLButtonElement>(null)
@@ -168,6 +174,12 @@ export default function Player(): JSX.Element {
   // audio would keep playing. A timer still fires in the background — use it to
   // guarantee the element actually pauses.
   const pauseFadeTimer = useRef<number | null>(null)
+  // The current ramp's finalize(). Held in a ref so a visibilitychange handler
+  // can snap the ramp to its end state the moment the window hides — RAF is
+  // frozen and the timer backstop above is throttled while hidden, so without
+  // this a resume ramp gets stuck mid-fade and the song plays at reduced volume
+  // (and a pause ramp keeps playing) until the throttled timer eventually fires.
+  const pauseFadeFinalize = useRef<(() => void) | null>(null)
 
   // Keep a ref of volume so RAF callbacks (created once) always see the latest value
   const volumeRef = useRef(volume)
@@ -181,6 +193,7 @@ export default function Player(): JSX.Element {
   const cancelPauseFade = (): void => {
     if (pauseFadeRaf.current != null) { cancelAnimationFrame(pauseFadeRaf.current); pauseFadeRaf.current = null }
     if (pauseFadeTimer.current != null) { clearTimeout(pauseFadeTimer.current); pauseFadeTimer.current = null }
+    pauseFadeFinalize.current = null
   }
 
   const cancelCF = (): void => {
@@ -360,7 +373,13 @@ export default function Player(): JSX.Element {
     const audio = getActive()
     if (!audio) return
     cancelPauseFade()
+    // Only ramp when the window is actually visible. A play/pause fired while
+    // hidden (mini player, tray, another tab in front) can't animate — RAF is
+    // frozen — so skip the fade and apply the end state instantly instead of
+    // starting a ramp that would sit stuck at the wrong volume until a
+    // throttled timer catches up.
     const smoothFade = useStore.getState().pauseFadeEnabled && !cfActive.current
+      && document.visibilityState === 'visible'
     if (isPlaying) {
       if (smoothFade) {
         // Ramp back up — from 0 on a normal resume, or from wherever a
@@ -385,9 +404,13 @@ export default function Player(): JSX.Element {
           if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
           else finalize()
         }
+        pauseFadeFinalize.current = finalize
         pauseFadeRaf.current = requestAnimationFrame(tick)
         pauseFadeTimer.current = window.setTimeout(finalize, PAUSE_FADE_MS + 50)
       } else {
+        // Instant resume (fade off, or fired while hidden). Restore volume in
+        // case a previous ramp was snapped/cancelled mid-fade at a low value.
+        audio.volume = volumeRef.current
         audio.play().catch(console.error)
       }
     } else {
@@ -420,6 +443,7 @@ export default function Player(): JSX.Element {
           if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
           else finalize()
         }
+        pauseFadeFinalize.current = finalize
         pauseFadeRaf.current = requestAnimationFrame(tick)
         // Backstop so the pause still lands if RAF is frozen (tab hidden / app
         // backgrounded) before the ramp finishes. Small margin past the ramp so
@@ -452,11 +476,17 @@ export default function Player(): JSX.Element {
       if (audio.paused) audio.play().catch(() => {})
     }
     const id = setInterval(check, 8000)
-    const onVisible = (): void => { if (document.visibilityState === 'visible') check() }
-    document.addEventListener('visibilitychange', onVisible)
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') { check(); return }
+      // Going hidden mid-ramp: RAF is about to freeze and the timer backstop is
+      // throttled, so snap the fade to its end state now (full volume on a
+      // resume, paused on a pause) rather than leaving it stuck partway.
+      pauseFadeFinalize.current?.()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       clearInterval(id)
-      document.removeEventListener('visibilitychange', onVisible)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [isPlaying])
 
@@ -888,7 +918,7 @@ export default function Player(): JSX.Element {
     'view-wrld':      () => setActiveView('wrld'),
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
-    'mini-player':         () => (window as any).electron?.openFloatWindow?.('mini-player'),
+    'mini-player':         () => { if (useStore.getState().popoutWindows.miniPlayer) (window as any).electron?.openFloatWindow?.('mini-player') },
     'close-float-windows': () => (window as any).electron?.closeFloatWindows?.(),
     'restart-app':         () => (window as any).electron?.relaunchApp?.(),
     'rescan-library':      () => useStore.getState().scanLibrary(),
@@ -1152,7 +1182,52 @@ export default function Player(): JSX.Element {
       </div>
 
       {/* ── Desktop player ── */}
-      <div className="hidden md:flex h-[90px] bg-surface border-t border-[var(--border)] items-center px-4 gap-4 shrink-0" onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
+      <div className={`hidden md:flex bg-surface border-t border-[var(--border)] items-center shrink-0 relative ${playerCollapsed ? 'h-7' : 'h-[90px] px-4 gap-4'}`} onContextMenu={(e) => { e.preventDefault(); if (currentTrack) { setCtxMenuPos({ x: e.clientX, y: e.clientY }); setShowContextMenu(true) } }}>
+        {playerCollapsed ? (
+        <>
+          {/* Thin progress line along the top edge */}
+          {radioFmActive ? (
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-red-900/40">
+              <div className="h-full bg-red-400" style={{ width: `${fmProgress * 100}%` }} />
+            </div>
+          ) : (
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-surface-overlay">
+              <div className="h-full bg-accent" style={{ width: `${(seekDrag !== null ? seekDrag : progress) * 100}%` }} />
+            </div>
+          )}
+          <button
+            onClick={() => setIsPlaying(!isPlaying)}
+            disabled={!currentTrack || radioFmActive}
+            className="ml-4 w-6 h-6 rounded-full bg-white flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-transform disabled:opacity-30"
+            title={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying
+              ? <Pause size={12} fill="#000" className="text-black" />
+              : <Play  size={12} fill="#000" className="text-black ml-0.5" />}
+          </button>
+          <span className="ml-3 text-xs truncate min-w-0 flex-1">
+            <span className="text-text-secondary font-medium">
+              {radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.title : (currentTrack?.title || 'Not playing')}
+            </span>
+            {(radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.artist : currentTrack?.artist) && (
+              <span className="text-text-muted"> — {radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.artist : currentTrack?.artist}</span>
+            )}
+          </span>
+          <span className="text-text-muted text-xs tabular-nums shrink-0">
+            {radioFmActive
+              ? `${formatDuration(Math.floor(fmElapsedMs / 1000))} / ${formatDuration(Math.floor(fmDurationMs / 1000))}`
+              : `${formatDuration(currentTime)} / ${formatDuration(duration)}`}
+          </span>
+          <button
+            onClick={() => setPlayerCollapsed(false)}
+            title="Expand player"
+            className="mx-4 text-text-secondary hover:text-text-primary transition-colors shrink-0"
+          >
+            <ChevronUp size={18} />
+          </button>
+        </>
+        ) : (
+        <>
         {/* Track info */}
         <div className="flex items-center gap-3 w-72 min-w-0 shrink-0">
           <button
@@ -1201,7 +1276,7 @@ export default function Player(): JSX.Element {
                   <button
                     ref={contextMenuBtnRef}
                     className="p-1 rounded text-text-muted hover:text-text-primary transition-colors"
-                    onClick={() => setShowContextMenu((v) => !v)}
+                    onClick={() => { setCtxMenuPos(null); setShowContextMenu((v) => !v) }}
                     title="More options"
                     disabled={!currentTrack && !radioFmActive}
                   >
@@ -1240,10 +1315,10 @@ export default function Player(): JSX.Element {
                       state={{
                         track: currentTrack,
                         songId: currentSongId,
-                        x: contextMenuBtnRef.current?.getBoundingClientRect().left ?? 0,
-                        y: contextMenuBtnRef.current?.getBoundingClientRect().top ?? 0,
+                        x: ctxMenuPos?.x ?? contextMenuBtnRef.current?.getBoundingClientRect().left ?? 0,
+                        y: ctxMenuPos?.y ?? contextMenuBtnRef.current?.getBoundingClientRect().top ?? 0,
                       }}
-                      onClose={() => setShowContextMenu(false)}
+                      onClose={() => { setShowContextMenu(false); setCtxMenuPos(null) }}
                       canEdit={canEditSong}
                       onInfo={openSongInfo}
                       onPlayNext={() => playNext(currentTrack)}
@@ -1360,8 +1435,10 @@ export default function Player(): JSX.Element {
             <Maximize2 size={16} />
           </button>}
 
-          {/* Desktop only: pop the compact always-on-top mini player window */}
-          {(window as any).electron?.openFloatWindow && (
+          {/* Desktop only: pop the compact always-on-top mini player window.
+              Hidden when the user turned this pop-out off (it has no in-app
+              equivalent, so there's nothing to fall back to). */}
+          {(window as any).electron?.openFloatWindow && popoutWindows.miniPlayer && (
             <button
               onClick={() => (window as any).electron.openFloatWindow('mini-player')}
               className="text-text-secondary hover:text-text-primary transition-colors"
@@ -1399,7 +1476,17 @@ export default function Player(): JSX.Element {
               </button>
             )}
           </div>
+
+          <button
+            onClick={() => setPlayerCollapsed(true)}
+            title="Collapse player"
+            className="text-text-secondary hover:text-text-primary transition-colors"
+          >
+            <ChevronDown size={18} />
+          </button>
         </div>
+        </>
+        )}
 
         {/* Song info modal */}
         {showSongInfo && (

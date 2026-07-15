@@ -53,7 +53,10 @@ export interface LibraryTrack {
   lastModified: number
   hasAlbumArt: boolean
   addedAt: number
-  // Loaded on demand
+  // Cover art is NOT stored here — it lives in the store's `libraryArt` map
+  // (keyed by track id) so a streaming cover never mutates this list. This
+  // optional field is only a transient seed some callers still read; treat the
+  // map as the source of truth.
   albumArt?: string | null    // base64 data URL
 }
 
