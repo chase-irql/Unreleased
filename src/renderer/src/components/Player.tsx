@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
+import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -111,6 +112,7 @@ export default function Player(): JSX.Element {
   const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
   const { libraryTracks } = useStorePick('libraryTracks')
+  const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
 
 
   // FM elapsed time — ticks locally between WS updates
@@ -367,14 +369,24 @@ export default function Player(): JSX.Element {
         audio.volume = from
         audio.play().catch(console.error)
         const startTime = performance.now()
+        // Land the ramp at full volume — from the RAF ramp completing, or from
+        // the timer backstop below. RAF is frozen while this window is hidden/
+        // occluded, so a resume triggered remotely (mini player or tray with
+        // the main window minimized) would otherwise start playback with the
+        // volume stuck at the 0 set above — the song "plays" silently.
+        const finalize = (): void => {
+          cancelPauseFade()
+          audio.volume = volumeRef.current
+        }
         const tick = (): void => {
           const t = Math.min((performance.now() - startTime) / PAUSE_FADE_MS, 1)
           // volumeRef read per-frame so slider moves mid-ramp still land
           audio.volume = from + (volumeRef.current - from) * t
           if (t < 1) pauseFadeRaf.current = requestAnimationFrame(tick)
-          else pauseFadeRaf.current = null
+          else finalize()
         }
         pauseFadeRaf.current = requestAnimationFrame(tick)
+        pauseFadeTimer.current = window.setTimeout(finalize, PAUSE_FADE_MS + 50)
       } else {
         audio.play().catch(console.error)
       }
@@ -822,6 +834,128 @@ export default function Player(): JSX.Element {
   // Same dispatch table, fed by pop-out windows over the window-sync channel.
   useEffect(() => registerPlayerCommandHandler((cmd, arg) => remoteCommandsRef.current[cmd]?.(arg)), [])
 
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  // What each hotkey action *does*. Keyed by the ids in lib/hotkeys.ts (which
+  // owns the id → key-combo mapping). Recreated every render so the closures
+  // see fresh state, like remoteCommandsRef above; a stable listener reads the
+  // ref. Store reads/writes go through getState() so they never need the pick.
+  const clampSpeed = (v: number): number => Math.min(2, Math.max(0.5, Math.round(v * 100) / 100))
+  const hotkeyActionsRef = useRef<Record<string, () => void>>({})
+  hotkeyActionsRef.current = {
+    'play-pause': () => { if (currentTrack && !radioFmActive) setIsPlaying(!isPlaying) },
+    'play':       () => { if (currentTrack && !radioFmActive) setIsPlaying(true) },
+    'pause':      () => { if (currentTrack && !radioFmActive) setIsPlaying(false) },
+    'next':       () => { if (currentTrack && !radioFmActive) handleNext() },
+    'previous':   () => { if (currentTrack && !radioFmActive) handlePrev() },
+    'seek-forward': () => {
+      if (!currentTrack || radioFmActive) return
+      const step = useStore.getState().hotkeySeekSeconds
+      const dur = getAudioDuration() || currentTrack.duration || 0
+      const target = getAudioCurrentTime() + step
+      seekAudio(dur > 0 ? Math.min(target, dur) : target)
+    },
+    'seek-backward': () => {
+      if (!currentTrack || radioFmActive) return
+      const step = useStore.getState().hotkeySeekSeconds
+      seekAudio(Math.max(0, getAudioCurrentTime() - step))
+    },
+    'volume-up':   () => { const v = useStore.getState().volume; setVolume(Math.min(1, Math.round((v + 0.05) * 100) / 100)) },
+    'volume-down': () => { const v = useStore.getState().volume; setVolume(Math.max(0, Math.round((v - 0.05) * 100) / 100)) },
+    'mute':        () => toggleMute(),
+    'shuffle':     () => { if (!radioFmActive) toggleShuffle() },
+    'loop':        () => { if (!radioFmActive) toggleRepeat() },
+    'clear-queue': () => useStore.getState().clearQueue(),
+    'like':        () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
+    'song-info':   () => { if (currentTrack && !radioFmActive) openSongInfo() },
+    'edit-song': () => {
+      if (radioFmActive) return
+      if (currentSongId != null) { useStore.getState().openSongEditor(currentSongId); return }
+      // Local file — open the local-metadata editor instead of the API editor.
+      if (currentTrack?.id.startsWith('local-')) {
+        const lt = libraryTracks.find((t) => t.id === currentTrack.id)
+        if (lt) { useStore.getState().setPendingLocalEditTrack(lt); setActiveView('local-editor') }
+      }
+    },
+    'speed-up':    () => setPlaybackSpeed(clampSpeed(playbackSpeed + 0.25)),
+    'speed-down':  () => setPlaybackSpeed(clampSpeed(playbackSpeed - 0.25)),
+    'crossfade':   () => { const s = useStore.getState(); s.setCrossfade(!s.crossfadeEnabled, s.crossfadeDuration) },
+    'smooth-playback': () => { const s = useStore.getState(); s.setPauseFade(!s.pauseFadeEnabled) },
+    'prefer-og':   () => { const s = useStore.getState(); s.setPreferOgVersion(!s.preferOgVersion) },
+    'sleep-timer': () => { const s = useStore.getState(); s.setSleepTimer(s.sleepTimerEnd ? null : Date.now() + 30 * 60 * 1000) },
+    'view-tracker':   () => setActiveView('api-tracker'),
+    'view-playlists': () => setActiveView('playlists'),
+    'view-library':   () => setActiveView('library'),
+    'view-wrld':      () => setActiveView('wrld'),
+    'open-settings':    () => useStore.getState().setShowSettings(true),
+    'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
+    'mini-player':         () => (window as any).electron?.openFloatWindow?.('mini-player'),
+    'close-float-windows': () => (window as any).electron?.closeFloatWindows?.(),
+    'restart-app':         () => (window as any).electron?.relaunchApp?.(),
+    'rescan-library':      () => useStore.getState().scanLibrary(),
+    'discord-status': async () => {
+      const el = (window as any).electron
+      if (!el?.getAppSettings) return
+      try {
+        const s = await el.getAppSettings()
+        await el.setAppSetting('discordRpcEnabled', !s.discordRpcEnabled)
+      } catch { /* ignore */ }
+    },
+  }
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      const combo = eventToCombo(e)
+      if (!combo) return
+      // Never hijack typing (search boxes, the metadata editor, etc.) — media
+      // keys are the one exception, since those are meaningless while typing.
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || !!target?.isContentEditable
+      if (typing && !combo.startsWith('Media')) return
+      // Leave Space/Enter alone when a button/link/select is focused so they
+      // still activate it (native keyboard behavior) instead of toggling play.
+      const clickable = tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || target?.getAttribute('role') === 'button'
+      if (clickable && (combo === 'Space' || combo === 'Enter')) return
+      // When global shortcuts are on, the OS delivers eligible combos through
+      // the global handler instead — don't also run them here (double-fire).
+      if (useStore.getState().globalHotkeysEnabled && (window as any).electron && isGloballyRegistrable(combo)) return
+      const id = resolveAction(combo, useStore.getState().hotkeyBindings)
+      if (!id) return
+      // Desktop-only actions are unbindable-in-practice on web — ignore them so
+      // e.g. Alt+3 doesn't half-switch to a Library view web builds don't have.
+      if (getAction(id)?.electronOnly && !(window as any).electron) return
+      const fn = hotkeyActionsRef.current[id]
+      if (!fn) return
+      e.preventDefault()
+      fn()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
+  // Global (OS-wide) shortcuts — a fired accelerator arrives here as an action
+  // id and runs through the same dispatch table as the in-app keys.
+  useEffect(() => {
+    const el = (window as any).electron
+    if (!el?.onGlobalShortcut) return
+    return el.onGlobalShortcut((id: string) => hotkeyActionsRef.current[id]?.())
+  }, [])
+
+  // (Re)register the OS-global set whenever it's toggled or a binding changes.
+  // Only the main window runs this (Player is main-only); pop-outs just flip the
+  // synced `globalHotkeysEnabled` and let this window own the registration.
+  useEffect(() => {
+    const el = (window as any).electron
+    if (!el?.registerGlobalShortcuts) return
+    if (!globalHotkeysEnabled) { el.registerGlobalShortcuts([]); return }
+    const entries: { accelerator: string; id: string }[] = []
+    for (const action of HOTKEY_ACTIONS) {
+      const accelerator = comboToAccelerator(effectiveBinding(action.id, hotkeyBindings))
+      if (accelerator) entries.push({ accelerator, id: action.id })
+    }
+    el.registerGlobalShortcuts(entries)
+    return () => { el.registerGlobalShortcuts?.([]) }
+  }, [globalHotkeysEnabled, hotkeyBindings])
+
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {
     setSeekDrag(progress)
@@ -882,19 +1016,8 @@ export default function Player(): JSX.Element {
   const speedLabel = playbackSpeed === 1 ? '1x' : `${playbackSpeed}x`
 
 
-  // Spacebar pause/play shortcut
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (e.code !== 'Space' && e.key !== ' ') return
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
-      if (!currentTrack || radioFmActive) return
-      e.preventDefault()
-      setIsPlaying(!isPlaying)
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [currentTrack, isPlaying, setIsPlaying, radioFmActive])
+  // (Play/pause on Space is handled by the unified hotkey system above — the
+  // 'play-pause' action defaults to Space and is rebindable in Settings.)
 
   // Cover art error state — reset when track changes
   const [coverArtError, setCoverArtError] = useState(false)

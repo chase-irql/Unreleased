@@ -7,6 +7,7 @@ import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration } from '../lib/j
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
+import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -104,6 +105,17 @@ interface AppState {
   // file instead of the currently selected one.
   preferOgVersion: boolean
 
+  // Keyboard shortcuts. `hotkeyBindings` holds only user *overrides* of the
+  // defaults in lib/hotkeys.ts (actionId → combo; an explicit '' means the
+  // user cleared that shortcut). `hotkeySeekSeconds` is the jump size for the
+  // skip-forward / skip-backward shortcuts.
+  hotkeyBindings: Record<string, string>
+  hotkeySeekSeconds: number
+  // When on (desktop only), eligible shortcuts (those with a modifier or a
+  // media key) are also registered OS-wide so they work while the app is in
+  // the background. See lib/hotkeys isGloballyRegistrable.
+  globalHotkeysEnabled: boolean
+
   // Liked songs
   likedTrackIds: string[]
 
@@ -192,6 +204,13 @@ interface AppActions {
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
   setPreferOgVersion: (enabled: boolean) => void
+  // Bind (or, with combo === '', clear) a shortcut. Passing a combo already in
+  // use elsewhere transfers it — the previous owner is cleared — so bindings
+  // stay unique. Resets restore every action to its default.
+  setHotkeyBinding: (actionId: string, combo: string) => void
+  resetHotkeyBindings: () => void
+  setHotkeySeekSeconds: (seconds: number) => void
+  setGlobalHotkeysEnabled: (enabled: boolean) => void
 
   toggleLike: (trackId: string) => void
 
@@ -390,6 +409,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
+  hotkeyBindings: ls.get<Record<string, string>>('hotkeyBindings') ?? {},
+  hotkeySeekSeconds: ls.get<number>('hotkeySeekSeconds') ?? 10,
+  globalHotkeysEnabled: ls.get<boolean>('globalHotkeysEnabled') ?? false,
 
   setCrossfade: (enabled, duration) => {
     set({ crossfadeEnabled: enabled, crossfadeDuration: duration })
@@ -401,6 +423,29 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
+
+  setHotkeyBinding: (actionId, combo) => {
+    const current = get().hotkeyBindings
+    const next = { ...current }
+    // Assigning a combo already bound elsewhere hands it over: clear it from
+    // whichever action currently resolves to it, so no two actions share a key.
+    if (combo) {
+      for (const a of HOTKEY_ACTIONS) {
+        if (a.id !== actionId && effectiveBinding(a.id, current) === combo) next[a.id] = ''
+      }
+    }
+    const action = HOTKEY_ACTIONS.find((a) => a.id === actionId)
+    // Store an override only when it differs from the default — if the user
+    // sets it back to the default (or clears one that had no default), drop the
+    // entry entirely so the persisted map stays minimal.
+    if (combo === (action?.defaultBinding ?? '')) delete next[actionId]
+    else next[actionId] = combo
+    set({ hotkeyBindings: next })
+    ls.set('hotkeyBindings', next)
+  },
+  resetHotkeyBindings: () => { set({ hotkeyBindings: {} }); ls.set('hotkeyBindings', {}) },
+  setHotkeySeekSeconds: (seconds) => { set({ hotkeySeekSeconds: seconds }); ls.set('hotkeySeekSeconds', seconds) },
+  setGlobalHotkeysEnabled: (enabled) => { set({ globalHotkeysEnabled: enabled }); ls.set('globalHotkeysEnabled', enabled) },
 
   // ── Liked songs ───────────────────────────────────────────────────────────
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],
