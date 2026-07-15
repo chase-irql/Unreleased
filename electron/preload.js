@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electron', {
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   maximizeWindow: () => ipcRenderer.invoke('maximize-window'),
   closeWindow:    () => ipcRenderer.invoke('close-window'),
+  relaunchApp:    () => ipcRenderer.invoke('relaunch-app'),
   isMaximized:    () => ipcRenderer.invoke('is-maximized'),
   setFullscreen:  (value) => ipcRenderer.invoke('set-fullscreen', value),
   isFullscreen:   ()      => ipcRenderer.invoke('is-fullscreen'),
@@ -21,7 +22,18 @@ contextBridge.exposeInMainWorld('electron', {
   // variants act on whichever window called them — pop-outs must not use
   // closeWindow/minimizeWindow/maximizeWindow, which target the main window.
   openFloatWindow: (view, params) => ipcRenderer.invoke('open-float-window', view, params),
+  closeFloatWindows: ()   => ipcRenderer.invoke('close-float-windows'),
   closeSelf:       ()     => ipcRenderer.invoke('close-self'),
+
+  // OS-global shortcuts. The renderer sends the full desired set (accelerator →
+  // action id); main re-registers atomically and pushes the fired action id
+  // back over 'global-shortcut'. Sending [] clears them all.
+  registerGlobalShortcuts: (entries) => ipcRenderer.invoke('register-global-shortcuts', entries),
+  onGlobalShortcut: (cb) => {
+    const fn = (_, id) => cb(id)
+    ipcRenderer.on('global-shortcut', fn)
+    return () => ipcRenderer.removeListener('global-shortcut', fn)
+  },
   minimizeSelf:    ()     => ipcRenderer.invoke('minimize-self'),
   maximizeSelf:    ()     => ipcRenderer.invoke('maximize-self'),
   focusMainWindow: ()     => ipcRenderer.invoke('focus-main-window'),

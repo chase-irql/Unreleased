@@ -12,6 +12,7 @@ import type { ViewType } from '../types'
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
+  'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
   'likedTrackIds', 'account', 'playlists',
   'libraryFolders', 'libraryAutoRefresh', 'libraryScanning', 'libraryLastScanned',

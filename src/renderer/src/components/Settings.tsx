@@ -3,9 +3,10 @@ import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
-  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves,
+  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
+import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
 import { SKINS } from '../lib/skins'
 import { getToken } from '../lib/userApi'
 import { cacheClearAll } from '../lib/apiCache'
@@ -26,7 +27,7 @@ const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[]
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
-type Tab = 'appearance' | 'playback' | 'library' | 'app' | 'developer' | 'about'
+type Tab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'about'
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -115,11 +116,13 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     playbackSpeed, setPlaybackSpeed,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
+    hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
+    globalHotkeysEnabled, setGlobalHotkeysEnabled,
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -159,10 +162,38 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [offlineStats, setOfflineStats] = useState<{ count: number; totalSize: number } | null>(null)
   const [offlineStatsLoading, setOfflineStatsLoading] = useState(false)
 
+  // Which shortcut row is currently "listening" for a key combo (null = none).
+  const [recordingId, setRecordingId] = useState<string | null>(null)
+  // While recording, the next keypress becomes the binding. Capture phase +
+  // stopPropagation so the key doesn't also fire the live hotkey (Player's
+  // listener is on document, bubble phase) or type into anything.
+  useEffect(() => {
+    if (!recordingId) return
+    const onKey = (e: KeyboardEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'Escape') { setRecordingId(null); return }
+      const bare = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey
+      // Bare Backspace/Delete clears the binding; modified, they can still bind.
+      if (bare && (e.key === 'Backspace' || e.key === 'Delete')) {
+        setHotkeyBinding(recordingId, '')
+        setRecordingId(null)
+        return
+      }
+      const combo = eventToCombo(e)
+      if (!combo) return // modifier held on its own — keep waiting for a real key
+      setHotkeyBinding(recordingId, combo)
+      setRecordingId(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [recordingId, setHotkeyBinding])
+
   const [tab, setTab] = useState<Tab>('appearance')
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'playback', label: 'Playback', icon: Volume2 },
+    { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
     ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen }] : []),
     ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor }] : []),
     ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench }] : []),
@@ -621,6 +652,94 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </button>
                   </div>
                 </Row>
+              </div>
+            )}
+
+            {/* ── Shortcuts ── */}
+            {tab === 'shortcuts' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-text-primary text-lg font-bold">Keyboard Shortcuts</h3>
+                  <button
+                    onClick={() => { setRecordingId(null); resetHotkeyBindings() }}
+                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-2.5 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
+                    title="Restore every shortcut to its default"
+                  >
+                    <RotateCcw size={12} /> Reset to defaults
+                  </button>
+                </div>
+                <p className="text-text-muted text-[11px] mb-3">
+                  Click a shortcut, then press the keys. Esc cancels · Backspace clears. Shortcuts work while the app window is focused.
+                </p>
+
+                <Row icon={Clock} iconColor="#4f46e5" label="Skip amount" sub="How far skip-forward / skip-backward jump">
+                  <select
+                    value={hotkeySeekSeconds}
+                    onChange={(e) => setHotkeySeekSeconds(parseInt(e.target.value))}
+                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                  >
+                    {[5, 10, 15, 30, 60].map((s) => <option key={s} value={s}>{s} seconds</option>)}
+                  </select>
+                </Row>
+
+                {isElectron && (
+                  <Row
+                    icon={Globe}
+                    iconColor="#0ea5e9"
+                    label="Global shortcuts"
+                    sub="Also trigger shortcuts when the app is in the background. Only shortcuts that use a modifier (Ctrl, Alt…) or a media key can be global — plain keys can't be captured system-wide."
+                    labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={globalHotkeysEnabled} onClick={() => setGlobalHotkeysEnabled(!globalHotkeysEnabled)} /></div>}
+                  />
+                )}
+
+                {HOTKEY_CATEGORIES.map((category) => {
+                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (isElectron || !a.electronOnly))
+                  if (actions.length === 0) return null
+                  return (
+                    <div key={category} className="mt-4 first:mt-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted mb-1.5">{category}</p>
+                      <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+                        {actions.map((action) => {
+                          const binding = effectiveBinding(action.id, hotkeyBindings)
+                          const tokens = comboTokens(binding)
+                          const recording = recordingId === action.id
+                          const isGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
+                          return (
+                            <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
+                              <span className="text-text-secondary text-sm truncate flex items-center gap-1.5">
+                                {action.label}
+                                {isGlobal && <Globe size={11} className="text-sky-400 shrink-0" aria-label="Works globally" />}
+                              </span>
+                              <button
+                                onClick={() => setRecordingId(recording ? null : action.id)}
+                                className={`shrink-0 min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                  recording
+                                    ? 'border-accent text-accent bg-accent/10 animate-pulse'
+                                    : tokens.length > 0
+                                      ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
+                                      : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                                }`}
+                                title={recording ? 'Press a key combination…' : 'Click to change'}
+                              >
+                                {recording ? (
+                                  'Press keys…'
+                                ) : tokens.length > 0 ? (
+                                  tokens.map((t, i) => (
+                                    <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
+                                      {t}
+                                    </kbd>
+                                  ))
+                                ) : (
+                                  'Not set'
+                                )}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
 

@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification, globalShortcut } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -588,6 +588,14 @@ ipcMain.handle('close-window', () => {
   if (!appSettings.minimizeToTray || !tray) isQuitting = true
   mainWindow?.close()
 })
+// Full app restart (backs the "restart app" shortcut). relaunch() queues a
+// fresh instance to spawn once this one exits; isQuitting bypasses the
+// minimize-to-tray-on-close guard so exit() actually terminates.
+ipcMain.handle('relaunch-app', () => {
+  isQuitting = true
+  app.relaunch()
+  app.exit(0)
+})
 ipcMain.handle('is-maximized', () => mainWindow?.isMaximized() ?? false)
 ipcMain.handle('set-fullscreen', (_, value) => mainWindow?.setFullScreen(!!value))
 ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
@@ -595,6 +603,33 @@ ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
 // ── IPC: floating pop-out windows ─────────────────────────────────────────────
 ipcMain.handle('open-float-window', (_, view, params) => {
   if (Object.prototype.hasOwnProperty.call(FLOAT_SIZES, view)) createFloatWindow(view, params)
+})
+
+// Closes every pop-out (mini player, settings, editor, …) but leaves the main
+// window alone — backs the "close all pop-out windows" shortcut.
+ipcMain.handle('close-float-windows', () => closeAllFloatWindows())
+
+// ── OS-global shortcuts ──────────────────────────────────────────────────────
+// The renderer owns which accelerators map to which action; main just registers
+// them and relays a fire back to the main window's hotkey dispatcher. Each
+// register call replaces the whole set (unregisterAll first), so toggling the
+// feature off is just registerGlobalShortcuts([]).
+ipcMain.handle('register-global-shortcuts', (_, entries) => {
+  globalShortcut.unregisterAll()
+  const failed = []
+  for (const { accelerator, id } of entries || []) {
+    if (!accelerator || !id) continue
+    try {
+      // register returns false when the OS/another app already owns the combo.
+      const ok = globalShortcut.register(accelerator, () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('global-shortcut', id)
+      })
+      if (!ok) failed.push(accelerator)
+    } catch {
+      failed.push(accelerator)
+    }
+  }
+  return { failed }
 })
 
 // Pop-outs are frameless and render their own window buttons; the
@@ -1451,7 +1486,7 @@ app.on('second-instance', () => {
   }
 })
 
-app.on('before-quit', () => { isQuitting = true; discordRpc.setEnabled(false) })
+app.on('before-quit', () => { isQuitting = true; discordRpc.setEnabled(false); globalShortcut.unregisterAll() })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

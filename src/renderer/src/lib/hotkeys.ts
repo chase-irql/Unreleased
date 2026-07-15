@@ -1,0 +1,223 @@
+/**
+ * hotkeys.ts — the keyboard-shortcut registry and the pure helpers that turn a
+ * KeyboardEvent into a canonical combo string (and back into a display label).
+ *
+ * The registry here is the single source of truth for *what* actions exist and
+ * their default bindings. User overrides live in the store (`hotkeyBindings`,
+ * an actionId → combo map) and are merged in via `effectiveBinding`. The actual
+ * dispatch table — what each action *does* — lives in Player.tsx, keyed by the
+ * same ids, because those handlers need the audio element and the live player
+ * closures. Keeping definitions (here) and behavior (there) split lets the
+ * Settings UI import the list without pulling the whole player in.
+ *
+ * Combo format: modifier tokens in a fixed order (Ctrl, Alt, Shift, Meta) then
+ * the main key, joined by "+". Examples: "Space", "M", "Ctrl+ArrowRight",
+ * "Ctrl+Shift+C", "Alt+1". A combo is layout-independent for letters/digits
+ * (derived from `event.code`, so "A" is the physical A key regardless of the
+ * active keyboard layout) while punctuation maps to its US-key symbol.
+ */
+
+export type HotkeyCategory = 'Playback' | 'Volume' | 'Navigation' | 'App'
+
+export interface HotkeyAction {
+  id: string
+  label: string
+  category: HotkeyCategory
+  /** Canonical combo, or '' for "no default binding". */
+  defaultBinding: string
+  /** Only meaningful in the desktop (Electron) build — hidden on web. */
+  electronOnly?: boolean
+}
+
+// Order here is the order shown in Settings (within each category block).
+export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
+  // ── Playback ──────────────────────────────────────────────────────────────
+  { id: 'play-pause',       label: 'Play / pause',              category: 'Playback', defaultBinding: 'Space' },
+  { id: 'play',             label: 'Play',                      category: 'Playback', defaultBinding: '' },
+  { id: 'pause',            label: 'Pause',                     category: 'Playback', defaultBinding: '' },
+  { id: 'next',             label: 'Next track',                category: 'Playback', defaultBinding: 'Ctrl+ArrowRight' },
+  { id: 'previous',         label: 'Previous track',            category: 'Playback', defaultBinding: 'Ctrl+ArrowLeft' },
+  { id: 'seek-forward',     label: 'Skip forward',              category: 'Playback', defaultBinding: 'Shift+ArrowRight' },
+  { id: 'seek-backward',    label: 'Skip backward',             category: 'Playback', defaultBinding: 'Shift+ArrowLeft' },
+  { id: 'speed-up',         label: 'Increase playback speed',   category: 'Playback', defaultBinding: ']' },
+  { id: 'speed-down',       label: 'Decrease playback speed',   category: 'Playback', defaultBinding: '[' },
+  { id: 'shuffle',          label: 'Toggle shuffle',            category: 'Playback', defaultBinding: 'S' },
+  { id: 'loop',             label: 'Toggle loop / repeat',      category: 'Playback', defaultBinding: 'R' },
+  { id: 'clear-queue',      label: 'Clear queue',               category: 'Playback', defaultBinding: 'Ctrl+Shift+C' },
+  { id: 'like',             label: 'Like current song',         category: 'Playback', defaultBinding: 'L' },
+  { id: 'song-info',        label: 'Show current song info',    category: 'Playback', defaultBinding: 'I' },
+  { id: 'edit-song',        label: 'Edit current song',         category: 'Playback', defaultBinding: 'E' },
+  { id: 'crossfade',        label: 'Toggle crossfade',          category: 'Playback', defaultBinding: '' },
+  { id: 'smooth-playback',  label: 'Toggle smooth playback',    category: 'Playback', defaultBinding: '' },
+  { id: 'prefer-og',        label: 'Toggle prefer OG version',  category: 'Playback', defaultBinding: '' },
+  { id: 'sleep-timer',      label: 'Start / stop sleep timer',  category: 'Playback', defaultBinding: '' },
+
+  // ── Volume ────────────────────────────────────────────────────────────────
+  { id: 'volume-up',        label: 'Volume up',                 category: 'Volume', defaultBinding: 'Ctrl+ArrowUp' },
+  { id: 'volume-down',      label: 'Volume down',               category: 'Volume', defaultBinding: 'Ctrl+ArrowDown' },
+  { id: 'mute',             label: 'Mute / unmute',             category: 'Volume', defaultBinding: 'M' },
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+  { id: 'view-tracker',     label: 'Go to Tracker',             category: 'Navigation', defaultBinding: 'Alt+1' },
+  { id: 'view-playlists',   label: 'Go to Playlists',           category: 'Navigation', defaultBinding: 'Alt+2' },
+  { id: 'view-library',     label: 'Go to Library',             category: 'Navigation', defaultBinding: 'Alt+3', electronOnly: true },
+  { id: 'view-wrld',        label: 'Go to WRLD',                category: 'Navigation', defaultBinding: 'Alt+4' },
+  { id: 'open-settings',    label: 'Open settings',             category: 'Navigation', defaultBinding: 'Ctrl+,' },
+  { id: 'open-diagnostics', label: 'Open diagnostics',          category: 'Navigation', defaultBinding: '' },
+
+  // ── App / windows ─────────────────────────────────────────────────────────
+  { id: 'mini-player',          label: 'Open mini player',            category: 'App', defaultBinding: 'Ctrl+M', electronOnly: true },
+  { id: 'close-float-windows',  label: 'Close all pop-out windows',   category: 'App', defaultBinding: 'Ctrl+Shift+W', electronOnly: true },
+  { id: 'restart-app',          label: 'Restart app',                 category: 'App', defaultBinding: '', electronOnly: true },
+  { id: 'rescan-library',       label: 'Rescan library',              category: 'App', defaultBinding: '', electronOnly: true },
+  { id: 'discord-status',       label: 'Toggle Discord status',       category: 'App', defaultBinding: '', electronOnly: true },
+] as const
+
+export const HOTKEY_CATEGORIES: readonly HotkeyCategory[] = ['Playback', 'Volume', 'Navigation', 'App']
+
+// actionId → action, for O(1) lookups from both the dispatcher and the UI.
+const ACTIONS_BY_ID = new Map(HOTKEY_ACTIONS.map((a) => [a.id, a]))
+
+export function getAction(id: string): HotkeyAction | undefined {
+  return ACTIONS_BY_ID.get(id)
+}
+
+/** The combo currently bound to `id`: the user override if one exists (an
+ *  override of '' means the user deliberately cleared it), else the default. */
+export function effectiveBinding(id: string, overrides: Record<string, string>): string {
+  if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id]
+  return ACTIONS_BY_ID.get(id)?.defaultBinding ?? ''
+}
+
+/** Reverse lookup: which action (if any) is bound to `combo`. Bindings are kept
+ *  unique at write time (see the store's setHotkeyBinding), so first match wins. */
+export function resolveAction(combo: string, overrides: Record<string, string>): string | null {
+  if (!combo) return null
+  for (const a of HOTKEY_ACTIONS) {
+    if (effectiveBinding(a.id, overrides) === combo) return a.id
+  }
+  return null
+}
+
+// ─── Event → combo ─────────────────────────────────────────────────────────
+
+const MODIFIER_CODES = new Set([
+  'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight',
+  'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight',
+])
+
+// event.code → canonical key token for the punctuation / navigation keys that
+// aren't letters or digits. Codes are physical-key based, so this stays correct
+// regardless of keyboard layout and independent of the Shift state.
+const CODE_KEY: Record<string, string> = {
+  Space: 'Space',
+  ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
+  Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'",
+  BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=', Backquote: '`',
+  Enter: 'Enter', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert', Tab: 'Tab',
+  Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+}
+
+/** The non-modifier "main key" of an event, or null if the event is a bare
+ *  modifier press (or a key we don't support binding). */
+function normalizeKey(e: KeyboardEvent): string | null {
+  const code = e.code
+  if (MODIFIER_CODES.has(code)) return null
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3)            // KeyA  → A
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5)          // Digit1 → 1
+  if (/^Numpad[0-9]$/.test(code)) return 'Num' + code.slice(6) // Numpad1 → Num1
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(e.key)) return e.key     // F1..F24
+  if (CODE_KEY[code]) return CODE_KEY[code]
+  // Media keys carry no stable `code` across platforms — fall back to `key`.
+  if (e.key && e.key.startsWith('Media')) return e.key
+  return null
+}
+
+/** Turn a keydown into its canonical combo string, or null if it's just a
+ *  modifier being held (or an unbindable key). Escape returns null on purpose:
+ *  the recorder uses it to cancel, and it should never become a binding. */
+export function eventToCombo(e: KeyboardEvent): string | null {
+  if (e.key === 'Escape') return null
+  const key = normalizeKey(e)
+  if (!key) return null
+  const parts: string[] = []
+  if (e.ctrlKey) parts.push('Ctrl')
+  if (e.altKey) parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  if (e.metaKey) parts.push('Meta')
+  parts.push(key)
+  return parts.join('+')
+}
+
+// ─── Combo → display ─────────────────────────────────────────────────────────
+
+const IS_MAC = typeof navigator !== 'undefined' &&
+  /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '')
+
+const DISPLAY: Record<string, string> = {
+  Ctrl: IS_MAC ? '⌃' : 'Ctrl',
+  Alt: IS_MAC ? '⌥' : 'Alt',
+  Shift: IS_MAC ? '⇧' : 'Shift',
+  Meta: IS_MAC ? '⌘' : 'Win',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  Space: 'Space', Enter: 'Enter', Backspace: '⌫', Delete: 'Del',
+  MediaPlayPause: 'Play/Pause', MediaTrackNext: 'Next', MediaTrackPrevious: 'Prev', MediaStop: 'Stop',
+}
+
+/** Split a combo into display tokens for rendering as individual <kbd> chips.
+ *  Returns [] for an empty/unbound combo. */
+export function comboTokens(combo: string): string[] {
+  if (!combo) return []
+  return combo.split('+').map((p) => DISPLAY[p] ?? p)
+}
+
+// ─── Global (OS-wide) shortcuts ──────────────────────────────────────────────
+// A combo can only be registered as an OS-global shortcut (Electron's
+// globalShortcut) when it carries a modifier or is a media key — a bare letter
+// registered globally would swallow that key in every application, so we refuse
+// to. These helpers translate our combo strings into Electron accelerators.
+
+const MODIFIER_TOKENS = new Set(['Ctrl', 'Alt', 'Shift', 'Meta'])
+
+// Combo main-key token → Electron accelerator key. Only keys that differ from
+// their combo token need an entry; anything else (A-Z, 0-9, punctuation, F-keys)
+// passes through unchanged.
+const ACCEL_KEY: Record<string, string> = {
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  Enter: 'Return',
+  MediaPlayPause: 'MediaPlayPause',
+  MediaTrackNext: 'MediaNextTrack',
+  MediaTrackPrevious: 'MediaPreviousTrack',
+  MediaStop: 'MediaStop',
+}
+
+const MEDIA_TOKENS = new Set(Object.keys(ACCEL_KEY).filter((k) => k.startsWith('Media')))
+
+/** True when `combo` is eligible for OS-global registration (has a modifier, or
+ *  is a media key). Bare single keys are in-app only. */
+export function isGloballyRegistrable(combo: string): boolean {
+  if (!combo) return false
+  const parts = combo.split('+')
+  const key = parts[parts.length - 1]
+  if (MEDIA_TOKENS.has(key)) return true
+  return parts.slice(0, -1).some((p) => MODIFIER_TOKENS.has(p))
+}
+
+/** Convert a combo to an Electron accelerator string, or null if it can't be a
+ *  global shortcut. "Ctrl" maps to CommandOrControl so it's Cmd on macOS. */
+export function comboToAccelerator(combo: string): string | null {
+  if (!isGloballyRegistrable(combo)) return null
+  const parts = combo.split('+')
+  const key = parts[parts.length - 1]
+  const out: string[] = []
+  for (const p of parts.slice(0, -1)) {
+    if (p === 'Ctrl') out.push('CommandOrControl')
+    else if (p === 'Alt') out.push('Alt')
+    else if (p === 'Shift') out.push('Shift')
+    else if (p === 'Meta') out.push('Super')
+    else return null
+  }
+  if (/^Num[0-9]$/.test(key)) out.push('num' + key.slice(3))
+  else out.push(ACCEL_KEY[key] ?? key)
+  return out.join('+')
+}
