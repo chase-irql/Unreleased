@@ -8,6 +8,7 @@ import type { JWApiSong } from '../lib/juicewrldApi'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
+import { DEFAULT_NAV_ORDER } from '../lib/navItems'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -59,6 +60,15 @@ export interface DownloadItem {
 // horizontal bar above/below the content. Mobile always uses the bottom tab bar.
 export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
 
+// The detached ("pop-out") BrowserWindows the desktop build can open instead of
+// rendering a view inline (see FloatApp). Each can be turned off individually:
+// for settings/songInfo/editor that falls back to the in-app overlay, and for
+// miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
+export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'miniPlayer'
+const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
+  settings: true, songInfo: true, editor: true, miniPlayer: true,
+}
+
 // ─── Non-queue state ──────────────────────────────────────────────────────────
 
 interface AppState {
@@ -77,6 +87,8 @@ interface AppState {
   showSettings: boolean
   showDiagnostics: boolean
   showQueue: boolean
+  // Desktop bottom player collapsed to a slim strip to reclaim vertical space.
+  playerCollapsed: boolean
   // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
   // is active — lets App.tsx hide the frameless-window title bar controls,
   // which would otherwise float over the immersive view.
@@ -90,6 +102,10 @@ interface AppState {
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
   theme: SkinId
   sidebarPosition: SidebarPosition
+  // User-defined order of the primary side-menu nav items, by view id. Only
+  // ever a permutation of the known ids — orderedNavItems() sanitizes it on
+  // read, so a stale/partial saved order can't drop or duplicate a tab.
+  navOrder: ViewType[]
 
   // Settings
   crossfadeEnabled: boolean
@@ -104,6 +120,10 @@ interface AppState {
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
   preferOgVersion: boolean
+  // Per-kind toggles for the detached pop-out windows (desktop only). Disabling
+  // one keeps the feature working — it just renders inline in the main window
+  // instead (or, for the mini player, hides the pop-out button).
+  popoutWindows: Record<PopoutWindowKind, boolean>
 
   // Keyboard shortcuts. `hotkeyBindings` holds only user *overrides* of the
   // defaults in lib/hotkeys.ts (actionId → combo; an explicit '' means the
@@ -151,6 +171,11 @@ interface AppState {
 
   // Library (Electron only)
   libraryTracks: LibraryTrack[]
+  // Lazily-read cover art, keyed by track id, kept OUT of libraryTracks so a
+  // cover streaming in never changes the libraryTracks reference (which the
+  // album/artist/song derivations memoize on). `undefined`/absent = not read
+  // yet, `null` = read and artless, string = data URI. See applyLibraryArt.
+  libraryArt: Record<string, string | null>
   libraryFolders: string[]
   libraryScanning: boolean
   libraryLastScanned: number | null
@@ -194,9 +219,11 @@ interface AppActions {
   setShowSettings: (show: boolean) => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
+  setPlayerCollapsed: (collapsed: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
   setTheme: (theme: SkinId) => void
   setSidebarPosition: (position: SidebarPosition) => void
+  setNavOrder: (order: ViewType[]) => void
 
   setCrossfade: (enabled: boolean, duration: number) => void
   setPauseFade: (enabled: boolean) => void
@@ -204,6 +231,7 @@ interface AppActions {
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
   setPreferOgVersion: (enabled: boolean) => void
+  setPopoutWindow: (kind: PopoutWindowKind, enabled: boolean) => void
   // Bind (or, with combo === '', clear) a shortcut. Passing a combo already in
   // use elsewhere transfers it — the previous owner is cleared — so bindings
   // stay unique. Resets restore every action to its default.
@@ -349,6 +377,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showSettings: false,
   showDiagnostics: false,
   showQueue: false,
+  playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
   wrldFullscreen: false,
   radioFmActive: false,
   radioFmIsLive: null,
@@ -360,6 +389,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // getSkin() maps unknown persisted ids (renamed/removed skins) back to dark.
   theme: getSkin(ls.get<string>('theme') ?? 'dark').id,
   sidebarPosition: ls.get<SidebarPosition>('sidebarPosition') ?? 'left',
+  navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
@@ -385,11 +415,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
   setShowSettings: (showSettings) => {
     // Desktop: Settings lives in its own pop-out window (see FloatApp) — every
-    // "open settings" path routes there. The in-app overlay remains only for
-    // the web build, where there are no extra OS windows.
+    // "open settings" path routes there, unless the user turned that pop-out
+    // off. The in-app overlay is the fallback (and the only path on the web
+    // build, where there are no extra OS windows).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const el = (window as any).electron
-    if (showSettings && el?.openFloatWindow) {
+    if (showSettings && el?.openFloatWindow && get().popoutWindows.settings) {
       el.openFloatWindow('settings')
       return
     }
@@ -397,9 +428,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
+  setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
   setSidebarPosition: (sidebarPosition) => { set({ sidebarPosition }); ls.set('sidebarPosition', sidebarPosition) },
+  setNavOrder: (navOrder) => { set({ navOrder }); ls.set('navOrder', navOrder) },
 
   // ── Settings ──────────────────────────────────────────────────────────────
   crossfadeEnabled: ls.get<boolean>('crossfadeEnabled') ?? false,
@@ -409,6 +442,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
+  // Merge stored overrides onto the defaults so a kind added in a later version
+  // is enabled by default even for installs whose saved object predates it.
+  popoutWindows: { ...POPOUT_WINDOW_DEFAULTS, ...(ls.get<Partial<Record<PopoutWindowKind, boolean>>>('popoutWindows') ?? {}) },
   hotkeyBindings: ls.get<Record<string, string>>('hotkeyBindings') ?? {},
   hotkeySeekSeconds: ls.get<number>('hotkeySeekSeconds') ?? 10,
   globalHotkeysEnabled: ls.get<boolean>('globalHotkeysEnabled') ?? false,
@@ -422,6 +458,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
+  setPopoutWindow: (kind, enabled) => {
+    const popoutWindows = { ...get().popoutWindows, [kind]: enabled }
+    set({ popoutWindows })
+    ls.set('popoutWindows', popoutWindows)
+  },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
 
   setHotkeyBinding: (actionId, combo) => {
@@ -637,7 +678,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   openSongEditor: (songId) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const el = (window as any).electron
-    if (el?.openFloatWindow) {
+    if (el?.openFloatWindow && get().popoutWindows.editor) {
       el.openFloatWindow('editor', { songId })
       return
     }
@@ -650,6 +691,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // ── Library ───────────────────────────────────────────────────────────────
   libraryTracks: [],
+  libraryArt: {},
   libraryFolders: ls.get<string[]>('libraryFolders') ?? [],
   libraryScanning: false,
   libraryLastScanned: ls.get<number>('libraryLastScanned') ?? null,
@@ -667,18 +709,26 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   setLibraryTracks: (libraryTracks) => set({ libraryTracks }),
   updateLibraryTrack: (id, updates) => set((s) => {
-    const newLib = s.libraryTracks.map((t) => t.id === id ? { ...t, ...updates } : t)
-    const newQueue = updates.albumArt !== undefined
-      ? s.queue.map((t) => t.id === id ? { ...t, imageUrl: (updates.albumArt as string) || '' } : t)
+    const artChanged = updates.albumArt !== undefined
+    // Cover art lives in libraryArt, never on the track objects — keep the
+    // track list metadata-only so it stays cheap to copy and persist. Route an
+    // art edit into the map (the channel thumbnails subscribe to) instead.
+    const { albumArt, ...meta } = updates
+    const newLib = Object.keys(meta).length
+      ? s.libraryTracks.map((t) => t.id === id ? { ...t, ...meta } : t)
+      : s.libraryTracks
+    const libraryArt = artChanged ? { ...s.libraryArt, [id]: albumArt as string | null } : s.libraryArt
+    const newQueue = artChanged
+      ? s.queue.map((t) => t.id === id ? { ...t, imageUrl: (albumArt as string) || '' } : t)
       : s.queue
     const isCurrentTrack = s.currentTrack?.id === id
-    const newCurrentTrack = (isCurrentTrack && updates.albumArt !== undefined && s.currentTrack)
-      ? { ...s.currentTrack, imageUrl: (updates.albumArt as string) || '' }
+    const newCurrentTrack = (isCurrentTrack && artChanged && s.currentTrack)
+      ? { ...s.currentTrack, imageUrl: (albumArt as string) || '' }
       : s.currentTrack
-    const newCurrentTrackFull = (isCurrentTrack && updates.albumArt !== undefined && s.currentTrackFull)
-      ? { ...s.currentTrackFull, albumArt: updates.albumArt as string | null }
+    const newCurrentTrackFull = (isCurrentTrack && artChanged && s.currentTrackFull)
+      ? { ...s.currentTrackFull, albumArt: albumArt as string | null }
       : s.currentTrackFull
-    return { libraryTracks: newLib, queue: newQueue, currentTrack: newCurrentTrack, currentTrackFull: newCurrentTrackFull }
+    return { libraryTracks: newLib, libraryArt, queue: newQueue, currentTrack: newCurrentTrack, currentTrackFull: newCurrentTrackFull }
   }),
   // Batched form of updateLibraryTrack(id, { albumArt }) — collects results
   // for a frame's worth of time and applies them in ONE set(), with the same
@@ -691,8 +741,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
         _pendingArt = null
         if (!batch || batch.size === 0) return
         set((s) => {
-          const libraryTracks = s.libraryTracks.map((t) => batch.has(t.id) ? { ...t, albumArt: batch.get(t.id) } : t)
-          const queue = s.queue.map((t) => batch.has(t.id) ? { ...t, imageUrl: batch.get(t.id) || '' } : t)
+          // Covers land in their own map — NOT in libraryTracks — so a burst of
+          // streaming covers never rebuilds the (potentially multi-thousand
+          // entry) track array or invalidates the album/artist/song memos that
+          // key on it. Only the per-id thumbnail subscribers re-render.
+          const libraryArt = { ...s.libraryArt }
+          for (const [k, v] of batch) libraryArt[k] = v
+          // Fan the same covers out to the active queue / now-playing so an
+          // already-queued local track picks up its art. Guarded so a large
+          // queue isn't copied when none of the batched ids are even in it.
+          const queue = s.queue.some((t) => batch.has(t.id))
+            ? s.queue.map((t) => batch.has(t.id) ? { ...t, imageUrl: batch.get(t.id) || '' } : t)
+            : s.queue
           const curId = s.currentTrack?.id
           const currentTrack = (curId && batch.has(curId) && s.currentTrack)
             ? { ...s.currentTrack, imageUrl: batch.get(curId) || '' }
@@ -700,7 +760,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
           const currentTrackFull = (curId && batch.has(curId) && s.currentTrackFull)
             ? { ...s.currentTrackFull, albumArt: batch.get(curId) ?? null }
             : s.currentTrackFull
-          return { libraryTracks, queue, currentTrack, currentTrackFull }
+          return { libraryArt, queue, currentTrack, currentTrackFull }
         })
       }, 40)
     }
@@ -745,16 +805,21 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const result = await el.scanLibrary(libraryFolders, libraryTracks)
       if (result.error) { console.error('Scan error:', result.error); return }
       const now = Date.now()
-      set({ libraryTracks: result.tracks, libraryLastScanned: now })
+      // Drop cached covers only for files that were added or changed this scan
+      // (their on-disk art may now differ); unchanged files keep theirs so a
+      // routine auto-refresh doesn't force every visible cover to re-read.
+      const prevSig = new Map(libraryTracks.map((t) => [t.id, `${t.fileSize}:${t.lastModified}`]))
+      set((s) => {
+        const libraryArt = { ...s.libraryArt }
+        for (const t of result.tracks as LibraryTrack[]) {
+          if (prevSig.get(t.id) !== `${t.fileSize}:${t.lastModified}`) delete libraryArt[t.id]
+        }
+        return { libraryTracks: result.tracks, libraryArt, libraryLastScanned: now }
+      })
       ls.set('libraryLastScanned', now)
-      // Strip lazily-loaded cover art before persisting: unchanged files come
-      // back from the scanner as the same in-memory objects, art included, and
-      // saving that would bloat library.json with base64 covers (it's meant to
-      // hold metadata only — art is re-read on demand and merged in loadLibrary).
-      const diskTracks = (result.tracks as LibraryTrack[]).map((t) =>
-        t.albumArt !== undefined ? { ...t, albumArt: undefined } : t,
-      )
-      await el.saveLibraryData({ tracks: diskTracks, folders: libraryFolders, lastScanned: now })
+      // The scanner returns metadata only (covers are read on demand), so the
+      // track list can be persisted as-is without bloating library.json.
+      await el.saveLibraryData({ tracks: result.tracks, folders: libraryFolders, lastScanned: now })
     } catch(e) { console.error('scanLibrary error:', e) }
     finally { set({ libraryScanning: false }) }
   },
@@ -813,20 +878,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (!el) return
     try {
       const [libData, playlists] = await Promise.all([el.loadLibraryData(), el.loadLocalPlaylists()])
-      // Carry already-loaded cover art over to the reloaded track list. This
-      // runs on every Library tab mount, and the disk snapshot never has
-      // albumArt (it's read lazily per-track) — replacing the list wholesale
-      // reset every cover to "not loaded yet" and re-read them all from disk
-      // each time the tab was opened.
-      if (libData?.tracks) {
-        set((s) => {
-          const artById = new Map(s.libraryTracks.filter((t) => t.albumArt !== undefined).map((t) => [t.id, t.albumArt]))
-          const tracks = (libData.tracks as LibraryTrack[]).map((t) =>
-            t.albumArt === undefined && artById.has(t.id) ? { ...t, albumArt: artById.get(t.id) } : t,
-          )
-          return { libraryTracks: tracks }
-        })
-      }
+      // Cover art lives in libraryArt (keyed by track id) and is left untouched
+      // here, so the loaded covers survive a Library-tab remount without any
+      // per-track merge — just swap in the fresh metadata list.
+      if (libData?.tracks) set({ libraryTracks: libData.tracks })
       if (playlists) set({ localPlaylists: playlists })
     } catch(e) { console.error('loadLibrary error:', e) }
   },

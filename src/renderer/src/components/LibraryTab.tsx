@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Music, Play, Pause, Shuffle, Search, MoreHorizontal,
-  ChevronLeft, LayoutGrid, List, Sparkles, User,
+  ChevronLeft, ChevronRight, LayoutGrid, List, Sparkles, User,
   FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
@@ -52,9 +52,16 @@ interface Artist {
 }
 
 // ─── lazy album-art loading hook ──────────────────────────────────────────────
-// A track carries `albumArt: undefined` until its cover has been read off disk.
-// This kicks off that read once and lets the store fan the result out to every
-// component showing the same track.
+// Covers live in the store's `libraryArt` map keyed by track id: `undefined`
+// until read off disk, then `null` (artless) or a data URI. This subscribes a
+// thumbnail to just its own entry and kicks off the read once. The main-process
+// read is itself cached (in memory + on disk, artless files remembered as ''),
+// so this never re-parses a file it has already seen.
+//
+// NB: we intentionally do NOT gate on `track.hasAlbumArt` — the scan runs with
+// `skipCovers: true`, which makes music-metadata drop the picture tag entirely,
+// so that flag is always false and gating on it hid every cover. The on-demand
+// read + cache is the real optimization for artless files.
 
 // The same track can be visible in several places at once (song list, album
 // grid, playlist mosaic) — without this, each thumbnail fired its own
@@ -64,19 +71,16 @@ const inflightArt = new Set<string>()
 function useTrackArt(track: LibraryTrack): string | null | undefined {
   const el = (window as any).electron
   const { applyLibraryArt } = useStorePick('applyLibraryArt')
+  const art = useStore((s) => s.libraryArt[track.id])
   useEffect(() => {
-    if (!el || track.albumArt !== undefined) return
-    // The scan already read this file's tags and found no embedded art —
-    // don't pay a full metadata parse just to learn null again.
-    if (!track.hasAlbumArt) { applyLibraryArt(track.id, null); return }
-    if (inflightArt.has(track.id)) return
+    if (!el || art !== undefined || inflightArt.has(track.id)) return
     inflightArt.add(track.id)
     el.readAlbumArt(track.filePath)
       .then((a: string | null) => applyLibraryArt(track.id, a ?? null))
       .catch(() => {})
       .finally(() => inflightArt.delete(track.id))
-  }, [track.id, track.albumArt])
-  return track.albumArt
+  }, [track.id, art])
+  return art
 }
 
 /** Small square thumbnail. Exported — PlaylistsView reuses it. */
@@ -445,27 +449,47 @@ const LIB_SECTIONS: { key: LibKey; label: string; icon: JSX.Element }[] = [
   { key: 'songs', label: 'Songs', icon: <List size={16} /> },
 ]
 
+const LS_RAIL_COLLAPSED = 'library:railCollapsed'
+
 function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => void; songCount: number }): JSX.Element {
+  const [collapsed, setCollapsed] = useState<boolean>(() => localStorage.getItem(LS_RAIL_COLLAPSED) === 'true')
+  const toggle = (): void => setCollapsed(c => { const next = !c; localStorage.setItem(LS_RAIL_COLLAPSED, String(next)); return next })
+
   const row = (active: boolean) =>
     `w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${
       active ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
     }`
+  // Labels fade to zero-width when collapsed so only the icons remain (matches Sidebar).
+  const label = (extra = ''): string =>
+    `truncate text-left transition-opacity duration-200 ${collapsed ? 'w-0 flex-none opacity-0 pointer-events-none' : `opacity-100 ${extra}`}`
 
   return (
-    <div className="w-52 shrink-0 flex flex-col bg-surface-raised border-r border-[var(--border)] overflow-y-auto">
-      <div className="px-4 pt-5 pb-3">
-        <h1 className="text-text-primary text-lg font-bold">Library</h1>
+    <div className={`shrink-0 flex flex-col bg-surface-raised border-r border-[var(--border)] overflow-x-hidden overflow-y-auto transition-[width] duration-200 ${collapsed ? 'w-14' : 'w-52'}`}>
+      <div className="flex items-center px-4 pt-5 pb-3 min-h-[2.75rem]">
+        <h1 className={`text-text-primary text-lg font-bold ${label('flex-1')}`}>Library</h1>
       </div>
 
       <div className="px-2 space-y-1">
         {LIB_SECTIONS.map(s => (
-          <button key={s.key} onClick={() => onNav({ kind: 'lib', key: s.key })} className={row(nav.kind === 'lib' && nav.key === s.key)}>
+          <button key={s.key} onClick={() => onNav({ kind: 'lib', key: s.key })}
+            title={collapsed ? s.label : undefined}
+            className={row(nav.kind === 'lib' && nav.key === s.key)}>
             <span className="shrink-0">{s.icon}</span>
-            <span className="truncate flex-1 text-left">{s.label}</span>
-            {s.key === 'songs' && <span className="text-[10px] text-text-muted">{songCount}</span>}
+            <span aria-hidden={collapsed} className={label('flex-1')}>{s.label}</span>
+            {s.key === 'songs' && <span aria-hidden={collapsed} className={`text-[10px] text-text-muted transition-opacity duration-200 ${collapsed ? 'w-0 opacity-0 pointer-events-none' : 'opacity-100'}`}>{songCount}</span>}
           </button>
         ))}
       </div>
+
+      {/* Collapse toggle */}
+      <button
+        onClick={toggle}
+        title={collapsed ? 'Expand menu' : 'Collapse menu'}
+        className="mt-auto m-2 flex items-center gap-3 px-3 py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+      >
+        <span className="shrink-0">{collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}</span>
+        <span aria-hidden={collapsed} className={label('flex-1')}>Collapse</span>
+      </button>
     </div>
   )
 }

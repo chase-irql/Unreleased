@@ -1,15 +1,16 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { SearchCode, HardDrive, Settings, ShieldCheck, ListMusic, Library, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
+import { Settings, ShieldCheck, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
+import { orderedNavItems } from '../lib/navItems'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
 
 const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition')
+  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
 
@@ -51,13 +52,9 @@ export default function Sidebar(): JSX.Element {
 
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
-  const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
-    { icon: <img src={logo} alt="WRLD" className="w-[24px] h-[24px] object-contain" />, label: 'WRLD', view: 'wrld' },
-    { icon: <SearchCode size={18} />, label: 'Tracker', view: 'api-tracker' },
-    { icon: <HardDrive size={18} />, label: 'Files', view: 'api-files' },
-    ...(isElectron ? [{ icon: <Library size={18} />, label: 'Library', view: 'library' as const }] : []),
-    { icon: <ListMusic size={18} />, label: 'Playlists', view: 'playlists' },
-  ]
+  // Order comes from Settings → Appearance → Menu order (drag-to-reorder);
+  // orderedNavItems sanitizes the saved list and drops web-hidden destinations.
+  const items = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
 
   const navClick = (view: ViewType): void => {
     if (activeView === view && view === 'playlists') {

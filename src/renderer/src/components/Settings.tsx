@@ -3,11 +3,13 @@ import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
-  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw,
+  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2,
+  ListOrdered, GripVertical,
 } from 'lucide-react'
-import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
+import { useStore, useStorePick, type SidebarPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
 import { SKINS } from '../lib/skins'
+import { orderedNavItems, DEFAULT_NAV_ORDER } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
@@ -24,6 +26,16 @@ const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[]
   { id: 'right', label: 'Right', icon: PanelRight },
   { id: 'top', label: 'Top', icon: PanelTop },
   { id: 'bottom', label: 'Bottom', icon: PanelBottom },
+]
+
+// The detached pop-out windows the user can turn on/off individually. Order =
+// display order. `sub` only where a kind behaves differently from the default
+// "opens in the main window when off" — the mini player has no in-app version.
+const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
+  { key: 'settings', label: 'Settings' },
+  { key: 'songInfo', label: 'Song info' },
+  { key: 'editor', label: 'Song editor' },
+  { key: 'miniPlayer', label: 'Mini player', sub: 'No in-app version — off hides the pop-out button' },
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
@@ -93,6 +105,8 @@ interface AppSettings {
   startupView: string
   discordRpcEnabled: boolean
   offlineLibraryPath: string
+  miniPlayerHidesWindows: boolean
+  confirmCloseWhilePlaying: boolean
 }
 
 // `floating` — rendered as the sole content of a pop-out BrowserWindow (see
@@ -109,10 +123,12 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     theme, setTheme,
     accentColor, setAccentColor,
     sidebarPosition, setSidebarPosition,
+    navOrder, setNavOrder,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
+    popoutWindows, setPopoutWindow,
     playbackSpeed, setPlaybackSpeed,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
@@ -122,10 +138,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
+  // Drag-to-reorder state for the "Menu order" list — indices into the visible
+  // nav list (see shownNav below). null = nothing being dragged / hovered.
+  const [navDragIdx, setNavDragIdx] = useState<number | null>(null)
+  const [navOverIdx, setNavOverIdx] = useState<number | null>(null)
   const [sleepMinutes, setSleepMinutes] = useState(30)
   const [updateState, setUpdateState] = useState<UpdateState>('idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
@@ -134,6 +154,31 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const overlayRef = useRef<HTMLDivElement>(null)
   const isElectron = navigator.userAgent.includes('Electron')
   const el = (window as any).electron
+  // Master pop-out switch reflects "any kind still on"; flipping it turns them
+  // all off (or, from all-off, back on).
+  const anyPopout = POPOUT_KINDS.some((k) => popoutWindows[k.key])
+
+  // ── Menu order (Appearance) ──────────────────────────────────────────────
+  // The nav items exactly as the side menu renders them: the saved order,
+  // sanitized, with web-hidden destinations dropped so what you drag here
+  // matches what you see in the sidebar.
+  const shownNav = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
+  const navIsDefault = navOrder.length === DEFAULT_NAV_ORDER.length && navOrder.every((v, i) => v === DEFAULT_NAV_ORDER[i])
+  // Move a visible item to sit adjacent to a visible target. Reordering happens
+  // on the FULL order (including any web-hidden items) so their relative spots
+  // are preserved even when a web user rearranges the visible ones.
+  const moveNavItem = (fromVisible: number, toVisible: number): void => {
+    if (fromVisible === toVisible) return
+    const full = orderedNavItems(navOrder).map((i) => i.view)
+    const dragView = shownNav[fromVisible].view
+    const targetView = shownNav[toVisible].view
+    const from = full.indexOf(dragView)
+    const next = [...full]
+    next.splice(from, 1)
+    const targetIdx = next.indexOf(targetView)
+    next.splice(toVisible > fromVisible ? targetIdx + 1 : targetIdx, 0, dragView)
+    setNavOrder(next)
+  }
 
   const closeSettings = (): void => {
     if (floating) el?.closeSelf?.()
@@ -155,6 +200,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     startupView: 'api-tracker',
     discordRpcEnabled: true,
     offlineLibraryPath: '',
+    miniPlayerHidesWindows: false,
+    confirmCloseWhilePlaying: true,
   })
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
@@ -532,6 +579,49 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         </button>
                       )
                     })}
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#6366f1' }}>
+                      <ListOrdered size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-text-primary text-sm">Menu order</span>
+                      <p className="text-text-muted text-[11px]">Drag to reorder the side menu tabs</p>
+                    </div>
+                    {!navIsDefault && (
+                      <button
+                        onClick={() => setNavOrder(DEFAULT_NAV_ORDER)}
+                        title="Restore the default menu order"
+                        className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
+                      >
+                        <RotateCcw size={11} /> Reset
+                      </button>
+                    )}
+                  </div>
+                  <div className="pl-[34px] space-y-1.5">
+                    {shownNav.map((item, idx) => (
+                      <div
+                        key={item.view}
+                        draggable
+                        onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
+                        onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
+                        onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
+                        className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
+                          navDragIdx === idx
+                            ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
+                            : navOverIdx === idx
+                              ? 'border-[var(--accent)] bg-accent/10'
+                              : 'border-[var(--border)] bg-[var(--surface-overlay)]'
+                        }`}
+                      >
+                        <GripVertical size={14} className="text-text-muted shrink-0" />
+                        <span className="w-6 h-6 shrink-0 flex items-center justify-center text-text-secondary">{item.icon}</span>
+                        <span className="text-text-primary text-sm truncate">{item.label}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -928,6 +1018,51 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">
                   <Toggle on={appSettings.minimizeToTray} onClick={() => setSetting('minimizeToTray', !appSettings.minimizeToTray)} />
                 </Row>
+                <Row
+                  icon={Minus}
+                  iconColor="#6b7280"
+                  label="Confirm before quitting while playing"
+                  sub="Ask before closing the app if a song is still playing (not when it just hides to the tray)"
+                >
+                  <Toggle on={appSettings.confirmCloseWhilePlaying} onClick={() => setSetting('confirmCloseWhilePlaying', !appSettings.confirmCloseWhilePlaying)} />
+                </Row>
+                <div className="py-3 border-b border-[var(--border)]">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#8b5cf6' }}>
+                      <AppWindow size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-text-primary text-sm">Pop-out windows</span>
+                      <p className="text-text-muted text-[11px]">Open these in their own separate window. Turn one off to keep it inside the main window instead.</p>
+                    </div>
+                    <div className="ml-2 shrink-0">
+                      <Toggle on={anyPopout} onClick={() => { const next = !anyPopout; POPOUT_KINDS.forEach((k) => setPopoutWindow(k.key, next)) }} />
+                    </div>
+                  </div>
+                  {anyPopout && (
+                    <div className="pl-[34px] mt-2.5 space-y-2.5">
+                      {POPOUT_KINDS.map(({ key, label, sub }) => (
+                        <div key={key} className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-text-secondary text-sm truncate">{label}</p>
+                            {sub && <p className="text-text-muted text-[11px] truncate">{sub}</p>}
+                          </div>
+                          <Toggle on={popoutWindows[key]} onClick={() => setPopoutWindow(key, !popoutWindows[key])} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {popoutWindows.miniPlayer && (
+                  <Row
+                    icon={PictureInPicture2}
+                    iconColor="#8b5cf6"
+                    label="Solo mini player"
+                    sub="Hide the main window and other pop-outs while the mini player is open — restored when it closes"
+                  >
+                    <Toggle on={appSettings.miniPlayerHidesWindows} onClick={() => setSetting('miniPlayerHidesWindows', !appSettings.miniPlayerHidesWindows)} />
+                  </Row>
+                )}
                 <Row icon={MessageCircle} iconColor="#5865f2" label="Show Discord Status">
                   <Toggle on={appSettings.discordRpcEnabled} onClick={() => setSetting('discordRpcEnabled', !appSettings.discordRpcEnabled)} />
                 </Row>

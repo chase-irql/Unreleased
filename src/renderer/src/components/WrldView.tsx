@@ -1165,8 +1165,8 @@ export default function WrldView(): JSX.Element {
                 a cramped 300px-capped overlay. */}
             <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
               {showQueue && !radioFmActive ? (
-                <div className="h-full flex items-center justify-center pr-[6%]">
-                  <div className="w-[65%] max-w-[420px] min-w-[260px] h-[75%]">
+                <div className="h-full flex items-stretch justify-center px-6 xl:px-10 py-7">
+                  <div className="w-full max-w-[440px] h-full animate-wrld-queue-in">
                     <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
                   </div>
                 </div>
@@ -1511,7 +1511,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
     <div
       className={`relative flex flex-col overflow-hidden ${
         variant === 'sheet' ? 'fixed inset-0 z-40'
-          : variant === 'panel' ? 'w-full h-full rounded-2xl shadow-2xl'
+          : variant === 'panel' ? 'w-full h-full rounded-2xl ring-1 ring-white/[0.09] shadow-[0_28px_80px_-12px_rgba(0,0,0,0.7)]'
           : 'w-full mt-2 rounded-2xl shadow-2xl'
       }`}
       style={variant === 'inline' ? { maxHeight: 300 } : undefined}
@@ -1527,6 +1527,8 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
         style={{ backdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)', WebkitBackdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)' }}
       />
       <div className="absolute inset-0 bg-white/[0.06]" />
+      {/* Soft top sheen — reads as light catching the top edge of the glass. */}
+      <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-white/[0.07] to-transparent pointer-events-none" />
 
       <div className="relative z-10 flex items-center justify-between px-4 pt-4 pb-3 shrink-0 border-b border-white/10">
         <div className="flex items-center gap-2">
@@ -1616,7 +1618,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
                 onDragOver={(e) => { e.preventDefault(); setDragOverIdx(i) }}
                 onDrop={() => handleDrop(i)}
                 onDragEnd={() => { setDragIdx(null); setDragOverIdx(null) }}
-                className={`transition-transform ${dragOverIdx === i && dragIdx !== i ? 'translate-y-0.5 opacity-70' : ''} ${dragIdx === i ? 'opacity-30' : ''}`}
+                className={`wrld-q-row transition-transform ${dragOverIdx === i && dragIdx !== i ? 'translate-y-0.5 opacity-70' : ''} ${dragIdx === i ? 'opacity-30' : ''}`}
               >
                 <WrldQueueRow
                   track={track}

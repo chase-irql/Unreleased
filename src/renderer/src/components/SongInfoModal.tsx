@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Music2, Pencil } from 'lucide-react'
+import { useStore } from '../store/useStore'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
@@ -45,11 +46,13 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
 
   // Desktop: song info lives in its own pop-out window — every existing
   // in-app <SongInfoModal> caller redirects there instead of rendering the
-  // overlay. The overlay remains for the web build (and for the pop-out
-  // itself, which mounts this with floating=true).
+  // overlay, unless the user disabled that pop-out. The overlay is the
+  // fallback (and the only path on the web build, and for the pop-out itself,
+  // which mounts this with floating=true).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const el = (window as any).electron
-  const redirectToFloat = !floating && !!el?.openFloatWindow
+  const popoutSongInfo = useStore((s) => s.popoutWindows.songInfo)
+  const redirectToFloat = !floating && !!el?.openFloatWindow && popoutSongInfo
   useEffect(() => {
     if (redirectToFloat && song) {
       el.openFloatWindow('song-info', { songId: song.id })
