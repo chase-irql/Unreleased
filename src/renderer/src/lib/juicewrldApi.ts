@@ -1,6 +1,7 @@
 import { Track } from '../types'
 import { apiRequest } from './apiClient'
 import { cacheGet } from './apiCache'
+import { peekSongPref } from './songPrefs'
 
 export const JWAPI_BASE = 'https://juicewrldapi.com/juicewrld'
 
@@ -205,6 +206,23 @@ export function buildImageUrl(imageUrl: string | null | undefined): string | und
   return `https://juicewrldapi.com${rel}`
 }
 
+/** Resolves a preference's `cover_url` — a user's chosen cover, pointing into
+ *  the API's own storage — to a loadable URL.
+ *
+ *  Three forms are accepted, because a cover can plausibly be picked from
+ *  either place the app already shows images from: an absolute/data URL passes
+ *  through; a leading-slash path is a site-relative asset, the same shape a
+ *  song's own `image_url` uses ("/assets/youtube.webp"); anything else is
+ *  treated as a path into the file storage ApiFilesView browses and goes
+ *  through the cover-art endpoint. Worth re-checking against the real column
+ *  once /library/preferences/ ships — this is the one place that has to know. */
+export function resolvePrefCoverUrl(coverUrl: string | null | undefined): string | undefined {
+  if (!coverUrl) return undefined
+  if (/^(https?:|data:|blob:)/.test(coverUrl)) return coverUrl
+  if (coverUrl.startsWith('/')) return buildImageUrl(coverUrl)
+  return buildCoverArtUrl(coverUrl)
+}
+
 // Discord's classic (local IPC) Rich Presence only reliably applies a
 // `large_url` up to roughly this many characters — longer ones get silently
 // ignored, leaving the static fallback logo. There's no way to shorten the
@@ -252,15 +270,27 @@ export function parseDuration(length: string | null | undefined): number {
 
 // ─── Convert API song to Track ────────────────────────────────────────────────
 
+// A Track is what the app plays and displays, so this is where a user's
+// per-song overrides get applied — every surface (queue, player, mini player,
+// Discord RPC, lists built from Tracks) then picks them up for free. The
+// canonical values stay on the Track as apiTitle/apiImageUrl.
+//
+// JWApiSong deliberately keeps the API's own data untouched: the editor views
+// work from that shape, so an editor never sees another user's personal rename
+// in a field they might propose upstream.
 export function songToTrack(song: JWApiSong): Track {
-  const title = song.track_titles?.[0] || song.name
-  const imageUrl = buildImageUrl(song.image_url)
+  const apiTitle = song.track_titles?.[0] || song.name
+  const apiImageUrl = buildImageUrl(song.image_url)
+  const pref = peekSongPref(song.id)
+  const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
   return {
     id: `jw-${song.id}`,
     path: song.path,
     streamUrl: buildStreamUrl(song.path),
-    imageUrl,
-    title,
+    imageUrl: coverUrl ?? apiImageUrl,
+    title: pref?.name || apiTitle,
+    apiTitle,
+    apiImageUrl,
     artist: song.credited_artists || 'Juice WRLD',
     album: song.album || song.era?.name || '',
     era: song.era?.name || undefined,
@@ -269,7 +299,7 @@ export function songToTrack(song: JWApiSong): Track {
     trackNumber: null,
     duration: parseDuration(song.length),
     genre: song.category,
-    hasAlbumArt: !!song.image_url,
+    hasAlbumArt: !!song.image_url || !!coverUrl,
   }
 }
 

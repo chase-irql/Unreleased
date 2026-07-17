@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
-  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown,
+  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag, FileAudio2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -384,6 +384,13 @@ export default function SongContextMenu({
           {hasValidSong && (
             <MenuItem icon={<Info size={14} />} label="Song info" onClick={() => { onInfo(); onClose() }} />
           )}
+          {hasValidSong && (
+            <MenuItem
+              icon={<Flag size={14} />}
+              label="Report issue"
+              onClick={() => { useStore.getState().openReport({ kind: 'song', songId: songId as number, songName: track.apiTitle || track.title }); onClose() }}
+            />
+          )}
           {onSelect && <MenuItem icon={<CheckSquare2 size={14} />} label="Select" onClick={() => { onSelect(); onClose() }} />}
           {onAddToQueue && canQueue && (
             <MenuItem icon={<ListPlus size={14} />} label="Add to queue" onClick={() => { onAddToQueue(); onClose() }} />
@@ -399,6 +406,9 @@ export default function SongContextMenu({
           )}
           {onEditLocalMetadata && (
             <MenuItem icon={<Pencil size={14} />} label="Edit metadata" onClick={() => { onEditLocalMetadata(); onClose() }} />
+          )}
+          {isLocalOnly && !!track.path && el && (
+            <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
           )}
           {onToggleLike && (
             <MenuItem

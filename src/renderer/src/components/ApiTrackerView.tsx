@@ -559,8 +559,12 @@ const SongRow = memo(function SongRow({
    *  or an expanded version. */
   compact?: boolean
 }): JSX.Element {
+  // This song's personal override, if any. Selecting just this song's row keeps
+  // the map's other churn from re-rendering the row, and songToTrack picks up
+  // the custom cover from the same source on the render this triggers.
+  const pref = useStore((s) => s.songPrefs[song.id])
   const track = songToTrack(song)
-  const title = song.name
+  const title = pref?.name || song.name
   const altTitles = song.track_titles ?? []
   const canPlay = !!song.path
 
@@ -725,7 +729,9 @@ const DetailedSongRow = memo(function DetailedSongRow({
   selected: boolean
   onToggleSelect: (song: JWApiSong) => void
 }): JSX.Element {
+  const pref = useStore((s) => s.songPrefs[song.id])
   const track = songToTrack(song)
+  const title = pref?.name || song.name
   const canPlay = !!song.path
   const altTitles = song.track_titles ?? []
 
@@ -761,7 +767,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
       <div className="flex-1 min-w-0">
         {/* Title row: name + artist + era/category badges + duration + actions */}
         <div className="flex items-center gap-1.5 min-w-0">
-          <p className="text-text-primary text-sm font-medium truncate">{song.name}</p>
+          <p className="text-text-primary text-sm font-medium truncate">{title}</p>
           <span className="hidden md:block text-text-muted text-xs truncate shrink-0 max-w-[160px]">
             {song.credited_artists || 'Juice WRLD'}
           </span>
@@ -1065,7 +1071,9 @@ const LyricResultRow = memo(function LyricResultRow({
   selected: boolean
   onToggleSelect: (song: JWApiSong) => void
 }): JSX.Element {
+  const pref = useStore((s) => s.songPrefs[song.id])
   const track = songToTrack(song)
+  const title = pref?.name || song.name
   const canPlay = !!song.path
   const snippet = useMemo(() => getLyricSnippet(song.lyrics, query), [song.lyrics, query])
 
@@ -1100,7 +1108,7 @@ const LyricResultRow = memo(function LyricResultRow({
 
       <div className="flex-1 min-w-0">
         <div className="hidden md:flex items-center gap-1.5 flex-wrap">
-          <p className="text-text-primary text-sm font-medium truncate">{song.name}</p>
+          <p className="text-text-primary text-sm font-medium truncate">{title}</p>
           <span className="text-text-muted text-xs truncate">{song.credited_artists || 'Juice WRLD'}</span>
           {song.era?.name && (
             <button
@@ -1121,7 +1129,7 @@ const LyricResultRow = memo(function LyricResultRow({
 
         {/* Mobile: title + a single compact subtitle line instead of the
             wrapping badge row above, matching SongRow's mobile layout. */}
-        <p className="md:hidden text-text-primary text-sm font-medium truncate">{song.name}</p>
+        <p className="md:hidden text-text-primary text-sm font-medium truncate">{title}</p>
         <p className="md:hidden text-text-muted text-xs truncate mt-0.5">
           {song.credited_artists || 'Juice WRLD'}
           {song.era?.name ? ` · ${song.era.name}` : ''}

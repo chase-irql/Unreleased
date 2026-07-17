@@ -15,6 +15,7 @@ import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
 import { navigateMainWindow } from '../lib/windowSync'
 import type { ViewType } from '../types'
+import ReportForm from './ReportForm'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -39,7 +40,7 @@ const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
-type Tab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'about'
+type Tab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -244,6 +245,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen }] : []),
     ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor }] : []),
     ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench }] : []),
+    { id: 'feedback', label: 'Feedback', icon: MessageCircle },
     { id: 'about', label: 'About', icon: Info },
   ]
 
@@ -1002,7 +1004,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub={{
                     taskbar: 'Minimize keeps the window on the taskbar',
                     tray: 'Minimize hides the window to the tray icon',
-                    notification: 'Hides to the tray and shows a notification',
+                    notification: 'Hides to the tray, kept pinned & visible (Windows only)',
                   }[appSettings.minimizeTo]}
                 >
                   <select
@@ -1094,6 +1096,20 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     {cacheCleared !== null ? `Cleared ${cacheCleared}` : 'Clear cache'}
                   </button>
                 </Row>
+              </div>
+            )}
+
+            {/* ── Feedback ── */}
+            {tab === 'feedback' && (
+              <div>
+                <h3 className="text-text-primary text-lg font-bold mb-1">Feedback</h3>
+                <p className="text-text-muted text-xs mb-4 leading-relaxed max-w-md">
+                  Found a bug or have an idea? Let us know. To report a problem with a
+                  specific song's info or lyrics, open that song and choose “Report”.
+                </p>
+                <div className="max-w-md">
+                  <ReportForm mode={{ kind: 'feedback' }} />
+                </div>
               </div>
             )}
 

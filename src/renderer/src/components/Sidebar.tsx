@@ -13,6 +13,10 @@ export default function Sidebar(): JSX.Element {
   const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
+  // Editors get the same entry point as admins — AdminPage itself narrows
+  // what they see (just the user-reports review tab).
+  const isEditor = !!account?.is_editor
+  const reviewLabel = isAdmin ? 'Admin' : 'Reports'
 
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(LS_COLLAPSED) === 'true'
@@ -121,10 +125,10 @@ export default function Sidebar(): JSX.Element {
                 <LogIn size={18} />
               </button>
             )}
-            {isAdmin && (
+            {(isAdmin || isEditor) && (
               <button
                 onClick={() => setActiveView('admin')}
-                title="Admin"
+                title={reviewLabel}
                 className={`${iconBtn} ${activeView === 'admin' ? 'bg-surface-raised !text-text-primary' : ''}`}
               >
                 <ShieldCheck size={18} />
@@ -274,10 +278,10 @@ export default function Sidebar(): JSX.Element {
             <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Log in</span>
           </button>
         )}
-        {isAdmin && (
+        {(isAdmin || isEditor) && (
           <button
             onClick={() => setActiveView('admin')}
-            title={collapsed ? 'Admin' : undefined}
+            title={collapsed ? reviewLabel : undefined}
             className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 px-3 ${
               activeView === 'admin'
                 ? 'bg-surface-raised text-text-primary'
@@ -285,7 +289,7 @@ export default function Sidebar(): JSX.Element {
             }`}
           >
             <span className="w-6 h-6 flex items-center justify-center shrink-0"><ShieldCheck size={18} /></span>
-            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Admin</span>
+            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>{reviewLabel}</span>
           </button>
         )}
         {/* Only on the web build — Electron users already have the app. */}

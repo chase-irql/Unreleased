@@ -4,13 +4,18 @@ import {
   Loader2, RefreshCw, FileEdit, KeyRound, Check, AlertCircle, RotateCcw,
   ChevronDown, ChevronUp, Shield, TrendingUp, MessageSquare, Calendar,
   Hash, Minus, Plus, UserCheck, FileCheck, Activity, Pencil, X as XIcon, ChevronDown as ChevronDownIcon,
+  Flag, Music2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } from '../lib/userApi'
+import * as reportsApi from '../lib/reportsApi'
+import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
+import { apiFetch, buildImageUrl } from '../lib/juicewrldApi'
+import type { JWApiSong } from '../lib/juicewrldApi'
 import { invalidateLyricsCache } from './Player'
 
-type Tab = 'proposals' | 'applications' | 'users' | 'stats' | 'security'
+type Tab = 'proposals' | 'applications' | 'reports' | 'users' | 'stats' | 'security'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +49,7 @@ const LONG_THRESHOLD = 200
 const STATUS_STYLE: Record<string, { bg: string; text: string; dot: string; border: string }> = {
   pending:  { bg: 'bg-amber-500/10',   text: 'text-amber-400',   dot: 'bg-amber-400',   border: 'border-l-amber-500/60' },
   approved: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', dot: 'bg-emerald-400', border: 'border-l-emerald-500/60' },
+  resolved: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', dot: 'bg-emerald-400', border: 'border-l-emerald-500/60' },
   rejected: { bg: 'bg-red-500/10',     text: 'text-red-400',     dot: 'bg-red-400',     border: 'border-l-red-500/50' },
   reversed: { bg: 'bg-zinc-500/10',    text: 'text-zinc-400',    dot: 'bg-zinc-500',    border: 'border-l-zinc-500/40' },
 }
@@ -191,9 +197,12 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
 export default function AdminPage(): JSX.Element {
   const { account, setActiveView, loadAccount } = useStorePick('account', 'setActiveView', 'loadAccount')
   const isAdmin    = !!account?.is_administrator
+  // Editors get the user-reports review tab only — the /reports/ endpoints
+  // accept editor tokens, everything else here is admin-scoped.
+  const isEditor   = !!account?.is_editor
   const otpEnabled = !!account?.otp_enabled
 
-  const [tab,          setTab]          = useState<Tab>('proposals')
+  const [tab,          setTab]          = useState<Tab>(account?.is_administrator ? 'proposals' : 'reports')
   const [loading,      setLoading]      = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [refreshKey,   setRefreshKey]   = useState(0)
@@ -201,15 +210,19 @@ export default function AdminPage(): JSX.Element {
   const [propStatus,   setPropStatus]   = useState<ProposalStatus | ''>('pending')
   const [proposals,    setProposals]    = useState<SongEditProposal[]>([])
   const [users,        setUsers]        = useState<AdminUser[]>([])
+  const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
+  const [reports,      setReports]      = useState<SongReportRow[]>([])
 
   const load = useCallback(async () => {
-    if (!isAdmin) return
+    if (!isAdmin && !isEditor) return
     setLoading(true); setError(null)
     try {
       if (tab === 'proposals') {
         setProposals(await userApi.adminListProposals(propStatus || undefined))
       } else if (tab === 'applications') {
         setApplications(await userApi.adminListApplications())
+      } else if (tab === 'reports') {
+        setReports(await reportsApi.listSongReports(reportStatus || undefined))
       } else if (tab === 'users' || tab === 'stats') {
         setUsers(await userApi.adminListUsers())
         if (tab === 'stats') {
@@ -219,19 +232,26 @@ export default function AdminPage(): JSX.Element {
       }
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
     finally { setLoading(false) }
-  }, [tab, isAdmin, propStatus])
+  }, [tab, isAdmin, propStatus, reportStatus])
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  if (!isAdmin) return (
+  // An editor-only account can never sit on an admin tab (e.g. state left
+  // over from a role change) — snap back to the one tab they can use.
+  useEffect(() => {
+    if (!isAdmin && isEditor && tab !== 'reports') setTab('reports')
+  }, [isAdmin, isEditor, tab])
+
+  if (!isAdmin && !isEditor) return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
       <Shield size={28} className="text-text-muted" />
-      <p className="text-text-primary font-semibold text-sm">Admin only</p>
+      <p className="text-text-primary font-semibold text-sm">Admins & editors only</p>
       <button onClick={() => setActiveView('api-tracker')} className="text-xs text-accent hover:underline">Go back</button>
     </div>
   )
 
-  if (!otpEnabled) return (
+  // OTP is an admin requirement — editor-only accounts go straight to Reports.
+  if (isAdmin && !otpEnabled) return (
     <div className="flex-1 overflow-y-auto flex items-center justify-center p-8">
       <div className="w-full max-w-sm">
         <OtpSetupPanel onEnabled={async () => { await loadAccount() }} />
@@ -239,16 +259,20 @@ export default function AdminPage(): JSX.Element {
     </div>
   )
 
-  const pendingApps  = applications.filter(a => a.status === 'pending').length
-  const pendingProps = tab !== 'proposals' ? proposals.filter(p => p.status === 'pending').length : 0
+  const pendingApps    = applications.filter(a => a.status === 'pending').length
+  const pendingProps   = tab !== 'proposals' ? proposals.filter(p => p.status === 'pending').length : 0
+  const pendingReports = tab !== 'reports' ? reports.filter(r => r.status === 'pending').length : 0
 
   type NavItem = { id: Tab; label: string; icon: React.ReactNode; badge?: number }
-  const nav: NavItem[] = [
+  const nav: NavItem[] = isAdmin ? [
     { id: 'proposals',    label: 'Proposals',    icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
     { id: 'applications', label: 'Applications', icon: <Clock size={13} />,      badge: pendingApps || undefined },
+    { id: 'reports',      label: 'Reports',      icon: <Flag size={13} />,       badge: pendingReports || undefined },
     { id: 'users',        label: 'Users',        icon: <Users size={13} /> },
     { id: 'stats',        label: 'Stats',        icon: <TrendingUp size={13} /> },
     { id: 'security',     label: 'Security',     icon: <Shield size={13} /> },
+  ] : [
+    { id: 'reports',      label: 'Reports',      icon: <Flag size={13} /> },
   ]
 
   return (
@@ -260,7 +284,7 @@ export default function AdminPage(): JSX.Element {
           <ChevronLeft size={16} />
         </button>
         <div className="flex-1 mb-3">
-          <span className="text-text-primary font-bold text-sm">Admin</span>
+          <span className="text-text-primary font-bold text-sm">{isAdmin ? 'Admin' : 'Reports'}</span>
           {account?.discord_username && (
             <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
           )}
@@ -305,6 +329,7 @@ export default function AdminPage(): JSX.Element {
         <div className="flex-1 overflow-hidden">
           {tab === 'proposals'    && <ProposalsTab proposals={proposals} status={propStatus} setStatus={setPropStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
           {tab === 'applications' && <ApplicationsTab applications={applications} onChanged={() => setRefreshKey(k => k + 1)} />}
+          {tab === 'reports'      && <ReportsTab reports={reports} status={reportStatus} setStatus={setReportStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
           {tab === 'users'        && <UsersTab users={users} onChanged={() => setRefreshKey(k => k + 1)} currentUserId={account?.id} />}
           {tab === 'stats'        && <StatsTab applications={applications} proposals={proposals} users={users} />}
           {tab === 'security'     && <SecurityTab />}
@@ -836,6 +861,156 @@ function AppSection({ label, value }: { label: string; value: string }): JSX.Ele
     <div>
       <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5">{label}</p>
       <p className="text-text-primary text-sm leading-relaxed whitespace-pre-wrap">{value}</p>
+    </div>
+  )
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────────
+// User-submitted song issue reports (wrong/missing info or lyrics). The app's
+// own submit path folds the issue checkboxes into the message text, so the
+// message is rendered verbatim; resolving PATCHes status + review_notes and
+// the server records who reviewed and when.
+
+function ReportsTab({ reports, status, setStatus, onChanged }: {
+  reports: SongReportRow[]
+  status: SongReportStatus | ''
+  setStatus: (s: SongReportStatus | '') => void
+  onChanged: () => void
+}): JSX.Element {
+  const [actionId, setActionId] = useState<number | null>(null)
+  const [notes,    setNotes]    = useState<Record<number, string>>({})
+  const [selected, setSelected] = useState<SongReportRow | null>(null)
+
+  useEffect(() => { setSelected(reports[0] ?? null) }, [reports])
+
+  // Song names for rows that only carry an id — one bulk catalog fetch (the
+  // same ?all=true mode compact view uses) instead of a request per report.
+  const [songsById, setSongsById] = useState<Map<number, JWApiSong>>(new Map())
+  useEffect(() => {
+    apiFetch<JWApiSong[]>('/songs/', { all: 'true' })
+      .then(songs => setSongsById(new Map(songs.map(s => [s.id, s]))))
+      .catch(() => {})
+  }, [])
+
+  const songLabel = (r: SongReportRow): string => {
+    if (r.song_name) return r.song_name
+    const id = reportsApi.reportSongId(r)
+    if (id == null) return r.public_id != null ? `Song #${r.public_id}` : 'Unknown song'
+    return songsById.get(id)?.name ?? `Song id ${id}`
+  }
+
+  const doReview = async (r: SongReportRow, newStatus: SongReportStatus) => {
+    setActionId(r.id)
+    try {
+      await reportsApi.reviewSongReport(r.id, { status: newStatus, review_notes: notes[r.id] ?? r.review_notes ?? '' })
+      onChanged()
+    } catch {} finally { setActionId(null) }
+  }
+
+  const FILTERS: { id: SongReportStatus | ''; label: string }[] = [
+    { id: 'pending',  label: 'Pending'  },
+    { id: 'resolved', label: 'Resolved' },
+    { id: '',         label: 'All'      },
+  ]
+
+  const r = selected
+  const rSong = r ? (reportsApi.reportSongId(r) != null ? songsById.get(reportsApi.reportSongId(r)!) : undefined) : undefined
+
+  return (
+    <div className="flex h-full overflow-hidden">
+      {/* Left: list */}
+      <div className="w-80 shrink-0 border-r border-[var(--border)] flex flex-col overflow-hidden">
+        <div className="shrink-0 flex gap-1 flex-wrap px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
+          {FILTERS.map(f => (
+            <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+                status === f.id ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'
+              }`}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {reports.length === 0 && <Empty label="No reports" />}
+          {reports.map(item => (
+            <button key={item.id} onClick={() => setSelected(item)}
+              className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${STATUS_STYLE[item.status]?.border ?? 'border-l-transparent'} transition-colors ${
+                selected?.id === item.id ? 'bg-accent/10' : 'hover:bg-surface-raised'
+              } ${item.status !== 'pending' ? 'opacity-60' : ''}`}>
+              <p className="text-text-primary text-xs font-semibold truncate">{songLabel(item)}</p>
+              <p className="text-text-muted text-[10px] truncate mt-0.5">{item.message}</p>
+              <p className="text-text-muted text-[10px] mt-1">
+                {item.status === 'pending'
+                  ? relativeTime(item.created_at ?? null)
+                  : `resolved · ${shortDate(item.reviewed_at ?? null)}`}
+              </p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Right: detail */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {!r ? <Empty label="Select a report" /> : (
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-xl bg-surface-overlay flex items-center justify-center shrink-0 overflow-hidden">
+                {rSong?.image_url
+                  ? <img src={buildImageUrl(rSong.image_url)} alt="" className="w-full h-full object-cover" />
+                  : <Music2 size={22} className="text-text-muted opacity-40" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 flex-wrap mb-1">
+                  <h2 className="text-text-primary text-lg font-bold truncate">{songLabel(r)}</h2>
+                  <StatusChip status={r.status} />
+                </div>
+                <div className="flex items-center gap-4 text-xs text-text-muted flex-wrap">
+                  {reportsApi.reportSongId(r) != null && <span className="flex items-center gap-1"><Hash size={10} />{reportsApi.reportSongId(r)}</span>}
+                  {rSong?.era?.name && <span>{rSong.era.name}</span>}
+                  <span className="flex items-center gap-1"><Calendar size={10} />{shortDate(r.created_at ?? null)}</span>
+                  {r.contact && <span className="flex items-center gap-1"><MessageSquare size={10} />{r.contact}</span>}
+                  {r.reviewer_username && <span>Reviewed by {r.reviewer_username}</span>}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {actionId === r.id ? <Loader2 size={14} className="animate-spin text-text-muted" /> : r.status === 'pending' ? (
+                  <button onClick={() => doReview(r, 'resolved')}
+                    className="px-3 py-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs font-semibold transition-colors flex items-center gap-1.5">
+                    <CheckCircle size={13} /> Resolve
+                  </button>
+                ) : (
+                  <button onClick={() => doReview(r, 'pending')}
+                    className="px-3 py-2 rounded-lg bg-surface-overlay hover:bg-surface-raised text-text-secondary text-xs font-semibold transition-colors flex items-center gap-1.5">
+                    <RotateCcw size={13} /> Reopen
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <hr className="border-[var(--border)]" />
+
+            <AppSection label="Report" value={r.message} />
+
+            {r.status !== 'pending' && r.review_notes && (
+              <AppSection label="Review notes" value={r.review_notes} />
+            )}
+
+            {r.status === 'pending' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Review note</label>
+                <textarea
+                  value={notes[r.id] || ''}
+                  onChange={e => setNotes(n => ({ ...n, [r.id]: e.target.value }))}
+                  placeholder="Optional note recorded with the resolution…"
+                  rows={3}
+                  className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2.5 text-text-primary text-sm resize-none focus:outline-none focus:border-accent/40"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

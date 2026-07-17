@@ -319,7 +319,7 @@ function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPl
 }): JSX.Element {
   return (
     <>
-      <div className="flex items-end gap-5 p-6 pb-4">
+      <div className={`flex items-end gap-5 p-6 pb-4 ${onBack ? 'pt-14' : ''}`}>
         {onBack && (
           <button onClick={onBack} className="absolute top-3 left-3 w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
             <ChevronLeft size={18} />

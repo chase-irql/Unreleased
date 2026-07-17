@@ -14,6 +14,14 @@ export interface Track {
   streamUrl?: string  // if set, Player streams this URL instead of the local `path` (via toFileUrl)
   imageUrl?: string   // if set, AlbumArtThumbnail uses this instead of getAlbumArt IPC
   era?: string        // API era abbreviation (e.g. "WOD") — shown on Discord RPC instead of album
+  // The song's own title and cover as the API returns them. `title`/`imageUrl`
+  // above may be a user's per-song override (see lib/songPrefs), and a Track
+  // outlives the conversion that built it — it sits in the queue until the
+  // user moves on — so the originals are kept here to let an override be
+  // applied, changed, or removed in place without refetching the song. Only
+  // set for API-sourced tracks; treat an absent value as "same as title".
+  apiTitle?: string
+  apiImageUrl?: string
 }
 
 export interface FullTrack extends Track {
