@@ -160,6 +160,20 @@ export default function App(): JSX.Element {
   // needed), so those views are ready before the user first opens them.
   useEffect(() => { prefetchApiData() }, [prefetchApiData])
 
+  // Warm the local library into the store during idle after boot, so the first
+  // Library/Playlists open is instant instead of paying a cold disk read + IPC.
+  // loadLibrary is idempotent (see its guard), so this never double-reads with
+  // the tab-mount / auto-refresh calls — whichever runs first wins. Skipped when
+  // the user has no library folders (nothing to read).
+  useEffect(() => {
+    if (!(window as any).electron || libraryFolders.length === 0) return
+    const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void) => number)
+    const id = ric ? ric(() => loadLibrary()) : window.setTimeout(() => loadLibrary(), 1500)
+    return () => { if (ric && (window as any).cancelIdleCallback) (window as any).cancelIdleCallback(id); else clearTimeout(id) }
+    // Folders rarely change; re-warming when they do is harmless (guard skips it
+    // if already loaded). loadLibrary identity is stable.
+  }, [libraryFolders, loadLibrary])
+
   // Deliver any reports queued in a previous session. loadAccount also flushes
   // after login (to attach the token), but this covers a signed-out user whose
   // loadAccount returns early. No-op until the reporting endpoints exist.

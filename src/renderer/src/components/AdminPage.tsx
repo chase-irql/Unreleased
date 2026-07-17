@@ -195,7 +195,14 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage(): JSX.Element {
-  const { account, setActiveView, loadAccount } = useStorePick('account', 'setActiveView', 'loadAccount')
+  const { account, setActiveView, loadAccount, showNowPlaying, showQueue } = useStorePick('account', 'setActiveView', 'loadAccount', 'showNowPlaying', 'showQueue')
+  // The header's rightmost controls (refresh + tabs) sit at the same corner
+  // as the custom frameless-window buttons (see WindowControls in App.tsx,
+  // fixed top-right). Without extra clearance they render underneath them —
+  // only needed when this page actually reaches the window's right edge, i.e.
+  // no side panel is open to its right (mirrors NowPlaying's same check).
+  const isElectron = navigator.userAgent.includes('Electron')
+  const needsWindowControlClearance = isElectron && !showNowPlaying && !showQueue
   const isAdmin    = !!account?.is_administrator
   // Editors get the user-reports review tab only — the /reports/ endpoints
   // accept editor tokens, everything else here is admin-scoped.
@@ -278,7 +285,8 @@ export default function AdminPage(): JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 flex items-center gap-3 px-6 pt-4 pb-0 border-b border-[var(--border)]">
+      <div className="shrink-0 flex items-center gap-3 px-6 pb-0 border-b border-[var(--border)]"
+        style={{ paddingTop: needsWindowControlClearance ? 36 : 16, paddingRight: needsWindowControlClearance ? 148 : undefined }}>
         <button onClick={() => setActiveView('api-tracker')}
           className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">
           <ChevronLeft size={16} />
@@ -321,20 +329,25 @@ export default function AdminPage(): JSX.Element {
         </div>
       )}
 
-      {loading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={20} className="animate-spin text-text-muted" />
-        </div>
-      ) : (
-        <div className="flex-1 overflow-hidden">
-          {tab === 'proposals'    && <ProposalsTab proposals={proposals} status={propStatus} setStatus={setPropStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
-          {tab === 'applications' && <ApplicationsTab applications={applications} onChanged={() => setRefreshKey(k => k + 1)} />}
-          {tab === 'reports'      && <ReportsTab reports={reports} status={reportStatus} setStatus={setReportStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
-          {tab === 'users'        && <UsersTab users={users} onChanged={() => setRefreshKey(k => k + 1)} currentUserId={account?.id} />}
-          {tab === 'stats'        && <StatsTab applications={applications} proposals={proposals} users={users} />}
-          {tab === 'security'     && <SecurityTab />}
-        </div>
-      )}
+      {/* The tab body stays mounted through a reload (switching the reports/
+          proposals status filter, hitting refresh, etc.) instead of being
+          replaced by a spinner — that was unmounting things like the status
+          filter chips and each tab's local state (selection, draft notes,
+          cached song lookups) on every refetch. A translucent overlay signals
+          the load without tearing the UI down. */}
+      <div className="flex-1 overflow-hidden relative">
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg)]/60 backdrop-blur-[1px]">
+            <Loader2 size={20} className="animate-spin text-text-muted" />
+          </div>
+        )}
+        {tab === 'proposals'    && <ProposalsTab proposals={proposals} status={propStatus} setStatus={setPropStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
+        {tab === 'applications' && <ApplicationsTab applications={applications} onChanged={() => setRefreshKey(k => k + 1)} />}
+        {tab === 'reports'      && <ReportsTab reports={reports} status={reportStatus} setStatus={setReportStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
+        {tab === 'users'        && <UsersTab users={users} onChanged={() => setRefreshKey(k => k + 1)} currentUserId={account?.id} />}
+        {tab === 'stats'        && <StatsTab applications={applications} proposals={proposals} users={users} />}
+        {tab === 'security'     && <SecurityTab />}
+      </div>
     </div>
   )
 }

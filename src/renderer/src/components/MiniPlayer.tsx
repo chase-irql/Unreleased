@@ -381,7 +381,7 @@ export default function MiniPlayer(): JSX.Element {
           <WinBtn onClick={togglePin} title={pinned ? 'Unpin from top' : 'Pin on top'} active={pinned}>
             <Pin size={12} className={pinned ? '' : 'opacity-60'} style={pinned ? undefined : { transform: 'rotate(45deg)' }} />
           </WinBtn>
-          <WinBtn onClick={() => el?.hideOtherWindows?.()} title="Hide all other windows">
+          <WinBtn onClick={() => el?.hideOtherWindows?.()} title="Close all other windows">
             <EyeOff size={12} />
           </WinBtn>
           <WinBtn onClick={() => el?.focusMainWindow?.()} title="Show full app">

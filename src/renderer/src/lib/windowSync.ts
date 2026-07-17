@@ -92,7 +92,7 @@ export function initWindowSync(isFloat: boolean): void {
       // A scan finishing in the other window just saved library-data.json —
       // reload it so this window's track list isn't stale (the tracks
       // themselves are far too big to ship through the sync channel).
-      if ('libraryLastScanned' in msg.payload) useStore.getState().loadLibrary()
+      if ('libraryLastScanned' in msg.payload) useStore.getState().loadLibrary(true)
       // setState writes the store directly, bypassing _setSongPrefs — so the
       // module cache songToTrack reads has to be mirrored by hand here, or a
       // rename made in one window would leave every other window converting

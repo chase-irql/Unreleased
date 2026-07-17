@@ -224,6 +224,12 @@ interface AppState {
   // album/artist/song derivations memoize on). `undefined`/absent = not read
   // yet, `null` = read and artless, string = data URI. See applyLibraryArt.
   libraryArt: Record<string, string | null>
+  // True once the on-disk track list has been read into memory this session.
+  // loadLibrary short-circuits when it's set (the store is already the source
+  // of truth), so revisiting the Library/Playlists tab doesn't re-read, re-ship
+  // over IPC, and rebuild the whole list every time. Reset only by a forced
+  // reload (another window changed the data) — see loadLibrary.
+  libraryLoaded: boolean
   libraryFolders: string[]
   libraryScanning: boolean
   libraryLastScanned: number | null
@@ -324,15 +330,20 @@ interface AppActions {
   openConvert: (track: Track) => void
   closeConvert: () => void
   /** Queues a general feedback report and tries to deliver it. `contact` is
-   *  the optional reach-me field the endpoint accepts. */
-  submitFeedback: (category: FeedbackCategory, message: string, contact?: string) => void
+   *  the optional reach-me field the endpoint accepts. Resolves once that
+   *  delivery attempt settles: `true` if it actually reached the server this
+   *  round, `false` if it's still sitting in the outbox (offline, rejected,
+   *  or the API is disabled) — the caller can surface which happened. */
+  submitFeedback: (category: FeedbackCategory, message: string, contact?: string) => Promise<boolean>
   /** Queues a song issue report (wrong/missing info or lyrics) and tries to
-   *  deliver it. `issues` is the set of checked problem types. */
-  reportSong: (songId: number, songName: string, issues: SongIssueType[], message: string, contact?: string) => void
+   *  deliver it. `issues` is the set of checked problem types. Same delivered
+   *  vs. still-queued resolution as `submitFeedback`. */
+  reportSong: (songId: number, songName: string, issues: SongIssueType[], message: string, contact?: string) => Promise<boolean>
   /** Drops a queued report from the outbox (e.g. one stuck failing). */
   dismissReport: (id: string) => void
-  /** Internal — appends a report to the outbox and kicks off delivery. */
-  _enqueueReport: (report: PendingReport) => void
+  /** Internal — appends a report to the outbox, kicks off delivery, and
+   *  resolves to whether this particular report was delivered this round. */
+  _enqueueReport: (report: PendingReport) => Promise<boolean>
   /** Internal — attempts to deliver every deliverable queued report. */
   _flushReports: () => Promise<void>
 
@@ -399,7 +410,7 @@ interface AppActions {
   addToLocalPlaylist: (playlistId: string, trackId: string) => void
   removeFromLocalPlaylist: (playlistId: string, trackId: string) => void
   reorderLocalPlaylist: (playlistId: string, trackIds: string[]) => void
-  loadLibrary: () => Promise<void>
+  loadLibrary: (force?: boolean) => Promise<void>
 
   loadOfflineLibrary: () => Promise<void>
   downloadPlaylistOffline: (key: string, name: string, songIds: number[], opts?: { silent?: boolean }) => Promise<void>
@@ -792,30 +803,32 @@ export const useStore = create<AppStore>((set, get, store) => ({
   openConvert: (track) => set({ convertModal: track }),
   closeConvert: () => set({ convertModal: null }),
 
-  _enqueueReport: (report: PendingReport) => {
+  _enqueueReport: async (report: PendingReport) => {
     const next = [...get().pendingReports, report]
     set({ pendingReports: next })
     ls.set('pendingReports', next)
-    // Fire-and-forget delivery; if the API is off or offline it stays queued.
-    get()._flushReports()
+    // Wait for this round of delivery so the caller can tell the user whether
+    // it actually reached the server or is just sitting in the outbox.
+    await get()._flushReports()
+    return !get().pendingReports.some((r) => r.id === report.id)
   },
 
-  submitFeedback: (category, message, contact) => {
+  submitFeedback: async (category, message, contact) => {
     const text = message.trim()
-    if (!text) return
-    get()._enqueueReport({
+    if (!text) return false
+    return get()._enqueueReport({
       id: newReportId(), kind: 'feedback', category, message: text,
       contact: contact?.trim() || undefined,
       appVersion: APP_VERSION, createdAt: Date.now(), attempts: 0,
     })
   },
 
-  reportSong: (songId, songName, issues, message, contact) => {
+  reportSong: async (songId, songName, issues, message, contact) => {
     // A report needs at least a flagged issue or a written note to be worth
     // sending — the form enforces this too, but guard here so no empty report
     // can reach the outbox.
-    if (issues.length === 0 && !message.trim()) return
-    get()._enqueueReport({
+    if (issues.length === 0 && !message.trim()) return false
+    return get()._enqueueReport({
       id: newReportId(), kind: 'song', songId, songName,
       issues, message: message.trim(),
       contact: contact?.trim() || undefined,
@@ -1164,6 +1177,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // ── Library ───────────────────────────────────────────────────────────────
   libraryTracks: [],
   libraryArt: {},
+  libraryLoaded: false,
   libraryFolders: ls.get<string[]>('libraryFolders') ?? [],
   libraryScanning: false,
   libraryLastScanned: ls.get<number>('libraryLastScanned') ?? null,
@@ -1297,7 +1311,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         for (const t of result.tracks as LibraryTrack[]) {
           if (prevSig.get(t.id) !== `${t.fileSize}:${t.lastModified}`) delete libraryArt[t.id]
         }
-        return { libraryTracks: result.tracks, libraryArt, libraryLastScanned: now }
+        return { libraryTracks: result.tracks, libraryArt, libraryLastScanned: now, libraryLoaded: true }
       })
       ls.set('libraryLastScanned', now)
       // The scanner returns metadata only (covers are read on demand), so the
@@ -1356,9 +1370,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ localPlaylists: next })
     el?.saveLocalPlaylists(next)
   },
-  loadLibrary: async () => {
+  loadLibrary: async (force = false) => {
     const el = (window as any).electron
     if (!el) return
+    // Already have the list in memory — skip the disk read + IPC + full re-set.
+    // The store is authoritative in-session (scans and local-playlist edits
+    // write it directly); only a forced reload after another window changed the
+    // data needs to re-read. This is what makes tab revisits instant.
+    if (!force && get().libraryLoaded) return
     try {
       const [libData, playlists] = await Promise.all([el.loadLibraryData(), el.loadLocalPlaylists()])
       // Cover art lives in libraryArt (keyed by track id) and is left untouched
@@ -1366,6 +1385,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       // per-track merge — just swap in the fresh metadata list.
       if (libData?.tracks) set({ libraryTracks: libData.tracks })
       if (playlists) set({ localPlaylists: playlists })
+      set({ libraryLoaded: true })
     } catch(e) { console.error('loadLibrary error:', e) }
   },
 

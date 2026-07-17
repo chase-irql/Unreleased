@@ -883,15 +883,27 @@ ipcMain.handle('toggle-always-on-top-self', (event) => {
   return win.isAlwaysOnTop()
 })
 
-// "Solo" button on the mini player — minimize every window except the
-// sender so only the pop-out stays on screen. Minimizing (rather than
-// hiding) the main window lets its own 'minimize' listener run, so the
-// minimize-to-tray/notification setting is honored; the mini's "Show full
-// app" button (focus-main-window) restores it from either state.
+// "Solo" button on the mini player — get every other window off the screen
+// AND out of the taskbar. Other pop-outs are closed for real. The main
+// window can't be: it owns the audio, and its 'closed' handler tears down
+// every pop-out (mini included) and quits the app — so it's hidden instead,
+// which drops its taskbar entry while playback keeps running. It's recorded
+// in miniPlayerHiddenWindows so closing the mini player restores it (see
+// restoreWindowsAfterMiniPlayer); the "Show full app" button brings it back
+// sooner. A main window already hidden (e.g. to the tray) is left as-is so
+// restore semantics match the solo-mode setting.
 ipcMain.handle('hide-other-windows', (event) => {
   const sender = BrowserWindow.fromWebContents(event.sender)
   for (const win of BrowserWindow.getAllWindows()) {
-    if (win !== sender && !win.isDestroyed() && !win.isMinimized()) win.minimize()
+    if (win === sender || win.isDestroyed()) continue
+    if (win === mainWindow) {
+      if (win.isVisible() || win.isMinimized()) {
+        if (!miniPlayerHiddenWindows.includes(win)) miniPlayerHiddenWindows.push(win)
+        win.hide()
+      }
+    } else {
+      win.close()
+    }
   }
 })
 

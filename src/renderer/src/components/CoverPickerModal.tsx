@@ -21,6 +21,13 @@ function parentFolder(path: string): string {
   return i > 0 ? path.slice(0, i) : ''
 }
 
+// Strips trailing qualifiers ("(feat. X)", "[Prod. Y]") from a song title so
+// the initial search hits the file tree's naming (folders/images are rarely
+// filed under the full bracketed title) — same idea as findSessionZips' strip().
+function cleanTitleForSearch(title: string): string {
+  return title.replace(/\s*[[(].*$/, '').trim()
+}
+
 // Directories first, then images, alphabetically within each — a picker has no
 // need for the full sort/view-mode machinery ApiFilesView offers.
 function sortForPicker(entries: JWApiFileEntry[]): JWApiFileEntry[] {
@@ -35,6 +42,9 @@ function sortForPicker(entries: JWApiFileEntry[]): JWApiFileEntry[] {
 }
 
 interface Props {
+  /** The song's title — seeds the initial search so covers already filed
+   *  under that name surface immediately instead of an empty root listing. */
+  songTitle?: string
   onSelect: (path: string) => void
   onClose: () => void
 }
@@ -45,29 +55,33 @@ interface Props {
 // hands its raw storage path back to the caller, the same shape the "paste a
 // path" field in SongPrefsSection already accepts (resolved by
 // resolvePrefCoverUrl via buildCoverArtUrl).
-export default function CoverPickerModal({ onSelect, onClose }: Props): JSX.Element {
+export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props): JSX.Element {
+  const initialQuery = songTitle ? cleanTitleForSearch(songTitle) : ''
   const overlayRef = useRef<HTMLDivElement>(null)
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<JWApiFileEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!initialQuery)
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([])
 
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
+  // Seeded from the song title (if any) so the picker opens already showing
+  // title-matched results — see the mount effect below for the root prefetch
+  // that still happens quietly alongside it.
+  const [search, setSearch] = useState(initialQuery)
+  const [debouncedSearch, setDebouncedSearch] = useState(initialQuery)
   const [searchResults, setSearchResults] = useState<JWApiFileEntry[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(!!initialQuery)
   const isSearching = debouncedSearch.trim().length > 0
 
-  const navigate = useCallback(async (path: string, pushHistory = true) => {
-    setSearch(''); setDebouncedSearch('')
+  const navigate = useCallback(async (path: string, pushHistory = true, resetSearch = true) => {
+    if (resetSearch) { setSearch(''); setDebouncedSearch('') }
     const cached = apiPeek<JWApiBrowseResponse>('/files/browse/', path ? { path } : {})
     if (cached) {
       setEntries(parseEntries(cached))
       setCurrentPath(path)
       setError(null)
-      setLoading(false)
-    } else {
+      if (resetSearch) setLoading(false)
+    } else if (resetSearch) {
       setLoading(true)
       setError(null)
     }
@@ -77,13 +91,16 @@ export default function CoverPickerModal({ onSelect, onClose }: Props): JSX.Elem
       setCurrentPath(path)
       setEntries(parseEntries(data))
     } catch (err) {
-      if (!cached) setError(err instanceof Error ? err.message : 'Failed to load')
+      if (!cached && resetSearch) setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
-      setLoading(false)
+      if (resetSearch) setLoading(false)
     }
   }, [currentPath])
 
-  useEffect(() => { navigate('', false) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Always prefetch the root listing (silently, without touching the search
+  // box) so clearing the initial title search drops straight into a populated
+  // browser instead of an empty one.
+  useEffect(() => { navigate('', false, !initialQuery) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300)

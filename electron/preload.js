@@ -38,8 +38,8 @@ contextBridge.exposeInMainWorld('electron', {
   maximizeSelf:    ()     => ipcRenderer.invoke('maximize-self'),
   focusMainWindow: ()     => ipcRenderer.invoke('focus-main-window'),
   // Mini player: panel expand/collapse resizes the window; pin toggles
-  // always-on-top and returns the new state; hideOtherWindows minimizes
-  // every window except the caller ("solo" mode).
+  // always-on-top and returns the new state; hideOtherWindows closes the
+  // other pop-outs and hides the main window off the taskbar ("solo" mode).
   miniPlayerSetExpanded: (expanded) => ipcRenderer.invoke('mini-player-set-expanded', expanded),
   toggleAlwaysOnTopSelf: ()         => ipcRenderer.invoke('toggle-always-on-top-self'),
   hideOtherWindows:      ()         => ipcRenderer.invoke('hide-other-windows'),
