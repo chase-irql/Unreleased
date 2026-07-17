@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, Notification, globalShortcut, screen } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -40,8 +40,10 @@ let appSettings = {
   autoDownload: true,
   minimizeToTray: false,
   // 'taskbar' | 'tray' | 'notification' — where minimizing sends the window.
-  // 'tray' hides to the tray icon silently; 'notification' also pops a
-  // "still running" toast in the notification area.
+  // Both 'tray' and 'notification' hide the window to the tray icon;
+  // 'notification' additionally tries to keep that icon pinned/always-visible
+  // in the notification area instead of letting Windows auto-collapse it into
+  // the overflow chevron (see pinTrayIcon()).
   minimizeTo: 'taskbar',
   startupView: 'api-tracker',
   discordRpcEnabled: true,
@@ -380,22 +382,46 @@ function showMainWindow() {
   mainWindow.focus()
 }
 
-// 'notification' mode pops a "still running" toast the first time the window
-// hides so users know where it went; once per run is enough — after that the
-// destination is expected and repeat toasts would just nag.
-let trayNoticeShown = false
+function hideWindowToTray() {
+  mainWindow?.hide()
+}
 
-function hideWindowToTray(notify) {
-  if (!mainWindow) return
-  mainWindow.hide()
-  if (!notify || trayNoticeShown) return
-  trayNoticeShown = true
-  const title = 'Unreleased is still running'
-  const body = 'The app was minimized to the notification area. Click the tray icon to reopen it.'
-  if (process.platform === 'win32' && tray) {
-    tray.displayBalloon({ iconType: 'info', icon: iconPath, title, content: body })
-  } else if (Notification.isSupported()) {
-    new Notification({ title, body, icon: iconPath }).show()
+// Windows only, best-effort: there's no public Electron/Win32 API to mark a
+// tray icon "always show" — that's a per-icon preference Explorer keeps for
+// itself under this registry key and only re-reads at its own startup.
+// Flipping IsPromoted here nudges Explorer to treat our icon as pinned
+// instead of auto-collapsing it into the overflow chevron after a few
+// minutes of disuse. It's undocumented behavior reverse-engineered from
+// Explorer's own settings UI: it can silently no-op on some Windows builds,
+// and an icon that's already hidden may not visibly update until Explorer
+// restarts or the user signs back in — there's no supported way to force
+// that from here without killing Explorer, which we don't do.
+let trayPinAttempted = false
+
+function pinTrayIcon() {
+  if (process.platform !== 'win32' || trayPinAttempted) return
+  trayPinAttempted = true
+  try {
+    const { execFileSync } = require('child_process')
+    const rootKey = 'HKCU\\Control Panel\\NotifyIconSettings'
+    const dump = execFileSync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
+    const exePath = process.execPath.toLowerCase()
+    let currentKey = null
+    const matches = new Set()
+    for (const rawLine of dump.split(/\r?\n/)) {
+      if (rawLine.startsWith('HKEY_CURRENT_USER')) {
+        currentKey = rawLine.trim()
+        continue
+      }
+      const m = /^\s+ExecutablePath\s+REG_SZ\s+(.+)$/.exec(rawLine)
+      if (m && currentKey && m[1].trim().toLowerCase() === exePath) matches.add(currentKey)
+    }
+    for (const key of matches) {
+      execFileSync('reg', ['add', key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
+    }
+    runLog('main', `pinTrayIcon: ${matches.size} matching registry entr${matches.size === 1 ? 'y' : 'ies'} updated`)
+  } catch (e) {
+    runLog('main', 'pinTrayIcon failed:', e.message)
   }
 }
 
@@ -517,7 +543,7 @@ function createWindow() {
   mainWindow.on('minimize', (e) => {
     if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
       e.preventDefault()
-      hideWindowToTray(appSettings.minimizeTo === 'notification')
+      hideWindowToTray()
     }
   })
 
@@ -680,7 +706,7 @@ ipcMain.handle('check-for-updates', () => {
 })
 ipcMain.handle('minimize-window', () => {
   if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
-    hideWindowToTray(appSettings.minimizeTo === 'notification')
+    hideWindowToTray()
   } else {
     mainWindow?.minimize()
   }
@@ -859,6 +885,7 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
+  if (key === 'minimizeTo' && value === 'notification') pinTrayIcon()
   return true
 })
 
@@ -1449,6 +1476,164 @@ ipcMain.handle('download-to-library', async (_, { url, songName, artist, songPat
   return { track: trackMeta }
 })
 
+// ── Audio format conversion (ffmpeg) ─────────────────────────────────────────
+// Local library files can be transcoded to another format via the bundled
+// ffmpeg-static binary. The output lands next to the source (never overwriting
+// it), inherits tags + embedded cover where the target container supports one,
+// and is registered into library-data.json so it shows up in the library.
+
+// ffmpeg-static resolves to a path inside node_modules; in a packaged build
+// that path lives inside the asar archive, but a native binary can't execute
+// from there — electron-builder unpacks it (see package.json asarUnpack), so we
+// remap onto the unpacked copy. Returns null if the dependency is missing.
+function resolveFfmpegPath() {
+  let p
+  try { p = require('ffmpeg-static') } catch { return null }
+  if (!p) return null
+  if (app.isPackaged) p = p.replace('app.asar', 'app.asar.unpacked')
+  return fs.existsSync(p) ? p : null
+}
+
+// Target format → { file extension, codec-arg builder, whether the container
+// can carry an embedded cover }. `bitrate` is only consulted for lossy codecs.
+// libvorbis rejects CBR (`-b:a`) on some inputs (e.g. mono) with "encoder setup
+// failed" — it wants VBR quality instead, so map the requested bitrate onto a
+// vorbis quality level (-q:a 0..10).
+const VORBIS_QUALITY = { '320k': 9, '256k': 8, '192k': 6, '128k': 4 }
+
+const CONVERT_FORMATS = {
+  mp3:  { ext: 'mp3',  cover: true,  codec: (br) => ['-c:a', 'libmp3lame', '-b:a', br] },
+  m4a:  { ext: 'm4a',  cover: true,  codec: (br) => ['-c:a', 'aac', '-b:a', br] },
+  flac: { ext: 'flac', cover: true,  codec: ()   => ['-c:a', 'flac'] },
+  wav:  { ext: 'wav',  cover: false, codec: ()   => ['-c:a', 'pcm_s16le'] },
+  ogg:  { ext: 'ogg',  cover: false, codec: (br) => ['-c:a', 'libvorbis', '-q:a', String(VORBIS_QUALITY[br] ?? 6)] },
+  opus: { ext: 'opus', cover: false, codec: (br) => ['-c:a', 'libopus', '-b:a', br] },
+}
+
+// Pick an output path next to the source that clobbers neither an existing file
+// nor the source itself (matters most for same-format re-encodes, where the
+// natural name collides with the input).
+function uniqueConvertPath(dir, base, ext, srcPath) {
+  const src = path.resolve(srcPath)
+  let candidate = path.join(dir, `${base}.${ext}`)
+  if (path.resolve(candidate) !== src && !fs.existsSync(candidate)) return candidate
+  candidate = path.join(dir, `${base} (converted).${ext}`)
+  let n = 1
+  while (path.resolve(candidate) === src || fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${base} (converted ${++n}).${ext}`)
+  }
+  return candidate
+}
+
+ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate }) => {
+  const spec = CONVERT_FORMATS[format]
+  if (!spec) return { error: `Unsupported target format: ${format}` }
+  if (!filePath || !fs.existsSync(filePath)) return { error: 'Source file not found' }
+
+  const ffmpegPath = resolveFfmpegPath()
+  if (!ffmpegPath) return { error: 'ffmpeg is unavailable — the bundled converter could not be found.' }
+
+  let mm
+  try { mm = require('music-metadata') } catch { return { error: 'music-metadata not installed' } }
+
+  // Total duration drives the progress percentage.
+  let durationSec = 0
+  try {
+    const probe = await mm.parseFile(filePath, { duration: true, skipCovers: true })
+    durationSec = probe.format.duration || 0
+  } catch {}
+
+  const dir = path.dirname(filePath)
+  const base = path.basename(filePath, path.extname(filePath))
+  const outPath = uniqueConvertPath(dir, base, spec.ext, filePath)
+
+  const br = bitrate || '256k'
+  const args = ['-hide_banner', '-nostdin', '-y', '-i', filePath]
+  if (spec.cover) {
+    // Keep audio + carry the cover (an "attached_pic" video stream) if present;
+    // `?` makes the video mapping optional so cover-less files don't fail.
+    args.push('-map', '0:a', '-map', '0:v?', '-c:v', 'copy')
+  } else {
+    args.push('-map', '0:a')
+  }
+  args.push('-map_metadata', '0', ...spec.codec(br))
+  // Machine-readable progress on stdout; keep stderr for the failure message.
+  args.push('-progress', 'pipe:1', '-nostats', outPath)
+
+  const { spawn } = require('child_process')
+
+  try {
+    await new Promise((resolve, reject) => {
+      const ff = spawn(ffmpegPath, args, { windowsHide: true })
+      let stderr = ''
+      ff.on('error', reject)
+      ff.stderr.on('data', (d) => {
+        stderr += d.toString()
+        if (stderr.length > 8000) stderr = stderr.slice(-8000)
+      })
+      ff.stdout.on('data', (d) => {
+        if (durationSec <= 0) return
+        const matches = [...d.toString().matchAll(/out_time_us=(\d+)/g)]
+        if (!matches.length) return
+        const us = parseInt(matches[matches.length - 1][1], 10)
+        const percent = Math.max(1, Math.min(99, Math.round((us / 1e6 / durationSec) * 100)))
+        if (!event.sender.isDestroyed()) event.sender.send('convert-progress', { id, percent })
+      })
+      ff.on('close', (code) => {
+        if (code === 0) return resolve()
+        const tail = stderr.split('\n').map(l => l.trim()).filter(Boolean).slice(-3).join(' ')
+        reject(new Error(tail || `ffmpeg exited with code ${code}`))
+      })
+    })
+  } catch (e) {
+    try { fs.unlinkSync(outPath) } catch {} // clean up any partial output
+    return { error: 'Conversion failed: ' + e.message }
+  }
+
+  // Build a library entry for the new file (mirrors scan-library's shape).
+  let trackMeta
+  try {
+    const meta = await mm.parseFile(outPath, { duration: true, skipCovers: true })
+    const c = meta.common
+    const f = meta.format
+    const stat = fs.statSync(outPath)
+    trackMeta = {
+      id: 'local-' + outPath,
+      filePath: outPath,
+      ext: spec.ext,
+      title: c.title || base,
+      artist: (c.artists || []).join(', ') || c.artist || '',
+      album: c.album || '',
+      albumArtist: c.albumartist || '',
+      year: c.year || null,
+      trackNumber: c.track?.no || null,
+      discNumber: c.disk?.no || null,
+      composer: (c.composer || []).join(', '),
+      genre: (c.genre || []).join(', '),
+      duration: f.duration || 0,
+      bitrate: f.bitrate ? Math.round(f.bitrate / 1000) : null,
+      sampleRate: f.sampleRate || null,
+      fileSize: stat.size,
+      lastModified: stat.mtimeMs,
+      hasAlbumArt: !!(c.picture && c.picture.length > 0),
+      addedAt: Date.now(),
+    }
+  } catch (e) {
+    // The file converted fine; only the re-read failed. Report success with the
+    // path so the UI can still point the user at it.
+    return { outPath, warning: 'Converted, but metadata could not be read: ' + e.message }
+  }
+
+  const libData = loadLibraryData()
+  const existingIdx = libData.tracks.findIndex(t => t.id === trackMeta.id)
+  if (existingIdx >= 0) libData.tracks[existingIdx] = trackMeta
+  else libData.tracks.push(trackMeta)
+  saveLibraryData(libData)
+
+  if (!event.sender.isDestroyed()) event.sender.send('convert-progress', { id, percent: 100 })
+  return { track: trackMeta, outPath }
+})
+
 
 ipcMain.handle('open-discord-login', (_, authorizeUrl) => {
   return new Promise((resolve) => {
@@ -1569,6 +1754,7 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
+  if (appSettings.minimizeTo === 'notification') pinTrayIcon()
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
 
   if (!isDev) {

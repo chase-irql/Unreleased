@@ -11,6 +11,7 @@ const MiniPlayer = lazy(() => import('./components/MiniPlayer'))
 // trigger Vite's mixed-import warning without splitting anything.
 import SongInfoModal from './components/SongInfoModal'
 import ReportModal from './components/ReportModal'
+import ConvertFormatModal from './components/ConvertFormatModal'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const el = (window as any).electron
@@ -124,6 +125,7 @@ export default function FloatApp({ view }: { view: string }): JSX.Element {
           info report) — reportModal is per-window state, so the pop-out mounts
           its own instance rather than routing to the main window. */}
       <ReportModal />
+      <ConvertFormatModal />
     </div>
   )
 }

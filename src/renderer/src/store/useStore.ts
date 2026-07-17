@@ -177,6 +177,10 @@ interface AppState {
   pendingReports: PendingReport[]
   reportModal: ReportTarget | null
 
+  // `convertModal` is the local track whose "Convert format" dialog is open
+  // (null = closed). See components/ConvertFormatModal.
+  convertModal: Track | null
+
   // Playlist folders — a local-first grouping over both synced and local
   // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
   // usable logged out; synced-playlist membership syncs to the account once the
@@ -316,6 +320,9 @@ interface AppActions {
   /** Opens the report dialog for general feedback or a specific song. */
   openReport: (target: ReportTarget) => void
   closeReport: () => void
+  /** Opens / closes the "Convert format" dialog for a local track. */
+  openConvert: (track: Track) => void
+  closeConvert: () => void
   /** Queues a general feedback report and tries to deliver it. `contact` is
    *  the optional reach-me field the endpoint accepts. */
   submitFeedback: (category: FeedbackCategory, message: string, contact?: string) => void
@@ -375,6 +382,7 @@ interface AppActions {
 
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
+  addLibraryTrack: (track: LibraryTrack) => void
   updateLibraryTrack: (id: string, updates: Partial<LibraryTrack>) => void
   applyLibraryArt: (id: string, art: string | null) => void
   addLibraryFolder: (folder: string) => void
@@ -770,9 +778,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // ── Reports (feedback + song issue reports) ────────────────────────────────
   pendingReports: ls.get<PendingReport[]>('pendingReports') ?? [],
   reportModal: null,
+  convertModal: null,
 
   openReport: (target) => set({ reportModal: target }),
   closeReport: () => set({ reportModal: null }),
+  openConvert: (track) => set({ convertModal: track }),
+  closeConvert: () => set({ convertModal: null }),
 
   _enqueueReport: (report: PendingReport) => {
     const next = [...get().pendingReports, report]
@@ -1162,6 +1173,17 @@ export const useStore = create<AppStore>((set, get, store) => ({
   offlineSync: {},
 
   setLibraryTracks: (libraryTracks) => set({ libraryTracks }),
+  // Insert a single scanned track (e.g. a freshly converted file), replacing any
+  // existing entry with the same id so the library reflects it without a rescan.
+  addLibraryTrack: (track) => set((s) => {
+    const idx = s.libraryTracks.findIndex((t) => t.id === track.id)
+    if (idx >= 0) {
+      const next = s.libraryTracks.slice()
+      next[idx] = track
+      return { libraryTracks: next }
+    }
+    return { libraryTracks: [...s.libraryTracks, track] }
+  }),
   updateLibraryTrack: (id, updates) => set((s) => {
     const artChanged = updates.albumArt !== undefined
     // Cover art lives in libraryArt, never on the track objects — keep the

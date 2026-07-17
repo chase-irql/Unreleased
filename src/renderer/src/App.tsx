@@ -30,6 +30,7 @@ import RadioFmPlayer from './components/RadioFmPlayer'
 import DiscordRpcSync from './components/DiscordRpcSync'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
+import ConvertFormatModal from './components/ConvertFormatModal'
 import Player from './components/Player'
 import NowPlaying from './components/NowPlaying'
 import QueuePanel from './components/QueuePanel'
@@ -221,6 +222,7 @@ export default function App(): JSX.Element {
       {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <ReportModal />
+      <ConvertFormatModal />
       <DownloadManager />
       {/* Rendered last on purpose: Chromium builds the frameless window's
           draggable region in DOM order (drag rects unite, no-drag rects

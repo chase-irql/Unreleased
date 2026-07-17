@@ -1004,7 +1004,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub={{
                     taskbar: 'Minimize keeps the window on the taskbar',
                     tray: 'Minimize hides the window to the tray icon',
-                    notification: 'Hides to the tray and shows a notification',
+                    notification: 'Hides to the tray, kept pinned & visible (Windows only)',
                   }[appSettings.minimizeTo]}
                 >
                   <select

@@ -131,8 +131,13 @@ function OverviewTab() {
           <Endpoint method="POST" path="/playlists/share/" description="Create a public shared playlist link" />
           <Endpoint method="GET" path="/playlists/shared/{share_id}/" description="Fetch a shared playlist by ID" />
           <Endpoint method="POST" path="/plays/" description="Record a play event (no auth required)" />
-          <Endpoint method="GET" path="/accounts/account/me/" description="Current user info (public-facing)" />
+          <Endpoint method="GET" path="/accounts/account/me/" description="Current user info (public-facing), incl. user_preferences + playlist_folders" />
+          <Endpoint method="PATCH" path="/accounts/account/me/" description="Update user_preferences and/or playlist_folders" />
           <Endpoint method="GET" path="/accounts/me/" description="Current user with role — editor/admin dashboards" />
+          <Endpoint method="POST" path="/feedback/" description="Submit API feedback (no auth)" />
+          <Endpoint method="POST" path="/reports/" description="Report wrong info on a song (no auth)" />
+          <Endpoint method="GET" path="/reports/" description="List song reports (editor+)" />
+          <Endpoint method="PATCH" path="/reports/{id}/" description="Review a song report (editor+)" />
           <Endpoint method="POST" path="/accounts/logout/" description="Invalidate the current token" />
           <Endpoint method="GET" path="/accounts/application/" description="Fetch the logged-in user's editor application" />
           <Endpoint method="POST" path="/accounts/application/" description="Apply to become an editor" />
@@ -605,8 +610,42 @@ Authorization: Token <token>`}</Pre>
   "discord_avatar": "https://cdn.discordapp.com/avatars/...",
   "is_editor": false,
   "is_administrator": false,
-  "otp_enabled": false
+  "otp_enabled": false,
+  "user_preferences": [
+    { "song": 94086, "cover_url": "https://...", "name": "Custom title", "default_version": "v1", "playcount": 12 }
+  ],
+  "playlist_folders": [
+    { "id": "f1", "name": "Favorites", "playlist_ids": [12, 34] }
+  ]
 }`}</Pre>
+            <p className="text-xs text-text-muted mt-2">
+              Also mounted at <Code>/juicewrld/accounts/account/me/</Code> (same handler, different prefix).
+            </p>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="patch">PATCH</Badge><code className="text-xs font-mono text-text-primary">/accounts/account/me/</code></div>
+            <p className="text-xs text-text-muted mb-2">
+              Updates the logged-in user&apos;s own <Code>user_preferences</Code> and/or <Code>playlist_folders</Code> blobs. Send
+              the whole array for whichever field you&apos;re updating — this replaces it, it doesn&apos;t merge entries.
+            </p>
+            <Pre>{`PATCH /accounts/account/me/
+Authorization: Token <token>
+
+{
+  "user_preferences": [
+    { "song": 94086, "cover_url": null, "name": "Custom title", "default_version": null, "playcount": 12 }
+  ],
+  "playlist_folders": [
+    { "id": "f1", "name": "Favorites", "playlist_ids": [12, 34] }
+  ]
+}`}</Pre>
+            <Table
+              headers={['Field', 'Limit', 'Description']}
+              rows={[
+                [<Code>user_preferences</Code>, 'max 500 items', <>Per-song overrides — <Code>song</Code>, <Code>cover_url</Code>, <Code>name</Code>, <Code>default_version</Code>, <Code>playcount</Code>. All fields but <Code>song</Code> are optional/nullable.</>],
+                [<Code>playlist_folders</Code>, 'max 200 folders, 500 playlist ids each', <><Code>id</Code>, <Code>name</Code>, <Code>playlist_ids</Code> (array of int playlist IDs).</>],
+              ]}
+            />
           </div>
           <div>
             <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/me/</code></div>
@@ -632,10 +671,11 @@ Authorization: Token <token>`}</Pre>
         <Table
           headers={['Access Level', 'Endpoints']}
           rows={[
-            ['No login', 'Songs, eras, categories, files, radio, stats, shared playlists, play tracking'],
-            ['Any logged-in user', '/account/me/, /application/, /library/*'],
-            ['Editor or admin', '/me/, /editor/proposals/, /editor/leaderboard/, /badges/'],
+            ['No login', 'Songs, eras, categories, files, radio, stats, shared playlists, play tracking, feedback, report submission'],
+            ['Any logged-in user', '/account/me/ (incl. PATCH), /application/, /library/*'],
+            ['Editor or admin', '/me/, /editor/proposals/, /editor/leaderboard/, /badges/, /reports/ (read + review)'],
             ['Admin only', '/admin/users/, /admin/proposals/, /admin/applications/'],
+            ['Beta code (X-Beta-Code)', '/beta/versions, /beta/download — independent of the token/role system'],
           ]}
         />
         <p className="text-xs text-text-muted mt-2">
@@ -760,6 +800,65 @@ Content-Type: application/json
       <Section title="Play Tracking">
         <p className="text-sm text-text-secondary">Record a listen event — no auth required. Call when a track starts (or after e.g. 30 s).</p>
         <Pre>{`POST /juicewrld/plays/`}</Pre>
+      </Section>
+
+      <Section title="Feedback">
+        <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/juicewrld/feedback/</code></div>
+        <p className="text-xs text-text-muted mb-2">General API/app feedback. No auth required. Forwards to a webhook + the mod server.</p>
+        <Pre>{`{
+  "message": "required",
+  "contact": "optional"
+}`}</Pre>
+        <p className="text-xs text-text-muted">Throttled at <Code>10/min</Code>.</p>
+      </Section>
+
+      <Section title="Song Reports">
+        <p className="text-sm text-text-secondary">
+          Public-facing way to flag wrong/missing info on a specific song. Submissions go to the DB and are forwarded
+          to the mod server via webhook; editors triage them from the queue.
+        </p>
+        <Table
+          headers={['Method', 'Path', 'Access', 'Description']}
+          rows={[
+            ['POST', '/juicewrld/reports/', 'No auth', 'Submit a report'],
+            ['GET', '/juicewrld/reports/', 'Editor+', 'List reports — filter: ?status=pending|resolved'],
+            ['PATCH', '/juicewrld/reports/{id}/', 'Editor+', 'Set status/review_notes (records reviewer + time)'],
+          ]}
+        />
+        <p className="text-xs text-text-muted font-semibold mt-3">Create:</p>
+        <Pre>{`POST /juicewrld/reports/
+
+{
+  "song_id": 94086,     // or "public_id": 163 — one of the two, not both
+  "message": "required — what's wrong",
+  "contact": "optional"
+}`}</Pre>
+        <p className="text-xs text-text-muted">Throttled at <Code>10/min</Code>.</p>
+        <p className="text-xs text-text-muted font-semibold mt-3">Review:</p>
+        <Pre>{`PATCH /juicewrld/reports/{id}/
+Authorization: Token <token>
+
+{
+  "status": "resolved",     // "pending" | "resolved"
+  "review_notes": "optional"
+}`}</Pre>
+      </Section>
+
+      <Section title="Beta App (installer gating)" defaultOpen={false}>
+        <p className="text-sm text-text-secondary">
+          Gates access to in-development desktop builds behind a beta code, separate from the public token/role
+          system above — auth here is the <Code>X-Beta-Code</Code> header, not <Code>Authorization: Token</Code>.
+        </p>
+        <Table
+          headers={['Method', 'Path', 'Auth', 'Description']}
+          rows={[
+            ['GET', '/beta/unlock?code=X', 'None', <>Check a code — returns <Code>{'{ "valid": true|false }'}</Code></>],
+            ['GET', '/beta/versions', <Code>X-Beta-Code</Code>, 'List active beta builds (401 if the code is invalid)'],
+            ['GET', '/beta/download?version=X', <Code>X-Beta-Code</Code>, 'Stream the installer for that build (401/404)'],
+          ]}
+        />
+        <Pre>{`GET /beta/versions
+X-Beta-Code: YOUR_CODE`}</Pre>
       </Section>
 
       <Section title="Admin: User Lookup" defaultOpen={false}>

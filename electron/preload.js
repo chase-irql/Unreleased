@@ -96,6 +96,15 @@ contextBridge.exposeInMainWorld('electron', {
   readTrackMetadata:  (filePath)      => ipcRenderer.invoke('read-track-metadata', filePath),
   writeTrackMetadata: (filePath, meta) => ipcRenderer.invoke('write-track-metadata', filePath, meta),
 
+  // Local audio format conversion (bundled ffmpeg). Progress arrives on
+  // 'convert-progress' keyed by the id passed into convertAudio.
+  convertAudio: (payload) => ipcRenderer.invoke('convert-audio', payload),
+  onConvertProgress: (cb) => {
+    const fn = (_, d) => cb(d)
+    ipcRenderer.on('convert-progress', fn)
+    return () => ipcRenderer.removeListener('convert-progress', fn)
+  },
+
   // Local playlists
   loadLocalPlaylists: ()          => ipcRenderer.invoke('load-local-playlists'),
   saveLocalPlaylists: (playlists) => ipcRenderer.invoke('save-local-playlists', playlists),

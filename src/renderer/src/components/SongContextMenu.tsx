@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
-  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag,
+  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag, FileAudio2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -406,6 +406,9 @@ export default function SongContextMenu({
           )}
           {onEditLocalMetadata && (
             <MenuItem icon={<Pencil size={14} />} label="Edit metadata" onClick={() => { onEditLocalMetadata(); onClose() }} />
+          )}
+          {isLocalOnly && !!track.path && el && (
+            <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
           )}
           {onToggleLike && (
             <MenuItem
