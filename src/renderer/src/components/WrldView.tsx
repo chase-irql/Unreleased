@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, ListMusic, GripVertical, Trash2, Check, Download, History } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
@@ -736,6 +736,18 @@ export default function WrldView(): JSX.Element {
         >
           {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
         </button>
+
+        {/* Desktop only: pop the compact always-on-top mini player window */}
+        {isElectronApp && (
+          <button
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            onClick={() => (window as any).electron?.openFloatWindow?.('mini-player')}
+            className="w-8 h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
+            title="Pop out mini player"
+          >
+            <PictureInPicture2 size={13} />
+          </button>
+        )}
       </div>
 
       <>

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, X, ImageIcon, RotateCcw, Star, Music2, Play, Sparkles } from 'lucide-react'
+import { Check, X, ImageIcon, RotateCcw, Star, Music2, Play, Sparkles, FolderSearch } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { JWApiSong, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { getOwnVersionMeta, SongVersionMeta } from '../lib/versionsApi'
+import CoverPickerModal from './CoverPickerModal'
 
 // The "Personalize" editor shown inside SongInfoModal — the one place a user
 // sets the per-song overrides in lib/songPrefs (custom name, custom cover,
@@ -91,6 +92,7 @@ export default function SongPrefsSection({
   // ── Cover choices ─────────────────────────────────────────────────────────
   const [coverOpen, setCoverOpen] = useState(false)
   const [coverDraft, setCoverDraft] = useState('')
+  const [browseOpen, setBrowseOpen] = useState(false)
   const coverChoices = useMemo(() => {
     const out: { raw: string; url: string; title: string }[] = []
     const seen = new Set<string>()
@@ -218,7 +220,15 @@ export default function SongPrefsSection({
           )}
 
           <div>
-            <p className="text-[10px] text-text-muted mb-1.5">Or paste an image URL / storage path</p>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] text-text-muted">Or paste an image URL / storage path</p>
+              <button
+                onClick={() => setBrowseOpen(true)}
+                className="flex items-center gap-1 text-[10px] font-medium text-accent hover:text-accent/80 transition-colors"
+              >
+                <FolderSearch size={11} /> Browse API files
+              </button>
+            </div>
             <div className="flex items-center gap-1.5">
               <div className="shrink-0 w-8 h-8 rounded-md overflow-hidden bg-surface-overlay flex items-center justify-center">
                 {coverDraftPreview ? (
@@ -245,6 +255,13 @@ export default function SongPrefsSection({
             </div>
           </div>
         </div>
+      )}
+
+      {browseOpen && (
+        <CoverPickerModal
+          onClose={() => setBrowseOpen(false)}
+          onSelect={(path) => { setBrowseOpen(false); applyCover(path) }}
+        />
       )}
 
       {/* ── Default version ── */}
