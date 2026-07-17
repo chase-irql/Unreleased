@@ -209,6 +209,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [cacheCleared, setCacheCleared] = useState<number | null>(null)
   const [offlineStats, setOfflineStats] = useState<{ count: number; totalSize: number } | null>(null)
   const [offlineStatsLoading, setOfflineStatsLoading] = useState(false)
+  const [pinningTray, setPinningTray] = useState(false)
 
   // Which shortcut row is currently "listening" for a key combo (null = none).
   const [recordingId, setRecordingId] = useState<string | null>(null)
@@ -332,6 +333,12 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     if (!el) return
     const picked = await el.pickFolder()
     if (picked) setSetting('downloadPath', picked)
+  }
+
+  const pinTrayNow = async () => {
+    if (!el?.pinTrayIcon) return
+    setPinningTray(true)
+    try { await el.pinTrayIcon() } finally { setPinningTray(false) }
   }
 
   const pickOfflineFolder = async () => {
@@ -658,7 +665,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     <span className="text-text-muted text-xs tabular-nums w-10 text-right">{playbackSpeed.toFixed(2)}x</span>
                   </div>
                 </Row>
-                <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync" sub="Nudge synced lyrics earlier or later">
+                <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.1) * 10) / 10)}
@@ -710,7 +717,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   icon={Waves}
                   iconColor="#0ea5e9"
                   label="Smooth fade when pausing"
-                  sub="Briefly ramp the volume instead of cutting off instantly"
                   labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={pauseFadeEnabled} onClick={() => setPauseFade(!pauseFadeEnabled)} /></div>}
                 />
                 <Row
@@ -1017,6 +1023,23 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     <option value="notification">Notification tray</option>
                   </select>
                 </Row>
+                {appSettings.minimizeTo === 'notification' && el?.platform === 'win32' && (
+                  <Row
+                    icon={Minus}
+                    iconColor="#6b7280"
+                    label="Pin tray icon"
+                    sub="Windows only picks this up on its own restart — pin it now instead of waiting for your next sign-in"
+                  >
+                    <button
+                      onClick={pinTrayNow}
+                      disabled={pinningTray}
+                      className="shrink-0 px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {pinningTray && <Loader2 size={12} className="animate-spin" />}
+                      {pinningTray ? 'Pinning…' : 'Pin now'}
+                    </button>
+                  </Row>
+                )}
                 <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">
                   <Toggle on={appSettings.minimizeToTray} onClick={() => setSetting('minimizeToTray', !appSettings.minimizeToTray)} />
                 </Row>

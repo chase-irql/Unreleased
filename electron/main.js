@@ -388,41 +388,108 @@ function hideWindowToTray() {
 
 // Windows only, best-effort: there's no public Electron/Win32 API to mark a
 // tray icon "always show" — that's a per-icon preference Explorer keeps for
-// itself under this registry key and only re-reads at its own startup.
-// Flipping IsPromoted here nudges Explorer to treat our icon as pinned
-// instead of auto-collapsing it into the overflow chevron after a few
-// minutes of disuse. It's undocumented behavior reverse-engineered from
-// Explorer's own settings UI: it can silently no-op on some Windows builds,
-// and an icon that's already hidden may not visibly update until Explorer
-// restarts or the user signs back in — there's no supported way to force
-// that from here without killing Explorer, which we don't do.
-let trayPinAttempted = false
+// itself under this registry key and only re-reads it at its OWN startup.
+// Flipping IsPromoted here is what Explorer's own "always show" toggle does
+// under the hood, but a write alone doesn't move the icon out of the overflow
+// chevron in the current session — Explorer has to be restarted (or the user
+// has to sign back in) to re-read it. restartExplorer() below does that,
+// gated behind an explicit confirm since it briefly closes File Explorer
+// windows and flashes the taskbar/desktop.
+function readNotifyIconEntries() {
+  const { execFileSync } = require('child_process')
+  const rootKey = 'HKCU\\Control Panel\\NotifyIconSettings'
+  let dump
+  try {
+    dump = execFileSync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
+  } catch {
+    return []
+  }
+  const exePath = process.execPath.toLowerCase()
+  const entries = []
+  let currentKey = null
+  let currentExe = null
+  let currentPromoted = null
+  const flush = () => {
+    if (currentKey && currentExe === exePath) entries.push({ key: currentKey, isPromoted: currentPromoted })
+  }
+  for (const rawLine of dump.split(/\r?\n/)) {
+    if (rawLine.startsWith('HKEY_CURRENT_USER')) {
+      flush()
+      currentKey = rawLine.trim()
+      currentExe = null
+      currentPromoted = null
+      continue
+    }
+    const exeMatch = /^\s+ExecutablePath\s+REG_SZ\s+(.+)$/.exec(rawLine)
+    if (exeMatch) currentExe = exeMatch[1].trim().toLowerCase()
+    const promotedMatch = /^\s+IsPromoted\s+REG_DWORD\s+0x([0-9a-f]+)$/i.exec(rawLine)
+    if (promotedMatch) currentPromoted = parseInt(promotedMatch[1], 16)
+  }
+  flush()
+  return entries
+}
 
+// Returns { found, applied }: `found` is false if Windows hasn't created a
+// NotifyIconSettings entry for this exe yet (nothing to pin — happens if the
+// tray icon hasn't appeared long enough for Explorer to register it);
+// `applied` is true only if an entry existed and needed (and got) flipping.
 function pinTrayIcon() {
-  if (process.platform !== 'win32' || trayPinAttempted) return
-  trayPinAttempted = true
+  if (process.platform !== 'win32') return { found: false, applied: false }
   try {
     const { execFileSync } = require('child_process')
-    const rootKey = 'HKCU\\Control Panel\\NotifyIconSettings'
-    const dump = execFileSync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
-    const exePath = process.execPath.toLowerCase()
-    let currentKey = null
-    const matches = new Set()
-    for (const rawLine of dump.split(/\r?\n/)) {
-      if (rawLine.startsWith('HKEY_CURRENT_USER')) {
-        currentKey = rawLine.trim()
-        continue
-      }
-      const m = /^\s+ExecutablePath\s+REG_SZ\s+(.+)$/.exec(rawLine)
-      if (m && currentKey && m[1].trim().toLowerCase() === exePath) matches.add(currentKey)
+    const entries = readNotifyIconEntries()
+    const needsUpdate = entries.filter((e) => e.isPromoted !== 1)
+    for (const e of needsUpdate) {
+      execFileSync('reg', ['add', e.key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
     }
-    for (const key of matches) {
-      execFileSync('reg', ['add', key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
-    }
-    runLog('main', `pinTrayIcon: ${matches.size} matching registry entr${matches.size === 1 ? 'y' : 'ies'} updated`)
+    runLog('main', `pinTrayIcon: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} found, ${needsUpdate.length} updated`)
+    return { found: entries.length > 0, applied: needsUpdate.length > 0 }
   } catch (e) {
     runLog('main', 'pinTrayIcon failed:', e.message)
+    return { found: false, applied: false }
   }
+}
+
+// Kills and relaunches explorer.exe so it re-reads NotifyIconSettings.
+// Visibly disruptive (closes File Explorer windows, flashes the taskbar and
+// desktop) — only ever called after the user explicitly agrees to it.
+function restartExplorer() {
+  try {
+    const { execFileSync } = require('child_process')
+    execFileSync('taskkill', ['/F', '/IM', 'explorer.exe'], { windowsHide: true })
+  } catch (e) {
+    runLog('main', 'restartExplorer: taskkill failed:', e.message)
+  }
+  setTimeout(() => {
+    try {
+      require('child_process').spawn('explorer.exe', [], { detached: true, stdio: 'ignore' }).unref()
+      runLog('main', 'Explorer restarted to apply tray icon pin')
+    } catch (e) {
+      runLog('main', 'restartExplorer: relaunch failed:', e.message)
+    }
+  }, 400)
+}
+
+// Writes the pin flag, then — only if it actually changed something — asks
+// whether to restart Explorer now so the icon visibly moves out of the
+// overflow chevron immediately, instead of waiting for the next sign-in.
+function attemptPinAndOfferRestart() {
+  const result = pinTrayIcon()
+  if (result.applied) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['Restart Explorer', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      title: 'Pin tray icon',
+      message: 'Restart Windows Explorer to pin the icon now?',
+      detail: 'This briefly closes File Explorer windows and refreshes the taskbar/desktop. If you skip it, the icon pins itself the next time Explorer restarts or you sign back in.',
+    }).then(({ response }) => {
+      if (response === 0) restartExplorer()
+    })
+  }
+  return result
 }
 
 function updateTray() {
@@ -816,6 +883,18 @@ ipcMain.handle('toggle-always-on-top-self', (event) => {
   return win.isAlwaysOnTop()
 })
 
+// "Solo" button on the mini player — minimize every window except the
+// sender so only the pop-out stays on screen. Minimizing (rather than
+// hiding) the main window lets its own 'minimize' listener run, so the
+// minimize-to-tray/notification setting is honored; the mini's "Show full
+// app" button (focus-main-window) restores it from either state.
+ipcMain.handle('hide-other-windows', (event) => {
+  const sender = BrowserWindow.fromWebContents(event.sender)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win !== sender && !win.isDestroyed() && !win.isMinimized()) win.minimize()
+  }
+})
+
 // Store-sync relay: a renderer broadcasts a state patch and every OTHER
 // window receives it (each window runs its own store instance — see
 // src/renderer/src/lib/windowSync.ts for what gets mirrored and why).
@@ -885,9 +964,14 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
-  if (key === 'minimizeTo' && value === 'notification') pinTrayIcon()
+  if (key === 'minimizeTo' && value === 'notification') attemptPinAndOfferRestart()
   return true
 })
+
+// Manual retry for the "Pin now" button in Settings — same write + restart
+// prompt as switching the setting on, usable again later if the user skipped
+// the restart prompt or the pin didn't stick.
+ipcMain.handle('pin-tray-icon', () => attemptPinAndOfferRestart())
 
 // ── IPC: beta channel ─────────────────────────────────────────────────────────
 // Validates against the backend itself (GET {BETA_API_BASE}/unlock?code=...

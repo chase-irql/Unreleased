@@ -38,9 +38,11 @@ contextBridge.exposeInMainWorld('electron', {
   maximizeSelf:    ()     => ipcRenderer.invoke('maximize-self'),
   focusMainWindow: ()     => ipcRenderer.invoke('focus-main-window'),
   // Mini player: panel expand/collapse resizes the window; pin toggles
-  // always-on-top and returns the new state.
+  // always-on-top and returns the new state; hideOtherWindows minimizes
+  // every window except the caller ("solo" mode).
   miniPlayerSetExpanded: (expanded) => ipcRenderer.invoke('mini-player-set-expanded', expanded),
   toggleAlwaysOnTopSelf: ()         => ipcRenderer.invoke('toggle-always-on-top-self'),
+  hideOtherWindows:      ()         => ipcRenderer.invoke('hide-other-windows'),
   windowSyncSend:  (msg)  => ipcRenderer.send('window-sync', msg),
   onWindowSync: (cb) => {
     const fn = (_, msg) => cb(msg)
@@ -65,6 +67,7 @@ contextBridge.exposeInMainWorld('electron', {
   // App settings
   getAppSettings:  ()           => ipcRenderer.invoke('get-app-settings'),
   setAppSetting:   (key, value) => ipcRenderer.invoke('set-app-setting', key, value),
+  pinTrayIcon:     ()           => ipcRenderer.invoke('pin-tray-icon'),
 
   // Beta channel
   betaGetStatus: ()     => ipcRenderer.invoke('beta-get-status'),

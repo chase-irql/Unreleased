@@ -13,6 +13,7 @@ import type { ViewType } from '../types'
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition', 'navOrder',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
+  'popoutWindows',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
   'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',

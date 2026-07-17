@@ -699,12 +699,19 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   _reapplySongPref: (songId) => {
-    const { songPrefs, queue, currentTrack } = get()
+    const { songPrefs, queue, currentTrack, currentTrackFull } = get()
     const pref = songPrefs[songId]
     const trackId = `jw-${songId}`
+    const isCurrentTrack = currentTrack?.id === trackId
+    const newCurrentTrack = isCurrentTrack ? applyPrefToTrack(currentTrack, pref) : currentTrack
     set({
       queue: queue.map((t: Track) => (t.id === trackId ? applyPrefToTrack(t, pref) : t)),
-      ...(currentTrack?.id === trackId ? { currentTrack: applyPrefToTrack(currentTrack, pref) } : {}),
+      currentTrack: newCurrentTrack,
+      // currentTrackFull is a separate snapshot (lyrics/metadata) that Player
+      // only rebuilds when the track id changes — without this fan-out a cover
+      // change wouldn't show until the song replayed, same reasoning as
+      // updateLibraryTrack's currentTrackFull sync above.
+      ...(isCurrentTrack && currentTrackFull ? { currentTrackFull: { ...currentTrackFull, albumArt: newCurrentTrack?.imageUrl ?? null } } : {}),
     })
   },
 

@@ -10,6 +10,7 @@ import {
   Heart,
   Pin,
   ExternalLink,
+  EyeOff,
   Minus,
   X,
   Music,
@@ -380,6 +381,9 @@ export default function MiniPlayer(): JSX.Element {
           <WinBtn onClick={togglePin} title={pinned ? 'Unpin from top' : 'Pin on top'} active={pinned}>
             <Pin size={12} className={pinned ? '' : 'opacity-60'} style={pinned ? undefined : { transform: 'rotate(45deg)' }} />
           </WinBtn>
+          <WinBtn onClick={() => el?.hideOtherWindows?.()} title="Hide all other windows">
+            <EyeOff size={12} />
+          </WinBtn>
           <WinBtn onClick={() => el?.focusMainWindow?.()} title="Show full app">
             <ExternalLink size={12} />
           </WinBtn>
@@ -410,7 +414,7 @@ export default function MiniPlayer(): JSX.Element {
           {/* Info + controls */}
           <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
             {/* Title / artist (padded clear of the window buttons) */}
-            <div className="min-w-0 pr-28">
+            <div className="min-w-0 pr-36">
               <p className="text-text-primary text-sm font-semibold truncate" title={title}>{title}</p>
               <div className="flex items-center gap-1.5 min-w-0">
                 <p className="text-text-muted text-xs truncate">{artist}</p>

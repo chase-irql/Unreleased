@@ -1916,8 +1916,13 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         ) : (
           <div className="px-2 pb-8">
-            {/* Search + compact view */}
-            <div className="px-2 mb-3 flex items-center gap-2">
+            {/* Search + compact view — sticky so scrolled track rows never
+                reach the top of the scroll container, where they'd render
+                behind the frameless window's fixed min/max/close buttons. */}
+            <div
+              className="sticky top-0 z-20 -mx-2 px-4 py-2 mb-3 flex items-center gap-2 bg-surface"
+              style={{ paddingRight: (window as any).electron ? 188 : undefined }}
+            >
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
                 <input
