@@ -259,6 +259,7 @@ export default function SongPrefsSection({
 
       {browseOpen && (
         <CoverPickerModal
+          songTitle={apiTitle}
           onClose={() => setBrowseOpen(false)}
           onSelect={(path) => { setBrowseOpen(false); applyCover(path) }}
         />
