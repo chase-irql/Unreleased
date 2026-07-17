@@ -29,6 +29,7 @@ import PlaylistsView from './components/PlaylistsView'
 import RadioFmPlayer from './components/RadioFmPlayer'
 import DiscordRpcSync from './components/DiscordRpcSync'
 import UserAuthModal from './components/UserAuthModal'
+import ReportModal from './components/ReportModal'
 import Player from './components/Player'
 import NowPlaying from './components/NowPlaying'
 import QueuePanel from './components/QueuePanel'
@@ -158,6 +159,11 @@ export default function App(): JSX.Element {
   // needed), so those views are ready before the user first opens them.
   useEffect(() => { prefetchApiData() }, [prefetchApiData])
 
+  // Deliver any reports queued in a previous session. loadAccount also flushes
+  // after login (to attach the token), but this covers a signed-out user whose
+  // loadAccount returns early. No-op until the reporting endpoints exist.
+  useEffect(() => { useStore.getState()._flushReports() }, [])
+
   const isElectron = navigator.userAgent.includes("Electron")
 
   return (
@@ -214,6 +220,7 @@ export default function App(): JSX.Element {
       {showSettings && <Suspense fallback={null}><Settings /></Suspense>}
       {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
+      <ReportModal />
       <DownloadManager />
       {/* Rendered last on purpose: Chromium builds the frameless window's
           draggable region in DOM order (drag rects unite, no-drag rects

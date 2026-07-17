@@ -1,4 +1,5 @@
 import { useStore, type AppStore } from '../store/useStore'
+import { setSongPrefsCache } from './songPrefs'
 import type { ViewType } from '../types'
 
 // State mirrored between the main window and pop-out windows (see FloatApp).
@@ -14,7 +15,7 @@ const SYNC_KEYS = [
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
-  'likedTrackIds', 'account', 'playlists',
+  'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
   'libraryFolders', 'libraryAutoRefresh', 'libraryScanning', 'libraryLastScanned',
   'developerMode', 'updateStatus',
   // Playback mirror for the mini-player pop-out. The MAIN window owns the
@@ -91,6 +92,11 @@ export function initWindowSync(isFloat: boolean): void {
       // reload it so this window's track list isn't stale (the tracks
       // themselves are far too big to ship through the sync channel).
       if ('libraryLastScanned' in msg.payload) useStore.getState().loadLibrary()
+      // setState writes the store directly, bypassing _setSongPrefs — so the
+      // module cache songToTrack reads has to be mirrored by hand here, or a
+      // rename made in one window would leave every other window converting
+      // songs against stale overrides.
+      if ('songPrefs' in msg.payload) setSongPrefsCache(msg.payload.songPrefs ?? {})
     } else if (msg.type === 'request') {
       // Pop-outs boot with localStorage-persisted values only; the main
       // window answers with the live session state (account, update status…).

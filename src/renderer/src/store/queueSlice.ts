@@ -17,6 +17,7 @@ import { apiFetch, songToTrack } from '../lib/juicewrldApi'
 import type { JWApiPaginatedResponse, JWApiSong } from '../lib/juicewrldApi'
 import { getOwnVersionMeta, getVersionGroup } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
+import { peekSongPref, hasAnyDefaultVersion } from '../lib/songPrefs'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,9 +125,11 @@ export interface QueueSlice {
   // Internal
   _loadMore: () => void
   _prefetchRadioTrack: () => void
-  /** If "prefer OG version" is enabled, asynchronously swaps `track` for its
-   *  linked OG sibling (if one exists) once it becomes the current track. */
-  _maybeSwapToOg: (track: Track) => void
+  /** Asynchronously swaps `track` for the version the user actually wants —
+   *  its group's preferred version, or its linked OG sibling when "prefer OG
+   *  version" is on — once it becomes the current track. No-op when neither
+   *  applies. */
+  _maybeSwapToPreferredVersion: (track: Track) => void
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -167,21 +170,61 @@ let _radioSession = 0
 const isOgVersion = (meta: SongVersionMeta | null | undefined): boolean =>
   !!meta && /\bog\b/i.test(`${meta.version ?? ''} ${meta.versionTitle ?? ''}`)
 
-/** Given an API-sourced track, looks up its linked version group and — if an
- *  "OG" sibling exists and this track isn't already it — returns a Track for
- *  that sibling. Returns null if there's nothing to swap to. */
-async function findOgTrack(track: Track): Promise<Track | null> {
+/** Matches a member against a user's preferred version label ("v1", "TV Mix").
+ *  Compares the per-song `version` field only — `versionTitle` is shared by
+ *  every member of a group and so can't distinguish between them. */
+const matchesVersionLabel = (meta: SongVersionMeta | null | undefined, label: string): boolean =>
+  !!meta?.version && meta.version.trim().toLowerCase() === label.trim().toLowerCase()
+
+/** The version label this user wants to hear from `songId`'s group.
+ *
+ *  Preferences are stored per song, but a default version is really a property
+ *  of the GROUP — so a default set on any member governs all of them, and
+ *  playing a sibling (or a compact-view group row, which can start from
+ *  whichever member it likes) honours it. The song's own row wins when several
+ *  members disagree. */
+function groupDefaultVersion(songId: number, group: SongVersionMeta[]): string | null {
+  const own = peekSongPref(songId)?.default_version
+  if (own) return own
+  for (const member of group) {
+    const label = peekSongPref(member.songId)?.default_version
+    if (label) return label
+  }
+  return null
+}
+
+const apiSongId = (track: Track): number | null => {
   if (!track.id.startsWith('jw-')) return null
   const songId = Number(track.id.slice(3))
-  if (!Number.isFinite(songId)) return null
+  return Number.isFinite(songId) ? songId : null
+}
+
+/** Given an API-sourced track, works out which song should actually play and
+ *  returns a Track for it — or null when the current one is already right (or
+ *  there's nothing to swap to).
+ *
+ *  A per-song default version is explicit intent about this exact group, so it
+ *  wins over the global prefer-OG toggle. If a default is set but no member
+ *  carries that label, nothing is swapped: quietly falling back to OG would
+ *  play something the user didn't ask for. */
+async function resolveVersionSwap(track: Track, preferOg: boolean): Promise<Track | null> {
+  const songId = apiSongId(track)
+  if (songId == null) return null
 
   const [own, group] = await Promise.all([getOwnVersionMeta(songId), getVersionGroup(songId)])
-  if (isOgVersion(own)) return null
+
+  const wanted = groupDefaultVersion(songId, group)
+  if (wanted) {
+    if (matchesVersionLabel(own, wanted)) return null
+    const target = group.find(m => matchesVersionLabel(m, wanted))
+    if (!target) return null
+    return songToTrack(await apiFetch<JWApiSong>(`/songs/${target.songId}/`))
+  }
+
+  if (!preferOg || isOgVersion(own)) return null
   const ogSibling = group.find(isOgVersion)
   if (!ogSibling) return null
-
-  const song = await apiFetch<JWApiSong>(`/songs/${ogSibling.songId}/`)
-  return songToTrack(song)
+  return songToTrack(await apiFetch<JWApiSong>(`/songs/${ogSibling.songId}/`))
 }
 
 // ─── Slice factory ────────────────────────────────────────────────────────────
@@ -240,7 +283,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       currentTime: 0,
     })
     if (filter?.hasMore) get()._loadMore()
-    get()._maybeSwapToOg(track)
+    get()._maybeSwapToPreferredVersion(track)
   },
 
   // ── playCollection ─────────────────────────────────────────────────────────
@@ -279,7 +322,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       currentTime: 0,
     })
     get()._prefetchRadioTrack()
-    get()._maybeSwapToOg(track)
+    get()._maybeSwapToPreferredVersion(track)
   },
 
   // ── nextTrack ──────────────────────────────────────────────────────────────
@@ -308,7 +351,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         currentTime: 0,
       })
       get()._prefetchRadioTrack()
-      get()._maybeSwapToOg(radioNext)
+      get()._maybeSwapToPreferredVersion(radioNext)
       return radioNext
     }
 
@@ -327,7 +370,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
           const first = reshuffled[0]
           set({ queue: reshuffled, queueIndex: 0, currentTrack: first, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
           get()._loadMore()
-          get()._maybeSwapToOg(first)
+          get()._maybeSwapToPreferredVersion(first)
           return first
         } else {
           set({ isPlaying: false }); return null
@@ -344,7 +387,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const track = queue[nextIdx]
     set({ queueIndex: nextIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
     get()._loadMore()
-    get()._maybeSwapToOg(track)
+    get()._maybeSwapToPreferredVersion(track)
     return track
   },
 
@@ -367,7 +410,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const prevIdx = Math.max(0, queueIndex - 1)
     const track = queue[prevIdx]
     set({ queueIndex: prevIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
-    get()._maybeSwapToOg(track)
+    get()._maybeSwapToPreferredVersion(track)
     return track
   },
 
@@ -379,7 +422,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       : queue.findIndex((t: Track) => t.id === track.id)
     if (idx < 0) return
     set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
-    get()._maybeSwapToOg(track)
+    get()._maybeSwapToPreferredVersion(track)
   },
 
   // ── toggleShuffle ──────────────────────────────────────────────────────────
@@ -510,7 +553,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
         const newQueue = [...queue.slice(-(RADIO_HISTORY_LIMIT - 1)), track]
         set({ queue: newQueue, queueIndex: newQueue.length - 1, currentTrack: track, currentTrackFull: null, isPlaying: true, radioNext: null, progress: 0, currentTime: 0 })
         get()._prefetchRadioTrack()
-        get()._maybeSwapToOg(track)
+        get()._maybeSwapToPreferredVersion(track)
       }
     }
 
@@ -543,19 +586,23 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     }
   },
 
-  // ── Prefer-OG swap ─────────────────────────────────────────────────────────
-  _maybeSwapToOg: (track) => {
-    if (!get().preferOgVersion) return
-    findOgTrack(track)
-      .then((ogTrack) => {
-        if (!ogTrack) return
+  // ── Preferred-version swap ─────────────────────────────────────────────────
+  _maybeSwapToPreferredVersion: (track) => {
+    const preferOg = get().preferOgVersion
+    // Nothing could possibly swap — no per-song default anywhere and the
+    // global toggle off — so skip the version lookup rather than pay a
+    // /versions/ round trip on every track change for the common case.
+    if (!preferOg && !hasAnyDefaultVersion()) return
+    resolveVersionSwap(track, preferOg)
+      .then((swapped) => {
+        if (!swapped) return
         const state = get()
         // Bail if the user has since moved on to a different track.
         if (state.currentTrack?.id !== track.id) return
         set({
-          currentTrack: ogTrack,
+          currentTrack: swapped,
           currentTrackFull: null,
-          queue: state.queue.map((t: Track) => (t.id === track.id ? ogTrack : t)),
+          queue: state.queue.map((t: Track) => (t.id === track.id ? swapped : t)),
         })
       })
       .catch(() => {})

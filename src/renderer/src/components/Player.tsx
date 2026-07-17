@@ -45,6 +45,10 @@ function resolvePlaybackUrl(track: { id: string; streamUrl?: string; path: strin
 // How long the pause-fade ramps volume when "smooth fade when pausing" is on.
 const PAUSE_FADE_MS = 400
 
+// How much of a song counts as having played it (or half its length, for
+// anything shorter). See creditPlayIfListened.
+const PLAYCOUNT_THRESHOLD_SECONDS = 30
+
 let _seek: ((t: number) => void) | null = null
 let _getAudioDuration: (() => number) | null = null
 let _getAudioCurrentTime: (() => number) | null = null
@@ -589,6 +593,26 @@ export default function Player(): JSX.Element {
     apply()
   }, [audioOutput])
 
+  // Credits a play once the track has actually been listened to, rather than
+  // the moment it starts — skipping through a queue or letting a crossfade
+  // preload the next song shouldn't count. Whichever comes first: a fixed
+  // number of seconds in, or halfway through anything shorter than that.
+  const creditedTrackId = useRef<string | null>(null)
+  const creditPlayIfListened = (position: number, dur: number): void => {
+    const track = useStore.getState().currentTrack
+    if (!track || dur <= 0) return
+    // Back at the start of a track that already counted — repeat-one came
+    // around, or the user seeked back — so let it count again as a new play.
+    if (creditedTrackId.current === track.id && position < 1) creditedTrackId.current = null
+    if (creditedTrackId.current === track.id) return
+    if (position < Math.min(PLAYCOUNT_THRESHOLD_SECONDS, dur / 2)) return
+    const songId = trackIdToSongId(track.id)
+    // Local files and raw file-browser entries have no song id to count against.
+    if (songId == null) return
+    creditedTrackId.current = track.id
+    useStore.getState().bumpSongPlaycount(songId)
+  }
+
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLAudioElement>): void => {
     const audio = e.currentTarget
     if (audio !== getActive()) return  // ignore pre-loading slot's events
@@ -601,6 +625,8 @@ export default function Player(): JSX.Element {
     // isn't a finite number yet.
     const dur = isFinite(audio.duration) ? audio.duration : (currentTrack?.duration || 0)
     if (dur > 0) setProgress(audio.currentTime / dur)
+
+    creditPlayIfListened(audio.currentTime, dur)
 
     // Sleep timer
     if (sleepTimerEnd && Date.now() >= sleepTimerEnd) {
@@ -734,11 +760,11 @@ export default function Player(): JSX.Element {
           isPlaying: wasPlaying,
         })
         // This setState bypasses nextTrack(), which is what normally tops up a
-        // lazily-loaded queue and applies the prefer-OG swap — without these,
-        // crossfaded advances never fetch the next page and playback stops
-        // dead at the end of the initially loaded songs.
+        // lazily-loaded queue and applies the preferred-version swap — without
+        // these, crossfaded advances never fetch the next page and playback
+        // stops dead at the end of the initially loaded songs.
         useStore.getState()._loadMore()
-        useStore.getState()._maybeSwapToOg(track)
+        useStore.getState()._maybeSwapToPreferredVersion(track)
       }
       return
     }
@@ -870,6 +896,11 @@ export default function Player(): JSX.Element {
   // see fresh state, like remoteCommandsRef above; a stable listener reads the
   // ref. Store reads/writes go through getState() so they never need the pick.
   const clampSpeed = (v: number): number => Math.min(2, Math.max(0.5, Math.round(v * 100) / 100))
+  const seekToPercent = (pct: number): void => {
+    if (!currentTrack || radioFmActive) return
+    const dur = getAudioDuration() || currentTrack.duration || 0
+    if (dur > 0) seekAudio(dur * pct)
+  }
   const hotkeyActionsRef = useRef<Record<string, () => void>>({})
   hotkeyActionsRef.current = {
     'play-pause': () => { if (currentTrack && !radioFmActive) setIsPlaying(!isPlaying) },
@@ -912,12 +943,29 @@ export default function Player(): JSX.Element {
     'smooth-playback': () => { const s = useStore.getState(); s.setPauseFade(!s.pauseFadeEnabled) },
     'prefer-og':   () => { const s = useStore.getState(); s.setPreferOgVersion(!s.preferOgVersion) },
     'sleep-timer': () => { const s = useStore.getState(); s.setSleepTimer(s.sleepTimerEnd ? null : Date.now() + 30 * 60 * 1000) },
+    'seek-0':  () => seekToPercent(0),
+    'seek-10': () => seekToPercent(0.1),
+    'seek-20': () => seekToPercent(0.2),
+    'seek-30': () => seekToPercent(0.3),
+    'seek-40': () => seekToPercent(0.4),
+    'seek-50': () => seekToPercent(0.5),
+    'seek-60': () => seekToPercent(0.6),
+    'seek-70': () => seekToPercent(0.7),
+    'seek-80': () => seekToPercent(0.8),
+    'seek-90': () => seekToPercent(0.9),
     'view-tracker':   () => setActiveView('api-tracker'),
     'view-playlists': () => setActiveView('playlists'),
     'view-library':   () => setActiveView('library'),
     'view-wrld':      () => setActiveView('wrld'),
+    'view-admin':     () => { if (account?.is_administrator || account?.is_editor) setActiveView('admin') },
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
+    'toggle-queue':     () => { const s = useStore.getState(); s.setShowQueue(!s.showQueue) },
+    'focus-search':     () => {
+      const input = document.querySelector<HTMLInputElement>('input[placeholder*="Search" i]')
+      input?.focus()
+      input?.select()
+    },
     'mini-player':         () => { if (useStore.getState().popoutWindows.miniPlayer) (window as any).electron?.openFloatWindow?.('mini-player') },
     'close-float-windows': () => (window as any).electron?.closeFloatWindows?.(),
     'restart-app':         () => (window as any).electron?.relaunchApp?.(),

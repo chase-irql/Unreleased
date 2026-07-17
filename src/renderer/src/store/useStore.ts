@@ -1,10 +1,23 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { ViewType, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
+import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
-import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration } from '../lib/juicewrldApi'
+import * as preferencesApi from '../lib/preferencesApi'
+import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
+import {
+  emptySongPref, isEmptySongPref, normalizePrefText, setSongPrefsCache,
+} from '../lib/songPrefs'
+import type { SongPreference, SongPrefMap, SongPrefPatch } from '../lib/songPrefs'
+import * as reportsApi from '../lib/reportsApi'
+import { newReportId, isDeliverable } from '../lib/reports'
+import type {
+  PendingReport, ReportTarget, FeedbackCategory, SongIssueType,
+} from '../lib/reports'
+import * as foldersApi from '../lib/foldersApi'
+import { newFolderId, normalizeFolderName, pruneFolders } from '../lib/playlistFolders'
+import type { PlaylistFolder, ServerPlaylistFolder } from '../lib/playlistFolders'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
@@ -18,6 +31,16 @@ import { DEFAULT_NAV_ORDER } from '../lib/navItems'
 // downloaded track would look "unreferenced" the next time any playlist
 // resyncs and get deleted out from under the user.
 const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
+
+// Build-time app version (vite `define`), captured as report context. Guarded
+// so the store still loads in any context where the define isn't injected.
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+
+// True when this renderer is a pop-out window (FloatApp, ?float=<view>).
+// Pop-outs share localStorage with the main window, so only the main window
+// may flush the report outbox — the live endpoints have no idempotency key,
+// so two windows flushing the same queue would double-send every report.
+const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
 // Lightweight localStorage persistence helper
 const ls = {
@@ -139,6 +162,27 @@ interface AppState {
   // Liked songs
   likedTrackIds: string[]
 
+  // Per-song user overrides (custom name, custom cover, preferred version,
+  // playcount), keyed by numeric API song id. Local-first like likedTrackIds:
+  // usable logged out, merged up to the server on login. Every write goes
+  // through _setSongPrefs so the lib/songPrefs cache — which songToTrack reads
+  // and which can't import this store without a cycle — stays in step.
+  songPrefs: SongPrefMap
+
+  // In-app reports (feedback + song issue reports). `pendingReports` is a
+  // persisted outbox: a report is queued locally on submit and delivered when
+  // the endpoints exist and the network is reachable (see lib/reportsApi's
+  // reportsApiEnabled), so nothing is lost while the backend is still pending.
+  // `reportModal` is the open report dialog's target (null = closed).
+  pendingReports: PendingReport[]
+  reportModal: ReportTarget | null
+
+  // Playlist folders — a local-first grouping over both synced and local
+  // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
+  // usable logged out; synced-playlist membership syncs to the account once the
+  // endpoints exist (see lib/foldersApi). See lib/playlistFolders.
+  playlistFolders: PlaylistFolder[]
+
   // API tracker extras
   apiTrackerCategory: string
   apiTrackerEra: string
@@ -242,6 +286,69 @@ interface AppActions {
 
   toggleLike: (trackId: string) => void
 
+  /** Custom display name for a song, or null to fall back to its own title. */
+  setSongName: (songId: number, name: string | null) => void
+  /** Custom cover, as a pointer into the API's storage (see
+   *  resolvePrefCoverUrl), or null to fall back to the song's own image. */
+  setSongCover: (songId: number, coverUrl: string | null) => void
+  /** Preferred version *label* within this song's version group (e.g. "v1") —
+   *  playing any member of the group then plays this one. Null clears it. */
+  setSongDefaultVersion: (songId: number, version: string | null) => void
+  /** Drops every override for a song, playcount included. */
+  clearSongPref: (songId: number) => void
+  /** Credits one play. Called by the Player once a track passes the listened
+   *  threshold — not on every start. */
+  bumpSongPlaycount: (songId: number) => void
+  /** Merges the profile's `user_preferences` blob (from getMe) with local
+   *  state — profile wins per song except playcount, which takes the max —
+   *  then pushes the merged array back up. Runs on login. */
+  syncSongPrefs: (serverPrefs?: SongPreference[]) => Promise<void>
+  /** Internal — the single write path for songPrefs (state + localStorage +
+   *  lib/songPrefs' cache). */
+  _setSongPrefs: (next: SongPrefMap) => void
+  /** Internal — debounced whole-array push of songPrefs to the profile. */
+  _schedulePrefsPush: () => void
+  /** Internal — patches one song's row and syncs it to the server. */
+  _writeSongPref: (songId: number, patch: SongPrefPatch) => void
+  /** Internal — pushes a row's name/cover onto Tracks already in the queue. */
+  _reapplySongPref: (songId: number) => void
+
+  /** Opens the report dialog for general feedback or a specific song. */
+  openReport: (target: ReportTarget) => void
+  closeReport: () => void
+  /** Queues a general feedback report and tries to deliver it. `contact` is
+   *  the optional reach-me field the endpoint accepts. */
+  submitFeedback: (category: FeedbackCategory, message: string, contact?: string) => void
+  /** Queues a song issue report (wrong/missing info or lyrics) and tries to
+   *  deliver it. `issues` is the set of checked problem types. */
+  reportSong: (songId: number, songName: string, issues: SongIssueType[], message: string, contact?: string) => void
+  /** Drops a queued report from the outbox (e.g. one stuck failing). */
+  dismissReport: (id: string) => void
+  /** Internal — appends a report to the outbox and kicks off delivery. */
+  _enqueueReport: (report: PendingReport) => void
+  /** Internal — attempts to deliver every deliverable queued report. */
+  _flushReports: () => Promise<void>
+
+  /** Creates a folder (optionally seeded with playlist keys) and returns its id. */
+  createFolder: (name: string, playlistKeys?: string[]) => string | null
+  renameFolder: (id: string, name: string) => void
+  /** Deletes the folder; its playlists become ungrouped (they aren't deleted). */
+  deleteFolder: (id: string) => void
+  /** Files playlists under a folder (or `null` to remove them from any folder).
+   *  A playlist lives in at most one folder, so this clears prior membership. */
+  movePlaylistsToFolder: (playlistKeys: string[], folderId: string | null) => void
+  /** Drops folder members that no longer exist (playlists deleted since). */
+  pruneFolders: (validKeys: string[]) => void
+  /** Merges the profile's `playlist_folders` blob (from getMe) with local
+   *  state — the profile is the source of truth for synced membership, and
+   *  device-local members re-attach by folder id — then pushes the merge back
+   *  up. Runs on login. */
+  syncFolders: (serverFolders?: ServerPlaylistFolder[]) => Promise<void>
+  /** Internal — the single write path for playlistFolders. */
+  _setFolders: (next: PlaylistFolder[]) => void
+  /** Internal — debounced whole-array push of folders to the profile. */
+  _scheduleFoldersPush: () => void
+
   setApiTrackerCategory: (cat: string) => void
   setApiTrackerEra: (era: string) => void
   setApiFilesPath: (path: string) => void
@@ -338,6 +445,60 @@ const _offlineKeyEpochs = new Map<string, number>()
 // Covers arrive in bursts — one per visible row — and applying each through
 // its own set() meant a full libraryTracks copy and list re-render per cover.
 let _pendingArt: Map<string, string | null> | null = null
+
+// ─── Song preferences helpers ─────────────────────────────────────────────────
+
+/** Merges `patch` into one song's row, dropping the row once nothing is left
+ *  on it. Pure — callers persist the result through _setSongPrefs. */
+function patchPrefMap(prefs: SongPrefMap, songId: number, patch: SongPrefPatch): SongPrefMap {
+  const merged = { ...(prefs[songId] ?? emptySongPref(songId)), ...patch }
+  const next = { ...prefs }
+  if (isEmptySongPref(merged)) delete next[songId]
+  else next[songId] = merged
+  return next
+}
+
+/** Re-derives a Track's name/cover from a preference row. Tracks already in
+ *  the queue were built by songToTrack before the override existed and would
+ *  otherwise show the old name until something refetched them; deriving from
+ *  the canonical apiTitle/apiImageUrl kept on every API Track means an
+ *  override can be applied, changed, or removed in place. */
+function applyPrefToTrack(track: Track, pref: SongPreference | undefined): Track {
+  const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
+  return {
+    ...track,
+    title: pref?.name || track.apiTitle || track.title,
+    imageUrl: coverUrl ?? track.apiImageUrl,
+    hasAlbumArt: !!track.apiImageUrl || !!coverUrl,
+  }
+}
+
+/** Hydrates the persisted preferences and seeds lib/songPrefs' cache with them
+ *  before any song → Track conversion can happen, so overrides survive a
+ *  restart and apply to the very first render. */
+function hydrateSongPrefs(): SongPrefMap {
+  const stored = ls.get<SongPrefMap>('songPrefs') ?? {}
+  setSongPrefsCache(stored)
+  return stored
+}
+
+// ─── Report outbox helpers ────────────────────────────────────────────────────
+
+// Guards _flushReports against overlapping runs (boot + login + a fresh submit
+// can all fire it close together) — without this, the same queued report could
+// be POSTed twice before the first response removed it.
+let _reportsFlushing = false
+
+// ─── Profile-blob push debounce ───────────────────────────────────────────────
+
+// Preferences and folders each live as one JSON field on /account/me/, PATCHed
+// whole. Debouncing collapses a burst of edits (typing a rename, a run of
+// playcount bumps) into a single PATCH instead of one request per keystroke.
+// Failures are swallowed: state is local-first, and the next push — or the
+// next login's merge — re-sends everything anyway.
+const PROFILE_PUSH_DEBOUNCE_MS = 1500
+let _prefsPushTimer: ReturnType<typeof setTimeout> | null = null
+let _foldersPushTimer: ReturnType<typeof setTimeout> | null = null
 
 // Chains `fn` behind any in-flight offline work for `key` so writers for the
 // same playlist never interleave.
@@ -516,6 +677,288 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
 
+  // ── Song preferences ──────────────────────────────────────────────────────
+  songPrefs: hydrateSongPrefs(),
+
+  // Every write lands in three places: Zustand state (so React re-renders),
+  // localStorage (so overrides survive a restart and work logged out), and
+  // lib/songPrefs' module cache (so songToTrack — which can't import this
+  // store without a cycle — resolves overrides for Tracks built later).
+  _setSongPrefs: (next) => {
+    set({ songPrefs: next })
+    ls.set('songPrefs', next)
+    setSongPrefsCache(next)
+  },
+
+  _reapplySongPref: (songId) => {
+    const { songPrefs, queue, currentTrack } = get()
+    const pref = songPrefs[songId]
+    const trackId = `jw-${songId}`
+    set({
+      queue: queue.map((t: Track) => (t.id === trackId ? applyPrefToTrack(t, pref) : t)),
+      ...(currentTrack?.id === trackId ? { currentTrack: applyPrefToTrack(currentTrack, pref) } : {}),
+    })
+  },
+
+  _schedulePrefsPush: () => {
+    if (!get().account || !preferencesApi.preferencesApiEnabled) return
+    if (_prefsPushTimer) clearTimeout(_prefsPushTimer)
+    _prefsPushTimer = setTimeout(() => {
+      _prefsPushTimer = null
+      preferencesApi.pushPreferences(Object.values(get().songPrefs)).catch(() => {})
+    }, PROFILE_PUSH_DEBOUNCE_MS)
+  },
+
+  _writeSongPref: (songId, patch) => {
+    get()._setSongPrefs(patchPrefMap(get().songPrefs, songId, patch))
+    if (patch.name !== undefined || patch.cover_url !== undefined) get()._reapplySongPref(songId)
+    // No rollback on push failure: the local write is already durable, and the
+    // profile blob is replaced wholesale on the next push or login merge — a
+    // transient PATCH failure shouldn't undo an edit the user just made.
+    get()._schedulePrefsPush()
+  },
+
+  setSongName: (songId, name) => get()._writeSongPref(songId, { name: normalizePrefText(name) }),
+  setSongCover: (songId, coverUrl) => get()._writeSongPref(songId, { cover_url: normalizePrefText(coverUrl) }),
+  setSongDefaultVersion: (songId, version) => get()._writeSongPref(songId, { default_version: normalizePrefText(version) }),
+
+  clearSongPref: (songId) => {
+    const before = get().songPrefs
+    if (!before[songId]) return
+    const next = { ...before }
+    delete next[songId]
+    get()._setSongPrefs(next)
+    get()._reapplySongPref(songId)
+    get()._schedulePrefsPush()
+  },
+
+  bumpSongPlaycount: (songId) => {
+    const prefs = get().songPrefs
+    // The profile blob stores absolute counts (there's no server-side
+    // increment), so this device just bumps locally and the debounced push
+    // sends its totals; login merges take max() per song across devices so
+    // one device's push can't erase plays made on another.
+    get()._setSongPrefs(patchPrefMap(prefs, songId, { playcount: (prefs[songId]?.playcount ?? 0) + 1 }))
+    get()._schedulePrefsPush()
+  },
+
+  syncSongPrefs: async (serverPrefs) => {
+    if (!preferencesApi.preferencesApiEnabled) return
+    try {
+      const rows = serverPrefs ?? []
+      const local = get().songPrefs
+      const merged: SongPrefMap = {}
+      // The profile's copy wins for override fields (another device may have
+      // edited them since this one last pushed) — except playcount, where
+      // max() is the only merge that never loses plays made here offline.
+      for (const row of rows) {
+        const mine = local[row.song]
+        merged[row.song] = mine
+          ? { ...row, playcount: Math.max(row.playcount ?? 0, mine.playcount ?? 0) }
+          : row
+      }
+      // Rows that exist only on this device (set before signing in, or on
+      // songs the profile blob dropped at the 500 cap) are kept and pushed.
+      for (const pref of Object.values(local)) {
+        if (!merged[pref.song]) merged[pref.song] = pref
+      }
+      get()._setSongPrefs(merged)
+      await preferencesApi.pushPreferences(Object.values(merged)).catch(() => {})
+    } catch {}
+  },
+
+  // ── Reports (feedback + song issue reports) ────────────────────────────────
+  pendingReports: ls.get<PendingReport[]>('pendingReports') ?? [],
+  reportModal: null,
+
+  openReport: (target) => set({ reportModal: target }),
+  closeReport: () => set({ reportModal: null }),
+
+  _enqueueReport: (report: PendingReport) => {
+    const next = [...get().pendingReports, report]
+    set({ pendingReports: next })
+    ls.set('pendingReports', next)
+    // Fire-and-forget delivery; if the API is off or offline it stays queued.
+    get()._flushReports()
+  },
+
+  submitFeedback: (category, message, contact) => {
+    const text = message.trim()
+    if (!text) return
+    get()._enqueueReport({
+      id: newReportId(), kind: 'feedback', category, message: text,
+      contact: contact?.trim() || undefined,
+      appVersion: APP_VERSION, createdAt: Date.now(), attempts: 0,
+    })
+  },
+
+  reportSong: (songId, songName, issues, message, contact) => {
+    // A report needs at least a flagged issue or a written note to be worth
+    // sending — the form enforces this too, but guard here so no empty report
+    // can reach the outbox.
+    if (issues.length === 0 && !message.trim()) return
+    get()._enqueueReport({
+      id: newReportId(), kind: 'song', songId, songName,
+      issues, message: message.trim(),
+      contact: contact?.trim() || undefined,
+      appVersion: APP_VERSION, createdAt: Date.now(), attempts: 0,
+    })
+  },
+
+  dismissReport: (id) => {
+    const next = get().pendingReports.filter((r) => r.id !== id)
+    set({ pendingReports: next })
+    ls.set('pendingReports', next)
+  },
+
+  _flushReports: async () => {
+    if (_reportsFlushing) return
+    if (!reportsApi.reportsApiEnabled) return
+    // Pop-outs share this outbox through localStorage; without an idempotency
+    // key on the live endpoints, only the main window may deliver it.
+    if (IS_FLOAT_WINDOW) return
+    const queue = get().pendingReports.filter(isDeliverable)
+    if (queue.length === 0) return
+    _reportsFlushing = true
+    try {
+      for (const report of queue) {
+        try {
+          // The endpoints are unauthenticated; a logged-in user's Discord
+          // username rides along as contact when the form left it blank.
+          const contact = report.contact || get().account?.discord_username || undefined
+          if (report.kind === 'feedback') await reportsApi.submitFeedback(report, contact)
+          else await reportsApi.submitSongReport(report, contact)
+          // Delivered — drop it, re-reading current state so a report queued
+          // mid-flush isn't lost.
+          const remaining = get().pendingReports.filter((r) => r.id !== report.id)
+          set({ pendingReports: remaining })
+          ls.set('pendingReports', remaining)
+        } catch {
+          // Delivery failed — count the attempt so a permanently-rejected
+          // report eventually stops auto-retrying (see MAX_REPORT_ATTEMPTS).
+          const bumped = get().pendingReports.map((r) =>
+            r.id === report.id ? { ...r, attempts: r.attempts + 1 } : r,
+          )
+          set({ pendingReports: bumped })
+          ls.set('pendingReports', bumped)
+        }
+      }
+    } finally {
+      _reportsFlushing = false
+    }
+  },
+
+  // ── Playlist folders ───────────────────────────────────────────────────────
+  playlistFolders: ls.get<PlaylistFolder[]>('playlistFolders') ?? [],
+
+  _setFolders: (next) => {
+    set({ playlistFolders: next })
+    ls.set('playlistFolders', next)
+  },
+
+  _scheduleFoldersPush: () => {
+    if (!get().account || !foldersApi.foldersApiEnabled) return
+    if (_foldersPushTimer) clearTimeout(_foldersPushTimer)
+    _foldersPushTimer = setTimeout(() => {
+      _foldersPushTimer = null
+      foldersApi.pushFolders(get().playlistFolders).catch(() => {})
+    }, PROFILE_PUSH_DEBOUNCE_MS)
+  },
+
+  createFolder: (name, playlistKeys = []) => {
+    const clean = normalizeFolderName(name)
+    if (!clean) return null
+    const now = Date.now()
+    const id = newFolderId()
+    // A playlist lives in one folder, so pull the seed keys out of any folder
+    // they're already in before creating this one.
+    const seed = new Set(playlistKeys)
+    const existing = get().playlistFolders.map((f) => ({
+      ...f, playlistKeys: f.playlistKeys.filter((k) => !seed.has(k)),
+    }))
+    const folder: PlaylistFolder = { id, name: clean, playlistKeys: [...seed], createdAt: now, updatedAt: now }
+    get()._setFolders([...existing, folder])
+    get()._scheduleFoldersPush()
+    return id
+  },
+
+  renameFolder: (id, name) => {
+    const clean = normalizeFolderName(name)
+    if (!clean) return
+    const next = get().playlistFolders.map((f) =>
+      f.id === id ? { ...f, name: clean, updatedAt: Date.now() } : f,
+    )
+    get()._setFolders(next)
+    get()._scheduleFoldersPush()
+  },
+
+  deleteFolder: (id) => {
+    get()._setFolders(get().playlistFolders.filter((f) => f.id !== id))
+    get()._scheduleFoldersPush()
+  },
+
+  movePlaylistsToFolder: (playlistKeys, folderId) => {
+    const moving = new Set(playlistKeys)
+    const now = Date.now()
+    const next = get().playlistFolders.map((f) => {
+      // Remove the moving keys from every folder first…
+      const without = f.playlistKeys.filter((k) => !moving.has(k))
+      // …then append them to the target (dedup preserved by the removal above).
+      if (f.id === folderId) return { ...f, playlistKeys: [...without, ...playlistKeys], updatedAt: now }
+      return without.length === f.playlistKeys.length ? f : { ...f, playlistKeys: without, updatedAt: now }
+    })
+    get()._setFolders(next)
+    get()._scheduleFoldersPush()
+  },
+
+  pruneFolders: (validKeys) => {
+    const next = pruneFolders(get().playlistFolders, new Set(validKeys))
+    if (next !== get().playlistFolders) get()._setFolders(next)
+  },
+
+  syncFolders: async (serverFolders) => {
+    if (!foldersApi.foldersApiEnabled) return
+    try {
+      const local = get().playlistFolders
+      const server = serverFolders ?? []
+      if (server.length === 0) {
+        // Nothing on the account yet — push what's here so this device's
+        // folders become the starting point.
+        if (local.length > 0) await foldersApi.pushFolders(local).catch(() => {})
+        return
+      }
+      // The profile's list is the source of truth for synced-playlist
+      // membership. Folder ids are client-generated and round-trip through
+      // the blob unchanged, so a same-id local folder IS the same folder —
+      // re-attach its device-local ("local:") members, which the server
+      // never stores.
+      const localById = new Map(local.map((f) => [f.id, f]))
+      const merged: PlaylistFolder[] = server.map((s) => {
+        const mine = localById.get(s.id)
+        const localKeys = (mine?.playlistKeys ?? []).filter((k) => k.startsWith('local:'))
+        return {
+          id: s.id,
+          name: s.name,
+          playlistKeys: [...s.playlist_ids.map((id) => `api:${id}`), ...localKeys],
+          createdAt: mine?.createdAt ?? Date.now(),
+          updatedAt: Date.now(),
+        }
+      })
+      // A local folder the server doesn't know: if it holds ONLY device-local
+      // members it's a device-only folder — keep it. If it holds synced
+      // members, its absence from the profile means another device deleted it
+      // after this device last pushed — honour the delete by dropping it.
+      const serverIds = new Set(server.map((s) => s.id))
+      for (const f of local) {
+        const hasLocal = f.playlistKeys.some((k) => k.startsWith('local:'))
+        const hasApi = f.playlistKeys.some((k) => k.startsWith('api:'))
+        if (!serverIds.has(f.id) && hasLocal && !hasApi) merged.push(f)
+      }
+      get()._setFolders(merged)
+      await foldersApi.pushFolders(merged).catch(() => {})
+    } catch {}
+  },
+
   // ── API tracker extras ────────────────────────────────────────────────────
   apiTrackerCategory: '',
   apiTrackerEra: '',
@@ -568,6 +1011,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
       set({ likedTrackIds: merged })
       ls.set('likedTrackIds', merged)
     } catch {}
+    // The preference/folder blobs ride on the getMe() response — merge them
+    // with local state and push the result back, no extra requests needed.
+    const profile = get().account
+    await get().syncSongPrefs(profile?.user_preferences)
+    get().syncFolders(profile?.playlist_folders)
+    // Deliver any reports queued while signed out — a logged-in flush can
+    // attach the account's Discord username as the contact field.
+    get()._flushReports()
     await get().refreshPlaylists()
     // Fire-and-forget: warm playlist tracks + covers in the background so the
     // Playlists page is ready before the user ever navigates to it.
@@ -602,6 +1053,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
     await userApi.logout()
     const localLikes = ls.get<string[]>('likedTrackIds') ?? []
     set({ account: null, playlists: [], likedTrackIds: localLikes })
+    // Overrides stay on this device after signing out, the same way likes do —
+    // they're re-merged upward on the next login.
+    get()._setSongPrefs(ls.get<SongPrefMap>('songPrefs') ?? {})
   },
 
   refreshPlaylists: async () => {

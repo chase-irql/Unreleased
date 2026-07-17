@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
-  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown,
+  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -383,6 +383,13 @@ export default function SongContextMenu({
           {onPlayNext && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play next" onClick={() => { onPlayNext(); onClose() }} />}
           {hasValidSong && (
             <MenuItem icon={<Info size={14} />} label="Song info" onClick={() => { onInfo(); onClose() }} />
+          )}
+          {hasValidSong && (
+            <MenuItem
+              icon={<Flag size={14} />}
+              label="Report issue"
+              onClick={() => { useStore.getState().openReport({ kind: 'song', songId: songId as number, songName: track.apiTitle || track.title }); onClose() }}
+            />
           )}
           {onSelect && <MenuItem icon={<CheckSquare2 size={14} />} label="Select" onClick={() => { onSelect(); onClose() }} />}
           {onAddToQueue && canQueue && (

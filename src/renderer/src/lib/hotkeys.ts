@@ -51,6 +51,16 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'smooth-playback',  label: 'Toggle smooth playback',    category: 'Playback', defaultBinding: '' },
   { id: 'prefer-og',        label: 'Toggle prefer OG version',  category: 'Playback', defaultBinding: '' },
   { id: 'sleep-timer',      label: 'Start / stop sleep timer',  category: 'Playback', defaultBinding: '' },
+  { id: 'seek-0',           label: 'Seek to 0%',                category: 'Playback', defaultBinding: '0' },
+  { id: 'seek-10',          label: 'Seek to 10%',               category: 'Playback', defaultBinding: '1' },
+  { id: 'seek-20',          label: 'Seek to 20%',               category: 'Playback', defaultBinding: '2' },
+  { id: 'seek-30',          label: 'Seek to 30%',               category: 'Playback', defaultBinding: '3' },
+  { id: 'seek-40',          label: 'Seek to 40%',               category: 'Playback', defaultBinding: '4' },
+  { id: 'seek-50',          label: 'Seek to 50%',               category: 'Playback', defaultBinding: '5' },
+  { id: 'seek-60',          label: 'Seek to 60%',               category: 'Playback', defaultBinding: '6' },
+  { id: 'seek-70',          label: 'Seek to 70%',               category: 'Playback', defaultBinding: '7' },
+  { id: 'seek-80',          label: 'Seek to 80%',               category: 'Playback', defaultBinding: '8' },
+  { id: 'seek-90',          label: 'Seek to 90%',               category: 'Playback', defaultBinding: '9' },
 
   // ── Volume ────────────────────────────────────────────────────────────────
   { id: 'volume-up',        label: 'Volume up',                 category: 'Volume', defaultBinding: 'Ctrl+ArrowUp' },
@@ -62,8 +72,11 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'view-playlists',   label: 'Go to Playlists',           category: 'Navigation', defaultBinding: 'Alt+2' },
   { id: 'view-library',     label: 'Go to Library',             category: 'Navigation', defaultBinding: 'Alt+3', electronOnly: true },
   { id: 'view-wrld',        label: 'Go to WRLD',                category: 'Navigation', defaultBinding: 'Alt+4' },
+  { id: 'view-admin',       label: 'Go to Admin / Reports',     category: 'Navigation', defaultBinding: 'Alt+5' },
   { id: 'open-settings',    label: 'Open settings',             category: 'Navigation', defaultBinding: 'Ctrl+,' },
   { id: 'open-diagnostics', label: 'Open diagnostics',          category: 'Navigation', defaultBinding: '' },
+  { id: 'toggle-queue',     label: 'Toggle queue panel',        category: 'Navigation', defaultBinding: 'Q' },
+  { id: 'focus-search',     label: 'Focus search box',          category: 'Navigation', defaultBinding: 'Ctrl+F' },
 
   // ── App / windows ─────────────────────────────────────────────────────────
   { id: 'mini-player',          label: 'Open mini player',            category: 'App', defaultBinding: 'Ctrl+M', electronOnly: true },

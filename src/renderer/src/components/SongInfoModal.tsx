@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Music2, Pencil } from 'lucide-react'
+import { X, Music2, Pencil, Flag } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch } from '../lib/juicewrldApi'
+import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
+import SongPrefsSection from './SongPrefsSection'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
@@ -52,6 +53,8 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const el = (window as any).electron
   const popoutSongInfo = useStore((s) => s.popoutWindows.songInfo)
+  const songPrefs = useStore((s) => s.songPrefs)
+  const openReport = useStore((s) => s.openReport)
   const redirectToFloat = !floating && !!el?.openFloatWindow && popoutSongInfo
   useEffect(() => {
     if (redirectToFloat && song) {
@@ -101,8 +104,15 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
 
   if (redirectToFloat || !displaySong) return null
 
-  const coverUrl = buildImageUrl(displaySong.image_url)
-  const primaryTitle = displaySong.track_titles?.[0] || displaySong.name
+  // The user's per-song override (custom name/cover). Subscribing to the whole
+  // map keeps the hero in step when it's edited from the Personalize section
+  // below (or another window) — the map's reference only changes on a write,
+  // so this modal isn't re-rendering on unrelated store churn.
+  const pref = songPrefs[displaySong.id]
+  const apiCoverUrl = buildImageUrl(displaySong.image_url)
+  const coverUrl = resolvePrefCoverUrl(pref?.cover_url) ?? apiCoverUrl
+  const apiPrimaryTitle = displaySong.track_titles?.[0] || displaySong.name
+  const primaryTitle = pref?.name || apiPrimaryTitle
   const altTitles = displaySong.track_titles?.slice(1).filter(Boolean) ?? []
   const duration = formatDuration(parseDuration(displaySong.length), '—')
   const catColor = CATEGORY_COLORS[displaySong.category] ?? 'bg-surface-overlay text-text-muted border-[var(--border)]'
@@ -206,6 +216,14 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
 
         {/* Scrollable info */}
         <div className="overflow-y-auto flex-1 px-5 py-4">
+
+          <SongPrefsSection
+            songId={displaySong.id}
+            apiTitle={apiPrimaryTitle}
+            apiImageUrl={apiCoverUrl}
+            ownImageRaw={displaySong.image_url}
+            versions={versions}
+          />
 
           <div>
             <Row label="Artist" value={displaySong.credited_artists || 'Juice WRLD'} />
@@ -333,6 +351,13 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
               </pre>
             </>
           )}
+
+          <button
+            onClick={() => openReport({ kind: 'song', songId: displaySong.id, songName: apiPrimaryTitle })}
+            className="mt-4 w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors text-xs"
+          >
+            <Flag size={13} /> Report wrong or missing info / lyrics
+          </button>
 
         </div>
       </div>

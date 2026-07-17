@@ -1,6 +1,9 @@
 import { Track } from '../types'
-import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration } from './juicewrldApi'
+import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from './juicewrldApi'
 import type { JWApiSong } from './juicewrldApi'
+import { peekSongPref } from './songPrefs'
+import type { SongPreference } from './songPrefs'
+import type { ServerPlaylistFolder } from './playlistFolders'
 import { apiRequest, cacheDelete } from './apiClient'
 import { cacheSet } from './apiCache'
 
@@ -17,6 +20,11 @@ export interface AccountUser {
   is_editor: boolean
   is_administrator: boolean
   otp_enabled: boolean
+  // JSON blobs stored on the profile and PATCHable through this same route —
+  // per-song preferences and playlist folders (see lib/preferencesApi and
+  // lib/foldersApi). Optional so cached/older responses stay assignable.
+  user_preferences?: SongPreference[]
+  playlist_folders?: ServerPlaylistFolder[]
 }
 
 export interface ApiSongLite {
@@ -107,14 +115,22 @@ async function request<T>(url: string, options: RequestInit = {}, auth = true, c
   })
 }
 
+// Applies per-song overrides for the same reason songToTrack does — a track
+// reached through a playlist or the favorites list has to show the user's
+// custom name and cover just like one reached through the Tracker.
 export function liteSongToTrack(song: ApiSongLite): Track {
-  const title = song.track_titles?.[0] || song.name
+  const apiTitle = song.track_titles?.[0] || song.name
+  const apiImageUrl = buildImageUrl(song.image_url)
+  const pref = peekSongPref(song.id)
+  const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
   return {
     id: `jw-${song.id}`,
     path: song.path,
     streamUrl: buildStreamUrl(song.path),
-    imageUrl: buildImageUrl(song.image_url),
-    title,
+    imageUrl: coverUrl ?? apiImageUrl,
+    title: pref?.name || apiTitle,
+    apiTitle,
+    apiImageUrl,
     artist: song.credited_artists || 'Juice WRLD',
     album: song.album || song.era?.name || '',
     era: song.era?.name || undefined,
@@ -123,7 +139,7 @@ export function liteSongToTrack(song: ApiSongLite): Track {
     trackNumber: null,
     duration: parseDuration(song.length),
     genre: song.category,
-    hasAlbumArt: !!song.image_url,
+    hasAlbumArt: !!song.image_url || !!coverUrl,
   }
 }
 
