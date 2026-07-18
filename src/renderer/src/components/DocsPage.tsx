@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronLeft, ExternalLink } from 'lucide-react'
+import { useStorePick } from '../store/useStore'
 
 // ─── Small reusable primitives ────────────────────────────────────────────────
 
@@ -1322,12 +1323,20 @@ type TabId = typeof TABS[number]['id']
 
 export default function DocsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const { setActiveView } = useStorePick('setActiveView')
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
       {/* Header */}
       <div className="flex-shrink-0 px-6 pt-6 pb-0 border-b border-[var(--border)]">
         <div className="flex items-baseline gap-3 mb-4">
+          <button
+            onClick={() => setActiveView('wrld')}
+            title="Back"
+            className="p-1 -ml-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0 self-center"
+          >
+            <ChevronLeft size={18} />
+          </button>
           <h1 className="text-text-primary text-xl font-bold">API Docs</h1>
           <span className="text-xs text-text-muted font-mono">juicewrldapi.com</span>
           <a

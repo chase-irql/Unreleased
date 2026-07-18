@@ -119,13 +119,24 @@ async function patchRow(songId: number, versionId: number, body: Record<string, 
 }
 
 /** All other songs grouped with this one (excluding itself), with their
- *  version metadata. Empty if ungrouped. */
+ *  version metadata. Empty if ungrouped.
+ *
+ *  Dedupes by song_id (keeping the most recently created row per song) —
+ *  the /versions/ table has no unique constraint on (song_id, group_id), so
+ *  a double-submitted "link versions" action leaves two identical rows per
+ *  song and would otherwise show the same version twice in the UI. */
 export async function getVersionGroup(songId: number): Promise<SongVersionMeta[]> {
   try {
     const row = await getRow(songId)
     if (!row) return []
     const all = await getAllRows()
-    return all.filter(r => r.group_id === row.group_id && r.song_id !== songId).map(toMeta)
+    const bySong = new Map<number, VersionRow>()
+    for (const r of all) {
+      if (r.group_id !== row.group_id || r.song_id === songId) continue
+      const existing = bySong.get(r.song_id)
+      if (!existing || r.created_at > existing.created_at) bySong.set(r.song_id, r)
+    }
+    return Array.from(bySong.values()).map(toMeta)
   } catch {
     return []
   }

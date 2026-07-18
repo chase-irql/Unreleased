@@ -103,6 +103,22 @@ export function cleanTitleForSearch(title: string): string {
   return title.replace(/\s*[[(].*$/, '').trim()
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Filters /files/browse/ search results down to entries whose path contains
+ *  the query as a whole word — the API's `search` param is a plain substring
+ *  match, so a short title like "Rental" also turns up unrelated files like
+ *  "Parental Advisory.png" (which literally contains "rental"). Shared by
+ *  CoverPickerModal and SongPrefsSection's inline cover search. */
+export function filterSearchResults(entries: JWApiFileEntry[], term: string): JWApiFileEntry[] {
+  const t = term.trim()
+  if (!t) return entries
+  const re = new RegExp(`\\b${escapeRegExp(t)}\\b`, 'i')
+  return entries.filter((e) => re.test(e.path))
+}
+
 // ─── Fetch util ───────────────────────────────────────────────────────────────
 
 // Builds the same URL/cache key apiFetch uses, so apiPeek below can read the

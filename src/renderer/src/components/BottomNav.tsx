@@ -4,7 +4,7 @@ import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, account } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'account')
+  const { activeView, setActiveView, showSettings, setShowSettings, account } = useStorePick('activeView', 'setActiveView', 'showSettings', 'setShowSettings', 'account')
   const isAdmin = !!account?.is_administrator
   // Editor-only accounts don't get the Admin page — their review tools
   // (Proposals/Reports) live in their own profile page instead.
@@ -71,7 +71,7 @@ export default function BottomNav(): JSX.Element {
         </button>
       )}
       <button
-        onClick={() => setShowSettings(true)}
+        onClick={() => setShowSettings(!showSettings)}
         className="flex-1 flex flex-col items-center justify-center py-2.5 gap-1 text-text-muted transition-colors overflow-hidden"
       >
         <Settings size={24} />

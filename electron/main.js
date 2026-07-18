@@ -985,11 +985,6 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   return true
 })
 
-// Manual retry for the "Pin now" button in Settings — same write + tray
-// recreate as switching the setting on, usable again later if the pin
-// didn't stick (e.g. Windows hadn't registered the icon yet the first time).
-ipcMain.handle('pin-tray-icon', () => applyTrayPin())
-
 // ── IPC: beta channel ─────────────────────────────────────────────────────────
 // Validates against the backend itself (GET {BETA_API_BASE}/unlock?code=...
 // -> {"valid": true|false}) — see build/fetch-releases.ps1 for the full

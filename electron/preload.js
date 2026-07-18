@@ -68,7 +68,6 @@ contextBridge.exposeInMainWorld('electron', {
   // App settings
   getAppSettings:  ()           => ipcRenderer.invoke('get-app-settings'),
   setAppSetting:   (key, value) => ipcRenderer.invoke('set-app-setting', key, value),
-  pinTrayIcon:     ()           => ipcRenderer.invoke('pin-tray-icon'),
 
   // Beta channel
   betaGetStatus: ()     => ipcRenderer.invoke('beta-get-status'),

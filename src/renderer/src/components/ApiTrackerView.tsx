@@ -21,7 +21,7 @@ import { Track } from '../types'
 import * as userApi from '../lib/userApi'
 import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTitle } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
-import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache } from '../lib/compactGroups'
+import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
@@ -1339,6 +1339,17 @@ export default function ApiTrackerView(): JSX.Element {
     toggleGroupExpanded(group.groupId)
   }
 
+  // Compact view renders far less content than the underlying song list, so
+  // the sentinel stays permanently visible and would otherwise auto-page
+  // through the entire library in the background — pause that while active.
+  const compactViewRef = useRef(false)
+  useEffect(() => { compactViewRef.current = compactView }, [compactView])
+
+  // Bumped by the invalidation subscriber below so an edit made elsewhere
+  // (e.g. Editor → Versions) shows up here immediately even while this view
+  // stays mounted and compactView never changes.
+  const [compactReloadToken, setCompactReloadToken] = useState(0)
+
   useEffect(() => {
     if (!compactView || !versionsEnabled) { setCompactGroups([]); return }
     let cancelled = false
@@ -1357,7 +1368,13 @@ export default function ApiTrackerView(): JSX.Element {
       setLoadingCompact(false)
     })
     return () => { cancelled = true }
-  }, [compactView])
+  }, [compactView, compactReloadToken])
+
+  useEffect(() => {
+    return subscribeCompactGroupsInvalidation(() => {
+      if (compactViewRef.current) setCompactReloadToken(t => t + 1)
+    })
+  }, [])
 
   // Stale-while-revalidate: seed from the offline cache synchronously so the
   // list renders instantly on open, then the effects below refetch and replace
@@ -1395,11 +1412,6 @@ export default function ApiTrackerView(): JSX.Element {
   const hasMoreRef = useRef(false)
   const loadingRef = useRef(true)
   const sentinelVisibleRef = useRef(false)
-  // Compact view renders far less content than the underlying song list, so
-  // the sentinel stays permanently visible and would otherwise auto-page
-  // through the entire library in the background — pause that while active.
-  const compactViewRef = useRef(false)
-  useEffect(() => { compactViewRef.current = compactView }, [compactView])
 
   const [viewMode, setViewModeState] = useState<ViewMode>(() => {
     // 'grid' was a removed third view mode — treat any stale stored value as 'list'.

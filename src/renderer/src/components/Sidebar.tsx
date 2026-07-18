@@ -10,7 +10,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
+  const { activeView, setActiveView, showSettings, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'showSettings', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
 
@@ -148,7 +148,7 @@ export default function Sidebar(): JSX.Element {
                 <Info size={18} />
               </button>
             )}
-            <button onClick={() => setShowSettings(true)} title="Settings" className={iconBtn}>
+            <button onClick={() => setShowSettings(!showSettings)} title="Settings" className={iconBtn}>
               <Settings size={18} />
             </button>
           </div>
@@ -319,7 +319,7 @@ export default function Sidebar(): JSX.Element {
           </button>
         )}
         <button
-          onClick={() => setShowSettings(true)}
+          onClick={() => setShowSettings(!showSettings)}
           title={collapsed ? 'Settings' : undefined}
           className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check } from 'lucide-react'
 import {
-  apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch,
+  apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch, filterSearchResults,
   JWApiFileEntry, JWApiBrowseResponse,
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
@@ -111,8 +111,9 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
     if (!isSearching) { setSearchResults([]); return }
     let cancelled = false
     setSearchLoading(true)
-    apiFetch<JWApiBrowseResponse>('/files/browse/', { search: debouncedSearch.trim() })
-      .then((data) => { if (!cancelled) setSearchResults(parseBrowseEntries(data)) })
+    const term = debouncedSearch.trim()
+    apiFetch<JWApiBrowseResponse>('/files/browse/', { search: term })
+      .then((data) => { if (!cancelled) setSearchResults(filterSearchResults(parseBrowseEntries(data), term)) })
       .catch(() => { if (!cancelled) setSearchResults([]) })
       .finally(() => { if (!cancelled) setSearchLoading(false) })
     return () => { cancelled = true }
@@ -127,7 +128,9 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
     if (!initialQuery || altQueries.length === 0) return
     let cancelled = false
     Promise.all(altQueries.map((q) =>
-      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseBrowseEntries).catch(() => [] as JWApiFileEntry[])
+      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q })
+        .then((data) => filterSearchResults(parseBrowseEntries(data), q))
+        .catch(() => [] as JWApiFileEntry[])
     )).then((lists) => {
       if (cancelled) return
       setSearchResults((prev) => {

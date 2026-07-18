@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Music2, Pencil, Flag, PictureInPicture2 } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { X, Music2, Pencil, Flag, PictureInPicture2, Minimize2 } from 'lucide-react'
+import { useStore, useStorePick } from '../store/useStore'
+import { attachToMainWindow } from '../lib/windowSync'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
@@ -40,9 +41,13 @@ interface Props {
   // the panel fills the window, the hero doubles as the drag handle, and
   // closing closes the OS window (via the caller's onClose).
   floating?: boolean
+  // Explicitly render in-app and never auto-redirect to a float window, even
+  // when the song-info pop-out is enabled. Used by the main window's global
+  // host so "attach" docks here instead of bouncing straight back out.
+  docked?: boolean
 }
 
-export default function SongInfoModal({ song, onClose, onEdit, floating = false }: Props): JSX.Element | null {
+export default function SongInfoModal({ song, onClose, onEdit, floating = false, docked = false }: Props): JSX.Element | null {
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // Desktop: song info lives in its own pop-out window — every existing
@@ -55,7 +60,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
   const popoutSongInfo = useStore((s) => s.popoutWindows.songInfo)
   const songPrefs = useStore((s) => s.songPrefs)
   const openReport = useStore((s) => s.openReport)
-  const redirectToFloat = !floating && !!el?.openFloatWindow && popoutSongInfo
+  const redirectToFloat = !floating && !docked && !!el?.openFloatWindow && popoutSongInfo
   useEffect(() => {
     if (redirectToFloat && song) {
       el.openFloatWindow('song-info', { songId: song.id })
@@ -181,6 +186,17 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
                 title="Open in a separate window"
               >
                 <PictureInPicture2 size={13} />
+              </button>
+            )}
+            {/* Manual attach — from the pop-out window, dock back into the main
+                window (the main window opens its in-app song info). */}
+            {floating && (
+              <button
+                onClick={() => { attachToMainWindow({ view: 'song-info', songId: displaySong.id }); onClose() }}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
+                title="Dock into main window"
+              >
+                <Minimize2 size={13} />
               </button>
             )}
             {onEdit && (
@@ -390,5 +406,33 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
       </div>
     </div>,
     document.body
+  )
+}
+
+// Main-window-only host for the docked song-info modal. Renders nothing until
+// something sets `infoSongId` (only the "attach" flow does — a floating
+// song-info window asking to dock back in), then fetches that song and shows
+// the modal in-app. `docked` keeps it from bouncing straight back out to a
+// float window when the song-info pop-out is enabled.
+export function GlobalSongInfoHost(): JSX.Element | null {
+  const { infoSongId, setInfoSongId, account } = useStorePick('infoSongId', 'setInfoSongId', 'account')
+  const [song, setSong] = useState<JWApiSong | null>(null)
+
+  useEffect(() => {
+    if (infoSongId == null) { setSong(null); return }
+    let stale = false
+    apiFetch<JWApiSong>(`/songs/${infoSongId}/`).then((s) => { if (!stale) setSong(s) }).catch(() => {})
+    return () => { stale = true }
+  }, [infoSongId])
+
+  if (infoSongId == null || !song) return null
+  const canEdit = !!account && (account.is_editor || account.is_administrator)
+  return (
+    <SongInfoModal
+      docked
+      song={song}
+      onClose={() => setInfoSongId(null)}
+      onEdit={canEdit ? (id) => useStore.getState().openSongEditor(id) : undefined}
+    />
   )
 }
