@@ -10,6 +10,7 @@ out/
 release/
 build/
 beta-builds/
+scripts/build-gui/
 
 # Electron builder
 *.AppImage

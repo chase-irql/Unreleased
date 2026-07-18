@@ -1,4 +1,0 @@
-usage: release.py [-h] [--notes NOTES] [--skip-build] [--skip-upload]
-                  [--upload-only] [--skip-web]
-                  version
-release.py: error: unrecognized arguments: lyrics animation fix, Add Song proposal form for editors, context menu unification, and various bug fixes
