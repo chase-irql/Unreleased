@@ -111,7 +111,7 @@ npm run electron:build
 
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
+See [CHANGELOG.md](./CHANGELOG.md) for the full version history, or [CHANGELOG.web.md](./CHANGELOG.web.md) for changes specific to the web player.
 
 ---
 

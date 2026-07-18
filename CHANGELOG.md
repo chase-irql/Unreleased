@@ -2,7 +2,555 @@
 
 All notable changes to this project are documented here.
 
-> Deployed on [Vercel](https://unreleased-juicewrldapi.vercel.app) · Source on [GitHub](https://github.com/leanwrldd/unreleased)
+> Live at [player.juicewrldapi.com](https://player.juicewrldapi.com) · Source on [GitHub](https://github.com/leanwrldd/unreleased)
+
+---
+
+## [1.15.11] — 2026-07-18
+
+- **New** Files tab gained a media-type filter (All/Audio/Images/Videos)
+- **New** Custom-cover picker now shows likely matching covers inline as soon as you open it, without needing the full "Browse API files" modal
+- **Improve** Theme changes — including the dynamic "Now Playing" theme reacting to a new song — now smoothly cross-fade instead of snapping instantly
+- **New** *(Desktop)* Settings → App has an "Online installer" tool bundled with the app for repair/reinstall even if the app itself won't launch
+- **Fix** *(Desktop)* Pinning the tray icon no longer requires restarting Windows Explorer, and no longer briefly freezes the app while running
+
+---
+
+## [1.15.10] — 2026-07-18
+
+- **New** A "Now Playing" theme option that dynamically colors the app to match the currently playing song's cover art
+- **Rename** Editor-only accounts no longer see the Admin page — their tools moved into a new Editor Profile page, which gained a Reports tab
+- **New** Song Info now shows a song's alternate titles ("Also Known As"), and the custom-cover search now checks those alt titles too
+- **Fix** A song's custom cover now applies across all of its linked versions, so Now Playing shows the right art even when a sibling version is playing
+- **Improve** *(Desktop)* "Force reinstall latest release" is now hidden behind Developer mode
+
+---
+
+## [1.15.9] — 2026-07-18
+
+- **Fix** Browsing API files to pick a custom song cover now correctly selects image files
+- **Fix** A song's "default version" star now correctly reflects and clears the version actually in use
+- **New** *(Desktop)* DevTools can now be opened (via Diagnostics or F12 in developer mode) on any window, not just the main one
+
+---
+
+## [1.15.8] — 2026-07-18
+
+- **Improve** Admin/Reports page no longer wipes filters and selection on refresh — shows a translucent overlay instead of a full-page spinner
+- **New** Cover picker now seeds its search with the song's title so relevant covers show up immediately
+- **Improve** Feedback/report submissions now show whether they actually reached the server or are just queued locally offline
+- **Improve** *(Desktop)* Local library loads instantly on repeat visits to Library/Playlists instead of re-reading from disk every time
+- **Improve** *(Desktop)* Mini player "solo" mode now fully closes other pop-out windows and hides the main window from the taskbar
+
+---
+
+## [1.15.7] — 2026-07-18
+
+- **New** Custom song covers can now be picked by browsing the API's file storage, not just by pasting a URL/path
+- **Fix** Changing a song's custom cover now updates the currently playing track's artwork immediately
+- **Improve** Playlists view's search bar is now sticky while scrolling a playlist's track list
+- **New** *(Desktop)* "Pop out mini player" button added to the WRLD view; the mini player gained a "Hide all other windows" button
+- **New** *(Desktop)* Settings has a "Pin tray icon" button (Windows), which can offer to restart Windows Explorer to apply immediately
+
+---
+
+## [1.15.6] — 2026-07-17
+
+- **New** Per-song personalization — set a custom name, cover art, and preferred default version for any song via a new "Personalize" section; tracks your own play count too
+- **New** "Report issue" on any song, plus a "Feedback" tab in Settings for general feedback/bug reports
+- **New** Admins and editors get a "Reports" tab to review and resolve user-submitted song issue reports
+- **New** Playlist folders — organize playlists into folders, including nested folders
+- **New** Star a linked song version from the "Change version" menu to make it the one that always plays for that song
+- **New** *(Desktop)* "Convert format" on local files — transcode to MP3, M4A, Opus, OGG, FLAC, or WAV using the bundled ffmpeg
+- **New** *(Desktop)* Option to keep the tray icon pinned/visible instead of Windows auto-hiding it into the overflow area
+
+---
+
+## [1.15.4] — 2026-07-15
+
+- **New** Desktop player bar can now be collapsed to a slim strip showing just play/pause and track info
+- **New** Library sidebar can be collapsed to icons-only, matching the main sidebar
+- **New** Side menu order is now customizable — drag to reorder tabs in Settings → Appearance
+- **Fix** Right-clicking the player bar now opens the context menu at the cursor instead of always anchoring to the "more options" button
+- **Improve** WRLD view's queue panel got a visual refresh — larger panel with a glass sheen effect
+- **New** *(Desktop)* Mini player "solo" option to hide every other app window while it's open
+- **New** *(Desktop)* "Confirm before quitting while a song is playing" setting (skippable)
+- **New** *(Desktop)* Individual pop-out windows (Settings, Song info, Song editor, Mini player) can now be toggled on/off in Settings
+- **Fix** *(Desktop)* Pop-out windows now open on whichever monitor the app is actually on, instead of always jumping to the primary display
+- **Improve** *(Desktop)* Library tab's cover art no longer resets and re-reads on every visit — only changed files re-read their art after a rescan
+
+---
+
+## [1.15.3] — 2026-07-15
+
+- **New** Keyboard shortcuts are now fully rebindable — a new Settings → Shortcuts tab covers playback, volume, navigation, and app actions, with an adjustable skip-forward/back duration
+- **New** *(Desktop)* Optional global (OS-wide) shortcuts so modifier/media-key shortcuts work even when the app isn't focused
+
+---
+
+## [1.15.2] — 2026-07-15
+
+- **New** *(Desktop)* Restart-app shortcut, and a shortcut to close all pop-out windows at once
+- **New** *(Desktop)* Backend support for customizable global (system-wide) keyboard shortcuts
+
+---
+
+## [1.15.1] — 2026-07-15
+
+- **New** 8 selectable color themes in Settings → Appearance — Light, Dark, Midnight, Ocean, Ember, Mocha, Forest, and Blossom
+- **New** Sidebar position is now configurable — left, right, top, or bottom
+- **New** Tracker category/era filters are now multi-select, with individually removable filter chips
+- **New** "Smooth fade when pausing" setting ramps volume down/up on pause/resume instead of cutting audio off instantly
+- **Improve** *(Desktop)* Beta access codes are now validated against the server instead of a fixed list baked into the app
+- **New** *(Desktop)* Mini player — a small always-available floating player window with playback controls, pinnable on top of other windows
+
+---
+
+## [1.15.0] — 2026-07-14
+
+- **New** *(Desktop)* Opt-in beta (pre-release) update channel, unlockable with an access code in Settings
+- **New** *(Desktop)* Settings can now be popped out into its own floating window
+- **New** *(Desktop)* "Minimize to tray" and "minimize to notification area" options, in addition to the taskbar
+- **Improve** *(Desktop)* Installing an update now happens silently in the background instead of popping up the installer wizard
+
+---
+
+## [1.14.8] — 2026-07-13
+
+- **Fix** Files tab now remembers the last folder you were browsing when you switch tabs and come back
+- **Improve** Diagnostics values are now clickable to view the full text in a popup
+- **New** Editor page gained Length, Bitrate, and Date Leaked fields
+- **Fix** Editors could get a 405 error when linking or updating song versions — now targets the correct API path
+- **Improve** *(Desktop)* Local library scanning is now parallelized, noticeably speeding up scans of large libraries
+- **New** *(Desktop)* Album art thumbnails are now cached to disk, loading instantly after the first time
+- **Improve** *(Desktop)* Library tab's album art loads faster, avoiding redundant re-reads on scroll
+- **Fix** *(Desktop)* Library tab's toolbar no longer made the window undraggable
+
+---
+
+## [1.14.7] — 2026-07-12
+
+- **Remove** Tracker's grid view removed in favor of the newer detailed row view
+- **Improve** Tracker's Producers tab now shows Engineers as a separate list alongside Producers
+- **Fix** Bulk ZIP download from the Tracker now warns when some/all selected songs have no downloadable file
+- **Fix** "Play" buttons now start from a random track when Shuffle is on, instead of always the first track
+- **Fix** *(Desktop)* Discord Rich Presence cover art wasn't actually showing (wrong field) — now displays correctly
+- **Fix** *(Desktop)* Discord Rich Presence now shows full era names (e.g. "WRLD On Drugs") instead of raw abbreviations
+
+---
+
+## [1.14.5] — 2026-07-12
+
+- **New** Tracker gained a "Detailed" view mode — rows expand to show producers, engineers, locations, dates, leak type, bitrate, and more
+- **Improve** WRLD view's version-switch notch redesigned as a slim tab/grabber
+- **Improve** Editor page's Credits card now shows Producers and Engineers side by side
+- **New** *(Desktop)* System tray now shows now-playing info with play/pause/next/previous/like controls
+
+---
+
+## [1.14.4] — 2026-07-12
+
+- **Improve** App-wide performance overhaul — components only re-render on relevant state changes, reducing lag during playback
+- **Improve** Rarely-visited pages (Editor, Admin, Docs, WRLD view, etc.) now load on demand instead of at startup
+- **Improve** Editor and local-file metadata editor pages redesigned with a cleaner two-column layout
+- **Improve** Large playlists now virtualize their track list, fixing slowdowns
+- **Improve** Tracker's Producers tab now also includes engineer credits, without double-counting
+- **New** *(Desktop)* Track info now reports bit depth, channel count, and file size for local files
+
+---
+
+## [1.14.3] — 2026-07-12
+
+- **New** Editors can now propose a song's deletion from the Editor page, for admin review
+- **New** *(Desktop)* Linux support — AppImage builds, in-app auto-update on Linux, Music-folder fallback
+
+---
+
+## [1.14.2] — 2026-07-12
+
+- **New** Tracker gained a "Producers" tab to browse songs by producer credit (Calendar renamed to "Overview")
+- **Improve** Diagnostics now shows much more detail — now-playing file info, playback settings, account/playlist stats, update status
+
+---
+
+## [1.14.1] — 2026-07-12
+
+- **New** Diagnostics view (app/playback/storage/cache stats) via a new Developer Options toggle in Settings
+- **Improve** Local playlists now show their custom cover image instead of always falling back to a track-art mosaic
+- **Improve** WRLD view's "other versions" side tabs replaced with a compact dropdown
+- **Improve** 999 FM toggle and fullscreen button grouped together
+- **Fix** Lyrics panel no longer flashes to the top before snapping back when entering/exiting fullscreen
+- **Improve** *(Desktop)* Updated the app icon
+
+---
+
+## [1.14.0] — 2026-07-11
+
+- **Fix** "Find in Tracker" only appears when the file has a matching Tracker entry
+- **Fix** Crossfade with Shuffle on could crossfade into an already-played track
+- **Fix** Playback could stop dead after a crossfaded advance once the initially loaded queue page ran out
+- **Fix** Seek bar could freeze at the wrong position when seeking with arrow keys
+- **Fix** Playlist cover art now updates immediately after upload/removal
+- **Remove** Quick "remove track" (X) button removed from playlist rows (still in the ⋯ menu)
+- **Fix** Clicking a track in the queue's history/upcoming list could wipe your play history and break infinite-scroll loading
+- **Improve** WRLD view's album version switcher is now a dropdown instead of tabs
+- **Improve** Settings FAQ's documentation link now opens the in-app Docs view
+- **Fix** Rapidly restarting Radio no longer leaves duplicate background track-fetch loops running
+- **Fix** *(Desktop)* Discord Rich Presence progress no longer spams updates at 1.5×/2× playback speed
+- **Fix** *(Desktop)* Offline playlist downloads no longer race each other — fixes duplicate downloads, spurious "syncing" popups, and files getting deleted/re-downloaded
+- **Fix** *(Desktop)* A dropped connection during a download (update or offline track) could leave a corrupted file treated as complete — downloads now verify fully before replacing the real file
+- **Fix** *(Desktop)* Checking for updates could crash with a cryptic error when GitHub's API rate-limited the request
+
+---
+
+## [1.13.7] — 2026-07-11
+
+- **New** Files in the API file browser can now be liked — liked files show up in Liked Songs
+- **New** Tracker's Calendar tab can now also browse songs by recording studio/location
+- **Improve** File browser row quick actions moved into the right-click context menu
+- **Improve** Clicking the album art in the player bar now always opens the WRLD view
+- **New** Multi-selected playlists can now be merged into another playlist
+- **Fix** Playlist card context menu could render partly off-screen — now clamped to the viewport
+- **New** *(Desktop)* Settings shows total offline-download count and size, with a refresh button
+- **Fix** *(Desktop)* Offline library storage size shown in Settings could be inaccurate — now reads actual file sizes off disk
+
+---
+
+## [1.13.6] — 2026-07-11
+
+- **Fix** Clicking a song row outside select mode no longer accidentally toggles selection
+- **Improve** *(Desktop)* Adding songs to an offline-downloaded playlist now downloads the new songs right away instead of waiting for the next sync
+
+---
+
+## [1.13.5] — 2026-07-11
+
+- **New** Playlists can now be multi-selected in the library grid, with a bulk "Delete" action bar
+- **New** API Files browser supports ctrl/cmd-click to multi-select files/folders
+- **Fix** Tracker's Calendar tab no longer shows implausible recording dates parsed from free text
+- **Improve** Tracker's Calendar tab now remembers the last month you were viewing
+- **New** *(Desktop)* Launching the app while it's already running now just focuses the existing window
+
+---
+
+## [1.13.4] — 2026-07-11
+
+- **Fix** Tracker's song list/grid and compact view could hang/freeze with the full catalog loaded — now virtualized
+- **Fix** Compact (grouped-versions) view could show the same song listed twice within a group
+- **New** WRLD queue panel now has a collapsible "History" section
+- **New** Settings has a "Clear cache" button to remove cached API responses used for offline browsing
+- **Fix** Caching the full song catalog for offline use could silently fail and wipe the existing offline cache
+
+---
+
+## [1.13.3] — 2026-07-10
+
+- **New** Tracker has a new "Calendar" tab that groups songs by recording date, color-coded by era
+- **Improve** Lyric search results now show a highlighted snippet of the matching lyric
+- **New** Searching in the Tracker now updates the URL, so back/forward and shared links restore a specific search
+- **New** "Prefer OG version" setting — automatically switches to a track's linked OG-quality version when one exists
+- **Improve** Seek bar dragging is smoother (only seeks on release, larger drag area)
+- **Improve** The 999 FM "···" menu now offers a full context menu (song info, add to playlist)
+- **Improve** Tracker's compact (grouped-versions) view loads much faster with a large catalog
+- **Improve** *(Desktop)* Discord Rich Presence now falls back to a track's own file cover art when no curated image is set
+
+---
+
+## [1.13.2] — 2026-07-10
+
+- **New** Tracker has a new "Lyric Search" tab — search songs by lyric content
+- **Improve** Sorted views in the Tracker load faster (pages fetch in parallel)
+
+---
+
+## [1.13.1] — 2026-07-08
+
+- **New** Tracker, API Files, and Playlists now load instantly from cache and stay browsable offline
+- **Fix** Clicking "Edit" on a song could briefly flash the "My Proposals" screen before the editor loaded
+- **New** *(Desktop)* Settings has a "Diagnostic logs" button to open the folder containing crash/run logs
+- **New** *(Desktop)* The app now keeps a rolling run log (plus the previous run's log) to help diagnose crashes
+- **Fix** *(Desktop)* Closing the app window always quit it even with "minimize to tray" enabled — now correctly minimizes
+
+---
+
+## [1.13.0] — 2026-07-08
+
+- **New** The app now stays browsable offline — songs, playlists, favorites, and profile data fall back to the last cached response when the network is unavailable
+
+---
+
+## [1.12.13] — 2026-07-08
+
+- **Fix** Bulk "Add to queue"/"Add to playlist" now require every selected song to be eligible
+- **Fix** Seek bar dragging/seeking could break for streams with an unknown duration
+- **Fix** Sidebar navigation now scrolls instead of overflowing when there are more items than fit the window
+- **Fix** *(Desktop)* Seeking in local audio/video files now properly returns partial-content (byte-range) responses, fully fixing seeking
+
+---
+
+## [1.12.11] — 2026-07-07
+
+- **Fix** Admin-only accounts clicking "Edit" were sent to the "apply to be an editor" screen — admins can now edit directly
+- **Improve** Sidebar collapse/expand now animates smoothly instead of popping instantly
+- **Fix** *(Desktop)* Seeking in locally-played audio/video re-fetched the whole file from byte 0 instead of jumping to the requested position (fully fixed in 1.12.13)
+
+---
+
+## [1.12.10] — 2026-07-07
+
+- **Fix** Editor's song loader now shows a "Couldn't load song" message with a retry button instead of silently bouncing you to My Proposals
+- **Fix** Playback progress bar could get stuck at 0% for streams where the duration isn't known yet
+- **Improve** *(Desktop)* Library view's "frosted glass" redesign was reverted back to the app's standard look
+- **Fix** *(Desktop)* Offline playlist download progress now only counts tracks actually missing
+
+---
+
+## [1.12.9] — 2026-07-07
+
+- **Improve** Reopening a playlist now shows its cached tracks instantly while quietly refreshing in the background
+
+---
+
+## [1.12.8] — 2026-07-07
+
+- **Improve** Editors landing on the editor page with no song selected are now sent to "My Proposals" instead of a blank placeholder
+- **New** *(Desktop)* Desktop Library completely redesigned with a frosted "glass" look — browse by Recently Added, Artists, Albums, or Songs
+- **New** *(Desktop)* Local files can now be edited via a full-page metadata editor, with tag writing for MP3s
+- **New** *(Desktop)* Individual songs can be downloaded for offline playback from the context menu; Download Manager shows live speed and byte progress
+- **New** *(Desktop)* Library can auto-refresh changed files in the background
+- **Improve** *(Desktop)* Local library scans now skip files unchanged since the last scan
+
+---
+
+## [1.12.7] — 2026-07-07
+
+- **Fix** *(Desktop)* Local audio/video files failed to load in dev builds ("Not allowed to load local resource") — now served through a custom protocol that also works in packaged builds
+
+---
+
+## [1.12.6] — 2026-07-07
+
+- **New** Editors can now resubmit a stuck proposal from My Proposals
+- **Improve** Songs now display a dedicated album field (when the API provides one) instead of always falling back to the era name
+- **New** *(Desktop)* Offline-downloaded tracks show a badge in playlist views; Settings lets you change the offline songs storage folder (switching moves files instead of re-downloading)
+- **Improve** *(Desktop)* Offline playlist downloads now show live progress in the Download Manager
+
+---
+
+## [1.12.5] — 2026-07-05
+
+- **Fix** Native dropdown menus had unreadable option text in dark mode — now consistently dark text on white
+- **Fix** API requests now bypass the browser cache, preventing stale data from showing after edits
+- **New** *(Desktop)* Playlists can now be downloaded for full offline playback — stays synced automatically on focus and every 15 minutes
+
+---
+
+## [1.12.4] — 2026-07-05
+
+- **New** WRLD view now shows a song's other linked versions as peeking "bookmark" tabs on the album art
+- **New** Right-click synced lyrics to download them as a .lrc file
+- **Improve** Bottom nav and sidebar now list "WRLD" before "Tracker"
+- **Fix** *(Desktop)* Downloads trigger and Albums Admin header no longer overlap the window title-bar controls
+
+---
+
+## [1.12.3] — 2026-07-04
+
+- **Fix** Bulk "Add to queue" is now disabled with an explanatory tooltip when the whole selection is unplayable
+- **Improve** Lyrics sync offset now adjusts in finer 0.1s steps
+- **Fix** *(Desktop)* WRLD fullscreen toggle button repositioned now that the window title bar is hidden during fullscreen
+
+---
+
+## [1.12.2] — 2026-07-04
+
+- **New** Lyrics sync offset setting in Settings — nudge synced lyrics earlier or later
+- **New** Sidebar shows a "Download app" link for web users, pointing to the desktop app's latest release
+
+---
+
+## [1.12.1] — 2026-07-04
+
+- **New** WRLD view now has its own audio output device picker
+- **New** Tracker's compact view now shows a category badge for each grouped song
+- **Fix** Right-click menus now clamp to their actual rendered size instead of a rough guess
+- **Fix** *(Desktop)* Native window title-bar controls are now hidden while WRLD fullscreen is active
+
+---
+
+## [1.12.0] — 2026-07-04
+
+- **Fix** Bulk "Add to queue" now skips unplayable songs
+- **Improve** Playlist covers now load instantly from cache when reopening a playlist
+- **Improve** Queue panel's "+N more" is now a button — click to reveal more upcoming tracks
+- **Fix** Play / Play next / Add to queue are hidden in the context menu for unplayable tracks
+- **Improve** WRLD view's fullscreen and 999 FM toggle buttons restyled
+- **Improve** WRLD view's queue now takes over the full right column instead of floating as a small overlay
+- **New** *(Desktop)* Local library tracks with no matching API song can now be added to on-device playlists
+
+---
+
+## [1.11.11] — 2026-07-03
+
+- **New** Editor profile: proposal list now has a search box
+- **Improve** Tracker compact view: sorting moved from a dropdown to clickable column headers
+- **Fix** Tracker compact view could freeze when selecting many songs across expanded groups
+- **Fix** Playlist header's "⋯" menu could get clipped or overflow the screen
+- **Fix** Song context menus could spill off-screen near a window edge
+
+---
+
+## [1.11.10] — 2026-07-03
+
+- **New** Tracker compact view: sort version groups, and right-click a group to bulk-act on all its versions
+- **New** Playlists: right-click a playlist for a full context menu — play all, queue all, download ZIP, share, rename, delete
+- **New** Multi-select tracks within an open playlist to bulk add to queue/playlist or remove
+- **Improve** Playlist header's action buttons are now grouped into a single "⋯" menu
+- **Improve** Navigating away from an open playlist and back no longer resets you to the playlist list
+- **Improve** WRLD view: mute now restores your previous volume instead of resetting to 50%
+- **Fix** Playback could silently get stuck at the end of a track on mobile with the screen locked
+- **Fix** Song info modal could render clipped when opened from certain panels
+- **Fix** WRLD view: the song "..." menu could fail to close when clicking its own toggle button
+
+---
+
+## [1.11.9] — 2026-07-03
+
+- **Fix** Tracker/Playlists compact view: version groups no longer silently go missing for large catalogs
+- **Fix** Tracker compact view search now matches producers, engineers, era, notes, and more; ignores apostrophes
+- **Fix** *(Desktop)* WRLD view fullscreen button repositioned so it no longer overlaps the window control buttons
+
+---
+
+## [1.11.8] — 2026-07-02
+
+- **Fix** Tracker/Playlists compact view now respects the search box
+- **Fix** WRLD view lyrics: the enlarged active line no longer gets clipped near the panel's edge
+- **Improve** Volume percentage tooltip is now larger and easier to read
+- **New** Playlists compact view: individual tracks can now be removed from the playlist directly
+
+---
+
+## [1.11.7] — 2026-07-02
+
+- **New** Files view: recursive search across the whole file tree
+- **New** Playlists: "Compact" view collapses tracks that share a version group into one row
+- **Improve** Tracker: bulk "Add to playlist" now excludes session/unsurfaced songs and marks playlists that already contain the whole selection
+- **Fix** WRLD view queue no longer pushes the player controls off-screen on short windows
+- **Fix** Native dropdowns now follow the app's light/dark theme instead of the OS's
+
+---
+
+## [1.11.6] — 2026-07-02
+
+- **New** Song context menus everywhere now include "Change version" — jump straight to a linked version
+- **Improve** Right-click/options menus for songs are now consistent across every view
+- **Improve** Song info modal text can now be selected and copied
+
+---
+
+## [1.11.5] — 2026-07-02
+
+- **Improve** Tracker compact view group rows now show the group's cover art
+- **New** Linking songs as versions now prompts you to name the group if it doesn't already have a title
+- **Fix** Tracker compact view no longer silently kept loading the entire song library in the background
+
+---
+
+## [1.11.4] — 2026-07-01
+
+- **New** Tracker: "Compact" view collapses songs into their version groups
+- **Improve** Multi-select no longer needs a separate "Select" button — click any song row to start selecting
+- **New** Editor page: version title field now autocompletes existing titles
+
+---
+
+## [1.11.3] — 2026-07-01
+
+- **Improve** Editor page: song version fields now save via an explicit button instead of auto-saving on blur
+- **Remove** Song info modal no longer lets you search and link new versions inline — do this from the editor instead
+- **Fix** Light mode: muted/secondary text is now darker for better readability
+
+---
+
+## [1.11.2] — 2026-07-01
+
+- **Improve** Editor page: song version label is now free text instead of a number; version title now applies to every linked version at once
+
+---
+
+## [1.11.1] — 2026-07-01
+
+- **Fix** Editor/Song info: linking or unlinking a song version now shows an error message on failure
+
+---
+
+## [1.11.0] — 2026-07-01
+
+- **New** Tracker bulk-selected songs can now be right-clicked for the same actions, plus a "Link versions" bulk action for editors
+- **New** Editor page: link/unlink song versions and set a version number/title without leaving the edit form
+- **Improve** Song info modal: linked versions now show their version number/title
+
+---
+
+## [1.10.16] — 2026-07-01
+
+- **New** Tracker: multi-select mode — select multiple songs to add to queue, add to a playlist, or download as a ZIP in bulk
+
+---
+
+## [1.10.14] — 2026-07-01
+
+- **New** Song info modal: link songs together as "Other Versions" (e.g. v1/v2/TV Mix) and jump between them
+
+---
+
+## [1.10.12] — 2026-07-01
+
+- **New** Song info modal now has an Edit button for editors, wired up across every view
+- **New** Recording-session songs (Tracker) can now be downloaded as a ZIP from the context menu
+- **New** Song info modal now shows a song's alternate names
+- **New** WRLD view lyrics: manual scroll to browse the full lyric sheet, with a "Resume" button
+- **Fix** Liked Songs: "Play next" now actually plays the track next instead of appending to the end
+- **Fix** *(Desktop)* Discord Rich Presence now clears entirely while paused instead of showing a frozen progress bar, and now shows the track's era, with an era tooltip on the cover art
+
+---
+
+## [1.10.11] — 2026-07-01
+
+- **Improve** Settings redesigned again with a sidebar tab list (Appearance/Playback/Library/App/About)
+
+---
+
+## [1.10.10] — 2026-07-01
+
+- **Improve** Settings redesigned with grouped, iOS-style sections and toggle switches
+- **Improve** Library page: playlists are now split into "Playlists" and "On This Device" sections
+- **Improve** WRLD view "Playing Next" queue now pops up inline under the player instead of a separate side panel
+
+---
+
+## [1.10.9] — 2026-07-01
+
+- **New** Playlists: full-bleed blurred cover art now sits behind the playlist header (Apple Music style)
+- **New** Playlists: circular Play/Shuffle buttons on playlist headers, and a hover play button on playlist grid tiles
+- **New** Sidebar: playlists list expands under the "Playlists" nav item for one-click access
+- **New** WRLD view: fullscreen now uses real OS/browser fullscreen instead of just an in-app overlay
+- **New** WRLD view: "Playing Next" queue panel — view and drag-to-reorder the upcoming queue
+- **Improve** Media lightbox: image/video controls now float above the media
+- **Fix** WRLD view lyrics: active line no longer appears to snap bold partway through the highlight transition
+- **New** *(Desktop)* F11 toggles fullscreen, and the UI stays in sync with fullscreen entered/exited by any means
+
+---
+
+## [1.10.8] — 2026-07-01
+
+- **New** WRLD view: fullscreen toggle button (Escape to exit)
+- **Remove** WRLD view song menu: removed the "Play Next" option
+- **Fix** WRLD view: active lyric line no longer causes a late "pop" when growing — now animates via a smooth scale transition
+- **New** *(Desktop)* Discord Rich Presence now shows the track's cover art
+- **Fix** *(Desktop)* Discord Rich Presence now catches up immediately after a seek instead of leaving the countdown anchored to the pre-seek position
+- **New** *(Desktop)* Liked Songs now includes liked local library tracks, with a working context menu for them
 
 ---
 
