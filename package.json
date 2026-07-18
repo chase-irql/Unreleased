@@ -1,6 +1,6 @@
 {
   "name": "unreleased",
-  "version": "1.15.10",
+  "version": "1.15.11",
   "description": "A music player for Juice WRLD",
   "main": "electron/main.js",
   "scripts": {
@@ -99,7 +99,13 @@
           ]
         }
       ],
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "extraResources": [
+        {
+          "from": "build/bundled/Unreleased-Setup.exe",
+          "to": "Unreleased-Setup.exe"
+        }
+      ]
     },
     "nsis": {
       "include": "build/installer.nsh",
