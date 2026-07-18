@@ -40,7 +40,7 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 // Pop-outs share localStorage with the main window, so only the main window
 // may flush the report outbox — the live endpoints have no idempotency key,
 // so two windows flushing the same queue would double-send every report.
-const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
+export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
 // Lightweight localStorage persistence helper
 const ls = {

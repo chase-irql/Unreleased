@@ -75,6 +75,7 @@ function groupCategory(members: { item: JWApiSong }[]): Category {
 const PAGE_SIZE = 50
 const LS_TRACKER_VIEW = 'api-tracker:viewMode'
 const LS_TRACKER_SIDEBAR = 'api-tracker:showSidebar'
+const LS_TRACKER_COMPACT = 'api-tracker:compactView'
 const LS_TRACKER_SEARCH  = 'api-tracker:search'
 const LS_TRACKER_CALENDAR_MONTH = 'api-tracker:calendarMonth'
 
@@ -1302,7 +1303,14 @@ export default function ApiTrackerView(): JSX.Element {
   // — tying it to sortedSongs previously meant a group's members could be
   // missed if they hadn't scrolled into view yet, and re-querying on every
   // page load compounded into serious lag as more pages loaded.
-  const [compactView, setCompactView] = useState(false)
+  const [compactView, setCompactViewState] = useState(() => localStorage.getItem(LS_TRACKER_COMPACT) === 'true')
+  const setCompactView = (v: boolean | ((prev: boolean) => boolean)): void => {
+    setCompactViewState(prev => {
+      const next = typeof v === 'function' ? v(prev) : v
+      localStorage.setItem(LS_TRACKER_COMPACT, String(next))
+      return next
+    })
+  }
   const [compactGroups, setCompactGroups] = useState<CompactGroup<JWApiSong>[]>([])
   const [loadingCompact, setLoadingCompact] = useState(false)
   // How compact-view groups are ordered — driven by clicking the "Name" /

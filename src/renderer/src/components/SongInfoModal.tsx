@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Music2, Pencil, Flag } from 'lucide-react'
+import { X, Music2, Pencil, Flag, PictureInPicture2 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
@@ -168,23 +168,37 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
             />
           )}
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-surface" />
-          {onEdit && (
-            <button
-              onClick={() => { onEdit(displaySong.id); onClose() }}
-              style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
-              className="absolute top-3 right-12 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
-              title="Edit song info"
-            >
-              <Pencil size={13} />
-            </button>
-          )}
-          <button
-            onClick={onClose}
+          <div
+            className="absolute top-3 right-3 z-10 flex items-center gap-1.5"
             style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
-            className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
           >
-            <X size={15} />
-          </button>
+            {/* Manual pop-out — only when shown in-app on desktop (i.e. the
+                Song-info pop-out was turned off); detaches into its own window. */}
+            {!floating && el?.openFloatWindow && (
+              <button
+                onClick={() => { el.openFloatWindow('song-info', { songId: displaySong.id }); onClose() }}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
+                title="Open in a separate window"
+              >
+                <PictureInPicture2 size={13} />
+              </button>
+            )}
+            {onEdit && (
+              <button
+                onClick={() => { onEdit(displaySong.id); onClose() }}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
+                title="Edit song info"
+              >
+                <Pencil size={13} />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
+            >
+              <X size={15} />
+            </button>
+          </div>
           <div className="relative flex items-end gap-4 px-5 pt-8 pb-5">
             <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay">
               {coverUrl ? (

@@ -222,7 +222,7 @@ export default function PlaylistsView(): JSX.Element {
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, sidebarPosition } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'sidebarPosition')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -297,6 +297,8 @@ export default function PlaylistsView(): JSX.Element {
   // Sort + search
   const [sort, setSort] = useState<SortState>({ field: 'default', dir: 'asc' })
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Compact view — same grouping as the Tracker's (see lib/compactGroups.ts):
   // collapses tracks sharing a version_title into one row. Uses the
@@ -441,10 +443,15 @@ export default function PlaylistsView(): JSX.Element {
 
   // Listen for sidebar "Playlists" re-click → go back to library
   useEffect(() => {
-    const h = () => { setSelectedId(null); setLocalSelectedId(null); setRenaming(false); setSearch(''); setSort({ field: 'default', dir: 'asc' }); setIsSharedView(false) }
+    const h = () => { setSelectedId(null); setLocalSelectedId(null); setRenaming(false); setSearch(''); setSearchOpen(false); setSort({ field: 'default', dir: 'asc' }); setIsSharedView(false) }
     window.addEventListener('playlists:back', h)
     return () => window.removeEventListener('playlists:back', h)
   }, [])
+
+  // Autofocus the search input when it expands from the icon
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus()
+  }, [searchOpen])
 
   // Auto-open playlist from URL params (e.g. /playlists?id=123&view=shared)
   useEffect(() => {
@@ -1370,8 +1377,8 @@ export default function PlaylistsView(): JSX.Element {
    *  a body portal, so it renders from either library view. */
   const renderFolderMenu = (): React.ReactNode => folderMenu && createPortal(
     <div
-      className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[200px]"
-      style={{ left: Math.min(folderMenu.x, window.innerWidth - 220), top: Math.min(folderMenu.y, window.innerHeight - 170) }}
+      className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 w-56"
+      style={{ left: Math.min(folderMenu.x, window.innerWidth - 236), top: Math.min(folderMenu.y, window.innerHeight - 170) }}
       onClick={e => e.stopPropagation()}
     >
       {folderMenu.renaming ? (
@@ -1384,7 +1391,7 @@ export default function PlaylistsView(): JSX.Element {
               if (e.key === 'Enter') { renameFolder(folderMenu.folder.id, folderMenu.renameVal ?? folderMenu.folder.name); setFolderMenu(null) }
               else if (e.key === 'Escape') setFolderMenu(prev => prev ? { ...prev, renaming: false } : null)
             }}
-            className="flex-1 bg-surface-overlay rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none border border-[var(--border)]"
+            className="flex-1 min-w-0 bg-surface-overlay rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none border border-[var(--border)]"
           />
           <button
             onClick={() => { renameFolder(folderMenu.folder.id, folderMenu.renameVal ?? folderMenu.folder.name); setFolderMenu(null) }}
@@ -1918,25 +1925,44 @@ export default function PlaylistsView(): JSX.Element {
           <div className="px-2 pb-8">
             {/* Search + compact view — sticky so scrolled track rows never
                 reach the top of the scroll container, where they'd render
-                behind the frameless window's fixed min/max/close buttons. */}
+                behind the frameless window's fixed min/max/close buttons.
+                That 188px gutter only applies when this row actually sits
+                under the window controls — with the sidebar on top/right,
+                main content doesn't reach that corner, so reserving it there
+                just leaves dead space next to the buttons. */}
             <div
-              className="sticky top-0 z-20 -mx-2 px-4 py-2 mb-3 flex items-center gap-2 bg-surface"
-              style={{ paddingRight: (window as any).electron ? 188 : undefined }}
+              className="sticky top-0 z-20 -mx-2 px-4 py-2 mb-3 flex items-center justify-end gap-2 bg-surface"
+              style={{ paddingRight: (window as any).electron && sidebarPosition !== 'top' && sidebarPosition !== 'right' ? 188 : undefined }}
             >
-              <div className="relative flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder={`Search ${tracks.length} tracks…`}
-                  className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-4 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
-                />
-                {search && (
-                  <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+              {searchOpen ? (
+                <div className="relative flex-1">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                  <input
+                    ref={searchInputRef}
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    onBlur={() => { if (!search) setSearchOpen(false) }}
+                    onKeyDown={e => { if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur() } }}
+                    placeholder={`Search ${tracks.length} tracks…`}
+                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-8 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+                  />
+                  <button
+                    onClick={() => { setSearch(''); setSearchOpen(false) }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                    title="Close search"
+                  >
                     <X size={13} />
                   </button>
-                )}
-              </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setSearchOpen(true)}
+                  className="shrink-0 flex items-center justify-center w-9 h-9 rounded-xl text-text-muted hover:text-text-primary bg-surface-overlay border border-transparent transition-colors"
+                  title="Search tracks"
+                >
+                  <Search size={15} />
+                </button>
+              )}
               {versionsEnabled && (
                 <button
                   onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
