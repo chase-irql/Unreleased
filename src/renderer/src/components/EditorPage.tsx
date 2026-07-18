@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback, memo, type ReactNode } from 'react'
 import {
-  Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown,
-  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, PictureInPicture2,
+  Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown, ChevronLeft,
+  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, PictureInPicture2, Minimize2,
 } from 'lucide-react'
 import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
+import { attachToMainWindow } from '../lib/windowSync'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import { invalidateLyricsCache } from './Player'
@@ -692,6 +693,16 @@ export default function EditorPage(): JSX.Element {
       {/* 188px clears the window controls (132px) plus the fixed downloads
           trigger next to them (right: 144px + 36px wide — see DownloadManager) */}
       <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '188px' } : undefined}>
+        {/* Back — only in the in-app editor; the pop-out window has nowhere to go back to */}
+        {!IS_FLOAT_WINDOW && (
+          <button
+            onClick={() => setActiveView('editor-profile')}
+            title="Back"
+            className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
         <span className="font-bold text-[15px] text-text-primary">Song editor</span>
         {/* Manual pop-out — detach the in-app editor into its own window.
             Hidden inside the float window itself and when there's no saved
@@ -710,6 +721,21 @@ export default function EditorPage(): JSX.Element {
             className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
           >
             <PictureInPicture2 size={15} />
+          </button>
+        )}
+        {/* Manual attach — from the pop-out editor window, dock back into the
+            main window (opens its in-app editor for this song), then close. */}
+        {IS_FLOAT_WINDOW && song?.id != null && (
+          <button
+            onClick={() => {
+              if (!song) return
+              attachToMainWindow({ view: 'editor', songId: song.id })
+              ;(window as any).electron?.closeSelf?.()
+            }}
+            title="Dock into main window"
+            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
+          >
+            <Minimize2 size={15} />
           </button>
         )}
         <span className="flex-1" />

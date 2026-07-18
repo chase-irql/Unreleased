@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import {
   JWApiSong, resolvePrefCoverUrl, apiFetch, buildStreamUrl,
-  parseBrowseEntries, cleanTitleForSearch, JWApiBrowseResponse,
+  parseBrowseEntries, cleanTitleForSearch, filterSearchResults, JWApiBrowseResponse,
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
 import { getOwnVersionMeta, SongVersionMeta } from '../lib/versionsApi'
@@ -167,7 +167,9 @@ export default function SongPrefsSection({
     setSearchedLoading(true)
     const seenUrls = new Set(coverChoices.map((c) => c.url))
     Promise.all(queries.map((q) =>
-      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseBrowseEntries).catch(() => [])
+      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q })
+        .then((data) => filterSearchResults(parseBrowseEntries(data), q))
+        .catch(() => [])
     )).then((lists) => {
       if (cancelled) return
       const seenPaths = new Set<string>()

@@ -56,8 +56,22 @@ function buildGroups<T>(metas: SongVersionMeta[], getItem: (songId: number) => T
 const COMPACT_GROUPS_TTL = 30_000
 let compactGroupsCache: { promise: Promise<CompactGroup<JWApiSong>[]>; ts: number } | null = null
 
+// Invalidating the cache doesn't help a Tracker/Playlists compact view that's
+// already mounted and already fetched — its load effect only re-runs when its
+// own deps change, not when some other part of the app writes a version
+// change. Without this, an edit only showed up after toggling compact view
+// off/on or leaving and returning to the page. Subscribers re-fetch
+// immediately (if they're currently showing compact view) instead.
+const invalidationListeners = new Set<() => void>()
+
 export function invalidateCompactGroupsCache(): void {
   compactGroupsCache = null
+  for (const listener of invalidationListeners) listener()
+}
+
+export function subscribeCompactGroupsInvalidation(listener: () => void): () => void {
+  invalidationListeners.add(listener)
+  return () => { invalidationListeners.delete(listener) }
 }
 
 async function buildAllCompactGroups(): Promise<CompactGroup<JWApiSong>[]> {

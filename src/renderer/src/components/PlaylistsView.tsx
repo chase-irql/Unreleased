@@ -21,7 +21,7 @@ import { AlbumArtThumb } from './LibraryTab'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { CompactGroupRow, CompactEmptyIcon, useExpandedGroups } from './CompactGroupRow'
-import { groupItemsByVersion, filterCompactGroups } from '../lib/compactGroups'
+import { groupItemsByVersion, filterCompactGroups, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { versionsEnabled } from '../lib/versionsApi'
 import { useVirtualWindowEl } from '../hooks/useVirtualWindow'
@@ -428,6 +428,18 @@ export default function PlaylistsView(): JSX.Element {
     }
   }, [detail])
 
+  // Bumped by the invalidation subscriber below so an edit made elsewhere
+  // (e.g. Editor → Versions) shows up here immediately even while this view
+  // stays mounted and neither compactView nor tracks changes.
+  const [compactReloadToken, setCompactReloadToken] = useState(0)
+  const compactViewRef = useRef(compactView)
+  useEffect(() => { compactViewRef.current = compactView }, [compactView])
+  useEffect(() => {
+    return subscribeCompactGroupsInvalidation(() => {
+      if (compactViewRef.current) setCompactReloadToken(t => t + 1)
+    })
+  }, [])
+
   useEffect(() => {
     if (!compactView || !versionsEnabled) { setCompactGroups([]); return }
     let cancelled = false
@@ -436,7 +448,7 @@ export default function PlaylistsView(): JSX.Element {
       if (!cancelled) { setCompactGroups(groups); setLoadingCompact(false) }
     })
     return () => { cancelled = true }
-  }, [compactView, tracks])
+  }, [compactView, tracks, compactReloadToken])
 
   // Load local library so playlist tracks resolve
   useEffect(() => { loadLibrary() }, [])

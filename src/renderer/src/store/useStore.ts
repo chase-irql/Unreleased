@@ -110,6 +110,11 @@ interface AppState {
   showSettings: boolean
   showDiagnostics: boolean
   showQueue: boolean
+  // Song whose info modal is shown by the main window's global host (App's
+  // <GlobalSongInfoHost>). Only used to "attach" a floating song-info window
+  // back into the main window — the per-view list modals keep their own local
+  // state. null = nothing shown.
+  infoSongId: number | null
   // Desktop bottom player collapsed to a slim strip to reclaim vertical space.
   playerCollapsed: boolean
   // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
@@ -273,6 +278,7 @@ interface AppActions {
   setShowSettings: (show: boolean) => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
+  setInfoSongId: (id: number | null) => void
   setPlayerCollapsed: (collapsed: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
   setTheme: (theme: SkinId) => void
@@ -578,6 +584,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showSettings: false,
   showDiagnostics: false,
   showQueue: false,
+  infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
   wrldFullscreen: false,
   radioFmActive: false,
@@ -629,6 +636,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
+  setInfoSongId: (infoSongId) => set({ infoSongId }),
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },

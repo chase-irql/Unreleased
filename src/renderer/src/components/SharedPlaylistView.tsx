@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Play, Loader2, Music2, Share2, Download } from 'lucide-react'
+import { Play, Loader2, Music2, Share2, Download, ChevronLeft } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { apiFetch, buildStreamUrl, buildCoverArtUrl } from '../lib/juicewrldApi'
 import { liteSongToTrack, ApiSongLite } from '../lib/userApi'
@@ -98,7 +98,7 @@ function parseTracks(data: unknown): Track[] {
 }
 
 export default function SharedPlaylistView(): JSX.Element {
-  const { playTrack, playCollection } = useStorePick('playTrack', 'playCollection')
+  const { playTrack, playCollection, setActiveView } = useStorePick('playTrack', 'playCollection', 'setActiveView')
   const shareId = window.location.pathname.split('/shared/')[1]?.split('/')[0] ?? ''
 
   const [tracks, setTracks] = useState<Track[]>([])
@@ -130,6 +130,12 @@ export default function SharedPlaylistView(): JSX.Element {
       <div className="flex-1 flex flex-col items-center justify-center gap-3 text-text-muted">
         <Music2 size={40} className="opacity-20" />
         <p className="text-sm">Shared playlist not found or expired.</p>
+        <button
+          onClick={() => setActiveView('wrld')}
+          className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-sm transition-colors mt-1"
+        >
+          <ChevronLeft size={15} /> Back to app
+        </button>
       </div>
     )
   }
@@ -137,6 +143,12 @@ export default function SharedPlaylistView(): JSX.Element {
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto px-5 py-6">
       {/* Header */}
+      <button
+        onClick={() => setActiveView('wrld')}
+        className="flex items-center gap-1.5 self-start text-text-muted hover:text-text-primary text-sm transition-colors mb-4"
+      >
+        <ChevronLeft size={15} /> Back to app
+      </button>
       <div className="flex items-center gap-4 mb-6">
         <div className="w-16 h-16 rounded-xl bg-accent/15 flex items-center justify-center shrink-0">
           <Share2 size={28} className="text-accent" />

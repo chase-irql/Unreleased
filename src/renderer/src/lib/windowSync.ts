@@ -40,11 +40,20 @@ const SYNC_KEYS = [
 type SyncKey = (typeof SYNC_KEYS)[number]
 type SyncPatch = Partial<Pick<AppStore, SyncKey>>
 
+// A floating pop-out asking the main window to re-open its page docked in-app
+// (the "attach" button — inverse of detach). The main window opens the in-app
+// equivalent and the float then closes itself.
+type AttachTarget =
+  | { view: 'settings' }
+  | { view: 'editor'; songId: number }
+  | { view: 'song-info'; songId: number }
+
 type SyncMessage =
   | { type: 'patch'; payload: SyncPatch }
   | { type: 'snapshot'; payload: SyncPatch }
   | { type: 'request' }
   | { type: 'navigate'; view: ViewType }
+  | { type: 'attach'; target: AttachTarget }
   | { type: 'command'; cmd: string; arg?: unknown }
 
 // Playback commands from pop-outs land here — the main window's Player
@@ -116,6 +125,16 @@ export function initWindowSync(isFloat: boolean): void {
       if (!isFloat) playerCommandHandler?.(msg.cmd, msg.arg)
     } else if (msg.type === 'navigate') {
       if (!isFloat) useStore.getState().setActiveView(msg.view)
+    } else if (msg.type === 'attach') {
+      if (!isFloat) {
+        const s = useStore.getState()
+        const t = msg.target
+        // setState directly (not the setShowSettings/openSongEditor actions)
+        // so we force the in-app view even when that page's auto-pop-out is on.
+        if (t.view === 'settings') useStore.setState({ showSettings: true })
+        else if (t.view === 'editor') { useStore.setState({ pendingEditorSongId: t.songId }); s.setActiveView('editor') }
+        else if (t.view === 'song-info') s.setInfoSongId(t.songId)
+      }
     }
   })
 
@@ -128,5 +147,15 @@ export function navigateMainWindow(view: ViewType): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const el = (window as any).electron
   el?.windowSyncSend?.({ type: 'navigate', view })
+  el?.focusMainWindow?.()
+}
+
+// "Attach" a floating pop-out back into the main window: ask the main window to
+// open the docked in-app equivalent, then focus it. The caller closes its own
+// float window afterwards (el.closeSelf).
+export function attachToMainWindow(target: AttachTarget): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const el = (window as any).electron
+  el?.windowSyncSend?.({ type: 'attach', target })
   el?.focusMainWindow?.()
 }

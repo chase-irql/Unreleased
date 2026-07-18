@@ -142,6 +142,16 @@ export default function Player(): JSX.Element {
   const fmProgress = fmDurationMs > 0 ? Math.min(fmElapsedMs / fmDurationMs, 1) : 0
   const openSongInfo = (): void => {
     setShowContextMenu(false)
+    if (radioFmActive) {
+      const songId = radioFmNowPlaying?.song_id ?? radioFmMatchedSong?.songId
+      if (songId == null) return
+      setSongInfoData(null)
+      setShowSongInfo(true)
+      apiFetch<JWApiSong>(`/songs/${songId}/`)
+        .then((song) => setSongInfoData(song))
+        .catch(() => setShowSongInfo(false))
+      return
+    }
     if (!currentTrack) return
     const match = currentTrack.id.match(/^jw-(\d+)$/)
     if (!match) return
@@ -927,7 +937,7 @@ export default function Player(): JSX.Element {
     'loop':        () => { if (!radioFmActive) toggleRepeat() },
     'clear-queue': () => useStore.getState().clearQueue(),
     'like':        () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
-    'song-info':   () => { if (currentTrack && !radioFmActive) openSongInfo() },
+    'song-info':   () => { if (currentTrack || radioFmActive) openSongInfo() },
     'edit-song': () => {
       if (radioFmActive) return
       if (currentSongId != null) { useStore.getState().openSongEditor(currentSongId); return }
