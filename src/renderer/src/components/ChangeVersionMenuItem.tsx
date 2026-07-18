@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Layers, ChevronDown, Loader2, Star } from 'lucide-react'
 import { getVersionGroup } from '../lib/versionsApi'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
@@ -29,12 +29,26 @@ export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [versions, setVersions] = useState<VersionOption[] | null>(null)
-  const { defaultVersion, setSongDefaultVersion } = useStore(
+  const { songPrefs, setSongDefaultVersion } = useStore(
     useShallow((s) => ({
-      defaultVersion: s.songPrefs[songId]?.default_version ?? null,
+      songPrefs: s.songPrefs,
       setSongDefaultVersion: s.setSongDefaultVersion,
     }))
   )
+
+  // Own row wins if set, else the first sibling that has one — mirrors
+  // queueSlice's groupDefaultVersion so the star here matches what playback
+  // actually resolves to, even when the default was set from a *different*
+  // version's own menu rather than this song's.
+  const defaultVersion = useMemo(() => {
+    const own = songPrefs[songId]?.default_version
+    if (own) return own
+    for (const v of versions ?? []) {
+      const d = songPrefs[v.song.id]?.default_version
+      if (d) return d
+    }
+    return null
+  }, [songPrefs, songId, versions])
 
   const toggle = async (): Promise<void> => {
     if (expanded) { setExpanded(false); return }
@@ -94,7 +108,21 @@ export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props
                   </button>
                   {version && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); setSongDefaultVersion(songId, isDefault ? null : version) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!isDefault) { setSongDefaultVersion(songId, version); return }
+                        // Unstarring has to clear wherever the label actually
+                        // lives (own row or an inherited sibling's) or the
+                        // star would stay lit next render.
+                        if (songPrefs[songId]?.default_version?.toLowerCase() === version.toLowerCase()) {
+                          setSongDefaultVersion(songId, null)
+                        }
+                        for (const v of versions ?? []) {
+                          if (songPrefs[v.song.id]?.default_version?.toLowerCase() === version.toLowerCase()) {
+                            setSongDefaultVersion(v.song.id, null)
+                          }
+                        }
+                      }}
                       title={isDefault ? 'Default version — click to unset' : `Always play "${version}" for this song`}
                       className={`shrink-0 w-7 h-7 flex items-center justify-center rounded-md transition-colors ${isDefault ? 'text-accent' : 'text-text-muted hover:text-text-primary'}`}
                     >

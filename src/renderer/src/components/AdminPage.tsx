@@ -291,7 +291,7 @@ export default function AdminPage(): JSX.Element {
           className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">
           <ChevronLeft size={16} />
         </button>
-        <div className="flex-1 mb-3">
+        <div className="mb-3">
           <span className="text-text-primary font-bold text-sm">{isAdmin ? 'Admin' : 'Reports'}</span>
           {account?.discord_username && (
             <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>

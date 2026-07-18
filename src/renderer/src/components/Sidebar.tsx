@@ -77,11 +77,13 @@ export default function Sidebar(): JSX.Element {
       <aside className={`hidden md:flex flex-col w-full bg-sidebar shrink-0 border-[var(--border)] ${sidebarPosition === 'top' ? 'border-b' : 'border-t'}`}>
         {/* Bar touches the frameless window's top edge, so it carries the
             drag strip that main's overlay provides in the other layouts.
-            mr-[132px] keeps the strip clear of the min/max/close buttons —
-            a drag rect under them would win the draggable-region ordering
-            and swallow their clicks (see WindowControls in App.tsx). */}
+            mr-[188px] keeps the strip clear of the min/max/close buttons
+            (132px) plus the fixed downloads trigger next to them (right:
+            144px + 36px wide — see DownloadManager) — a drag rect under
+            them would win the draggable-region ordering and swallow their
+            clicks (see WindowControls in App.tsx). */}
         {isElectron && sidebarPosition === 'top' && (
-          <div className="shrink-0 h-7 mr-[132px] select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+          <div className="shrink-0 h-7 mr-[188px] select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         )}
         <div className="flex items-center gap-1 px-3 py-1.5 min-w-0">
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
@@ -163,12 +165,17 @@ export default function Sidebar(): JSX.Element {
     <aside
       className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 ${sidebarPosition === 'right' ? 'border-l' : 'border-r'} border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
     >
-      {/* On the right, the sidebar's top edge sits under the window buttons —
-          keep the drag strip out of their 132px corner (same ordering pitfall
-          as the top-bar strip above). */}
+      {/* On the right, the sidebar's top edge sits under the window buttons
+          (132px) and the fixed downloads trigger next to them (right: 144px
+          + 36px wide — see DownloadManager) — keep the drag strip out of
+          their 188px corner (same ordering pitfall as the top-bar strip
+          above), and give the first nav item real clearance below them so
+          it doesn't visually run into the buttons when the sidebar is wide
+          enough to sit under them (expanded width, or any width once
+          collapsed still tucks under the min/max/close cluster). */}
       {isElectron && (
         <div
-          className={`shrink-0 h-7 select-none ${sidebarPosition === 'right' ? 'mr-[132px]' : ''}`}
+          className={`shrink-0 select-none ${sidebarPosition === 'right' ? 'h-9 mr-[188px]' : 'h-7'}`}
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
       )}

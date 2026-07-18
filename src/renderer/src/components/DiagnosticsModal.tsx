@@ -1,5 +1,5 @@
 ﻿import { useRef, useState } from 'react'
-import { X, Info, FolderOpen } from 'lucide-react'
+import { X, Info, FolderOpen, Terminal } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { cacheStats } from '../lib/apiCache'
 import type { Track } from '../types'
@@ -207,13 +207,21 @@ export default function DiagnosticsModal(): JSX.Element {
         </div>
 
         {isElectron && (
-          <div className="px-6 py-3 border-t border-[var(--border)] shrink-0">
+          <div className="px-6 py-3 border-t border-[var(--border)] shrink-0 flex items-center gap-2">
             <button
               onClick={() => el?.openLogsFolder?.()}
               className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
             >
               <FolderOpen size={13} />
               Open logs
+            </button>
+            <button
+              onClick={() => el?.toggleDevTools?.()}
+              title="Opens the Network/Console tab — useful for checking whether a request actually reached the server"
+              className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+            >
+              <Terminal size={13} />
+              Open DevTools
             </button>
           </div>
         )}

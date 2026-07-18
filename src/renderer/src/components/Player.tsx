@@ -978,17 +978,21 @@ export default function Player(): JSX.Element {
         await el.setAppSetting('discordRpcEnabled', !s.discordRpcEnabled)
       } catch { /* ignore */ }
     },
+    'toggle-devtools': () => (window as any).electron?.toggleDevTools?.(),
   }
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       const combo = eventToCombo(e)
       if (!combo) return
       // Never hijack typing (search boxes, the metadata editor, etc.) — media
-      // keys are the one exception, since those are meaningless while typing.
+      // keys are one exception (meaningless while typing), and so are bare
+      // function keys (F1-F24): conventionally global in every browser/OS,
+      // never part of typed text, so a focused input shouldn't swallow them.
       const target = e.target as HTMLElement | null
       const tag = target?.tagName
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || !!target?.isContentEditable
-      if (typing && !combo.startsWith('Media')) return
+      const isFKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(combo.split('+').pop() ?? '')
+      if (typing && !combo.startsWith('Media') && !isFKey) return
       // Leave Space/Enter alone when a button/link/select is focused so they
       // still activate it (native keyboard behavior) instead of toggling play.
       const clickable = tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || target?.getAttribute('role') === 'button'
