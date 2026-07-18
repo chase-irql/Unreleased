@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electron', {
   isMaximized:    () => ipcRenderer.invoke('is-maximized'),
   setFullscreen:  (value) => ipcRenderer.invoke('set-fullscreen', value),
   isFullscreen:   ()      => ipcRenderer.invoke('is-fullscreen'),
+  toggleDevTools: ()      => ipcRenderer.invoke('toggle-devtools'),
   onFullscreenChange: (cb) => {
     const fn = (_, v) => cb(v)
     ipcRenderer.on('fullscreen-changed', fn)

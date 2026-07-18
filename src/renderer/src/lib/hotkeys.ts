@@ -27,6 +27,10 @@ export interface HotkeyAction {
   defaultBinding: string
   /** Only meaningful in the desktop (Electron) build — hidden on web. */
   electronOnly?: boolean
+  /** Still active with its default binding for everyone, but only listed (and
+   *  therefore rebindable) in Settings when Developer mode is on — keeps the
+   *  shortcut list from bloating with power-user-only entries. */
+  devModeOnly?: boolean
 }
 
 // Order here is the order shown in Settings (within each category block).
@@ -84,6 +88,7 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'restart-app',          label: 'Restart app',                 category: 'App', defaultBinding: '', electronOnly: true },
   { id: 'rescan-library',       label: 'Rescan library',              category: 'App', defaultBinding: '', electronOnly: true },
   { id: 'discord-status',       label: 'Toggle Discord status',       category: 'App', defaultBinding: '', electronOnly: true },
+  { id: 'toggle-devtools',      label: 'Toggle DevTools',              category: 'App', defaultBinding: 'F12', electronOnly: true, devModeOnly: true },
 ] as const
 
 export const HOTKEY_CATEGORIES: readonly HotkeyCategory[] = ['Playback', 'Volume', 'Navigation', 'App']

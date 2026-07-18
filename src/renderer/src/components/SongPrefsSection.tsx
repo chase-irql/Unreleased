@@ -38,9 +38,10 @@ export default function SongPrefsSection({
   /** Linked version siblings, already fetched by the modal. */
   versions: VersionEntry[]
 }): JSX.Element {
-  const { pref, setSongName, setSongCover, setSongDefaultVersion, clearSongPref, account } = useStore(
+  const { pref, songPrefs, setSongName, setSongCover, setSongDefaultVersion, clearSongPref, account } = useStore(
     useShallow((s) => ({
       pref: s.songPrefs[songId],
+      songPrefs: s.songPrefs,
       setSongName: s.setSongName,
       setSongCover: s.setSongCover,
       setSongDefaultVersion: s.setSongDefaultVersion,
@@ -88,6 +89,39 @@ export default function SongPrefsSection({
     for (const v of versions) push(v.meta.version, v.song.track_titles?.[0] || v.song.name)
     return out
   }, [ownMeta, versions, apiTitle])
+
+  // The group's effective default — own row wins if set, else the first
+  // sibling that has one — mirrors queueSlice's groupDefaultVersion so this
+  // picker highlights the same choice playback will actually resolve to, even
+  // when the default was set while viewing a *different* version of this song.
+  const groupDefaultVersion = useMemo(() => {
+    if (pref?.default_version) return pref.default_version
+    for (const v of versions) {
+      const d = songPrefs[v.song.id]?.default_version
+      if (d) return d
+    }
+    return null
+  }, [pref, versions, songPrefs])
+
+  // Setting a label always writes to this song's own row (it wins per the
+  // resolution above). Clearing has to reach wherever the label actually
+  // lives — own row or an inherited sibling's — or "unstarring" an inherited
+  // default would silently do nothing and the star would stay lit.
+  const clearDefaultVersionLabel = (label: string): void => {
+    if (pref?.default_version?.toLowerCase() === label.toLowerCase()) setSongDefaultVersion(songId, null)
+    for (const v of versions) {
+      if (songPrefs[v.song.id]?.default_version?.toLowerCase() === label.toLowerCase()) setSongDefaultVersion(v.song.id, null)
+    }
+  }
+
+  // "As selected" means no forced default anywhere in the group, not just on
+  // this song's own row.
+  const clearGroupDefaultVersion = (): void => {
+    if (pref?.default_version) setSongDefaultVersion(songId, null)
+    for (const v of versions) {
+      if (songPrefs[v.song.id]?.default_version) setSongDefaultVersion(v.song.id, null)
+    }
+  }
 
   // ── Cover choices ─────────────────────────────────────────────────────────
   const [coverOpen, setCoverOpen] = useState(false)
@@ -274,19 +308,19 @@ export default function SongPrefsSection({
           </p>
           <div className="flex flex-wrap gap-1.5">
             <button
-              onClick={() => setSongDefaultVersion(songId, null)}
-              className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${!pref?.default_version
+              onClick={clearGroupDefaultVersion}
+              className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${!groupDefaultVersion
                 ? 'bg-accent/15 text-accent border-accent/40'
                 : 'text-text-secondary border-[var(--border)] hover:bg-surface'}`}
             >
               As selected
             </button>
             {versionChoices.map((c) => {
-              const active = pref?.default_version?.toLowerCase() === c.label.toLowerCase()
+              const active = groupDefaultVersion?.toLowerCase() === c.label.toLowerCase()
               return (
                 <button
                   key={c.label}
-                  onClick={() => setSongDefaultVersion(songId, active ? null : c.label)}
+                  onClick={() => (active ? clearDefaultVersionLabel(c.label) : setSongDefaultVersion(songId, c.label))}
                   title={c.title}
                   className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${active
                     ? 'bg-accent/15 text-accent border-accent/40'

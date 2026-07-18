@@ -52,9 +52,11 @@ interface Props {
 // A scoped-down version of ApiFilesView's browser for picking a single image
 // out of the API's file storage as a song's custom cover — folders + images
 // only, no audio playback/selection/download machinery. Selecting an image
-// hands its raw storage path back to the caller, the same shape the "paste a
-// path" field in SongPrefsSection already accepts (resolved by
-// resolvePrefCoverUrl via buildCoverArtUrl).
+// hands back its resolved /files/download/ URL (buildStreamUrl), the same
+// absolute-URL shape ApiFilesView's "Copy link" produces — NOT the raw
+// storage path. resolvePrefCoverUrl treats a bare path as an audio track
+// whose embedded art needs extracting via /files/cover-art/, which 404s on a
+// plain image file; an absolute URL passes through untouched instead.
 export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props): JSX.Element {
   const initialQuery = songTitle ? cleanTitleForSearch(songTitle) : ''
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -243,7 +245,7 @@ export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props
                 return (
                   <button
                     key={entry.path}
-                    onClick={() => { if (isDir) navigate(entry.path); else onSelect(entry.path) }}
+                    onClick={() => { if (isDir) navigate(entry.path); else onSelect(buildStreamUrl(entry.path)) }}
                     title={entry.name}
                     className="group flex flex-col rounded-xl overflow-hidden transition-colors bg-surface-overlay hover:bg-surface-raised text-left"
                   >

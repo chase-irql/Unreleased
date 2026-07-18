@@ -791,7 +791,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 )}
 
                 {HOTKEY_CATEGORIES.map((category) => {
-                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (isElectron || !a.electronOnly))
+                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (isElectron || !a.electronOnly) && (developerMode || !a.devModeOnly))
                   if (actions.length === 0) return null
                   return (
                     <div key={category} className="mt-4 first:mt-3">

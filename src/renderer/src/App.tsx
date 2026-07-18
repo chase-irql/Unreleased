@@ -195,10 +195,12 @@ export default function App(): JSX.Element {
         <main className="flex-1 overflow-hidden flex flex-col relative">
           {/* Frameless-window drag strip — when the nav bar sits on top (md+
               only; it's hidden on narrow windows) the bar touches the window
-              edge instead and carries its own strip. */}
+              edge instead and carries its own strip. mr-[188px] clears the
+              min/max/close buttons (132px) plus the fixed downloads trigger
+              next to them (right: 144px + 36px wide — see DownloadManager). */}
           {isElectron && (
             <div
-              className={`absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px] pointer-events-none ${sidebarPosition === 'top' ? 'md:hidden' : ''}`}
+              className={`absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[188px] pointer-events-none ${sidebarPosition === 'top' ? 'md:hidden' : ''}`}
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
             />
           )}

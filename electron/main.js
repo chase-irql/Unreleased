@@ -797,6 +797,9 @@ ipcMain.handle('relaunch-app', () => {
 ipcMain.handle('is-maximized', () => mainWindow?.isMaximized() ?? false)
 ipcMain.handle('set-fullscreen', (_, value) => mainWindow?.setFullScreen(!!value))
 ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
+// Toggles DevTools on whichever window asked (main or a pop-out), not always
+// mainWindow — lets a float window's own Diagnostics/hotkey inspect itself.
+ipcMain.handle('toggle-devtools', (event) => event.sender.toggleDevTools())
 
 // ── IPC: floating pop-out windows ─────────────────────────────────────────────
 ipcMain.handle('open-float-window', (_, view, params) => {
