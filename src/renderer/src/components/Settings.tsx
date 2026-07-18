@@ -414,7 +414,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 <RefreshCw size={14} className={updateState === 'checking' || updateState === 'downloading' ? 'animate-spin' : ''} />
               </button>
             )}
-            {isElectron && updateState !== 'downloading' && updateState !== 'checking' && (
+            {isElectron && developerMode && updateState !== 'downloading' && updateState !== 'checking' && (
               <button
                 title="Force reinstall latest release"
                 onClick={() => el?.forceUpdate?.()}
@@ -500,7 +500,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                             if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
                           }}
                           className="group text-left"
-                          title={skin.name}
+                          title={skin.dynamic ? 'Palette follows the current song’s cover art' : skin.name}
                         >
                           {/* Mini app mock: sidebar strip, two "text" lines, and a
                               player bar with the skin's accent — a live swatch of
@@ -518,7 +518,16 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                               <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
                               <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
                               <div className="mt-auto flex items-center gap-1">
-                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: skin.accent ?? accentColor }} />
+                                <div
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{
+                                    // Dynamic skin has no fixed accent — a color wheel
+                                    // signals "follows the song's cover art".
+                                    background: skin.dynamic
+                                      ? 'conic-gradient(#f43f5e, #f59e0b, #10b981, #38bdf8, #a78bfa, #f43f5e)'
+                                      : skin.accent ?? accentColor,
+                                  }}
+                                />
                                 <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
                               </div>
                             </div>

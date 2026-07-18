@@ -223,16 +223,29 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false 
             apiImageUrl={apiCoverUrl}
             ownImageRaw={displaySong.image_url}
             versions={versions}
+            altTitles={altTitles}
           />
 
           <div>
             <Row label="Artist" value={displaySong.credited_artists || 'Juice WRLD'} />
-            <Row label="Alt names" value={altTitles.length > 0 ? altTitles.join('\n') : null} />
             <Row label="Duration" value={parseDuration(displaySong.length) ? duration : null} />
             <Row label="Leak type" value={displaySong.leak_type} />
             <Row label="Date leaked" value={displaySong.date_leaked} />
             <Row label="Bitrate" value={displaySong.bitrate} />
           </div>
+
+          {/* Alt names sit right beside Other Versions rather than up in the
+              generic row list — both are "other ways this same song shows up",
+              and alt titles are also what widens the cover picker's search
+              (see SongPrefsSection's altTitles prop). */}
+          {altTitles.length > 0 && (
+            <>
+              <GroupLabel>Also Known As</GroupLabel>
+              <p className="text-text-primary text-xs leading-relaxed pb-2.5 border-b border-[var(--border)]">
+                {altTitles.join(' · ')}
+              </p>
+            </>
+          )}
 
           {versionsEnabled && (
             <>

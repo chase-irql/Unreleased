@@ -6,8 +6,8 @@ import { ViewType } from '../types'
 export default function BottomNav(): JSX.Element {
   const { activeView, setActiveView, setShowSettings, account } = useStorePick('activeView', 'setActiveView', 'setShowSettings', 'account')
   const isAdmin = !!account?.is_administrator
-  // Editors get the same entry as admins — AdminPage shows them only the
-  // user-reports review tab (mirrors Sidebar's gating).
+  // Editor-only accounts don't get the Admin page — their review tools
+  // (Proposals/Reports) live in their own profile page instead.
   const isEditor = !!account?.is_editor
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
@@ -46,7 +46,7 @@ export default function BottomNav(): JSX.Element {
           </button>
         )
       })}
-      {(isAdmin || isEditor) && (
+      {isAdmin && (
         <button
           onClick={() => setActiveView('admin')}
           className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'admin' ? 'text-accent' : 'text-text-muted'}`}
@@ -55,7 +55,19 @@ export default function BottomNav(): JSX.Element {
             <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: 'var(--accent)' }} />
           )}
           <ShieldCheck size={24} />
-          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">{isAdmin ? 'Admin' : 'Reports'}</span>
+          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">Admin</span>
+        </button>
+      )}
+      {!isAdmin && isEditor && (
+        <button
+          onClick={() => setActiveView('editor-profile')}
+          className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'editor-profile' ? 'text-accent' : 'text-text-muted'}`}
+        >
+          {activeView === 'editor-profile' && (
+            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: 'var(--accent)' }} />
+          )}
+          <ShieldCheck size={24} />
+          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">Editor</span>
         </button>
       )}
       <button

@@ -17,6 +17,12 @@ const SYNC_KEYS = [
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
   'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
+  // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
+  // their own store instance — without this, that report only ever reaches
+  // localStorage and just sits there, since _flushReports deliberately no-ops
+  // outside the main window (see the delivery trigger below and the store's
+  // report outbox comment for why only the main window may send).
+  'pendingReports',
   'libraryFolders', 'libraryAutoRefresh', 'libraryScanning', 'libraryLastScanned',
   'developerMode', 'updateStatus',
   // Playback mirror for the mini-player pop-out. The MAIN window owns the
@@ -98,6 +104,10 @@ export function initWindowSync(isFloat: boolean): void {
       // rename made in one window would leave every other window converting
       // songs against stale overrides.
       if ('songPrefs' in msg.payload) setSongPrefsCache(msg.payload.songPrefs ?? {})
+      // A pop-out just queued (or the main window's own outbox otherwise
+      // changed) — only the main window actually sends (see _flushReports),
+      // so it's the one that needs to react and attempt delivery.
+      if (!isFloat && 'pendingReports' in msg.payload) useStore.getState()._flushReports()
     } else if (msg.type === 'request') {
       // Pop-outs boot with localStorage-persisted values only; the main
       // window answers with the live session state (account, update status…).

@@ -24,7 +24,7 @@ function GroupLabel({ children }: { children: string }): JSX.Element {
 }
 
 export default function SongPrefsSection({
-  songId, apiTitle, apiImageUrl, ownImageRaw, versions,
+  songId, apiTitle, apiImageUrl, ownImageRaw, versions, altTitles = [],
 }: {
   songId: number
   /** The song's own primary title — the placeholder/reset target for the name. */
@@ -37,6 +37,9 @@ export default function SongPrefsSection({
   ownImageRaw: string | null
   /** Linked version siblings, already fetched by the modal. */
   versions: VersionEntry[]
+  /** This song's other known titles — widens the cover picker's search so
+   *  covers filed under an alt name still surface. */
+  altTitles?: string[]
 }): JSX.Element {
   const { pref, songPrefs, setSongName, setSongCover, setSongDefaultVersion, clearSongPref, account } = useStore(
     useShallow((s) => ({
@@ -149,8 +152,14 @@ export default function SongPrefsSection({
   const hasOverrides = nameOverridden || coverOverridden || !!pref?.default_version
   const playcount = pref?.playcount ?? 0
 
+  // A custom cover is written to EVERY member of the version group, not just
+  // this song's row: covers are conceptually about "the song" the same way
+  // default_version is, and the track actually playing may be a sibling (via
+  // the group default swap) — a cover written only to this row would never
+  // reach it, leaving Now Playing on the old art.
   const applyCover = (raw: string | null): void => {
     setSongCover(songId, raw)
+    for (const v of versions) setSongCover(v.song.id, raw)
     setCoverOpen(false)
     setCoverDraft('')
   }
@@ -162,7 +171,16 @@ export default function SongPrefsSection({
         <span className="text-xs font-semibold text-text-primary">Personalize</span>
         {hasOverrides && (
           <button
-            onClick={() => clearSongPref(songId)}
+            onClick={() => {
+              clearSongPref(songId)
+              // The cover was written group-wide (see applyCover) — clear it
+              // from the siblings too, or the sibling that's actually playing
+              // would keep showing the "removed" cover. Only the cover: a
+              // sibling's own custom name is its own business.
+              for (const v of versions) {
+                if (songPrefs[v.song.id]?.cover_url) setSongCover(v.song.id, null)
+              }
+            }}
             className="ml-auto flex items-center gap-1 text-[10px] text-text-muted hover:text-red-400 transition-colors"
             title="Remove all personalizations for this song"
           >
@@ -201,7 +219,10 @@ export default function SongPrefsSection({
       <div className="flex items-center gap-2.5">
         <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-surface-overlay flex items-center justify-center">
           {effectiveCover ? (
-            <img src={effectiveCover} alt="" className="w-full h-full object-cover"
+            // Keyed by URL: onError hides the element imperatively, and React
+            // would otherwise reuse that hidden node when the cover changes —
+            // leaving a working cover invisible after one bad URL.
+            <img key={effectiveCover} src={effectiveCover} alt="" className="w-full h-full object-cover"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           ) : (
             <Music2 size={18} className="text-text-muted opacity-30" />
@@ -266,7 +287,7 @@ export default function SongPrefsSection({
             <div className="flex items-center gap-1.5">
               <div className="shrink-0 w-8 h-8 rounded-md overflow-hidden bg-surface-overlay flex items-center justify-center">
                 {coverDraftPreview ? (
-                  <img src={coverDraftPreview} alt="" className="w-full h-full object-cover"
+                  <img key={coverDraftPreview} src={coverDraftPreview} alt="" className="w-full h-full object-cover"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                 ) : (
                   <ImageIcon size={12} className="text-text-muted opacity-40" />
@@ -294,13 +315,16 @@ export default function SongPrefsSection({
       {browseOpen && (
         <CoverPickerModal
           songTitle={apiTitle}
+          altTitles={altTitles}
           onClose={() => setBrowseOpen(false)}
           onSelect={(path) => { setBrowseOpen(false); applyCover(path) }}
         />
       )}
 
       {/* ── Default version ── */}
-      {versionChoices.length > 0 && (
+      {/* A default only means anything when there's more than one label to
+          choose between — a single-version song has nothing to default to. */}
+      {versionChoices.length > 1 && (
         <>
           <GroupLabel>Default version</GroupLabel>
           <p className="text-[10px] text-text-muted -mt-1 mb-1.5">
