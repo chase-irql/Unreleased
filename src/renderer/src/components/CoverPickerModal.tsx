@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check } from 'lucide-react'
-import { apiFetch, apiPeek, buildStreamUrl, JWApiFileEntry, JWApiBrowseResponse } from '../lib/juicewrldApi'
+import {
+  apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch,
+  JWApiFileEntry, JWApiBrowseResponse,
+} from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
-
-function parseEntries(data: JWApiBrowseResponse): JWApiFileEntry[] {
-  if (Array.isArray(data)) return data
-  if (data && typeof data === 'object' && 'items' in data && Array.isArray(data.items)) return data.items
-  return []
-}
 
 function breadcrumbs(path: string): { label: string; path: string }[] {
   if (!path) return []
@@ -19,13 +16,6 @@ function breadcrumbs(path: string): { label: string; path: string }[] {
 function parentFolder(path: string): string {
   const i = path.lastIndexOf('/')
   return i > 0 ? path.slice(0, i) : ''
-}
-
-// Strips trailing qualifiers ("(feat. X)", "[Prod. Y]") from a song title so
-// the initial search hits the file tree's naming (folders/images are rarely
-// filed under the full bracketed title) — same idea as findSessionZips' strip().
-function cleanTitleForSearch(title: string): string {
-  return title.replace(/\s*[[(].*$/, '').trim()
 }
 
 // Directories first, then images, alphabetically within each — a picker has no
@@ -87,7 +77,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
     if (resetSearch) { setSearch(''); setDebouncedSearch('') }
     const cached = apiPeek<JWApiBrowseResponse>('/files/browse/', path ? { path } : {})
     if (cached) {
-      setEntries(parseEntries(cached))
+      setEntries(parseBrowseEntries(cached))
       setCurrentPath(path)
       setError(null)
       if (resetSearch) setLoading(false)
@@ -99,7 +89,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
       const data = await apiFetch<JWApiBrowseResponse>('/files/browse/', path ? { path } : {})
       if (pushHistory) setHistory((h) => [...h, currentPath])
       setCurrentPath(path)
-      setEntries(parseEntries(data))
+      setEntries(parseBrowseEntries(data))
     } catch (err) {
       if (!cached && resetSearch) setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
@@ -122,7 +112,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
     let cancelled = false
     setSearchLoading(true)
     apiFetch<JWApiBrowseResponse>('/files/browse/', { search: debouncedSearch.trim() })
-      .then((data) => { if (!cancelled) setSearchResults(parseEntries(data)) })
+      .then((data) => { if (!cancelled) setSearchResults(parseBrowseEntries(data)) })
       .catch(() => { if (!cancelled) setSearchResults([]) })
       .finally(() => { if (!cancelled) setSearchLoading(false) })
     return () => { cancelled = true }
@@ -137,7 +127,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
     if (!initialQuery || altQueries.length === 0) return
     let cancelled = false
     Promise.all(altQueries.map((q) =>
-      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseEntries).catch(() => [] as JWApiFileEntry[])
+      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseBrowseEntries).catch(() => [] as JWApiFileEntry[])
     )).then((lists) => {
       if (cancelled) return
       setSearchResults((prev) => {

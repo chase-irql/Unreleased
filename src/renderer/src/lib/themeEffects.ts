@@ -195,4 +195,21 @@ export function useThemeEffects(): void {
     if (songAccentActive) return
     applyAccentVars(accentColor)
   }, [accentColor, theme])
+
+  // Palette cross-fades (index.css transitions the registered vars) switch on
+  // only after the persisted skin has painted once — two rAFs so the browser
+  // has committed a frame with the final startup values, otherwise launch
+  // would visibly fade from the first-paint fallback palette.
+  useEffect(() => {
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() =>
+        document.documentElement.classList.add('theme-animate'),
+      )
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  }, [])
 }

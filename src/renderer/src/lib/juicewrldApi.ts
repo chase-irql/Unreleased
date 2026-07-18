@@ -86,6 +86,23 @@ export interface JWApiFileEntry {
 // /files/browse/ may return { items: [...] } or a flat array
 export type JWApiBrowseResponse = JWApiFileEntry[] | { items: JWApiFileEntry[]; current_path?: string }
 
+/** Normalizes a /files/browse/ response to a flat entry array — shared by
+ *  every view that hits that endpoint (ApiFilesView, CoverPickerModal). */
+export function parseBrowseEntries(data: JWApiBrowseResponse): JWApiFileEntry[] {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && 'items' in data && Array.isArray(data.items)) return data.items
+  return []
+}
+
+/** Strips trailing qualifiers ("(feat. X)", "[Prod. Y]") from a song title so
+ *  a /files/browse/ search hits the file tree's naming — folders/images are
+ *  rarely filed under the full bracketed title. Same idea as
+ *  findSessionZips' strip() below, shared with CoverPickerModal and
+ *  SongPrefsSection's inline cover search. */
+export function cleanTitleForSearch(title: string): string {
+  return title.replace(/\s*[[(].*$/, '').trim()
+}
+
 // ─── Fetch util ───────────────────────────────────────────────────────────────
 
 // Builds the same URL/cache key apiFetch uses, so apiPeek below can read the

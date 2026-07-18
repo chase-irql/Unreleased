@@ -1037,7 +1037,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     icon={Minus}
                     iconColor="#6b7280"
                     label="Pin tray icon"
-                    sub="Windows only picks this up on its own restart — pin it now instead of waiting for your next sign-in"
+                    sub="Retry if the icon is still hidden behind the overflow arrow"
                   >
                     <button
                       onClick={pinTrayNow}
@@ -1126,6 +1126,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   >
                     <Trash2 size={13} />
                     {cacheCleared !== null ? `Cleared ${cacheCleared}` : 'Clear cache'}
+                  </button>
+                </Row>
+                <Row icon={DownloadCloud} iconColor="#0ea5e9" label="Online installer" sub="Ships with the app — repairs or reinstalls even if the app won't launch">
+                  <button
+                    onClick={() => el?.openOnlineInstaller?.()}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
+                  >
+                    <DownloadCloud size={13} />
+                    Open
                   </button>
                 </Row>
               </div>

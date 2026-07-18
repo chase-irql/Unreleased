@@ -4,6 +4,7 @@ import {
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
+  Filter,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import {
@@ -13,6 +14,7 @@ import {
   buildCoverArtUrl,
   apiFileTrackId,
   apiFilePathToTrack,
+  parseBrowseEntries as parseEntries,
   JWApiFileEntry,
   JWApiBrowseResponse,
   JWApiSong,
@@ -28,16 +30,19 @@ type ViewMode = 'list' | 'grid'
 type SortBy = 'name' | 'type' | 'size'
 type SortDir = 'asc' | 'desc'
 type ZipStatus = 'idle' | 'starting' | 'zipping' | 'done' | 'error'
+type MediaFilter = 'all' | 'audio' | 'image' | 'video'
 
 const LS_SORT_BY = 'api-files:sortBy'
 const LS_SORT_DIR = 'api-files:sortDir'
 const LS_VIEW_MODE = 'api-files:viewMode'
+const LS_TYPE_FILTER = 'api-files:typeFilter'
 
-function parseEntries(data: JWApiBrowseResponse): JWApiFileEntry[] {
-  if (Array.isArray(data)) return data
-  if (data && typeof data === 'object' && 'items' in data && Array.isArray(data.items)) return data.items
-  return []
-}
+const MEDIA_FILTERS: { key: MediaFilter; label: string; icon: typeof Filter }[] = [
+  { key: 'all', label: 'All', icon: Filter },
+  { key: 'audio', label: 'Audio', icon: Music2 },
+  { key: 'image', label: 'Images', icon: ImageIcon },
+  { key: 'video', label: 'Videos', icon: Video },
+]
 
 function breadcrumbs(path: string): { label: string; path: string }[] {
   if (!path) return []
@@ -280,10 +285,14 @@ export default function ApiFilesView(): JSX.Element {
   const [sortDir, setSortDirState] = useState<SortDir>(
     () => (localStorage.getItem(LS_SORT_DIR) as SortDir) || 'asc'
   )
+  const [typeFilter, setTypeFilterState] = useState<MediaFilter>(
+    () => (localStorage.getItem(LS_TYPE_FILTER) as MediaFilter) || 'all'
+  )
 
   const setViewMode = (v: ViewMode): void => { setViewModeState(v); localStorage.setItem(LS_VIEW_MODE, v) }
   const setSortBy = (v: SortBy): void => { setSortByState(v); localStorage.setItem(LS_SORT_BY, v) }
   const setSortDir = (v: SortDir): void => { setSortDirState(v); localStorage.setItem(LS_SORT_DIR, v) }
+  const setTypeFilter = (v: MediaFilter): void => { setTypeFilterState(v); localStorage.setItem(LS_TYPE_FILTER, v) }
 
   const toggleSort = (by: SortBy): void => {
     if (sortBy === by) {
@@ -552,6 +561,22 @@ export default function ApiFilesView(): JSX.Element {
     [isSearching, searchResults, entries, sortBy, sortDir]
   )
 
+  // Type filter — folders stay visible regardless of filter so navigation
+  // still works; only files are matched against the selected media type.
+  const filteredEntries = useMemo(
+    () => typeFilter === 'all'
+      ? sortedEntries
+      : sortedEntries.filter((e) => e.type === 'directory' || getMediaType(e.name) === typeFilter),
+    [sortedEntries, typeFilter]
+  )
+
+  const filteredLocalEntries = useMemo(
+    () => typeFilter === 'all'
+      ? localEntries
+      : localEntries.filter((e) => e.type === 'directory' || getMediaType(e.name) === typeFilter),
+    [localEntries, typeFilter]
+  )
+
   const crumbs = breadcrumbs(currentPath)
 
   const SortIcon = ({ by }: { by: SortBy }): JSX.Element => {
@@ -586,6 +611,17 @@ export default function ApiFilesView(): JSX.Element {
                     {by}
                     <SortIcon by={by} />
                   </button>
+                ))}
+              </div>
+              {/* Type filter */}
+              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5">
+                {MEDIA_FILTERS.map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setTypeFilter(key)}
+                    className={`p-2 rounded-md transition-colors ${typeFilter === key ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                    title={`Show ${label.toLowerCase()}`}
+                  ><Icon size={14} /></button>
                 ))}
               </div>
               {/* View toggle */}
@@ -714,6 +750,11 @@ export default function ApiFilesView(): JSX.Element {
                 <p className="text-text-muted text-sm">No files found</p>
                 <button onClick={pickLocalFolder} className="text-accent text-sm underline">Pick a folder</button>
               </div>
+            ) : filteredLocalEntries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-2">
+                <Filter size={32} className="text-text-muted opacity-30" />
+                <p className="text-text-muted text-sm">No {typeFilter} files here</p>
+              </div>
             ) : viewMode === 'list' ? (
               <div className="space-y-0.5">
                 {localPath && (
@@ -728,7 +769,7 @@ export default function ApiFilesView(): JSX.Element {
                     <span className="text-text-muted text-sm">..</span>
                   </button>
                 )}
-                {localEntries.map((entry) => {
+                {filteredLocalEntries.map((entry) => {
                   const isDir = entry.type === 'directory'
                   const mt = isDir ? 'folder' : getMediaType(entry.name)
                   const ext = getFileExt(entry.name).slice(1).toUpperCase()
@@ -778,7 +819,7 @@ export default function ApiFilesView(): JSX.Element {
                     <span className="text-text-muted text-xs">..</span>
                   </button>
                 )}
-                {localEntries.map((entry) => {
+                {filteredLocalEntries.map((entry) => {
                   const isDir = entry.type === 'directory'
                   const mt = isDir ? 'folder' : getMediaType(entry.name)
                   const ext = getFileExt(entry.name).slice(1).toUpperCase()
@@ -837,6 +878,11 @@ export default function ApiFilesView(): JSX.Element {
               <Music2 size={32} className="text-text-muted opacity-30" />
               <p className="text-text-muted text-sm">{isSearching ? `No files match "${debouncedSearch.trim()}"` : 'Nothing here'}</p>
             </div>
+          ) : filteredEntries.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2">
+              <Filter size={32} className="text-text-muted opacity-30" />
+              <p className="text-text-muted text-sm">No {typeFilter} files here</p>
+            </div>
           ) : viewMode === 'list' ? (
             /* ── List view ────────────────────────────────────────────────────── */
             <div className="space-y-0.5">
@@ -846,7 +892,7 @@ export default function ApiFilesView(): JSX.Element {
                   <span className="text-text-muted text-sm">..</span>
                 </button>
               )}
-              {sortedEntries.map((entry) => {
+              {filteredEntries.map((entry) => {
                 const isDir = entry.type === 'directory'
                 const mt = isDir ? 'folder' : getMediaType(entry.name)
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
@@ -940,7 +986,7 @@ export default function ApiFilesView(): JSX.Element {
                   <span className="text-text-muted text-xs">..</span>
                 </button>
               )}
-              {sortedEntries.map((entry) => {
+              {filteredEntries.map((entry) => {
                 const isDir = entry.type === 'directory'
                 const mt = isDir ? 'folder' : getMediaType(entry.name)
                 const ext = getFileExt(entry.name).slice(1).toUpperCase()
@@ -1047,7 +1093,7 @@ export default function ApiFilesView(): JSX.Element {
               {selectedPaths.size} {selectedPaths.size === 1 ? 'item' : 'items'} selected
             </span>
             <button
-              onClick={() => setSelectedPaths(new Set(sortedEntries.map(e => e.path)))}
+              onClick={() => setSelectedPaths(new Set(filteredEntries.map(e => e.path)))}
               className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
             >
               Select all

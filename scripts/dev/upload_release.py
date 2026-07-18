@@ -3,12 +3,12 @@
 upload_release.py — Upload assets to a GitHub release.
 
 Usage:
-    python scripts/upload_release.py <file> [<file2> ...] [--tag v1.7.9]
+    python scripts/dev/upload_release.py <file> [<file2> ...] [--tag v1.7.9]
 
 Examples:
-    python scripts/upload_release.py "release/Unreleased-Setup-1.7.9.exe"
-    python scripts/upload_release.py "release/Unreleased-Setup-1.7.9.exe" "release/latest.yml" "release/Unreleased-Setup-1.7.9.exe.blockmap"
-    python scripts/upload_release.py release/* --tag v1.7.8
+    python scripts/dev/upload_release.py "release/Unreleased-Setup-1.7.9.exe"
+    python scripts/dev/upload_release.py "release/Unreleased-Setup-1.7.9.exe" "release/latest.yml" "release/Unreleased-Setup-1.7.9.exe.blockmap"
+    python scripts/dev/upload_release.py release/* --tag v1.7.8
 
 The script:
   - Reads GH_TOKEN from environment or .env.local
@@ -39,7 +39,7 @@ def get_token():
     if token:
         return token
     # Try .env.local in project root
-    env_path = Path(__file__).parent.parent / ".env.local"
+    env_path = Path(__file__).parent.parent.parent / ".env.local"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
             if line.startswith("GH_TOKEN="):
@@ -119,7 +119,7 @@ def upload_asset(release_id, filepath, token):
 
 # ── Get or infer tag from package.json ───────────────────────────────────────
 def get_default_tag():
-    pkg = Path(__file__).parent.parent / "package.json"
+    pkg = Path(__file__).parent.parent.parent / "package.json"
     if pkg.exists():
         v = json.loads(pkg.read_text()).get("version", "")
         if v:

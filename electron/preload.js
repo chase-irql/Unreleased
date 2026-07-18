@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Run/crash logging — fire-and-forget breadcrumbs into the run log
   runLog:        (scope, message) => ipcRenderer.send('run-log', scope, message),
   openLogsFolder: ()             => ipcRenderer.invoke('open-logs-folder'),
+  openOnlineInstaller: ()        => ipcRenderer.invoke('open-online-installer'),
   getLogPaths:   ()              => ipcRenderer.invoke('get-log-paths'),
 
   // Tray — playback state up to main, media commands back down

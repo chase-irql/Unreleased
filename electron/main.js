@@ -388,19 +388,28 @@ function hideWindowToTray() {
 
 // Windows only, best-effort: there's no public Electron/Win32 API to mark a
 // tray icon "always show" — that's a per-icon preference Explorer keeps for
-// itself under this registry key and only re-reads it at its OWN startup.
-// Flipping IsPromoted here is what Explorer's own "always show" toggle does
-// under the hood, but a write alone doesn't move the icon out of the overflow
-// chevron in the current session — Explorer has to be restarted (or the user
-// has to sign back in) to re-read it. restartExplorer() below does that,
-// gated behind an explicit confirm since it briefly closes File Explorer
-// windows and flashes the taskbar/desktop.
-function readNotifyIconEntries() {
-  const { execFileSync } = require('child_process')
+// itself under this registry key. Flipping IsPromoted here is what Explorer's
+// own "always show" toggle does under the hood, but Explorer only reads it
+// when an icon is (re-)added via Shell_NotifyIcon — so after writing the
+// flag, applyTrayPin() below destroys and recreates just OUR tray icon
+// (recreateTrayIcon) to force that re-add. That's enough; it does NOT require
+// restarting Explorer itself.
+//
+// All reg.exe calls here use the async execFile, not execFileSync — a sync
+// child-process call blocks Electron's single-threaded main process, which
+// freezes every window and all IPC in the app for as long as reg.exe runs.
+const { execFile } = require('child_process')
+function execFileAsync(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, opts, (err, stdout) => (err ? reject(err) : resolve(stdout)))
+  })
+}
+
+async function readNotifyIconEntries() {
   const rootKey = 'HKCU\\Control Panel\\NotifyIconSettings'
   let dump
   try {
-    dump = execFileSync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
+    dump = await execFileAsync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
   } catch {
     return []
   }
@@ -433,14 +442,13 @@ function readNotifyIconEntries() {
 // NotifyIconSettings entry for this exe yet (nothing to pin — happens if the
 // tray icon hasn't appeared long enough for Explorer to register it);
 // `applied` is true only if an entry existed and needed (and got) flipping.
-function pinTrayIcon() {
+async function pinTrayIcon() {
   if (process.platform !== 'win32') return { found: false, applied: false }
   try {
-    const { execFileSync } = require('child_process')
-    const entries = readNotifyIconEntries()
+    const entries = await readNotifyIconEntries()
     const needsUpdate = entries.filter((e) => e.isPromoted !== 1)
     for (const e of needsUpdate) {
-      execFileSync('reg', ['add', e.key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
+      await execFileAsync('reg', ['add', e.key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
     }
     runLog('main', `pinTrayIcon: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} found, ${needsUpdate.length} updated`)
     return { found: entries.length > 0, applied: needsUpdate.length > 0 }
@@ -450,45 +458,22 @@ function pinTrayIcon() {
   }
 }
 
-// Kills and relaunches explorer.exe so it re-reads NotifyIconSettings.
-// Visibly disruptive (closes File Explorer windows, flashes the taskbar and
-// desktop) — only ever called after the user explicitly agrees to it.
-function restartExplorer() {
-  try {
-    const { execFileSync } = require('child_process')
-    execFileSync('taskkill', ['/F', '/IM', 'explorer.exe'], { windowsHide: true })
-  } catch (e) {
-    runLog('main', 'restartExplorer: taskkill failed:', e.message)
-  }
-  setTimeout(() => {
-    try {
-      require('child_process').spawn('explorer.exe', [], { detached: true, stdio: 'ignore' }).unref()
-      runLog('main', 'Explorer restarted to apply tray icon pin')
-    } catch (e) {
-      runLog('main', 'restartExplorer: relaunch failed:', e.message)
-    }
-  }, 400)
+// Destroys and recreates just our own tray icon — a fresh Shell_NotifyIcon
+// add — so Explorer re-checks NotifyIconSettings for it. Only our one icon
+// blinks off and back on; nothing else on the taskbar is touched.
+function recreateTrayIcon() {
+  if (!tray) return
+  try { tray.destroy() } catch {}
+  tray = null
+  createTray()
 }
 
-// Writes the pin flag, then — only if it actually changed something — asks
-// whether to restart Explorer now so the icon visibly moves out of the
-// overflow chevron immediately, instead of waiting for the next sign-in.
-function attemptPinAndOfferRestart() {
-  const result = pinTrayIcon()
-  if (result.applied) {
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      buttons: ['Restart Explorer', 'Later'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-      title: 'Pin tray icon',
-      message: 'Restart Windows Explorer to pin the icon now?',
-      detail: 'This briefly closes File Explorer windows and refreshes the taskbar/desktop. If you skip it, the icon pins itself the next time Explorer restarts or you sign back in.',
-    }).then(({ response }) => {
-      if (response === 0) restartExplorer()
-    })
-  }
+// Writes the pin flag, then — only if it actually changed something —
+// recreates the tray icon so it shows pinned immediately instead of waiting
+// for Explorer's next restart/sign-in.
+async function applyTrayPin() {
+  const result = await pinTrayIcon()
+  if (result.applied) recreateTrayIcon()
   return result
 }
 
@@ -964,6 +949,23 @@ ipcMain.handle('pick-folder', async (event) => {
 
 ipcMain.handle('open-path', (_, p) => shell.openPath(p))
 
+// The small web-installer stub ships inside the app (see package.json
+// win.extraResources) as an emergency repair/reinstall tool — it works even
+// if the app itself is broken, since it's a standalone .exe next to the
+// install, not something the app has to run. Prefer that local copy (no
+// download needed); fall back to the GitHub download link when it's missing
+// (dev builds, non-Windows platforms, or an old install predating this).
+ipcMain.handle('open-online-installer', async () => {
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'Unreleased-Setup.exe') : null
+  if (bundled && fs.existsSync(bundled)) {
+    const err = await shell.openPath(bundled)
+    if (!err) return { source: 'bundled' }
+    log('Bundled installer failed to launch, falling back to web:', err)
+  }
+  shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest/download/Unreleased-Setup.exe')
+  return { source: 'web' }
+})
+
 // ── IPC: run logging ──────────────────────────────────────────────────────────
 // Renderer breadcrumbs (window errors, unhandled rejections, and explicit
 // diagnostic logs like the tracker sort loop) funnel here into the run log.
@@ -979,14 +981,14 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
-  if (key === 'minimizeTo' && value === 'notification') attemptPinAndOfferRestart()
+  if (key === 'minimizeTo' && value === 'notification') applyTrayPin()
   return true
 })
 
-// Manual retry for the "Pin now" button in Settings — same write + restart
-// prompt as switching the setting on, usable again later if the user skipped
-// the restart prompt or the pin didn't stick.
-ipcMain.handle('pin-tray-icon', () => attemptPinAndOfferRestart())
+// Manual retry for the "Pin now" button in Settings — same write + tray
+// recreate as switching the setting on, usable again later if the pin
+// didn't stick (e.g. Windows hadn't registered the icon yet the first time).
+ipcMain.handle('pin-tray-icon', () => applyTrayPin())
 
 // ── IPC: beta channel ─────────────────────────────────────────────────────────
 // Validates against the backend itself (GET {BETA_API_BASE}/unlock?code=...
@@ -1853,7 +1855,7 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
-  if (appSettings.minimizeTo === 'notification') pinTrayIcon()
+  if (appSettings.minimizeTo === 'notification') applyTrayPin()
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
 
   if (!isDev) {

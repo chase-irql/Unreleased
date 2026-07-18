@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, X, ImageIcon, RotateCcw, Star, Music2, Play, Sparkles, FolderSearch } from 'lucide-react'
+import { Check, X, ImageIcon, RotateCcw, Star, Music2, Play, Sparkles, FolderSearch, Loader2 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { JWApiSong, resolvePrefCoverUrl } from '../lib/juicewrldApi'
+import {
+  JWApiSong, resolvePrefCoverUrl, apiFetch, buildStreamUrl,
+  parseBrowseEntries, cleanTitleForSearch, JWApiBrowseResponse,
+} from '../lib/juicewrldApi'
+import { getMediaType } from '../lib/fileTypes'
 import { getOwnVersionMeta, SongVersionMeta } from '../lib/versionsApi'
 import CoverPickerModal from './CoverPickerModal'
 
@@ -145,6 +149,44 @@ export default function SongPrefsSection({
     return out
   }, [ownImageRaw, versions, apiTitle])
 
+  // ── Searched covers ───────────────────────────────────────────────────────
+  // Same title(+alt names) search CoverPickerModal seeds itself with, but run
+  // inline the first time the cover panel opens — surfaces likely covers
+  // right here instead of making the user open the full browser to see them.
+  // null = not fetched yet (per song), so switching songs re-triggers it.
+  const [searchedCovers, setSearchedCovers] = useState<{ path: string; url: string }[] | null>(null)
+  const [searchedLoading, setSearchedLoading] = useState(false)
+  useEffect(() => { setSearchedCovers(null) }, [songId])
+  useEffect(() => {
+    if (!coverOpen || searchedCovers != null) return
+    const queries = [apiTitle, ...versions.map((v) => v.song.track_titles?.[0] || v.song.name)]
+      .map(cleanTitleForSearch)
+      .filter((q, i, arr) => q && arr.indexOf(q) === i)
+    if (queries.length === 0) { setSearchedCovers([]); return }
+    let cancelled = false
+    setSearchedLoading(true)
+    const seenUrls = new Set(coverChoices.map((c) => c.url))
+    Promise.all(queries.map((q) =>
+      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseBrowseEntries).catch(() => [])
+    )).then((lists) => {
+      if (cancelled) return
+      const seenPaths = new Set<string>()
+      const out: { path: string; url: string }[] = []
+      for (const list of lists) {
+        for (const e of list) {
+          if (e.type !== 'file' || getMediaType(e.name) !== 'image' || seenPaths.has(e.path)) continue
+          seenPaths.add(e.path)
+          const url = buildStreamUrl(e.path)
+          if (seenUrls.has(url)) continue
+          out.push({ path: e.path, url })
+        }
+      }
+      setSearchedCovers(out)
+    }).finally(() => { if (!cancelled) setSearchedLoading(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coverOpen, searchedCovers, apiTitle, versions])
+
   const effectiveCover = resolvePrefCoverUrl(pref?.cover_url) ?? apiImageUrl
   const coverDraftPreview = resolvePrefCoverUrl(coverDraft.trim())
   const nameOverridden = !!pref?.name
@@ -261,6 +303,37 @@ export default function SongPrefsSection({
                       className={`relative aspect-square rounded-md overflow-hidden bg-surface-overlay border transition-colors ${active ? 'border-accent' : 'border-transparent hover:border-[var(--border)]'}`}
                     >
                       <img src={c.url} alt={c.title} className="w-full h-full object-cover"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
+                      {active && (
+                        <span className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full bg-accent flex items-center justify-center">
+                          <Check size={10} className="text-white" />
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {searchedLoading ? (
+            <div className="flex items-center gap-1.5 text-[10px] text-text-muted py-1">
+              <Loader2 size={11} className="animate-spin" /> Searching API files for "{apiTitle}"…
+            </div>
+          ) : searchedCovers && searchedCovers.length > 0 && (
+            <>
+              <p className="text-[10px] text-text-muted">Found in API files</p>
+              <div className="grid grid-cols-5 gap-1.5">
+                {searchedCovers.map((c) => {
+                  const active = pref?.cover_url === c.url
+                  return (
+                    <button
+                      key={c.url}
+                      onClick={() => applyCover(c.url)}
+                      title={c.path}
+                      className={`relative aspect-square rounded-md overflow-hidden bg-surface-overlay border transition-colors ${active ? 'border-accent' : 'border-transparent hover:border-[var(--border)]'}`}
+                    >
+                      <img src={c.url} alt="" className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
                       {active && (
                         <span className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full bg-accent flex items-center justify-center">

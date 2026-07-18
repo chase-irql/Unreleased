@@ -83,8 +83,8 @@ HELP = f"""
   {CYN}quit{RST} / {CYN}exit{RST}          leave
 
 CLI one-shot mode:
-  python scripts/api_debug.py GET /songs/ page_size=5 category=released
-  python scripts/api_debug.py POST /accounts/login/ --body '{{"discord_id":"123"}}' --token abc
+  python scripts/dev/api_debug.py GET /songs/ page_size=5 category=released
+  python scripts/dev/api_debug.py POST /accounts/login/ --body '{{"discord_id":"123"}}' --token abc
 """
 
 

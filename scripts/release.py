@@ -23,7 +23,7 @@ All prompts are asked up front, then everything else runs unattended:
      BETA_ADMIN_TOKEN in .env.local).
 """
 
-import os, sys, re, json, subprocess, time, urllib.request, urllib.error, urllib.parse
+import os, sys, re, json, shutil, subprocess, time, urllib.request, urllib.error, urllib.parse
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"): sys.stderr.reconfigure(encoding="utf-8")
 
@@ -184,22 +184,27 @@ def api(method, path, token, data=None):
 # ── Upload with live progress bar ─────────────────────────────────────────────
 
 class _ProgressFile:
-    def __init__(self, path):
+    def __init__(self, path, on_progress=None):
         self._f    = open(path, "rb")
         self._size = path.stat().st_size
         self._done = 0
+        # on_progress(done_bytes, total_bytes) — defaults to printing an
+        # in-place ASCII bar; a GUI can pass its own callback instead.
+        self._on_progress = on_progress or self._print_bar
+    def _print_bar(self, done, total):
+        pct = done * 100 // total if total else 100
+        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
+        mb_d, mb_t = done / 1_048_576, total / 1_048_576
+        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
     def read(self, n=-1):
         chunk = self._f.read(n)
         self._done += len(chunk)
-        pct = self._done * 100 // self._size if self._size else 100
-        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_d, mb_t = self._done / 1_048_576, self._size / 1_048_576
-        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
+        self._on_progress(self._done, self._size)
         return chunk
     def __len__(self):  return self._size
     def close(self):    self._f.close()
 
-def upload_asset(release_id, filepath, token):
+def upload_asset(release_id, filepath, token, on_progress=None):
     name = filepath.name
     size = filepath.stat().st_size
     print(f"\n  Uploading: {_c(name, WHT, BOLD)}  ({size/1_048_576:.1f} MB)")
@@ -212,12 +217,13 @@ def upload_asset(release_id, filepath, token):
         "Content-Length": str(size),
         "User-Agent":     "release.py",
     }
-    wrap = _ProgressFile(filepath)
+    wrap = _ProgressFile(filepath, on_progress)
     req  = urllib.request.Request(url, data=wrap, headers=hdrs, method="POST")
     try:
         with urllib.request.urlopen(req) as resp:
             result = json.loads(resp.read())
             print(f"\n  {_c('✓', GRN, BOLD)}  {result['browser_download_url']}")
+            return result
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         print(f"\n  HTTP {e.code}: {body[:300]}")
@@ -231,7 +237,7 @@ def upload_asset(release_id, filepath, token):
 # composed from multiple segments (boundary text + one or more files).
 
 class _MultipartUpload:
-    def __init__(self, boundary, fields, files):
+    def __init__(self, boundary, fields, files, on_progress=None):
         self._segments = []  # ('bytes', b'...') | ('file', Path)
         for name, value in fields.items():
             self._segments.append(("bytes",
@@ -248,14 +254,17 @@ class _MultipartUpload:
         self._idx = 0
         self._fh = None
         self._done = 0
+        # on_progress(done_bytes, total_bytes) — defaults to printing an
+        # in-place ASCII bar; a GUI can pass its own callback instead.
+        self._on_progress = on_progress or self._print_bar
 
     def __len__(self):
         return self._size
 
-    def _report(self):
-        pct = self._done * 100 // self._size if self._size else 100
+    def _print_bar(self, done, total):
+        pct = done * 100 // total if total else 100
         bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_d, mb_t = self._done / 1_048_576, self._size / 1_048_576
+        mb_d, mb_t = done / 1_048_576, total / 1_048_576
         print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
 
     def read(self, n=-1):
@@ -265,7 +274,7 @@ class _MultipartUpload:
                 self._idx += 1
                 if data:
                     self._done += len(data)
-                    self._report()
+                    self._on_progress(self._done, self._size)
                     return data
                 continue
             if self._fh is None:
@@ -273,7 +282,7 @@ class _MultipartUpload:
             chunk = self._fh.read(n if n and n > 0 else 1_048_576)
             if chunk:
                 self._done += len(chunk)
-                self._report()
+                self._on_progress(self._done, self._size)
                 return chunk
             self._fh.close()
             self._fh = None
@@ -284,9 +293,9 @@ class _MultipartUpload:
         if self._fh:
             self._fh.close()
 
-def upload_beta(url, token, fields, files):
+def upload_beta(url, token, fields, files, on_progress=None):
     boundary = f"----unreleased-{int(time.time())}"
-    wrap = _MultipartUpload(boundary, fields, files)
+    wrap = _MultipartUpload(boundary, fields, files, on_progress)
     print(f"\n  Uploading: {_c(', '.join(p.name for p in files.values()), WHT, BOLD)}  ({len(wrap)/1_048_576:.1f} MB)")
     req = urllib.request.Request(url, data=wrap, method="POST", headers={
         "Authorization":  f"Bearer {token}",
@@ -429,6 +438,22 @@ def step_build():
     if result.returncode != 0:
         die("Build failed. See output above.")
     ok("Build complete")
+
+    # 3. Refresh the bundled web-installer stub for the NEXT release. The app
+    #    embeds this copy (see package.json win.extraResources) as an emergency
+    #    repair/reinstall tool, but it can't embed the file this same build just
+    #    produced — electron-builder needs it to exist before packaging starts.
+    #    The stub is a version-agnostic bootstrapper (fetches whatever is
+    #    latest.yml-current at run time), so shipping one release behind is
+    #    harmless. build/ is gitignored, so this just updates the local copy.
+    stub = ROOT / "release" / "nsis-web" / "Unreleased-Setup.exe"
+    if stub.exists():
+        bundled_dir = ROOT / "build" / "bundled"
+        bundled_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(stub, bundled_dir / "Unreleased-Setup.exe")
+        ok("Bundled installer stub refreshed for next build")
+    else:
+        warn(f"Not found (skipping bundled-stub refresh): {stub.name}")
 
 
 def step_push_app():
