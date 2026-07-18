@@ -14,6 +14,7 @@ export type SkinId =
   | 'mocha'
   | 'forest'
   | 'blossom'
+  | 'song'
 
 export interface Skin {
   id: SkinId
@@ -25,6 +26,10 @@ export interface Skin {
   // The classic light/dark skins leave it unset so switching between them
   // keeps whatever accent the user already chose.
   accent?: string
+  // Dynamic skins derive their palette at runtime (from the current song's
+  // cover art — see useThemeEffects); `vars` is only the fallback shown while
+  // nothing is playing or extraction fails.
+  dynamic?: boolean
   vars: {
     '--surface': string
     '--surface-raised': string
@@ -170,6 +175,28 @@ export const SKINS: Skin[] = [
       '--text-muted': '#64796d',
       '--border': 'rgba(167, 243, 208, 0.1)',
       '--scrollbar': '#2c4437',
+    },
+  },
+  {
+    // Palette is generated from the current song's cover art at runtime;
+    // these vars are the resting state (classic dark) shown while nothing is
+    // playing or when the art can't be sampled.
+    id: 'song',
+    name: 'Now Playing',
+    dark: true,
+    dynamic: true,
+    vars: {
+      '--surface': '#121212',
+      '--surface-raised': '#1a1a1a',
+      '--surface-overlay': '#242424',
+      '--surface-highest': '#2a2a2a',
+      '--sidebar': '#000000',
+      '--titlebar': '#000000',
+      '--text-primary': '#ffffff',
+      '--text-secondary': '#b3b3b3',
+      '--text-muted': '#6b6b6b',
+      '--border': 'rgba(255, 255, 255, 0.08)',
+      '--scrollbar': '#404040',
     },
   },
   {

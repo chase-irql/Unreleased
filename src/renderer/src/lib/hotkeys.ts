@@ -76,7 +76,7 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'view-playlists',   label: 'Go to Playlists',           category: 'Navigation', defaultBinding: 'Alt+2' },
   { id: 'view-library',     label: 'Go to Library',             category: 'Navigation', defaultBinding: 'Alt+3', electronOnly: true },
   { id: 'view-wrld',        label: 'Go to WRLD',                category: 'Navigation', defaultBinding: 'Alt+4' },
-  { id: 'view-admin',       label: 'Go to Admin / Reports',     category: 'Navigation', defaultBinding: 'Alt+5' },
+  { id: 'view-admin',       label: 'Go to Admin / Editor profile', category: 'Navigation', defaultBinding: 'Alt+5' },
   { id: 'open-settings',    label: 'Open settings',             category: 'Navigation', defaultBinding: 'Ctrl+,' },
   { id: 'open-diagnostics', label: 'Open diagnostics',          category: 'Navigation', defaultBinding: '' },
   { id: 'toggle-queue',     label: 'Toggle queue panel',        category: 'Navigation', defaultBinding: 'Q' },

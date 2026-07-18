@@ -508,6 +508,27 @@ function hydrateSongPrefs(): SongPrefMap {
 // be POSTed twice before the first response removed it.
 let _reportsFlushing = false
 
+// A pop-out's own _flushReports call is always a no-op (see IS_FLOAT_WINDOW
+// above) — delivery actually happens in the main window after `pendingReports`
+// syncs over (see windowSync.ts), and the outcome syncs back the same way. So
+// instead of claiming "queued" the instant a pop-out enqueues (true then, but
+// misleading seconds later once it's actually gone through), wait briefly for
+// that round trip to land before answering. Falls back to "still queued" if
+// nothing comes back in time (main window closed, sync hiccup, etc.).
+function waitForReportSettled(id: string, timeoutMs = 8000): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!useStore.getState().pendingReports.some((r) => r.id === id)) { resolve(true); return }
+    const unsub = useStore.subscribe((state) => {
+      if (!state.pendingReports.some((r) => r.id === id)) {
+        clearTimeout(timer)
+        unsub()
+        resolve(true)
+      }
+    })
+    const timer = setTimeout(() => { unsub(); resolve(false) }, timeoutMs)
+  })
+}
+
 // ─── Profile-blob push debounce ───────────────────────────────────────────────
 
 // Preferences and folders each live as one JSON field on /account/me/, PATCHed
@@ -807,6 +828,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = [...get().pendingReports, report]
     set({ pendingReports: next })
     ls.set('pendingReports', next)
+    // This window's own flush is a no-op in a pop-out (only the main window
+    // sends) — the enqueue above syncs to it over windowSync, which flushes on
+    // receipt and syncs the outcome back. Wait for that instead of the local
+    // (always-empty) flush, so the pop-out doesn't report "queued" instantly
+    // even for one about to be delivered a moment later.
+    if (IS_FLOAT_WINDOW) return waitForReportSettled(report.id)
     // Wait for this round of delivery so the caller can tell the user whether
     // it actually reached the server or is just sitting in the outbox.
     await get()._flushReports()

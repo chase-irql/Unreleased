@@ -45,6 +45,9 @@ interface Props {
   /** The song's title — seeds the initial search so covers already filed
    *  under that name surface immediately instead of an empty root listing. */
   songTitle?: string
+  /** This song's other known titles — a cover may be filed under an alt name
+   *  instead of the primary one, so these are searched too and merged in. */
+  altTitles?: string[]
   onSelect: (path: string) => void
   onClose: () => void
 }
@@ -57,8 +60,13 @@ interface Props {
 // storage path. resolvePrefCoverUrl treats a bare path as an audio track
 // whose embedded art needs extracting via /files/cover-art/, which 404s on a
 // plain image file; an absolute URL passes through untouched instead.
-export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props): JSX.Element {
+export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, onClose }: Props): JSX.Element {
   const initialQuery = songTitle ? cleanTitleForSearch(songTitle) : ''
+  // Alt titles searched alongside the primary one on mount (deduped, and never
+  // repeating a name the primary search already covers).
+  const altQueries = altTitles
+    .map(cleanTitleForSearch)
+    .filter((q, i, arr) => q && q.toLowerCase() !== initialQuery.toLowerCase() && arr.indexOf(q) === i)
   const overlayRef = useRef<HTMLDivElement>(null)
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<JWApiFileEntry[]>([])
@@ -119,6 +127,29 @@ export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props
       .finally(() => { if (!cancelled) setSearchLoading(false) })
     return () => { cancelled = true }
   }, [debouncedSearch, isSearching])
+
+  // Merge in results for the song's alt titles alongside the primary-title
+  // search seeded above — a cover is often filed under a feature's alias or
+  // an alternate spelling rather than the main title. Runs once on mount only:
+  // once the user edits the search box, the effect above replaces
+  // searchResults wholesale with a plain single-term search as normal.
+  useEffect(() => {
+    if (!initialQuery || altQueries.length === 0) return
+    let cancelled = false
+    Promise.all(altQueries.map((q) =>
+      apiFetch<JWApiBrowseResponse>('/files/browse/', { search: q }).then(parseEntries).catch(() => [] as JWApiFileEntry[])
+    )).then((lists) => {
+      if (cancelled) return
+      setSearchResults((prev) => {
+        const seen = new Set(prev.map((e) => e.path))
+        const merged = [...prev]
+        for (const list of lists) for (const e of list) if (!seen.has(e.path)) { seen.add(e.path); merged.push(e) }
+        return merged
+      })
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose() }
@@ -181,7 +212,12 @@ export default function CoverPickerModal({ songTitle, onSelect, onClose }: Props
             <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
               {searchLoading
                 ? <><Loader2 size={11} className="animate-spin" /> Searching…</>
-                : <>{searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{debouncedSearch.trim()}"</>}
+                : <>
+                    {searchResults.length} result{searchResults.length === 1 ? '' : 's'} for "{debouncedSearch.trim()}"
+                    {search === initialQuery && altQueries.length > 0 && (
+                      <> (+ {altQueries.length} alt name{altQueries.length === 1 ? '' : 's'})</>
+                    )}
+                  </>}
             </div>
           ) : (
             <div className="flex items-center gap-1.5">

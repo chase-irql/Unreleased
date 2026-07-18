@@ -1,9 +1,12 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
+import * as reportsApi from '../lib/reportsApi'
+import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
+import ReportsTab from './ReportsTab'
 
 const CATEGORIES = [
   { value: 'released', label: 'Released' },
@@ -295,6 +298,23 @@ export default function EditorProfileView(): JSX.Element {
   const [refreshing, setRefreshing] = useState(false)
   const [showAddSong, setShowAddSong] = useState(false)
 
+  // Reports review (moved out of the Admin sidebar entry for editor-only
+  // accounts — it now lives as a tab alongside their own proposals).
+  const canReviewReports = !!(account?.is_editor || account?.is_administrator)
+  const [profileTab, setProfileTab] = useState<'proposals' | 'reports'>('proposals')
+  const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
+  const [reports, setReports] = useState<SongReportRow[]>([])
+  const [loadingReports, setLoadingReports] = useState(false)
+
+  useEffect(() => {
+    if (profileTab !== 'reports' || !canReviewReports) return
+    setLoadingReports(true)
+    reportsApi.listSongReports(reportStatus || undefined)
+      .then(setReports)
+      .catch(() => {})
+      .finally(() => setLoadingReports(false))
+  }, [profileTab, reportStatus, refreshKey, canReviewReports])
+
   const handleDelete = async (id: number): Promise<void> => {
     setDeletingId(id)
     try {
@@ -445,7 +465,43 @@ export default function EditorProfileView(): JSX.Element {
         </div>
       </div>
 
-      {/* ── Body: side by side ── */}
+      {/* ── Tabs ── */}
+      {canReviewReports && (
+        <div className="flex items-center gap-1 px-6 pt-3 shrink-0 border-b border-[var(--border)]">
+          {([
+            { id: 'proposals' as const, label: 'Proposals', icon: <FileEdit size={13} /> },
+            { id: 'reports'   as const, label: 'Reports',   icon: <Flag size={13} /> },
+          ]).map(t => (
+            <button key={t.id} onClick={() => setProfileTab(t.id)}
+              className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium transition-colors border-b-2 ${
+                profileTab === t.id
+                  ? 'text-accent border-accent'
+                  : 'text-text-muted hover:text-text-primary border-transparent'
+              }`}>
+              <span className={profileTab === t.id ? 'text-accent' : ''}>{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {profileTab === 'reports' && canReviewReports ? (
+        <div className="flex-1 overflow-hidden p-5">
+          <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden relative">
+            {loadingReports && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg)]/60 backdrop-blur-[1px]">
+                <Loader2 size={20} className="animate-spin text-text-muted" />
+              </div>
+            )}
+            <ReportsTab
+              reports={reports}
+              status={reportStatus}
+              setStatus={setReportStatus}
+              onChanged={() => setRefreshKey(k => k + 1)}
+            />
+          </div>
+        </div>
+      ) : (
       <div className="flex-1 flex gap-5 overflow-hidden p-5">
 
         {/* ── Left: My Proposals ── */}
@@ -640,6 +696,7 @@ export default function EditorProfileView(): JSX.Element {
           </div>
         </div>
       </div>
+      )}
 
       {showAddSong && (
         <AddSongModal

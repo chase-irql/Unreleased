@@ -957,7 +957,10 @@ export default function Player(): JSX.Element {
     'view-playlists': () => setActiveView('playlists'),
     'view-library':   () => setActiveView('library'),
     'view-wrld':      () => setActiveView('wrld'),
-    'view-admin':     () => { if (account?.is_administrator || account?.is_editor) setActiveView('admin') },
+    'view-admin':     () => {
+      if (account?.is_administrator) setActiveView('admin')
+      else if (account?.is_editor) setActiveView('editor-profile')
+    },
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
     'toggle-queue':     () => { const s = useStore.getState(); s.setShowQueue(!s.showQueue) },
