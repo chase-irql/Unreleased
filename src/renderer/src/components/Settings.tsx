@@ -433,9 +433,22 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
               <span className="text-[10px] text-emerald-400">Restart to update</span>
             )}
           </div>
-          <button onClick={closeSettings} style={noDrag} className="text-text-muted hover:text-text-primary transition-colors">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3" style={noDrag}>
+            {/* Manual pop-out — only when shown in-app on desktop (i.e. the
+                Settings pop-out was turned off); detaches into its own window. */}
+            {!floating && isElectron && el?.openFloatWindow && (
+              <button
+                onClick={() => { el.openFloatWindow('settings'); setShowSettings(false) }}
+                title="Open in a separate window"
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <PictureInPicture2 size={18} />
+              </button>
+            )}
+            <button onClick={closeSettings} className="text-text-muted hover:text-text-primary transition-colors">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Mobile tab bar — the sidebar collapses below sm, so categories

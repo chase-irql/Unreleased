@@ -26,7 +26,7 @@ if sys.platform == "win32":
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ROOT     = Path(__file__).parent.parent
+ROOT     = Path(__file__).parent.parent.parent
 OUT_DIR  = ROOT / "beta-builds"
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────

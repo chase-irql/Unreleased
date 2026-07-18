@@ -69,8 +69,8 @@ export default function NowPlaying(): JSX.Element {
           className="flex items-center justify-between px-5 pb-3 shrink-0"
           style={{ paddingTop: needsWindowControlClearance ? 36 : 20, paddingRight: needsWindowControlClearance ? 148 : undefined }}
         >
-          <h2 className="text-text-primary font-semibold text-sm uppercase tracking-widest">Now Playing</h2>
-          <div className="flex items-center gap-2">
+          <h2 className="text-text-primary font-semibold text-sm uppercase tracking-widest truncate min-w-0">Now Playing</h2>
+          <div className="flex items-center gap-2 shrink-0">
             {currentTrack && (
               <button
                 onClick={() => setArtCollapsed(!artCollapsed)}

@@ -39,7 +39,7 @@ CONFIG_FILE = CONFIG_DIR / "release-gui.json"
 
 def is_valid_root(p) -> bool:
     p = Path(p)
-    return (p / "package.json").exists() and (p / "scripts" / "release.py").exists()
+    return (p / "package.json").exists() and (p / "scripts" / "python" / "release.py").exists()
 
 def load_saved_root():
     try:
@@ -58,7 +58,7 @@ def save_root(p):
 def dev_root():
     if getattr(sys, "frozen", False):
         return None
-    return Path(__file__).resolve().parent.parent
+    return Path(__file__).resolve().parent.parent.parent
 
 def resolve_root(parent=None):
     env = os.environ.get("UNRELEASED_ROOT")
@@ -81,13 +81,13 @@ def resolve_root(parent=None):
         QMessageBox.warning(
             parent, "Not a valid project folder",
             f"{chosen}\n\ndoesn't look like the Unreleased repo "
-            "(missing package.json / scripts/release.py). Try again.")
+            "(missing package.json / scripts/python/release.py). Try again.")
 
 def load_release_core(root: Path):
     """Load the *actual* release.py living in the target repo, so its own
-    ROOT computation (Path(__file__).parent.parent) resolves correctly and
-    this GUI always drives whatever version of the script is checked out."""
-    spec = importlib.util.spec_from_file_location("release_core", str(root / "scripts" / "release.py"))
+    ROOT computation (Path(__file__).parent.parent.parent) resolves correctly
+    and this GUI always drives whatever version of the script is checked out."""
+    spec = importlib.util.spec_from_file_location("release_core", str(root / "scripts" / "python" / "release.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

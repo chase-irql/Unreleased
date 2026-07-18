@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback, memo, type ReactNode } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown,
-  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2,
+  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, PictureInPicture2,
 } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import { invalidateLyricsCache } from './Player'
@@ -692,7 +692,27 @@ export default function EditorPage(): JSX.Element {
       {/* 188px clears the window controls (132px) plus the fixed downloads
           trigger next to them (right: 144px + 36px wide — see DownloadManager) */}
       <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '188px' } : undefined}>
-        <span className="flex-1 font-bold text-[15px] text-text-primary">Song editor</span>
+        <span className="font-bold text-[15px] text-text-primary">Song editor</span>
+        {/* Manual pop-out — detach the in-app editor into its own window.
+            Hidden inside the float window itself and when there's no saved
+            song to hand off (e.g. a brand-new draft). */}
+        {!IS_FLOAT_WINDOW && (window as any).electron?.openFloatWindow && song?.id != null && (
+          <button
+            onClick={() => {
+              if (!song) return
+              const el = (window as any).electron
+              el.openFloatWindow('editor', { songId: song.id })
+              // Clear the in-app editor so the song isn't open in two places.
+              setSong(null); setEditingPropId(null); setIsNewSongDraft(false)
+              setDeleteState('idle'); setDeleteError(null)
+            }}
+            title="Open in a separate window"
+            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
+          >
+            <PictureInPicture2 size={15} />
+          </button>
+        )}
+        <span className="flex-1" />
         <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isAdmin ? 'bg-accent/20 text-accent' : 'bg-emerald-500/20 text-emerald-400'}`}>
           {isAdmin ? 'admin' : 'editor'}
         </span>

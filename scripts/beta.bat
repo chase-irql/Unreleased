@@ -1,4 +1,4 @@
 @echo off
 title Unreleased — Beta Build
 cd /d "%~dp0\.."
-python scripts\beta.py
+python scripts\python\beta.py

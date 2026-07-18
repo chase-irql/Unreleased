@@ -1,3 +1,2 @@
-# Dev/build-only deps for release_gui.py — not part of the Electron app itself.
+# Dep for release_gui.py — not part of the Electron app itself.
 PySide6>=6.7
-pyinstaller>=6.10
