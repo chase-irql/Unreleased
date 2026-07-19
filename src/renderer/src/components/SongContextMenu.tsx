@@ -252,8 +252,12 @@ export default function SongContextMenu({
   return (
     <div
       ref={menuRef}
-      style={{ position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left }}
-      className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+      // Height-capped to the viewport: a fully-loaded menu (queue actions +
+      // an expanded "Change version" list + Download/Remove) is taller than a
+      // short phone screen, and the position clamp alone would leave the
+      // bottom items clipped and unreachable — scroll instead.
+      style={{ position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left, maxHeight: window.innerHeight - 16 }}
+      className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-x-hidden overflow-y-auto py-1"
     >
       <div className="px-3 py-2 border-b border-[var(--border)] mb-1">
         <p className="text-text-primary text-xs font-semibold truncate">{track.title}</p>
