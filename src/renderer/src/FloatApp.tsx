@@ -5,6 +5,7 @@ import { apiFetch, JWApiSong } from './lib/juicewrldApi'
 
 const Settings = lazy(() => import('./components/Settings'))
 const EditorPage = lazy(() => import('./components/EditorPage'))
+const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const MiniPlayer = lazy(() => import('./components/MiniPlayer'))
 // Not lazy: every list view already imports the info modal statically, so
 // it lives in the main chunk regardless — a dynamic import here would just
@@ -98,6 +99,32 @@ function FloatEditor(): JSX.Element {
   )
 }
 
+function FloatLocalEditor(): JSX.Element {
+  // LocalEditorPage picks its track up from pendingLocalEditTrack, which (unlike
+  // the API editor's plain songId) is a full LibraryTrack object — there's no
+  // API to re-fetch it from, so this window loads the local library from disk
+  // (see FloatApp below) and looks the track up by id once that resolves.
+  const { libraryTracks } = useStorePick('libraryTracks')
+  const [trackId, setTrackId] = useState<string | null>(() => initialParam('trackId'))
+
+  // "Edit metadata" clicked on another track while this window is open — swap content.
+  useEffect(() => el?.onFloatParams?.((p: Record<string, string>) => {
+    if (p?.trackId) setTrackId(p.trackId)
+  }), [])
+
+  useEffect(() => {
+    if (!trackId) return
+    const track = libraryTracks.find((t) => t.id === trackId)
+    if (track) useStore.setState({ pendingLocalEditTrack: track })
+  }, [trackId, libraryTracks])
+
+  return (
+    <div className="flex-1 min-h-0 overflow-hidden flex">
+      <LocalEditorPage />
+    </div>
+  )
+}
+
 // Shell for floating pop-out windows: main.js createFloatWindow opens a second
 // frameless BrowserWindow on the same bundle with ?float=<view> (+ params),
 // and main.tsx mounts this instead of <App/> — a single view filling the whole
@@ -106,18 +133,20 @@ export default function FloatApp({ view }: { view: string }): JSX.Element {
   useThemeEffects()
 
   // The library track list is too big to mirror through the sync channel —
-  // load it from disk so Settings → Library shows real track counts.
+  // load it from disk so Settings → Library shows real track counts, and so
+  // the local editor pop-out can look its target track up by id.
   useEffect(() => {
-    if (view === 'settings') useStore.getState().loadLibrary()
+    if (view === 'settings' || view === 'local-editor') useStore.getState().loadLibrary()
   }, [view])
 
   return (
     <div className="h-dvh bg-surface overflow-hidden flex flex-col">
-      {view === 'editor' && <FloatTitleBar />}
+      {(view === 'editor' || view === 'local-editor') && <FloatTitleBar />}
       <Suspense fallback={null}>
         {view === 'settings' ? <Settings floating />
           : view === 'song-info' ? <FloatSongInfo />
           : view === 'editor' ? <FloatEditor />
+          : view === 'local-editor' ? <FloatLocalEditor />
           : view === 'mini-player' ? <MiniPlayer />
           : null}
       </Suspense>

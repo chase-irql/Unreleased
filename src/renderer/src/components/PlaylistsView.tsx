@@ -1943,19 +1943,52 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         ) : (
           <div className="px-2 pb-8">
-            {/* Search + compact view — sticky so scrolled track rows never
-                reach the top of the scroll container, where they'd render
-                behind the frameless window's fixed min/max/close buttons.
-                That 188px gutter only applies when this row actually sits
-                under the window controls — with the sidebar on top/right,
-                main content doesn't reach that corner, so reserving it there
-                just leaves dead space next to the buttons. */}
+            {/* Search + compact toggle share the sticky header with the
+                column labels (used to be a near-empty row of their own) —
+                sticky so scrolled track rows never reach the top of the
+                scroll container, where they'd render behind the frameless
+                window's fixed min/max/close buttons. That 188px gutter only
+                applies when this row actually sits under the window
+                controls — with the sidebar on top/right, main content
+                doesn't reach that corner, so reserving it there would just
+                leave dead space. */}
             <div
-              className="sticky top-0 z-20 -mx-2 px-4 py-2 mb-3 flex items-center justify-end gap-2 bg-surface"
+              className="sticky top-0 z-20 px-4 py-2 mb-2 flex items-center gap-3 bg-surface"
               style={{ paddingRight: (window as any).electron && sidebarPosition !== 'top' && sidebarPosition !== 'right' ? 188 : undefined }}
             >
+              {compactView ? (
+                <span className="flex-1 text-text-muted text-xs uppercase tracking-widest">
+                  {loadingCompact ? 'Loading…' : `${filteredCompactGroups.length} version group${filteredCompactGroups.length === 1 ? '' : 's'}`}
+                </span>
+              ) : (
+                <div className="grid flex-1 items-center gap-3 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
+                  {selectMode && (
+                    <button
+                      onClick={() => {
+                        const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                        setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
+                      }}
+                      className="flex items-center justify-center text-text-muted hover:text-text-primary"
+                      title="Select all / none"
+                    >
+                      {displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                        ? <CheckSquare2 size={15} className="text-accent" />
+                        : <Square size={15} className="opacity-50" />}
+                    </button>
+                  )}
+                  <span />
+                  <span className="text-center">#</span>
+                  <span />
+                  <SortHeader label="Title" field="title" sort={sort} onSort={handleSort} />
+                  <div className="flex justify-center">
+                    <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
+                  </div>
+                  <span />
+                </div>
+              )}
+
               {searchOpen ? (
-                <div className="relative flex-1">
+                <div className="relative w-56 shrink-0">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
                   <input
                     ref={searchInputRef}
@@ -2060,32 +2093,6 @@ export default function PlaylistsView(): JSX.Element {
               )
             ) : (
               <>
-            {/* Column headers */}
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
-              {selectMode && (
-                <button
-                  onClick={() => {
-                    const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
-                    setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
-                  }}
-                  className="flex items-center justify-center text-text-muted hover:text-text-primary"
-                  title="Select all / none"
-                >
-                  {displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
-                    ? <CheckSquare2 size={15} className="text-accent" />
-                    : <Square size={15} className="opacity-50" />}
-                </button>
-              )}
-              <span />
-              <span className="text-center">#</span>
-              <span />
-              <SortHeader label="Title" field="title" sort={sort} onSort={handleSort} />
-              <div className="flex justify-center">
-                <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
-              </div>
-              <span />
-            </div>
-
             {displayTracks.length === 0 && (
               <p className="text-text-muted text-sm text-center py-8">No tracks match "{search}"</p>
             )}

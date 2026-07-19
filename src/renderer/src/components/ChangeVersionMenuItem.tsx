@@ -68,7 +68,10 @@ export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props
           }))
           .catch(() => null)
       ))
-      setVersions(fetched.filter((v): v is VersionOption => !!v))
+      // Songs with no `path` (recording sessions, some unsurfaced entries)
+      // have nothing to actually play — hidden here since both switching to
+      // one and starring it as the group default would break playback.
+      setVersions(fetched.filter((v): v is VersionOption => !!v && !!v.song.path))
     } finally {
       setLoading(false)
     }

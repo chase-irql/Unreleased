@@ -28,7 +28,7 @@ function GroupLabel({ children }: { children: string }): JSX.Element {
 }
 
 export default function SongPrefsSection({
-  songId, apiTitle, apiImageUrl, ownImageRaw, versions, altTitles = [],
+  songId, apiTitle, apiImageUrl, ownImageRaw, ownHasFile, versions, altTitles = [],
 }: {
   songId: number
   /** The song's own primary title — the placeholder/reset target for the name. */
@@ -39,6 +39,10 @@ export default function SongPrefsSection({
    *  when the user picks "this song's cover" so the value matches the backend's
    *  own pointer shape rather than an app-resolved absolute URL. */
   ownImageRaw: string | null
+  /** Whether this song has an actual playable file (`song.path`) — recording
+   *  sessions and some unsurfaced entries don't. Excluded from the default
+   *  version picker below since defaulting to one would leave nothing to play. */
+  ownHasFile: boolean
   /** Linked version siblings, already fetched by the modal. */
   versions: VersionEntry[]
   /** This song's other known titles — widens the cover picker's search so
@@ -86,16 +90,16 @@ export default function SongPrefsSection({
   const versionChoices = useMemo(() => {
     const out: { label: string; title: string }[] = []
     const seen = new Set<string>()
-    const push = (v: string | null | undefined, title: string): void => {
+    const push = (v: string | null | undefined, title: string, hasFile: boolean): void => {
       const label = v?.trim()
-      if (!label || seen.has(label.toLowerCase())) return
+      if (!label || !hasFile || seen.has(label.toLowerCase())) return
       seen.add(label.toLowerCase())
       out.push({ label, title })
     }
-    push(ownMeta?.version, apiTitle)
-    for (const v of versions) push(v.meta.version, v.song.track_titles?.[0] || v.song.name)
+    push(ownMeta?.version, apiTitle, ownHasFile)
+    for (const v of versions) push(v.meta.version, v.song.track_titles?.[0] || v.song.name, !!v.song.path)
     return out
-  }, [ownMeta, versions, apiTitle])
+  }, [ownMeta, versions, apiTitle, ownHasFile])
 
   // The group's effective default — own row wins if set, else the first
   // sibling that has one — mirrors queueSlice's groupDefaultVersion so this
@@ -196,14 +200,11 @@ export default function SongPrefsSection({
   const hasOverrides = nameOverridden || coverOverridden || !!pref?.default_version
   const playcount = pref?.playcount ?? 0
 
-  // A custom cover is written to EVERY member of the version group, not just
-  // this song's row: covers are conceptually about "the song" the same way
-  // default_version is, and the track actually playing may be a sibling (via
-  // the group default swap) — a cover written only to this row would never
-  // reach it, leaving Now Playing on the old art.
+  // Cover is per-version, same as each version's own art already is — unlike
+  // default_version, it should NOT spread to siblings, or customizing one
+  // version's cover here would silently overwrite every other version's too.
   const applyCover = (raw: string | null): void => {
     setSongCover(songId, raw)
-    for (const v of versions) setSongCover(v.song.id, raw)
     setCoverOpen(false)
     setCoverDraft('')
   }
@@ -215,16 +216,7 @@ export default function SongPrefsSection({
         <span className="text-xs font-semibold text-text-primary">Personalize</span>
         {hasOverrides && (
           <button
-            onClick={() => {
-              clearSongPref(songId)
-              // The cover was written group-wide (see applyCover) — clear it
-              // from the siblings too, or the sibling that's actually playing
-              // would keep showing the "removed" cover. Only the cover: a
-              // sibling's own custom name is its own business.
-              for (const v of versions) {
-                if (songPrefs[v.song.id]?.cover_url) setSongCover(v.song.id, null)
-              }
-            }}
+            onClick={() => clearSongPref(songId)}
             className="ml-auto flex items-center gap-1 text-[10px] text-text-muted hover:text-red-400 transition-colors"
             title="Remove all personalizations for this song"
           >

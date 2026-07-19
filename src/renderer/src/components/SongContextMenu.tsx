@@ -110,13 +110,13 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
-  const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline, addLibraryTrack } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
       setShowUserAuth: s.setShowUserAuth, playTrack: s.playTrack,
       localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
       offlineTracks: s.offlineTracks, removeOfflineTrack: s.removeOfflineTrack, downloadTrackOffline: s.downloadTrackOffline,
-      autoDownloadIfOffline: s.autoDownloadIfOffline,
+      autoDownloadIfOffline: s.autoDownloadIfOffline, addLibraryTrack: s.addLibraryTrack,
     }))
   )
   const { track, songId } = state
@@ -450,10 +450,13 @@ export default function SongContextMenu({
                     setAddingToLib(true)
                     try {
                       const url = 'https://juicewrldapi.com/juicewrld/files/download/?path=' + encodeURIComponent(track.path)
-                      const result = await el.ipcRenderer.invoke('download-to-library', {
+                      const result = await el.downloadToLibrary({
                         url, songName: track.title, artist: track.artist, songPath: track.path,
                       })
-                      if (!result.error) setAddedToLib(true)
+                      if (!result.error) {
+                        if (result.track) addLibraryTrack(result.track)
+                        setAddedToLib(true)
+                      }
                     } finally { setAddingToLib(false) }
                   }}
                 />

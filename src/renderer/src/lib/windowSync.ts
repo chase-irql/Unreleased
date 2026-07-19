@@ -1,6 +1,6 @@
 import { useStore, type AppStore } from '../store/useStore'
 import { setSongPrefsCache } from './songPrefs'
-import type { ViewType } from '../types'
+import type { ViewType, LibraryTrack } from '../types'
 
 // State mirrored between the main window and pop-out windows (see FloatApp).
 // Each window runs its own renderer process with its own store instance, so
@@ -16,6 +16,9 @@ const SYNC_KEYS = [
   'popoutWindows',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
+  // Slowed+reverb changes the *effective* playback rate — the mini player
+  // extrapolates progress/lyrics between syncs, so it needs these mirrored.
+  'slowedReverb', 'slowedRate', 'reverbMix', 'reverbDecay',
   'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
   // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
   // their own store instance — without this, that report only ever reaches
@@ -47,6 +50,7 @@ type AttachTarget =
   | { view: 'settings' }
   | { view: 'editor'; songId: number }
   | { view: 'song-info'; songId: number }
+  | { view: 'local-editor'; trackId: string }
 
 type SyncMessage =
   | { type: 'patch'; payload: SyncPatch }
@@ -55,6 +59,12 @@ type SyncMessage =
   | { type: 'navigate'; view: ViewType }
   | { type: 'attach'; target: AttachTarget }
   | { type: 'command'; cmd: string; arg?: unknown }
+  // A local-file metadata edit saved in one window — libraryTracks itself is
+  // too big for the blanket SYNC_KEYS mirror, but a single-track patch is
+  // cheap, so this keeps other open windows (e.g. the main window's Library
+  // tab behind a pop-out local editor) from showing stale metadata until
+  // their next rescan.
+  | { type: 'library-patch'; id: string; updates: Partial<LibraryTrack> }
 
 // Playback commands from pop-outs land here — the main window's Player
 // registers its dispatch table (the same one the tray menu uses) so remote
@@ -134,11 +144,33 @@ export function initWindowSync(isFloat: boolean): void {
         if (t.view === 'settings') useStore.setState({ showSettings: true })
         else if (t.view === 'editor') { useStore.setState({ pendingEditorSongId: t.songId }); s.setActiveView('editor') }
         else if (t.view === 'song-info') s.setInfoSongId(t.songId)
+        else if (t.view === 'local-editor') {
+          // The main window may not have the library loaded yet (e.g. it never
+          // visited the Library tab this session) — loadLibrary() no-ops if it
+          // already has it, so this is cheap in the common case.
+          s.loadLibrary().then(() => {
+            const track = useStore.getState().libraryTracks.find((tr) => tr.id === t.trackId)
+            if (track) useStore.setState({ pendingLocalEditTrack: track })
+          })
+          s.setActiveView('local-editor')
+        }
       }
+    } else if (msg.type === 'library-patch') {
+      useStore.getState().updateLibraryTrack(msg.id, msg.updates)
     }
   })
 
   if (isFloat) el.windowSyncSend({ type: 'request' })
+}
+
+// Tell every other open window about a local-file metadata edit, so a Library
+// tab left open behind a pop-out local editor doesn't show stale data once
+// the pop-out saves. Caller applies the same patch to its own store first —
+// this only relays it onward.
+export function broadcastLibraryTrackUpdate(id: string, updates: Partial<LibraryTrack>): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const el = (window as any).electron
+  el?.windowSyncSend?.({ type: 'library-patch', id, updates })
 }
 
 // Ask the main window to switch views (e.g. the pop-out Settings' "API Docs"
