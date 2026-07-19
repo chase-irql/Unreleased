@@ -152,7 +152,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
   return createPortal(
     <div
       ref={overlayRef}
-      className={`fixed inset-0 z-50 flex ${floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'}`}
+      className={`fixed inset-0 z-[160] flex ${floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'}`}
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
       <div className={`select-text bg-surface flex flex-col overflow-hidden ${floating

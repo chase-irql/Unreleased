@@ -5,7 +5,7 @@ import type { ViewType } from '../types'
 
 // The reorderable primary nav destinations shown in the desktop side menu
 // (Sidebar). `view` doubles as the stable id persisted in the saved order —
-// don't rename these. `electronOnly` items (Files, Library) are hidden on the
+// don't rename these. `electronOnly` items (Library) are hidden on the
 // web build. The mobile BottomNav uses its own curated set and is unaffected.
 export interface NavItemDef {
   view: ViewType
@@ -17,7 +17,7 @@ export interface NavItemDef {
 export const NAV_ITEMS: NavItemDef[] = [
   { view: 'wrld', label: 'WRLD', icon: <img src={logo} alt="WRLD" className="w-[24px] h-[24px] object-contain" /> },
   { view: 'api-tracker', label: 'Tracker', icon: <SearchCode size={18} /> },
-  { view: 'api-files', label: 'Files', icon: <HardDrive size={18} />, electronOnly: true },
+  { view: 'api-files', label: 'Files', icon: <HardDrive size={18} /> },
   { view: 'library', label: 'Library', icon: <Library size={18} />, electronOnly: true },
   { view: 'playlists', label: 'Playlists', icon: <ListMusic size={18} /> },
 ]

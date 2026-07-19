@@ -130,6 +130,42 @@ function MenuItem({ icon: Icon, label, onClick, destructive = false, disabled = 
   )
 }
 
+// Fixed-position popup menu that keeps itself fully on-screen by measuring its
+// real rendered box after every render — the estimate-free counterpart to
+// hardcoded `window.innerHeight - N` clamps, which undershoot whenever a
+// submenu ("Move to folder", "Add to playlist") grows the menu past the guess
+// and its bottom gets clipped, worst on short mobile viewports. Height is
+// capped to the viewport so an over-tall menu scrolls instead of clipping.
+function ClampedMenu({ x, y, className = '', children }: {
+  x: number
+  y: number
+  className?: string
+  children: React.ReactNode
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ left: x, top: y })
+  // No dep array: re-clamp whenever content changes size; the equality guard
+  // stops the re-render loop.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))
+    const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
+    setPos(prev => (prev.left === left && prev.top === top ? prev : { left, top }))
+  })
+  return (
+    <div
+      ref={ref}
+      className={`fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden ${className}`}
+      style={{ left: pos.left, top: pos.top, maxHeight: window.innerHeight - 16 }}
+      onClick={e => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  )
+}
+
 type SortField = 'default' | 'title' | 'artist' | 'duration'
 interface SortState { field: SortField; dir: 'asc' | 'desc' }
 
@@ -238,21 +274,6 @@ export default function PlaylistsView(): JSX.Element {
   // Context menus
   const [trackMenu, setTrackMenu] = useState<SongContextMenuState | null>(null)
   const [cardMenu, setCardMenu] = useState<CardMenuState | null>(null)
-  const cardMenuRef = useRef<HTMLDivElement>(null)
-  const [cardMenuPos, setCardMenuPos] = useState({ left: 0, top: 0 })
-
-  // Re-clamp the card menu against the actual rendered box each time its
-  // content changes size (e.g. the "Add all to playlist" submenu opening) —
-  // the initial x/y guess from the click is otherwise stale and the box can
-  // render partly off-screen or oddly stretched.
-  useLayoutEffect(() => {
-    const el = cardMenuRef.current
-    if (!cardMenu || !el) return
-    const rect = el.getBoundingClientRect()
-    const left = Math.max(8, Math.min(cardMenu.x, window.innerWidth - rect.width - 8))
-    const top = Math.max(8, Math.min(cardMenu.y, window.innerHeight - rect.height - 8))
-    setCardMenuPos(prev => (prev.left === left && prev.top === top ? prev : { left, top }))
-  }, [cardMenu])
 
   // Multi-select of playlists in the library grid — ctrl/cmd-click a card to
   // toggle it, mirroring the file browser's selection model (ApiFilesView).
@@ -992,12 +1013,7 @@ export default function PlaylistsView(): JSX.Element {
   // same cardMenu state — previously nothing rendered it there, so the menu
   // silently never appeared.
   const renderCardMenu = (): React.ReactNode => cardMenu && createPortal(
-    <div
-      ref={cardMenuRef}
-      className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-      style={{ left: cardMenuPos.left, top: cardMenuPos.top }}
-      onClick={e => e.stopPropagation()}
-    >
+    <ClampedMenu x={cardMenu.x} y={cardMenu.y} className="min-w-[210px]">
       {cardMenu.renaming ? (
         /* ── Inline rename input (shared by both kinds) ── */
         <div className="px-3 py-2 flex gap-2" onClick={e => e.stopPropagation()}>
@@ -1207,7 +1223,7 @@ export default function PlaylistsView(): JSX.Element {
           />
         </>
       )}
-    </div>,
+    </ClampedMenu>,
     document.body
   )
 
@@ -1388,11 +1404,7 @@ export default function PlaylistsView(): JSX.Element {
   /** Folder context menu (right-click a folder header / its ⋯ button) —
    *  a body portal, so it renders from either library view. */
   const renderFolderMenu = (): React.ReactNode => folderMenu && createPortal(
-    <div
-      className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 w-56"
-      style={{ left: Math.min(folderMenu.x, window.innerWidth - 236), top: Math.min(folderMenu.y, window.innerHeight - 170) }}
-      onClick={e => e.stopPropagation()}
-    >
+    <ClampedMenu x={folderMenu.x} y={folderMenu.y} className="w-56">
       {folderMenu.renaming ? (
         <div className="px-3 py-2 flex gap-2">
           <input
@@ -1419,7 +1431,7 @@ export default function PlaylistsView(): JSX.Element {
           <MenuItem icon={Trash2} label="Delete folder" destructive onClick={() => { deleteFolder(folderMenu.folder.id); setFolderMenu(null) }} />
         </>
       )}
-    </div>,
+    </ClampedMenu>,
     document.body
   )
 
@@ -1602,11 +1614,7 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         )}
         {plBulkMenu && (
-          <div
-            className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-            style={{ left: Math.min(plBulkMenu.x, window.innerWidth - 230), top: Math.min(plBulkMenu.y, window.innerHeight - 200) }}
-            onClick={e => e.stopPropagation()}
-          >
+          <ClampedMenu x={plBulkMenu.x} y={plBulkMenu.y} className="min-w-[210px]">
             <div className="px-3.5 py-2 text-xs text-text-muted">
               {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
             </div>
@@ -1646,7 +1654,7 @@ export default function PlaylistsView(): JSX.Element {
             />
             <div className="border-t border-[var(--border)] my-1" />
             <MenuItem icon={X} label="Exit selection" onClick={() => { setPlBulkMenu(null); exitPlaylistSelectMode() }} />
-          </div>
+          </ClampedMenu>
         )}
         {renderCardMenu()}
         {renderFolderMenu()}
@@ -2543,11 +2551,7 @@ export default function PlaylistsView(): JSX.Element {
 
       {/* Bulk context menu — shown when right-clicking a card during playlist multi-select */}
       {plBulkMenu && (
-        <div
-          className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-          style={{ left: Math.min(plBulkMenu.x, window.innerWidth - 230), top: Math.min(plBulkMenu.y, window.innerHeight - 200) }}
-          onClick={e => e.stopPropagation()}
-        >
+        <ClampedMenu x={plBulkMenu.x} y={plBulkMenu.y} className="min-w-[210px]">
           <div className="px-3.5 py-2 text-xs text-text-muted">
             {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
           </div>
@@ -2615,12 +2619,12 @@ export default function PlaylistsView(): JSX.Element {
           />
           <div className="border-t border-[var(--border)] my-1" />
           <MenuItem icon={X} label="Exit selection" onClick={() => { setPlBulkMenu(null); exitPlaylistSelectMode() }} />
-        </div>
+        </ClampedMenu>
       )}
 
       {/* Unified playlist card context menu — portaled to <body> and
-          re-clamped (see cardMenuPos above) so growing content like the
-          "Add all to playlist" submenu can't push it off-screen or get
+          self-clamped (see ClampedMenu) so growing content like the "Add all
+          to playlist" submenu can't push it off-screen or get
           clipped/mis-measured by an ancestor. */}
       {renderCardMenu()}
 

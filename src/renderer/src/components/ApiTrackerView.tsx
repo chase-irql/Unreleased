@@ -1437,6 +1437,16 @@ export default function ApiTrackerView(): JSX.Element {
   const resetSongs = useCallback((): void => {
     setSongs([])
     setPage(1)
+    // Clear the previous query's pagination state NOW, not when the new
+    // page-1 fetch lands. Emptying the list scrolls the sentinel into view,
+    // and its IntersectionObserver fires in the gap before the new fetch
+    // effect runs — reading the old query's hasMore/loading it would bump
+    // the page and request a page the narrower result set doesn't have (the
+    // API 404s "Invalid page"). On mobile, letter-by-letter typing runs this
+    // reset per keystroke, which made searches randomly come back empty.
+    setHasMore(false)
+    hasMoreRef.current = false
+    loadingRef.current = true
   }, [])
 
   const handleSort = (field: OrderField): void => {
@@ -1711,10 +1721,15 @@ export default function ApiTrackerView(): JSX.Element {
       setDebouncedSearch(search)
       // Skip resetSongs on initial mount — only reset when user actually types
       if (isFirstDebounce.current) { isFirstDebounce.current = false; return }
+      // Settled back to the query already showing (typed then deleted within
+      // the debounce window): no dep changes, so nothing would refetch — a
+      // reset here would just blank the list (and strand the loading flag
+      // resetSongs now presets).
+      if (search === debouncedSearch) return
       resetSongs()
     }, 400)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [search, resetSongs])
+  }, [search, debouncedSearch, resetSongs])
 
   // ── FETCH-ALL MODE: load the entire (server-filtered) result set, then sort
   // and/or filter client-side ─────────────────────────────────────────────────
