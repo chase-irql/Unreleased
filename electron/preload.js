@@ -99,6 +99,7 @@ contextBridge.exposeInMainWorld('electron', {
   readAlbumArt:       (filePath, maxSize) => ipcRenderer.invoke('read-album-art', filePath, maxSize),
   readTrackMetadata:  (filePath)      => ipcRenderer.invoke('read-track-metadata', filePath),
   writeTrackMetadata: (filePath, meta) => ipcRenderer.invoke('write-track-metadata', filePath, meta),
+  downloadToLibrary:  (payload)       => ipcRenderer.invoke('download-to-library', payload),
 
   // Local audio format conversion (bundled ffmpeg). Progress arrives on
   // 'convert-progress' keyed by the id passed into convertAudio.

@@ -252,6 +252,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
             apiTitle={apiPrimaryTitle}
             apiImageUrl={apiCoverUrl}
             ownImageRaw={displaySong.image_url}
+            ownHasFile={!!displaySong.path}
             versions={versions}
             altTitles={altTitles}
           />

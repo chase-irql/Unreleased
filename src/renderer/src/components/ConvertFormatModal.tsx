@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, FileAudio2, Loader2, Check, AlertCircle, Folder } from 'lucide-react'
+import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { LibraryTrack } from '../types'
 
@@ -40,6 +40,7 @@ export default function ConvertFormatModal(): JSX.Element | null {
 
   const [format, setFormat] = useState<FormatId>('mp3')
   const [bitrate, setBitrate] = useState('256k')
+  const [stripMeta, setStripMeta] = useState(false)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +55,7 @@ export default function ConvertFormatModal(): JSX.Element | null {
     const firstDifferent = FORMATS.find((f) => f.id !== sourceExt)?.id ?? 'mp3'
     setFormat(firstDifferent)
     setBitrate('256k')
+    setStripMeta(false)
     setBusy(false)
     setProgress(0)
     setError(null)
@@ -89,6 +91,7 @@ export default function ConvertFormatModal(): JSX.Element | null {
         filePath: track.path,
         format,
         bitrate: selected.lossy ? bitrate : undefined,
+        stripMetadata: stripMeta,
       })
       if (result?.error) { setError(result.error); return }
       if (result?.track) addLibraryTrack(result.track as LibraryTrack)
@@ -208,6 +211,27 @@ export default function ConvertFormatModal(): JSX.Element | null {
                   {selected.label} is lossless — the full audio quality is preserved.
                 </p>
               )}
+
+              {/* Remove metadata */}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setStripMeta((v) => !v)}
+                className="w-full flex items-center gap-3 rounded-xl border border-[var(--border)] bg-surface-overlay/50 px-3 py-2.5 text-left hover:bg-surface-overlay transition-colors disabled:opacity-50"
+              >
+                <Eraser size={16} className={stripMeta ? 'text-accent shrink-0' : 'text-text-muted shrink-0'} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-xs font-semibold text-text-primary">Remove metadata</span>
+                  <span className="block text-[10px] text-text-muted leading-tight">Strip tags &amp; cover art from the new file</span>
+                </span>
+                <span
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${stripMeta ? 'bg-accent' : 'bg-surface-raised'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${stripMeta ? 'translate-x-4' : ''}`}
+                  />
+                </span>
+              </button>
 
               {noElectron && (
                 <div className="flex items-center gap-2 text-amber-400 text-xs">

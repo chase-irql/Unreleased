@@ -36,6 +36,7 @@ const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
   { key: 'settings', label: 'Settings' },
   { key: 'songInfo', label: 'Song info' },
   { key: 'editor', label: 'Song editor' },
+  { key: 'localEditor', label: 'Local metadata editor' },
   { key: 'miniPlayer', label: 'Mini player', sub: 'No in-app version — off hides the pop-out button' },
 ]
 
@@ -102,7 +103,7 @@ interface AppSettings {
   downloadPath: string
   autoDownload: boolean
   minimizeToTray: boolean
-  minimizeTo: 'taskbar' | 'tray' | 'notification'
+  minimizeTo: 'taskbar' | 'tray'
   startupView: string
   discordRpcEnabled: boolean
   offlineLibraryPath: string
@@ -130,7 +131,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
     popoutWindows, setPopoutWindow,
-    playbackSpeed, setPlaybackSpeed,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
     hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
@@ -139,7 +139,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'playbackSpeed', 'setPlaybackSpeed', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -680,17 +680,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </select>
                   </Row>
                 )}
-                <Row icon={Zap} iconColor="#f59e0b" label="Playback speed">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range" min={0.5} max={2} step={0.05}
-                      value={playbackSpeed}
-                      onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-                      className="w-24 accent-[var(--accent)]"
-                    />
-                    <span className="text-text-muted text-xs tabular-nums w-10 text-right">{playbackSpeed.toFixed(2)}x</span>
-                  </div>
-                </Row>
+                {/* Playback speed moved to the player bar's Equalizer panel */}
                 <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync">
                   <div className="flex items-center gap-2">
                     <button
@@ -1036,7 +1026,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub={{
                     taskbar: 'Minimize keeps the window on the taskbar',
                     tray: 'Minimize hides the window to the tray icon',
-                    notification: 'Hides to the tray, kept pinned & visible (Windows only)',
                   }[appSettings.minimizeTo]}
                 >
                   <select
@@ -1046,7 +1035,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   >
                     <option value="taskbar">Taskbar</option>
                     <option value="tray">Tray</option>
-                    <option value="notification">Notification tray</option>
                   </select>
                 </Row>
                 <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">

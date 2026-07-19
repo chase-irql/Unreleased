@@ -193,10 +193,14 @@ function extractGeniusLyrics(html: string): string {
 export default function EditorPage(): JSX.Element {
   const {
     account, currentTrack,
-    pendingEditorSongId, setPendingEditorSongId, setActiveView,
+    pendingEditorSongId, setPendingEditorSongId, setActiveView, previousView,
     pendingEditProposal, setPendingEditProposal,
     setShowUserAuth, logoutAccount,
-  } = useStorePick('account', 'currentTrack', 'pendingEditorSongId', 'setPendingEditorSongId', 'setActiveView', 'pendingEditProposal', 'setPendingEditProposal', 'setShowUserAuth', 'logoutAccount')
+  } = useStorePick('account', 'currentTrack', 'pendingEditorSongId', 'setPendingEditorSongId', 'setActiveView', 'previousView', 'pendingEditProposal', 'setPendingEditProposal', 'setShowUserAuth', 'logoutAccount')
+  // Where "back"/"nothing to edit" should return to — wherever the user was
+  // before landing here, falling back to the editor dashboard when that's
+  // unknown (e.g. a deep link straight into the editor).
+  const backView = previousView && previousView !== 'editor' ? previousView : 'editor-profile'
   const isEditor = !!account?.is_editor
   const isAdmin  = !!account?.is_administrator
   // Admins can edit songs too (SongContextMenu's canEdit check already grants
@@ -225,6 +229,11 @@ export default function EditorPage(): JSX.Element {
   // fire and race the manual load, sometimes clobbering it with whatever's
   // currently playing.
   const manualLoadRef = useRef(false)
+  // True once a song/draft has actually been opened in this visit — lets the
+  // "nothing to edit" redirect below tell "backed out of an edit" apart from
+  // "landed here fresh with nothing pending" (the latter still goes to the
+  // editor dashboard; the former should return to wherever the user came from).
+  const wasEditingRef = useRef(false)
 
   const [name,     setName]     = useState('')
   const [artists,  setArtists]  = useState('')
@@ -469,8 +478,12 @@ export default function EditorPage(): JSX.Element {
     // synchronously before that window opens and cleared once loadSong settles
     // (by which point `song`/`loadError` block this effect on their own).
     if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError || manualLoadRef.current) return
-    setActiveView('editor-profile')
-  }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
+    setActiveView(wasEditingRef.current ? backView : 'editor-profile')
+  }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView, backView])
+
+  useEffect(() => {
+    if (song || isNewSongDraft) wasEditingRef.current = true
+  }, [song, isNewSongDraft])
 
   useEffect(() => {
     if (!pendingEditProposal || !canEdit) return
@@ -696,7 +709,7 @@ export default function EditorPage(): JSX.Element {
         {/* Back — only in the in-app editor; the pop-out window has nowhere to go back to */}
         {!IS_FLOAT_WINDOW && (
           <button
-            onClick={() => setActiveView('editor-profile')}
+            onClick={() => setActiveView(backView)}
             title="Back"
             className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0"
           >

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2 } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2, PictureInPicture2, Minimize2 } from 'lucide-react'
+import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
+import { attachToMainWindow, broadcastLibraryTrackUpdate } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
-import { Card, FieldGrid, FieldRow } from './EditorPage'
+import { Card, FieldGrid, FieldRow, TextareaRow } from './EditorPage'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Local-file metadata editor — the same full-page editor layout the API editor
@@ -25,6 +26,21 @@ interface MetaFields {
   discNumber: string
   composer: string
   genre: string
+  bpm: string
+  // Additional ID3 text frames — not tracked in the in-memory library index, so
+  // they're always seeded empty and populated from what's read off disk.
+  conductor: string
+  publisher: string
+  remixArtist: string
+  originalArtist: string
+  copyright: string
+  grouping: string
+  subtitle: string
+  initialKey: string
+  isrc: string
+  mood: string
+  encodedBy: string
+  comment: string
   lyrics: string
   syncedLyrics: string
   albumArt: string | null
@@ -36,12 +52,19 @@ const emptyFields = (t: LibraryTrack): MetaFields => ({
   trackNumber: t.trackNumber ? String(t.trackNumber) : '',
   discNumber: t.discNumber ? String(t.discNumber) : '',
   composer: t.composer, genre: t.genre,
+  bpm: '', conductor: '', publisher: '', remixArtist: '', originalArtist: '',
+  copyright: '', grouping: '', subtitle: '', initialKey: '', isrc: '',
+  mood: '', encodedBy: '', comment: '',
   lyrics: '', syncedLyrics: '', albumArt: t.albumArt ?? null,
 })
 
 export default function LocalEditorPage(): JSX.Element {
   const el = (window as any).electron
-  const { pendingLocalEditTrack: track, setPendingLocalEditTrack, updateLibraryTrack, setActiveView } = useStorePick('pendingLocalEditTrack', 'setPendingLocalEditTrack', 'updateLibraryTrack', 'setActiveView')
+  const { pendingLocalEditTrack: track, setPendingLocalEditTrack, updateLibraryTrack, setActiveView, previousView } = useStorePick('pendingLocalEditTrack', 'setPendingLocalEditTrack', 'updateLibraryTrack', 'setActiveView', 'previousView')
+  // "Edit metadata" can be triggered from anywhere a local track shows up
+  // (library, now playing, mini player) — return to wherever that was rather
+  // than always dumping the user back in the library.
+  const backView = previousView && previousView !== 'local-editor' ? previousView : 'library'
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -50,7 +73,13 @@ export default function LocalEditorPage(): JSX.Element {
   const [original, setOriginal] = useState<MetaFields | null>(null)
   const [fields, setFields]     = useState<MetaFields | null>(null)
 
-  const goBack = (): void => { setPendingLocalEditTrack(null); setActiveView('library') }
+  // In the pop-out window there's no in-app page to return to — closing the
+  // whole window is the equivalent of "back" (mirrors EditorPage's pop-out).
+  const goBack = (): void => {
+    setPendingLocalEditTrack(null)
+    if (IS_FLOAT_WINDOW) { el?.closeSelf?.(); return }
+    setActiveView(backView)
+  }
 
   // Load the full tag set off disk (embedded art, lyrics — things the library
   // index doesn't keep in memory) once the target track is known.
@@ -74,6 +103,19 @@ export default function LocalEditorPage(): JSX.Element {
           discNumber: meta.discNumber ? String(meta.discNumber) : (track.discNumber ? String(track.discNumber) : ''),
           composer: meta.composer || track.composer,
           genre: meta.genre || track.genre,
+          bpm: meta.bpm || '',
+          conductor: meta.conductor || '',
+          publisher: meta.publisher || '',
+          remixArtist: meta.remixArtist || '',
+          originalArtist: meta.originalArtist || '',
+          copyright: meta.copyright || '',
+          grouping: meta.grouping || '',
+          subtitle: meta.subtitle || '',
+          initialKey: meta.initialKey || '',
+          isrc: meta.isrc || '',
+          mood: meta.mood || '',
+          encodedBy: meta.encodedBy || '',
+          comment: meta.comment || '',
           lyrics: meta.lyrics || '',
           syncedLyrics: meta.syncedLyrics || '',
           albumArt: meta.albumArt || track.albumArt || null,
@@ -85,10 +127,10 @@ export default function LocalEditorPage(): JSX.Element {
     }).catch(() => setLoading(false))
   }, [track?.filePath])
 
-  // Landed here with nothing to edit — send the user back to the library.
+  // Landed here with nothing to edit — send the user back where they came from.
   useEffect(() => {
-    if (!track) setActiveView('library')
-  }, [track, setActiveView])
+    if (!track) setActiveView(backView)
+  }, [track, setActiveView, backView])
 
   if (!track || !fields || !original) {
     return (
@@ -127,7 +169,9 @@ export default function LocalEditorPage(): JSX.Element {
     // Tag writing is only implemented for MP3 — for other formats keep the edit
     // in the in-memory index so the UI reflects it, but warn it wasn't persisted.
     if (track.ext !== 'mp3') {
-      updateLibraryTrack(track.id, { ...common, hasAlbumArt: !!fields.albumArt })
+      const updates = { ...common, hasAlbumArt: !!fields.albumArt }
+      updateLibraryTrack(track.id, updates)
+      broadcastLibraryTrackUpdate(track.id, updates)
       setError('Metadata writing is only supported for MP3 files. The change is shown here but was not written to disk.')
       return
     }
@@ -141,12 +185,21 @@ export default function LocalEditorPage(): JSX.Element {
         year: fields.year ? parseInt(fields.year) : null,
         trackNumber: fields.trackNumber ? parseInt(fields.trackNumber) : null,
         composer: fields.composer, genre: fields.genre,
+        bpm: fields.bpm,
+        conductor: fields.conductor, publisher: fields.publisher,
+        remixArtist: fields.remixArtist, originalArtist: fields.originalArtist,
+        copyright: fields.copyright, grouping: fields.grouping,
+        subtitle: fields.subtitle, initialKey: fields.initialKey,
+        isrc: fields.isrc, mood: fields.mood, encodedBy: fields.encodedBy,
+        comment: fields.comment,
         lyrics: fields.lyrics,
         syncedLyrics: fields.syncedLyrics,
         albumArtBase64: fields.albumArt,
       })
       if (result.error) { setError(result.error); return }
-      updateLibraryTrack(track.id, { ...common, hasAlbumArt: !!fields.albumArt })
+      const updates = { ...common, hasAlbumArt: !!fields.albumArt }
+      updateLibraryTrack(track.id, updates)
+      broadcastLibraryTrackUpdate(track.id, updates)
       goBack()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save metadata')
@@ -163,9 +216,40 @@ export default function LocalEditorPage(): JSX.Element {
       {/* Top bar */}
       {/* 188px clears the window controls plus the fixed downloads trigger */}
       <div className="shrink-0 flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]" style={el ? { paddingRight: '188px' } : undefined}>
-        <button onClick={goBack} className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0">
-          <ChevronLeft size={16} />
-        </button>
+        {/* Back — only in the in-app editor; the pop-out window has nowhere to go back to */}
+        {!IS_FLOAT_WINDOW && (
+          <button onClick={goBack} className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0">
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        {/* Manual pop-out — detach the in-app editor into its own window. */}
+        {!IS_FLOAT_WINDOW && el?.openFloatWindow && (
+          <button
+            onClick={() => {
+              el.openFloatWindow('local-editor', { trackId: track.id })
+              // Clear the in-app editor so the track isn't open in two places.
+              setPendingLocalEditTrack(null)
+            }}
+            title="Open in a separate window"
+            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
+          >
+            <PictureInPicture2 size={15} />
+          </button>
+        )}
+        {/* Manual attach — from the pop-out window, dock back into the main
+            window (opens its in-app editor for this track), then close. */}
+        {IS_FLOAT_WINDOW && (
+          <button
+            onClick={() => {
+              attachToMainWindow({ view: 'local-editor', trackId: track.id })
+              el?.closeSelf?.()
+            }}
+            title="Dock into main window"
+            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
+          >
+            <Minimize2 size={15} />
+          </button>
+        )}
         <span className="flex-1 font-bold text-[15px] text-text-primary">Edit metadata</span>
         {changedCount > 0 && (
           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/20 text-accent shrink-0">
@@ -274,8 +358,12 @@ export default function LocalEditorPage(): JSX.Element {
 
                 <Card title="Credits">
                   <FieldGrid>
-                    <FieldRow label="Composer" value={fields.composer} original={original.composer} onChange={v => set('composer', v)} />
-                    <FieldRow label="Genre"    value={fields.genre}    original={original.genre}    onChange={v => set('genre', v)} />
+                    <FieldRow label="Composer"        value={fields.composer}       original={original.composer}       onChange={v => set('composer', v)} />
+                    <FieldRow label="Genre"           value={fields.genre}          original={original.genre}          onChange={v => set('genre', v)} />
+                    <FieldRow label="Conductor"       value={fields.conductor}      original={original.conductor}      onChange={v => set('conductor', v)} />
+                    <FieldRow label="Publisher"       value={fields.publisher}      original={original.publisher}      onChange={v => set('publisher', v)} />
+                    <FieldRow label="Remix Artist"    value={fields.remixArtist}    original={original.remixArtist}    onChange={v => set('remixArtist', v)} />
+                    <FieldRow label="Original Artist" value={fields.originalArtist} original={original.originalArtist} onChange={v => set('originalArtist', v)} />
                   </FieldGrid>
                 </Card>
 
@@ -284,6 +372,20 @@ export default function LocalEditorPage(): JSX.Element {
                     <FieldRow label="Year"    value={fields.year}        original={original.year}        onChange={v => set('year', v)}        placeholder="2019" mono />
                     <FieldRow label="Track #" value={fields.trackNumber} original={original.trackNumber} onChange={v => set('trackNumber', v)} placeholder="1" mono />
                     <FieldRow label="Disc #"  value={fields.discNumber}  original={original.discNumber}  onChange={v => set('discNumber', v)}  placeholder="1" mono />
+                    <FieldRow label="BPM"     value={fields.bpm}         original={original.bpm}         onChange={v => set('bpm', v)}         placeholder="120" mono />
+                    <FieldRow label="Key"     value={fields.initialKey}  original={original.initialKey}  onChange={v => set('initialKey', v)}  placeholder="A Minor" />
+                    <FieldRow label="ISRC"    value={fields.isrc}        original={original.isrc}        onChange={v => set('isrc', v)}        placeholder="US-XXX-00-00000" mono />
+                  </FieldGrid>
+                </Card>
+
+                <Card title="Details">
+                  <FieldGrid>
+                    <FieldRow label="Grouping"  value={fields.grouping}  original={original.grouping}  onChange={v => set('grouping', v)} />
+                    <FieldRow label="Mood"      value={fields.mood}      original={original.mood}      onChange={v => set('mood', v)} />
+                    <FieldRow label="Subtitle"  value={fields.subtitle}  original={original.subtitle}  onChange={v => set('subtitle', v)} span={2} />
+                    <FieldRow label="Copyright" value={fields.copyright} original={original.copyright} onChange={v => set('copyright', v)} span={2} />
+                    <FieldRow label="Encoded By" value={fields.encodedBy} original={original.encodedBy} onChange={v => set('encodedBy', v)} span={2} />
+                    <TextareaRow label="Comment" value={fields.comment} original={original.comment} onChange={v => set('comment', v)} rows={4} placeholder="Free-form comment…" span={2} />
                   </FieldGrid>
                 </Card>
 

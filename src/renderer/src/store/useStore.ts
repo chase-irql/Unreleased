@@ -20,6 +20,7 @@ import { newFolderId, normalizeFolderName, pruneFolders } from '../lib/playlistF
 import type { PlaylistFolder, ServerPlaylistFolder } from '../lib/playlistFolders'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
+import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 import { DEFAULT_NAV_ORDER } from '../lib/navItems'
 
@@ -41,6 +42,14 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 // may flush the report outbox — the live endpoints have no idempotency key,
 // so two windows flushing the same queue would double-send every report.
 export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
+
+// The rate audio actually plays at: the user's playback speed, additionally
+// slowed down while slowed+reverb is active. Every consumer of a "current
+// playback rate" (element rates, progress extrapolation, Discord timestamps,
+// Media Session position) must go through this, not raw playbackSpeed.
+export function effectivePlaybackRate(s: { playbackSpeed: number; slowedReverb: boolean; slowedRate: number }): number {
+  return s.playbackSpeed * (s.slowedReverb ? s.slowedRate : 1)
+}
 
 // Lightweight localStorage persistence helper
 const ls = {
@@ -87,9 +96,9 @@ export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
 // rendering a view inline (see FloatApp). Each can be turned off individually:
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
 // miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
-export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'miniPlayer'
+export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer'
 const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
-  settings: true, songInfo: true, editor: true, miniPlayer: true,
+  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true,
 }
 
 // ─── Non-queue state ──────────────────────────────────────────────────────────
@@ -99,6 +108,24 @@ interface AppState {
   currentTrackFull: FullTrack | null
   volume: number
   playbackSpeed: number
+  // Equalizer / audio effects (see lib/audioEffects.ts for the actual graph).
+  // eqGains holds one dB value per EQ_BANDS entry; eqPreset is the preset id
+  // those gains came from ('custom' once a slider is moved by hand).
+  eqEnabled: boolean
+  eqGains: number[]
+  eqPreset: string
+  // -1 = full left … 1 = full right
+  eqBalance: number
+  eqMono: boolean
+  skipSilence: boolean
+  // Slowed + reverb — the classic aesthetic: playback slowed with the pitch
+  // dropping along (preservesPitch off), plus a convolution reverb tail.
+  // slowedRate multiplies playbackSpeed while enabled; reverbMix/reverbDecay
+  // shape the wet signal (see lib/audioEffects.ts).
+  slowedReverb: boolean
+  slowedRate: number
+  reverbMix: number
+  reverbDecay: number
   // Seconds added to the lookup time when matching synced (LRC) lyric lines —
   // positive shifts lyrics later (delays them), negative shifts them earlier,
   // compensating for lyric files that aren't quite in step with the audio.
@@ -106,6 +133,10 @@ interface AppState {
 
   // UI
   activeView: ViewType
+  // The view that was active immediately before the current one — lets a page
+  // like the editor send its back button/redirects to wherever the user
+  // actually came from instead of a hardcoded destination.
+  previousView: ViewType | null
   showNowPlaying: boolean
   showSettings: boolean
   showDiagnostics: boolean
@@ -265,6 +296,18 @@ interface AppActions {
   setVolume: (vol: number) => void
   setPlaybackSpeed: (speed: number) => void
   setLyricsOffset: (offset: number) => void
+  setEqEnabled: (enabled: boolean) => void
+  // Single-band slider move — flips eqPreset to 'custom'.
+  setEqBand: (index: number, gain: number) => void
+  // Applies a preset by id (gains looked up from EQ_PRESETS).
+  setEqPreset: (id: string) => void
+  setEqBalance: (balance: number) => void
+  setEqMono: (mono: boolean) => void
+  setSkipSilence: (enabled: boolean) => void
+  setSlowedReverb: (enabled: boolean) => void
+  setSlowedRate: (rate: number) => void
+  setReverbMix: (mix: number) => void
+  setReverbDecay: (seconds: number) => void
 
   setActiveView: (view: ViewType) => void
   setShowNowPlaying: (show: boolean) => void
@@ -396,6 +439,9 @@ interface AppActions {
   openSongEditor: (songId: number) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
   setPendingLocalEditTrack: (track: LibraryTrack | null) => void
+  // "Edit metadata" on a local track from anywhere — desktop opens the
+  // pop-out local editor window, web navigates to the in-app view.
+  openLocalEditor: (track: LibraryTrack) => void
 
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
@@ -578,8 +624,47 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setPlaybackSpeed: (speed) => { set({ playbackSpeed: speed }); ls.set('playbackSpeed', speed) },
   setLyricsOffset: (offset) => { set({ lyricsOffset: offset }); ls.set('lyricsOffset', offset) },
 
+  // ── Equalizer / audio effects ─────────────────────────────────────────────
+  eqEnabled: ls.get<boolean>('eqEnabled') ?? false,
+  // Sanitize the stored array against the band list so a build that changes
+  // EQ_BANDS can't leave a mismatched gains length behind.
+  eqGains: (() => {
+    const saved = ls.get<number[]>('eqGains')
+    return Array.isArray(saved) && saved.length === EQ_BANDS.length ? saved : [...FLAT_GAINS]
+  })(),
+  eqPreset: ls.get<string>('eqPreset') ?? 'flat',
+  eqBalance: ls.get<number>('eqBalance') ?? 0,
+  eqMono: ls.get<boolean>('eqMono') ?? false,
+  skipSilence: ls.get<boolean>('skipSilence') ?? false,
+  setEqEnabled: (eqEnabled) => { set({ eqEnabled }); ls.set('eqEnabled', eqEnabled) },
+  setEqBand: (index, gain) => {
+    const eqGains = [...get().eqGains]
+    eqGains[index] = gain
+    set({ eqGains, eqPreset: 'custom' })
+    ls.set('eqGains', eqGains); ls.set('eqPreset', 'custom')
+  },
+  setEqPreset: (id) => {
+    const preset = EQ_PRESETS.find((p) => p.id === id)
+    if (!preset) return
+    const eqGains = [...preset.gains]
+    set({ eqGains, eqPreset: id })
+    ls.set('eqGains', eqGains); ls.set('eqPreset', id)
+  },
+  setEqBalance: (eqBalance) => { set({ eqBalance }); ls.set('eqBalance', eqBalance) },
+  setEqMono: (eqMono) => { set({ eqMono }); ls.set('eqMono', eqMono) },
+  setSkipSilence: (skipSilence) => { set({ skipSilence }); ls.set('skipSilence', skipSilence) },
+  slowedReverb: ls.get<boolean>('slowedReverb') ?? false,
+  slowedRate: ls.get<number>('slowedRate') ?? 0.8,
+  reverbMix: ls.get<number>('reverbMix') ?? 0.4,
+  reverbDecay: ls.get<number>('reverbDecay') ?? 3,
+  setSlowedReverb: (slowedReverb) => { set({ slowedReverb }); ls.set('slowedReverb', slowedReverb) },
+  setSlowedRate: (slowedRate) => { set({ slowedRate }); ls.set('slowedRate', slowedRate) },
+  setReverbMix: (reverbMix) => { set({ reverbMix }); ls.set('reverbMix', reverbMix) },
+  setReverbDecay: (reverbDecay) => { set({ reverbDecay }); ls.set('reverbDecay', reverbDecay) },
+
   // ── UI ────────────────────────────────────────────────────────────────────
   activeView: 'api-tracker',
+  previousView: null,
   showNowPlaying: false,
   showSettings: false,
   showDiagnostics: false,
@@ -611,7 +696,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'wrld': '/wrld',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
-    set({ activeView: view })
+    set((s) => ({ activeView: view, previousView: view === s.activeView ? s.previousView : s.activeView }))
   },
   setShowNowPlaying: (showNowPlaying) => set({ showNowPlaying }),
   setRadioFmActive: (radioFmActive) => set({ radioFmActive }),
@@ -1207,6 +1292,16 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setPendingEditProposal: (pendingEditProposal) => set({ pendingEditProposal }),
   setPendingLocalEditTrack: (pendingLocalEditTrack) => set({ pendingLocalEditTrack }),
+  openLocalEditor: (track) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (el?.openFloatWindow && get().popoutWindows.localEditor) {
+      el.openFloatWindow('local-editor', { trackId: track.id })
+      return
+    }
+    set({ pendingLocalEditTrack: track })
+    get().setActiveView('local-editor')
+  },
 
 
   // ── Library ───────────────────────────────────────────────────────────────

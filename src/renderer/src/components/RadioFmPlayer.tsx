@@ -4,6 +4,7 @@ import { RadioStreamClient, setActiveRadioClient } from '../lib/radioSocketServi
 import { fetchRadioLive } from '../lib/radioLive'
 import { apiFetch, buildImageUrl } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
+import { attachAudioElement } from '../lib/audioEffects'
 
 export default function RadioFmPlayer(): JSX.Element {
   const {
@@ -29,7 +30,12 @@ export default function RadioFmPlayer(): JSX.Element {
         setRadioFmQueuePreview(data.queue_preview ?? [])
       },
     })
-    if (audioRef.current) client.attach(audioRef.current)
+    if (audioRef.current) {
+      client.attach(audioRef.current)
+      // Route FM through the shared effects chain too, so the equalizer /
+      // balance / mono settings apply to every playable — not just the queue.
+      attachAudioElement(audioRef.current)
+    }
     client.connect()
     clientRef.current = client
     setActiveRadioClient(client)
@@ -125,6 +131,10 @@ export default function RadioFmPlayer(): JSX.Element {
     <audio
       ref={audioRef}
       preload="none"
+      // MSE playback uses a same-origin blob: URL (crossOrigin is a no-op
+      // there); the HTTP fallback streams from the API, which sends CORS
+      // headers — both keep the Web Audio chain un-tainted.
+      crossOrigin="anonymous"
       style={{ display: 'none' }}
       onError={() => {
         if (useStore.getState().radioFmActive) setRadioFmActive(false)

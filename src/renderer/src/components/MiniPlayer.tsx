@@ -20,7 +20,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react'
-import { useStorePick } from '../store/useStore'
+import { useStorePick, effectivePlaybackRate } from '../store/useStore'
 import { sendPlayerCommand } from '../lib/windowSync'
 import { formatDuration } from '../lib/format'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
@@ -269,8 +269,11 @@ export default function MiniPlayer(): JSX.Element {
   useEffect(() => { baseRef.current = { t: currentTime, at: performance.now() } }, [currentTime])
   const playingRef = useRef(isPlaying)
   playingRef.current = isPlaying
+  // Effective rate (speed × slowed multiplier) — slowedReverb/slowedRate are
+  // mirrored over window-sync precisely so this extrapolation stays in step.
+  const { slowedReverb, slowedRate } = useStorePick('slowedReverb', 'slowedRate')
   const speedRef = useRef(playbackSpeed)
-  speedRef.current = playbackSpeed
+  speedRef.current = effectivePlaybackRate({ playbackSpeed, slowedReverb, slowedRate })
   const getTime = useCallback((): number => {
     const { t, at } = baseRef.current
     if (!playingRef.current) return t

@@ -39,11 +39,9 @@ let appSettings = {
   downloadPath: app.getPath('downloads'),
   autoDownload: true,
   minimizeToTray: false,
-  // 'taskbar' | 'tray' | 'notification' — where minimizing sends the window.
-  // Both 'tray' and 'notification' hide the window to the tray icon;
-  // 'notification' additionally tries to keep that icon pinned/always-visible
-  // in the notification area instead of letting Windows auto-collapse it into
-  // the overflow chevron (see pinTrayIcon()).
+  // 'taskbar' | 'tray' — where minimizing sends the window. 'tray' hides it to
+  // the tray icon (Windows itself decides whether that icon sits in the
+  // visible strip or the overflow — the user pins it via Taskbar settings).
   minimizeTo: 'taskbar',
   startupView: 'api-tracker',
   discordRpcEnabled: true,
@@ -61,6 +59,9 @@ try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
   appSettings = { ...appSettings, ...saved }
 } catch {}
+// Migrate the removed 'notification' minimize mode (an always-pin-the-tray-icon
+// experiment that Windows wouldn't reliably honor) down to plain 'tray'.
+if (appSettings.minimizeTo === 'notification') appSettings.minimizeTo = 'tray'
 
 function saveSettings() {
   try { fs.writeFileSync(settingsPath, JSON.stringify(appSettings, null, 2)) } catch {}
@@ -217,6 +218,7 @@ const FLOAT_SIZES = {
   settings:      { width: 860,  height: 640, minWidth: 520, minHeight: 420 },
   'song-info':   { width: 540,  height: 760, minWidth: 420, minHeight: 480 },
   editor:        { width: 1000, height: 760, minWidth: 700, minHeight: 520 },
+  'local-editor': { width: 1000, height: 760, minWidth: 700, minHeight: 520 },
   // Compact bar height — must match MiniPlayer.tsx's h-[192px]. The window
   // stays height-locked at this until the lyrics/queue panel expands it
   // (see 'mini-player-set-expanded' below).
@@ -386,97 +388,6 @@ function hideWindowToTray() {
   mainWindow?.hide()
 }
 
-// Windows only, best-effort: there's no public Electron/Win32 API to mark a
-// tray icon "always show" — that's a per-icon preference Explorer keeps for
-// itself under this registry key. Flipping IsPromoted here is what Explorer's
-// own "always show" toggle does under the hood, but Explorer only reads it
-// when an icon is (re-)added via Shell_NotifyIcon — so after writing the
-// flag, applyTrayPin() below destroys and recreates just OUR tray icon
-// (recreateTrayIcon) to force that re-add. That's enough; it does NOT require
-// restarting Explorer itself.
-//
-// All reg.exe calls here use the async execFile, not execFileSync — a sync
-// child-process call blocks Electron's single-threaded main process, which
-// freezes every window and all IPC in the app for as long as reg.exe runs.
-const { execFile } = require('child_process')
-function execFileAsync(cmd, args, opts) {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, opts, (err, stdout) => (err ? reject(err) : resolve(stdout)))
-  })
-}
-
-async function readNotifyIconEntries() {
-  const rootKey = 'HKCU\\Control Panel\\NotifyIconSettings'
-  let dump
-  try {
-    dump = await execFileAsync('reg', ['query', rootKey, '/s'], { encoding: 'utf-8', windowsHide: true })
-  } catch {
-    return []
-  }
-  const exePath = process.execPath.toLowerCase()
-  const entries = []
-  let currentKey = null
-  let currentExe = null
-  let currentPromoted = null
-  const flush = () => {
-    if (currentKey && currentExe === exePath) entries.push({ key: currentKey, isPromoted: currentPromoted })
-  }
-  for (const rawLine of dump.split(/\r?\n/)) {
-    if (rawLine.startsWith('HKEY_CURRENT_USER')) {
-      flush()
-      currentKey = rawLine.trim()
-      currentExe = null
-      currentPromoted = null
-      continue
-    }
-    const exeMatch = /^\s+ExecutablePath\s+REG_SZ\s+(.+)$/.exec(rawLine)
-    if (exeMatch) currentExe = exeMatch[1].trim().toLowerCase()
-    const promotedMatch = /^\s+IsPromoted\s+REG_DWORD\s+0x([0-9a-f]+)$/i.exec(rawLine)
-    if (promotedMatch) currentPromoted = parseInt(promotedMatch[1], 16)
-  }
-  flush()
-  return entries
-}
-
-// Returns { found, applied }: `found` is false if Windows hasn't created a
-// NotifyIconSettings entry for this exe yet (nothing to pin — happens if the
-// tray icon hasn't appeared long enough for Explorer to register it);
-// `applied` is true only if an entry existed and needed (and got) flipping.
-async function pinTrayIcon() {
-  if (process.platform !== 'win32') return { found: false, applied: false }
-  try {
-    const entries = await readNotifyIconEntries()
-    const needsUpdate = entries.filter((e) => e.isPromoted !== 1)
-    for (const e of needsUpdate) {
-      await execFileAsync('reg', ['add', e.key, '/v', 'IsPromoted', '/t', 'REG_DWORD', '/d', '1', '/f'], { windowsHide: true })
-    }
-    runLog('main', `pinTrayIcon: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} found, ${needsUpdate.length} updated`)
-    return { found: entries.length > 0, applied: needsUpdate.length > 0 }
-  } catch (e) {
-    runLog('main', 'pinTrayIcon failed:', e.message)
-    return { found: false, applied: false }
-  }
-}
-
-// Destroys and recreates just our own tray icon — a fresh Shell_NotifyIcon
-// add — so Explorer re-checks NotifyIconSettings for it. Only our one icon
-// blinks off and back on; nothing else on the taskbar is touched.
-function recreateTrayIcon() {
-  if (!tray) return
-  try { tray.destroy() } catch {}
-  tray = null
-  createTray()
-}
-
-// Writes the pin flag, then — only if it actually changed something —
-// recreates the tray icon so it shows pinned immediately instead of waiting
-// for Explorer's next restart/sign-in.
-async function applyTrayPin() {
-  const result = await pinTrayIcon()
-  if (result.applied) recreateTrayIcon()
-  return result
-}
-
 function updateTray() {
   if (!tray) return
   const { isPlaying, title, artist } = trayPlayback
@@ -593,7 +504,7 @@ function createWindow() {
   // minimize where supported; where it doesn't, hiding a minimized window
   // still works, and showMainWindow() restores from either state.
   mainWindow.on('minimize', (e) => {
-    if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
+    if (appSettings.minimizeTo === 'tray' && tray) {
       e.preventDefault()
       hideWindowToTray()
     }
@@ -757,7 +668,7 @@ ipcMain.handle('check-for-updates', () => {
   return autoUpdater.checkForUpdatesAndNotify()
 })
 ipcMain.handle('minimize-window', () => {
-  if ((appSettings.minimizeTo === 'tray' || appSettings.minimizeTo === 'notification') && tray) {
+  if (appSettings.minimizeTo === 'tray' && tray) {
     hideWindowToTray()
   } else {
     mainWindow?.minimize()
@@ -981,7 +892,6 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
-  if (key === 'minimizeTo' && value === 'notification') applyTrayPin()
   return true
 })
 
@@ -1408,6 +1318,21 @@ ipcMain.handle('read-track-metadata', async (_, filePath) => {
       discNumber: common.disk?.no || null,
       composer: (common.composer || []).join(', '),
       genre: (common.genre || []).join(', '),
+      // Additional ID3 text frames the local editor lets the user edit. Most
+      // map to string[] in music-metadata (join them); comment is an IComment.
+      comment: common.comment?.[0]?.text || (typeof common.comment?.[0] === 'string' ? common.comment[0] : '') || '',
+      conductor: (common.conductor || []).join(', '),
+      publisher: (common.publisher || []).join(', '),
+      copyright: common.copyright || '',
+      bpm: common.bpm != null ? String(common.bpm) : '',
+      originalArtist: common.originalartist || '',
+      remixArtist: (common.remixer || []).join(', '),
+      mood: common.mood || '',
+      initialKey: common.key || '',
+      isrc: (common.isrc || []).join(', '),
+      grouping: common.grouping || '',
+      subtitle: (common.subtitle || []).join(', '),
+      encodedBy: common.encodedby || '',
       lyrics: common.lyrics?.[0]?.text || '',
       syncedLyrics: common.lyrics?.find(l => l.syncText)?.syncText?.map(s => `[${formatTime(s.timestamp)}]${s.text}`).join('\n') || '',
       albumArt,
@@ -1465,6 +1390,21 @@ ipcMain.handle('write-track-metadata', async (_, filePath, metadata) => {
     if (metadata.trackNumber !== undefined) tags.trackNumber = metadata.trackNumber != null ? String(metadata.trackNumber) : ''
     if (metadata.composer !== undefined) tags.composer = metadata.composer
     if (metadata.genre !== undefined) tags.genre = metadata.genre
+    // Additional editable text frames. Empty strings clear the frame; comment
+    // (COMM) needs the {language,text} object shape, the rest are plain strings.
+    if (metadata.comment !== undefined) tags.comment = { language: 'eng', text: metadata.comment || '' }
+    if (metadata.conductor !== undefined) tags.conductor = metadata.conductor
+    if (metadata.publisher !== undefined) tags.publisher = metadata.publisher
+    if (metadata.copyright !== undefined) tags.copyright = metadata.copyright
+    if (metadata.bpm !== undefined) tags.bpm = metadata.bpm != null && metadata.bpm !== '' ? String(metadata.bpm) : ''
+    if (metadata.originalArtist !== undefined) tags.originalArtist = metadata.originalArtist
+    if (metadata.remixArtist !== undefined) tags.remixArtist = metadata.remixArtist
+    if (metadata.mood !== undefined) tags.mood = metadata.mood
+    if (metadata.initialKey !== undefined) tags.initialKey = metadata.initialKey
+    if (metadata.isrc !== undefined) tags.ISRC = metadata.isrc
+    if (metadata.grouping !== undefined) tags.contentGroup = metadata.grouping
+    if (metadata.subtitle !== undefined) tags.subtitle = metadata.subtitle
+    if (metadata.encodedBy !== undefined) tags.encodedBy = metadata.encodedBy
     if (metadata.lyrics !== undefined) tags.unsynchronisedLyrics = { language: 'eng', text: metadata.lyrics }
     if (metadata.syncedLyrics !== undefined) {
       const synced = parseLrcToSylt(metadata.syncedLyrics || '')
@@ -1621,7 +1561,7 @@ function uniqueConvertPath(dir, base, ext, srcPath) {
   return candidate
 }
 
-ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate }) => {
+ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate, stripMetadata }) => {
   const spec = CONVERT_FORMATS[format]
   if (!spec) return { error: `Unsupported target format: ${format}` }
   if (!filePath || !fs.existsSync(filePath)) return { error: 'Source file not found' }
@@ -1645,14 +1585,20 @@ ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate })
 
   const br = bitrate || '256k'
   const args = ['-hide_banner', '-nostdin', '-y', '-i', filePath]
-  if (spec.cover) {
+  // When stripping, drop the cover (and everything else) — keep only audio.
+  const keepCover = spec.cover && !stripMetadata
+  if (keepCover) {
     // Keep audio + carry the cover (an "attached_pic" video stream) if present;
     // `?` makes the video mapping optional so cover-less files don't fail.
     args.push('-map', '0:a', '-map', '0:v?', '-c:v', 'copy')
   } else {
     args.push('-map', '0:a')
   }
-  args.push('-map_metadata', '0', ...spec.codec(br))
+  // -map_metadata -1 wipes tags; also drop chapters so nothing identifying
+  // survives. Otherwise inherit the source's tags (-map_metadata 0).
+  args.push('-map_metadata', stripMetadata ? '-1' : '0')
+  if (stripMetadata) args.push('-map_chapters', '-1')
+  args.push(...spec.codec(br))
   // Machine-readable progress on stdout; keep stderr for the failure message.
   args.push('-progress', 'pipe:1', '-nostats', outPath)
 
@@ -1814,13 +1760,17 @@ app.whenReady().then(() => {
       }
       const mime = mimeByExt[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
 
+      // CORS header on every response: the renderer's <audio> elements load
+      // with crossOrigin="anonymous" so the Web Audio equalizer chain can
+      // process them — without this header, CORS-mode loads fail and local
+      // files won't play at all.
       const rangeHeader = request.headers.get('range')
       const match = rangeHeader && /bytes=(\d*)-(\d*)/.exec(rangeHeader)
       if (match && (match[1] || match[2])) {
         const start = match[1] ? parseInt(match[1], 10) : size - parseInt(match[2], 10)
         const end = match[1] && match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1
         if (start >= size || start < 0 || start > end) {
-          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } })
+          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}`, 'Access-Control-Allow-Origin': '*' } })
         }
         const stream = fs.createReadStream(filePath, { start, end })
         return new Response(webStreamFromNode(stream), {
@@ -1830,6 +1780,7 @@ app.whenReady().then(() => {
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
             'Content-Range': `bytes ${start}-${end}/${size}`,
+            'Access-Control-Allow-Origin': '*',
           },
         })
       }
@@ -1841,6 +1792,7 @@ app.whenReady().then(() => {
           'Content-Type': mime,
           'Accept-Ranges': 'bytes',
           'Content-Length': String(size),
+          'Access-Control-Allow-Origin': '*',
         },
       })
     } catch (e) {
@@ -1850,7 +1802,6 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
-  if (appSettings.minimizeTo === 'notification') applyTrayPin()
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
 
   if (!isDev) {

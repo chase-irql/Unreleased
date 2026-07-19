@@ -21,8 +21,9 @@ import {
   Radio,
   Info,
   Loader2,
+  SlidersHorizontal,
 } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { useStore, useStorePick, effectivePlaybackRate } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
@@ -32,6 +33,11 @@ import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
+import EqualizerPanel from './EqualizerPanel'
+import {
+  attachAudioElement, applyAudioEffects, resumeEffectsContext,
+  setEffectsOutputDevice, getCurrentPeak,
+} from '../lib/audioEffects'
 import { LibraryTrack } from '../types'
 
 // Downloaded-for-offline audio always wins over streaming — same track id,
@@ -123,6 +129,16 @@ export default function Player(): JSX.Element {
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
   const { libraryTracks } = useStorePick('libraryTracks')
   const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
+  const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
+  const { slowedReverb, slowedRate, reverbMix, reverbDecay } = useStorePick('slowedReverb', 'slowedRate', 'reverbMix', 'reverbDecay')
+
+  // Applies the effective playback rate (speed × slowed multiplier) to an
+  // element, letting the pitch drop with it while slowed+reverb is active.
+  const applyRate = (audio: HTMLAudioElement): void => {
+    const s = useStore.getState()
+    audio.playbackRate = effectivePlaybackRate(s)
+    audio.preservesPitch = !s.slowedReverb
+  }
 
 
   // FM elapsed time — ticks locally between WS updates
@@ -264,6 +280,25 @@ export default function Player(): JSX.Element {
     na.load()
   }, [queueIndex, queue.length, isPlaying, repeat, crossfadeEnabled, radioMode])
 
+  // Route both slots through the shared Web Audio effects chain (EQ, balance,
+  // mono, silence detection). Elements keep their own volume/rate handling.
+  useEffect(() => {
+    attachAudioElement(slotA.current)
+    attachAudioElement(slotB.current)
+  }, [])
+
+  // Push effect settings into the chain whenever they change.
+  useEffect(() => {
+    applyAudioEffects({
+      eqEnabled,
+      gains: eqGains,
+      balance: eqBalance,
+      mono: eqMono,
+      reverbMix: slowedReverb ? reverbMix : 0,
+      reverbDecay,
+    })
+  }, [eqEnabled, eqGains, eqBalance, eqMono, slowedReverb, reverbMix, reverbDecay])
+
   // Expose seek and duration to other components
   useEffect(() => {
     _seek = (t) => {
@@ -378,7 +413,7 @@ export default function Player(): JSX.Element {
     const fileUrl = resolvePlaybackUrl(currentTrack)
     audio.src = fileUrl
     audio.volume = volumeRef.current
-    audio.playbackRate = playbackSpeed
+    applyRate(audio)
     if (isPlaying) audio.play().catch(console.error)
   }, [currentTrack?.id])
 
@@ -394,6 +429,9 @@ export default function Player(): JSX.Element {
     // throttled timer catches up.
     const smoothFade = useStore.getState().pauseFadeEnabled && !cfActive.current
       && document.visibilityState === 'visible'
+    // Autoplay policy can leave the effects AudioContext suspended until a
+    // gesture — kick it on every play so audio never routes into a dead graph.
+    if (isPlaying) resumeEffectsContext()
     if (isPlaying) {
       if (smoothFade) {
         // Ramp back up — from 0 on a normal resume, or from wherever a
@@ -512,12 +550,58 @@ export default function Player(): JSX.Element {
     if (!cfActive.current && pauseFadeRaf.current == null) audio.volume = volume
   }, [volume])
 
-  // Playback speed — apply to both audio slots
+  // Playback rate — apply to both audio slots (speed and the slowed+reverb
+  // multiplier both funnel through applyRate)
   useEffect(() => {
     for (const ref of [slotA, slotB]) {
-      if (ref.current) ref.current.playbackRate = playbackSpeed
+      if (ref.current) applyRate(ref.current)
     }
-  }, [playbackSpeed])
+  }, [playbackSpeed, slowedReverb, slowedRate])
+
+  // ── Skip silence ───────────────────────────────────────────────────────────
+  // Polls the effects chain's analyser and fast-forwards through sustained
+  // silence by boosting playbackRate until sound returns — no seeking, so
+  // streamed tracks don't rebuffer and nothing audible ever gets jumped over.
+  const silentTicks = useRef(0)
+  useEffect(() => {
+    const restoreRate = (): void => {
+      silentTicks.current = 0
+      const audio = getActive()
+      if (audio) audio.playbackRate = effectivePlaybackRate(useStore.getState())
+    }
+    if (!skipSilence) return
+    const id = setInterval(() => {
+      const audio = getActive()
+      // Only ever touch normal, active playback — never mid-crossfade (the
+      // fade-out deliberately approaches silence) and never while paused.
+      if (!audio || audio.paused || !useStore.getState().isPlaying || cfActive.current) {
+        silentTicks.current = 0
+        return
+      }
+      // The analyser reads the element-volume-scaled mix, so silence under
+      // mute is indistinguishable from real silence — bail instead of
+      // fast-forwarding a muted song into oblivion.
+      const vol = volumeRef.current
+      if (vol <= 0.01) { restoreRate(); return }
+      // Don't boost into the track's final moments — the ended/crossfade
+      // boundary logic should run at normal speed.
+      const dur = isFinite(audio.duration) ? audio.duration : 0
+      if (dur > 0 && dur - audio.currentTime < 2) { restoreRate(); return }
+      // Scale the threshold by volume to undo the element-volume scaling.
+      if (getCurrentPeak() < 0.005 * vol) {
+        // ~300ms of confirmed silence before engaging, so inter-word gaps
+        // and drum rests don't trigger it.
+        silentTicks.current++
+        if (silentTicks.current >= 3) {
+          const base = effectivePlaybackRate(useStore.getState())
+          audio.playbackRate = Math.min(base * 3, 4)
+        }
+      } else if (silentTicks.current > 0) {
+        restoreRate()
+      }
+    }, 100)
+    return () => { clearInterval(id); restoreRate() }
+  }, [skipSilence])
 
   // Media Session API — lock screen / notification metadata
   useEffect(() => {
@@ -581,14 +665,17 @@ export default function Player(): JSX.Element {
     try {
       navigator.mediaSession.setPositionState({
         duration:     audio.duration,
-        playbackRate: playbackSpeed,
+        playbackRate: effectivePlaybackRate(useStore.getState()),
         position:     Math.min(currentTime, audio.duration),
       })
     } catch {/* ignore */}
-  }, [currentTime, playbackSpeed])
+  }, [currentTime, playbackSpeed, slowedReverb, slowedRate])
 
   // Audio output device
   useEffect(() => {
+    // Attached elements emit through the effects AudioContext, so the device
+    // choice must land there too (element sinkIds no longer carry the sound).
+    setEffectsOutputDevice(audioOutput)
     const apply = async (): Promise<void> => {
       for (const audio of [slotA.current, slotB.current]) {
         if (!audio) continue
@@ -815,6 +902,18 @@ export default function Player(): JSX.Element {
       setProgress(0)
       return
     }
+    // When on repeat-one, skip back = restart the same song (mirrors handleNext)
+    if (repeat === 'one') {
+      cancelCF()
+      if (audio) {
+        audio.currentTime = 0
+        audio.volume = volumeRef.current
+        if (isPlaying) audio.play().catch(console.error)
+      }
+      setCurrentTime(0)
+      setProgress(0)
+      return
+    }
     if (audio && audio.currentTime > 3) {
       cancelCF()
       audio.currentTime = 0
@@ -944,7 +1043,7 @@ export default function Player(): JSX.Element {
       // Local file — open the local-metadata editor instead of the API editor.
       if (currentTrack?.id.startsWith('local-')) {
         const lt = libraryTracks.find((t) => t.id === currentTrack.id)
-        if (lt) { useStore.getState().setPendingLocalEditTrack(lt); setActiveView('local-editor') }
+        if (lt) useStore.getState().openLocalEditor(lt)
       }
     },
     'speed-up':    () => setPlaybackSpeed(clampSpeed(playbackSpeed + 0.25)),
@@ -1081,7 +1180,7 @@ export default function Player(): JSX.Element {
       const time = seekDrag * dur
       audio.currentTime = time
       audio.volume = volumeRef.current
-      audio.playbackRate = playbackSpeed
+      applyRate(audio)
       setCurrentTime(time)
       setProgress(seekDrag)
     }
@@ -1103,12 +1202,18 @@ export default function Player(): JSX.Element {
   const activeDuration = getActive()?.duration
   const duration = (activeDuration && isFinite(activeDuration) ? activeDuration : 0) || currentTrack?.duration || 0
 
-  const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
-  const cycleSpeed = (): void => {
-    const idx = SPEEDS.indexOf(playbackSpeed)
-    setPlaybackSpeed(SPEEDS[(idx + 1) % SPEEDS.length])
+  // Equalizer popover (also hosts balance/mono/skip-silence + playback speed)
+  const [showEq, setShowEq] = useState(false)
+  const eqBtnRef = useRef<HTMLButtonElement>(null)
+  const [eqPos, setEqPos] = useState({ bottom: 0, right: 0 })
+  const openEqPanel = (): void => {
+    if (!eqBtnRef.current) return
+    const r = eqBtnRef.current.getBoundingClientRect()
+    setEqPos({ bottom: window.innerHeight - r.top + 8, right: Math.max(8, window.innerWidth - r.right - 170) })
+    setShowEq((v) => !v)
   }
-  const speedLabel = playbackSpeed === 1 ? '1x' : `${playbackSpeed}x`
+  // Accent the button when anything in the panel deviates from neutral.
+  const eqActive = eqEnabled || playbackSpeed !== 1 || eqBalance !== 0 || eqMono || skipSilence || slowedReverb
 
 
   // (Play/pause on Space is handled by the unified hotkey system above — the
@@ -1147,9 +1252,13 @@ export default function Player(): JSX.Element {
 
   return (
     <>
+      {/* crossOrigin: required for the Web Audio effects chain — without CORS
+          clearance createMediaElementSource outputs pure silence. The API and
+          the local-media:// protocol both send Access-Control-Allow-Origin. */}
       <audio
         ref={slotA}
         preload="none"
+        crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
         onError={(e) => console.error('Audio error (slotA):', e)}
@@ -1157,6 +1266,7 @@ export default function Player(): JSX.Element {
       <audio
         ref={slotB}
         preload="none"
+        crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
         onError={(e) => console.error('Audio error (slotB):', e)}
@@ -1389,7 +1499,7 @@ export default function Player(): JSX.Element {
                       onPlayNext={() => playNext(currentTrack)}
                       onEditLocalMetadata={currentSongId == null && currentTrack.id.startsWith('local-') ? () => {
                         const lt = libraryTracks.find(t => t.id === currentTrack.id)
-                        if (lt) { useStore.getState().setPendingLocalEditTrack(lt); setActiveView('local-editor') }
+                        if (lt) useStore.getState().openLocalEditor(lt)
                       } : undefined}
                     />
                   )}
@@ -1468,20 +1578,19 @@ export default function Player(): JSX.Element {
           </div>
         </div>
 
-        {/* Right: speed + queue + NP + volume */}
+        {/* Right: equalizer + queue + NP + volume */}
         <div className="flex items-center gap-3 w-72 justify-end">
-          {/* Playback speed */}
-          {!radioFmActive && (
+          {/* Equalizer (EQ, balance, mono, skip silence, playback speed).
+              Stays visible during FM — the effects chain applies to the live
+              stream too; only the speed row hides inside the panel. */}
           <button
-            onClick={cycleSpeed}
-            title={`Playback speed: ${speedLabel}`}
-            className={`text-xs font-semibold tabular-nums min-w-[26px] transition-colors ${
-              playbackSpeed !== 1 ? 'text-accent' : 'text-text-muted hover:text-text-primary'
-            }`}
+            ref={eqBtnRef}
+            onClick={openEqPanel}
+            title="Equalizer"
+            className={`transition-colors ${eqActive ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
-            {speedLabel}
+            <SlidersHorizontal size={16} />
           </button>
-          )}
 
           {!radioFmActive && <button onClick={() => setShowQueue(!showQueue)}
             className={`relative transition-colors ${showQueue ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
@@ -1564,6 +1673,21 @@ export default function Player(): JSX.Element {
               setActiveView('editor')
             } : undefined}
           />
+        )}
+
+        {/* Equalizer popover */}
+        {showEq && createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowEq(false)} />
+            <div
+              onMouseDown={(e) => e.stopPropagation()}
+              className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl"
+              style={{ bottom: eqPos.bottom, right: eqPos.right }}
+            >
+              <EqualizerPanel />
+            </div>
+          </>,
+          document.body
         )}
 
         {/* Output device popover */}
