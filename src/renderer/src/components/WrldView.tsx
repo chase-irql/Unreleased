@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
@@ -35,6 +35,7 @@ export default function WrldView(): JSX.Element {
     nextTrack, prevTrack,
     showQueue, setShowQueue,
     audioOutput, setAudioOutput,
+    showEqPanel, setShowEqPanel, eqFxActive,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -64,6 +65,10 @@ export default function WrldView(): JSX.Element {
     setShowQueue: s.setShowQueue,
     audioOutput: s.audioOutput,
     setAudioOutput: s.setAudioOutput,
+    showEqPanel: s.showEqPanel,
+    setShowEqPanel: s.setShowEqPanel,
+    // Same "anything non-neutral" indicator as the player bar's EQ button.
+    eqFxActive: s.eqEnabled || (s.speedActive && s.playbackSpeed !== 1) || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
   })))
 
   // Skins beyond the classic pair mean `theme === 'dark'` no longer covers
@@ -874,6 +879,14 @@ export default function WrldView(): JSX.Element {
               )}
               <div className="flex items-center gap-2.5">
                 <button
+                  onClick={() => setShowEqPanel(!showEqPanel)}
+                  title="Equalizer"
+                  className="shrink-0 transition-opacity hover:opacity-70"
+                  style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
+                >
+                  <SlidersHorizontal size={16} />
+                </button>
+                <button
                   onClick={toggleMute}
                   className="shrink-0 transition-opacity hover:opacity-70"
                   style={{ color: txtTer }}
@@ -1078,6 +1091,14 @@ export default function WrldView(): JSX.Element {
 
                 {/* Volume row */}
                 <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => setShowEqPanel(!showEqPanel)}
+                    title="Equalizer"
+                    className="shrink-0 transition-opacity hover:opacity-70"
+                    style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
+                  >
+                    <SlidersHorizontal size={14} />
+                  </button>
                   <button
                     onClick={toggleMute}
                     className="shrink-0 transition-opacity hover:opacity-70"

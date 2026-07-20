@@ -43,6 +43,27 @@ export const EQ_PRESETS: EqPreset[] = [
   { id: 'small-speakers', name: 'Small Speakers', gains: [5.5, 4.5, 4, 2.5, 1.5, 0, -1.5, -3, -4, -4.5] },
 ]
 
+// A community-shared effects configuration ("community edit") — any subset of
+// the equalizer panel's settings, to be fetched from the API once its
+// endpoints exist. Partial on purpose: an edit only overrides what it sets.
+export interface CommunityEdit {
+  id: string
+  name: string
+  author?: string
+  settings: Partial<{
+    eqEnabled: boolean
+    eqGains: number[]
+    eqBalance: number
+    eqMono: boolean
+    reverbEnabled: boolean
+    reverbMix: number
+    reverbDecay: number
+    speedActive: boolean
+    playbackSpeed: number
+    pitchShift: boolean
+  }>
+}
+
 export interface AudioEffectSettings {
   eqEnabled: boolean
   gains: number[]

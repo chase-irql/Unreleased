@@ -21,6 +21,7 @@ import type { PlaylistFolder, ServerPlaylistFolder } from '../lib/playlistFolder
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
 import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
+import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 import { DEFAULT_NAV_ORDER } from '../lib/navItems'
 
@@ -43,12 +44,12 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 // so two windows flushing the same queue would double-send every report.
 export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
-// The rate audio actually plays at: the user's playback speed, additionally
-// slowed down while slowed+reverb is active. Every consumer of a "current
-// playback rate" (element rates, progress extrapolation, Discord timestamps,
-// Media Session position) must go through this, not raw playbackSpeed.
-export function effectivePlaybackRate(s: { playbackSpeed: number; slowedReverb: boolean; slowedRate: number }): number {
-  return s.playbackSpeed * (s.slowedReverb ? s.slowedRate : 1)
+// The rate audio actually plays at: the speed slider's value while the speed
+// toggle is on, else 1. Every consumer of a "current playback rate" (element
+// rates, progress extrapolation, Discord timestamps, Media Session position)
+// must go through this, not raw playbackSpeed.
+export function effectivePlaybackRate(s: { playbackSpeed: number; speedActive: boolean }): number {
+  return s.speedActive ? s.playbackSpeed : 1
 }
 
 // Lightweight localStorage persistence helper
@@ -118,14 +119,22 @@ interface AppState {
   eqBalance: number
   eqMono: boolean
   skipSilence: boolean
-  // Slowed + reverb — the classic aesthetic: playback slowed with the pitch
-  // dropping along (preservesPitch off), plus a convolution reverb tail.
-  // slowedRate multiplies playbackSpeed while enabled; reverbMix/reverbDecay
-  // shape the wet signal (see lib/audioEffects.ts).
-  slowedReverb: boolean
-  slowedRate: number
+  // Reverb (convolution tail; see lib/audioEffects.ts) — independently
+  // toggleable; mix/decay keep their values while off.
+  reverbEnabled: boolean
   reverbMix: number
   reverbDecay: number
+  // Speed on/off gate: while false playback runs at 1x and playbackSpeed just
+  // remembers the slider. setPlaybackSpeed flips it automatically (≠1 → on,
+  // =1 → off) so the speed hotkeys keep working with the toggle off.
+  speedActive: boolean
+  // Let the pitch follow the rate (preservesPitch off) — slowed feel below
+  // 1x, sped-up/nightcore feel above. Combine with reverb for slowed+reverb.
+  pitchShift: boolean
+  // Community-shared effect configs, shown next to the EQ presets. Stays
+  // empty until the API endpoints for them exist — a future fetch populates
+  // it; nothing is persisted locally.
+  communityEdits: CommunityEdit[]
   // Seconds added to the lookup time when matching synced (LRC) lyric lines —
   // positive shifts lyrics later (delays them), negative shifts them earlier,
   // compensating for lyric files that aren't quite in step with the audio.
@@ -141,6 +150,10 @@ interface AppState {
   showSettings: boolean
   showDiagnostics: boolean
   showQueue: boolean
+  // Equalizer popover visibility. Store-level (not Player-local) so the WRLD
+  // tab's button and the 'equalizer' hotkey can open it from anywhere — the
+  // always-mounted Player owns the actual portal.
+  showEqPanel: boolean
   // Song whose info modal is shown by the main window's global host (App's
   // <GlobalSongInfoHost>). Only used to "attach" a floating song-info window
   // back into the main window — the per-view list modals keep their own local
@@ -304,10 +317,12 @@ interface AppActions {
   setEqBalance: (balance: number) => void
   setEqMono: (mono: boolean) => void
   setSkipSilence: (enabled: boolean) => void
-  setSlowedReverb: (enabled: boolean) => void
-  setSlowedRate: (rate: number) => void
+  setReverbEnabled: (enabled: boolean) => void
   setReverbMix: (mix: number) => void
   setReverbDecay: (seconds: number) => void
+  setSpeedActive: (active: boolean) => void
+  setPitchShift: (enabled: boolean) => void
+  applyCommunityEdit: (edit: CommunityEdit) => void
 
   setActiveView: (view: ViewType) => void
   setShowNowPlaying: (show: boolean) => void
@@ -321,6 +336,7 @@ interface AppActions {
   setShowSettings: (show: boolean) => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
+  setShowEqPanel: (show: boolean) => void
   setInfoSongId: (id: number | null) => void
   setPlayerCollapsed: (collapsed: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
@@ -621,7 +637,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
   setVolume: (volume) => { set({ volume }); ls.set('volume', volume) },
-  setPlaybackSpeed: (speed) => { set({ playbackSpeed: speed }); ls.set('playbackSpeed', speed) },
+  // Touching the speed flips its toggle to match (≠1 on, =1 off) so slider
+  // moves and the speed hotkeys always take effect even when toggled off.
+  setPlaybackSpeed: (speed) => {
+    set({ playbackSpeed: speed, speedActive: speed !== 1 })
+    ls.set('playbackSpeed', speed); ls.set('speedActive', speed !== 1)
+  },
   setLyricsOffset: (offset) => { set({ lyricsOffset: offset }); ls.set('lyricsOffset', offset) },
 
   // ── Equalizer / audio effects ─────────────────────────────────────────────
@@ -653,14 +674,41 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setEqBalance: (eqBalance) => { set({ eqBalance }); ls.set('eqBalance', eqBalance) },
   setEqMono: (eqMono) => { set({ eqMono }); ls.set('eqMono', eqMono) },
   setSkipSilence: (skipSilence) => { set({ skipSilence }); ls.set('skipSilence', skipSilence) },
-  slowedReverb: ls.get<boolean>('slowedReverb') ?? false,
-  slowedRate: ls.get<number>('slowedRate') ?? 0.8,
+  // 'slowedReverb' is the feature's short-lived bundled-toggle predecessor —
+  // carry an existing on-state over so it doesn't silently switch off.
+  reverbEnabled: ls.get<boolean>('reverbEnabled') ?? ls.get<boolean>('slowedReverb') ?? false,
   reverbMix: ls.get<number>('reverbMix') ?? 0.4,
   reverbDecay: ls.get<number>('reverbDecay') ?? 3,
-  setSlowedReverb: (slowedReverb) => { set({ slowedReverb }); ls.set('slowedReverb', slowedReverb) },
-  setSlowedRate: (slowedRate) => { set({ slowedRate }); ls.set('slowedRate', slowedRate) },
+  speedActive: ls.get<boolean>('speedActive') ?? ((ls.get<number>('playbackSpeed') ?? 1) !== 1),
+  pitchShift: ls.get<boolean>('pitchShift') ?? ls.get<boolean>('slowedReverb') ?? false,
+  setReverbEnabled: (reverbEnabled) => { set({ reverbEnabled }); ls.set('reverbEnabled', reverbEnabled) },
   setReverbMix: (reverbMix) => { set({ reverbMix }); ls.set('reverbMix', reverbMix) },
   setReverbDecay: (reverbDecay) => { set({ reverbDecay }); ls.set('reverbDecay', reverbDecay) },
+  setSpeedActive: (speedActive) => { set({ speedActive }); ls.set('speedActive', speedActive) },
+  setPitchShift: (pitchShift) => { set({ pitchShift }); ls.set('pitchShift', pitchShift) },
+  communityEdits: [],
+  // Applies whatever subset of settings the edit carries, through the normal
+  // setters so persistence and the auto speed-toggle behavior stay in one
+  // place. EQ gains land as a bulk write ('custom' preset — there's no
+  // per-band setter path for them, so persist here like setEqBand does).
+  applyCommunityEdit: (edit) => {
+    const a = get()
+    const s = edit.settings
+    if (s.eqEnabled !== undefined) a.setEqEnabled(s.eqEnabled)
+    if (Array.isArray(s.eqGains) && s.eqGains.length === EQ_BANDS.length) {
+      const eqGains = [...s.eqGains]
+      set({ eqGains, eqPreset: 'custom' })
+      ls.set('eqGains', eqGains); ls.set('eqPreset', 'custom')
+    }
+    if (s.eqBalance !== undefined) a.setEqBalance(s.eqBalance)
+    if (s.eqMono !== undefined) a.setEqMono(s.eqMono)
+    if (s.reverbEnabled !== undefined) a.setReverbEnabled(s.reverbEnabled)
+    if (s.reverbMix !== undefined) a.setReverbMix(s.reverbMix)
+    if (s.reverbDecay !== undefined) a.setReverbDecay(s.reverbDecay)
+    if (s.playbackSpeed !== undefined) a.setPlaybackSpeed(s.playbackSpeed)
+    if (s.speedActive !== undefined) a.setSpeedActive(s.speedActive)
+    if (s.pitchShift !== undefined) a.setPitchShift(s.pitchShift)
+  },
 
   // ── UI ────────────────────────────────────────────────────────────────────
   activeView: 'api-tracker',
@@ -669,6 +717,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showSettings: false,
   showDiagnostics: false,
   showQueue: false,
+  showEqPanel: false,
   infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
   wrldFullscreen: false,
@@ -721,6 +770,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
+  setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
   setInfoSongId: (infoSongId) => set({ infoSongId }),
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
