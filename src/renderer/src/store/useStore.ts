@@ -24,6 +24,7 @@ import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
 import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 import { DEFAULT_NAV_ORDER } from '../lib/navItems'
+import { getLastfmSession } from '../lib/lastfm'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -192,6 +193,12 @@ interface AppState {
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
   preferOgVersion: boolean
+  // Last.fm scrobbling. `lastfmUser` mirrors the saved session's username
+  // (null = not connected; the session key itself lives in lib/lastfm's own
+  // localStorage entry). `lastfmEnabled` pauses scrobbling without
+  // disconnecting the account.
+  lastfmUser: string | null
+  lastfmEnabled: boolean
   // Per-kind toggles for the detached pop-out windows (desktop only). Disabling
   // one keeps the feature working — it just renders inline in the main window
   // instead (or, for the mini player, hides the pop-out button).
@@ -350,6 +357,8 @@ interface AppActions {
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
   setPreferOgVersion: (enabled: boolean) => void
+  setLastfmUser: (name: string | null) => void
+  setLastfmEnabled: (enabled: boolean) => void
   setPopoutWindow: (kind: PopoutWindowKind, enabled: boolean) => void
   // Bind (or, with combo === '', clear) a shortcut. Passing a combo already in
   // use elsewhere transfers it — the previous owner is cleared — so bindings
@@ -786,6 +795,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
+  lastfmUser: getLastfmSession()?.name ?? null,
+  lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
   // Merge stored overrides onto the defaults so a kind added in a later version
   // is enabled by default even for installs whose saved object predates it.
   popoutWindows: { ...POPOUT_WINDOW_DEFAULTS, ...(ls.get<Partial<Record<PopoutWindowKind, boolean>>>('popoutWindows') ?? {}) },
@@ -802,6 +813,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
+  setLastfmUser: (lastfmUser) => set({ lastfmUser }),
+  setLastfmEnabled: (enabled) => { set({ lastfmEnabled: enabled }); ls.set('lastfmEnabled', enabled) },
   setPopoutWindow: (kind, enabled) => {
     const popoutWindows = { ...get().popoutWindows, [kind]: enabled }
     set({ popoutWindows })

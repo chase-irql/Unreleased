@@ -28,6 +28,7 @@ import LikedSongsView from './components/LikedSongsView'
 import PlaylistsView from './components/PlaylistsView'
 import RadioFmPlayer from './components/RadioFmPlayer'
 import DiscordRpcSync from './components/DiscordRpcSync'
+import LastfmScrobbler from './components/LastfmScrobbler'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
@@ -234,6 +235,7 @@ export default function App(): JSX.Element {
       <Player />
       <RadioFmPlayer />
       <DiscordRpcSync />
+      <LastfmScrobbler />
       <BottomNav />
       {showSettings && <Suspense fallback={null}><Settings /></Suspense>}
       {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}

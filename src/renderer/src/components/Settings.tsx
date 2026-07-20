@@ -4,13 +4,16 @@ import {
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
-  ListOrdered, GripVertical,
+  ListOrdered, GripVertical, CloudUpload,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
 import { SKINS } from '../lib/skins'
 import { orderedNavItems, DEFAULT_NAV_ORDER } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
+import {
+  lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
+} from '../lib/lastfm'
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
 import { navigateMainWindow, attachToMainWindow } from '../lib/windowSync'
@@ -139,7 +142,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode')
+    lastfmUser, setLastfmUser, lastfmEnabled, setLastfmEnabled,
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -209,6 +213,57 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [cacheCleared, setCacheCleared] = useState<number | null>(null)
   const [offlineStats, setOfflineStats] = useState<{ count: number; totalSize: number } | null>(null)
   const [offlineStatsLoading, setOfflineStatsLoading] = useState(false)
+
+  // ── Last.fm connect flow (desktop token auth): fetch a token, send the user
+  // to last.fm to approve it, then poll getSession until approval lands (it
+  // returns null while the token is still unapproved). window.open reaches the
+  // system browser in every context — the Electron windows' window-open
+  // handlers route it through shell.openExternal.
+  const [lastfmBusy, setLastfmBusy] = useState(false)
+  const [lastfmWaiting, setLastfmWaiting] = useState(false)
+  const [lastfmError, setLastfmError] = useState<string | null>(null)
+  const lastfmPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopLastfmPoll = (): void => {
+    if (lastfmPollRef.current) clearInterval(lastfmPollRef.current)
+    lastfmPollRef.current = null
+    setLastfmWaiting(false)
+  }
+  useEffect(() => () => { if (lastfmPollRef.current) clearInterval(lastfmPollRef.current) }, [])
+
+  const connectLastfm = async (): Promise<void> => {
+    setLastfmError(null)
+    setLastfmBusy(true)
+    try {
+      const token = await lastfmGetAuthToken()
+      window.open(lastfmAuthUrl(token), '_blank', 'noopener')
+      setLastfmWaiting(true)
+      const startedAt = Date.now()
+      lastfmPollRef.current = setInterval(() => {
+        // Tokens live ~60 minutes but nobody waits that long — give up well before.
+        if (Date.now() - startedAt > 5 * 60_000) {
+          stopLastfmPoll()
+          setLastfmError('Authorization timed out — try again.')
+          return
+        }
+        lastfmTryGetSession(token).then((session) => {
+          if (session) { stopLastfmPoll(); setLastfmUser(session.name) }
+        }).catch((e: unknown) => {
+          stopLastfmPoll()
+          setLastfmError(e instanceof Error ? e.message : 'Connection failed')
+        })
+      }, 5000)
+    } catch (e) {
+      setLastfmError(e instanceof Error ? e.message : 'Connection failed')
+    } finally {
+      setLastfmBusy(false)
+    }
+  }
+
+  const disconnectLastfm = (): void => {
+    lastfmDisconnect()
+    setLastfmUser(null)
+  }
 
   // Which shortcut row is currently "listening" for a key combo (null = none).
   const [recordingId, setRecordingId] = useState<string | null>(null)
@@ -765,6 +820,50 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       {sleepTimerEnd ? 'Cancel' : 'Start'}
                     </button>
                   </div>
+                </Row>
+                <Row
+                  icon={CloudUpload}
+                  iconColor="#d51007"
+                  label="Last.fm scrobbling"
+                  sub={
+                    !lastfmConfigured() ? 'Unavailable — this build has no Last.fm API key'
+                    : lastfmError ? lastfmError
+                    : lastfmUser ? `Connected as ${lastfmUser}`
+                    : lastfmWaiting ? 'Approve access on last.fm, then come back here'
+                    : 'Send what you listen to, to your Last.fm profile'
+                  }
+                  labelExtra={lastfmUser
+                    ? <div className="ml-2 translate-y-[3px]"><Toggle on={lastfmEnabled} onClick={() => setLastfmEnabled(!lastfmEnabled)} /></div>
+                    : undefined}
+                >
+                  {lastfmConfigured() && (
+                    lastfmUser ? (
+                      <button
+                        onClick={disconnectLastfm}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                      >
+                        Disconnect
+                      </button>
+                    ) : lastfmWaiting ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin text-text-muted" />
+                        <button
+                          onClick={stopLastfmPoll}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-[var(--surface-overlay)] text-text-secondary hover:text-text-primary border border-[var(--border)]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={connectLastfm}
+                        disabled={lastfmBusy}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50"
+                      >
+                        Connect
+                      </button>
+                    )
+                  )}
                 </Row>
               </div>
             )}

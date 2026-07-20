@@ -13,6 +13,10 @@ import type { ViewType, LibraryTrack } from '../types'
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition', 'navOrder',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
+  // Last.fm connect/disconnect can happen in the pop-out Settings window; the
+  // session itself is in shared localStorage, but the scrobbler (main window
+  // only) keys off these store fields, so they must be mirrored.
+  'lastfmUser', 'lastfmEnabled',
   'popoutWindows',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
