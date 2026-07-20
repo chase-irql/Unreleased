@@ -1873,7 +1873,27 @@ autoUpdater.on('update-downloaded', (info) => {
   })
 })
 
+// electron-updater caches the in-progress download in a "pending" dir keyed
+// by filename (path derives from package.json "name", not productName — see
+// appInfo.js's updaterCacheDirName). If a check/download races a release
+// that's still mid-upload, a truncated file lands here and every future check
+// re-validates its hash against the (by-then-correct) latest.yml and fails
+// forever, since electron-updater never purges a bad cache on its own.
+function clearUpdaterCache() {
+  const base = process.platform === 'win32' ? (process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'))
+    : process.platform === 'darwin' ? path.join(require('os').homedir(), 'Library', 'Caches')
+    : (process.env.XDG_CACHE_HOME || path.join(require('os').homedir(), '.cache'))
+  const pendingDir = path.join(base, 'unreleased-updater', 'pending')
+  try {
+    fs.rmSync(pendingDir, { recursive: true, force: true })
+    log('Cleared stale updater cache:', pendingDir)
+  } catch (e) {
+    log('Failed to clear updater cache:', e.message)
+  }
+}
+
 autoUpdater.on('error', (err) => {
   log('Auto-updater error:', err.message)
+  clearUpdaterCache()
   broadcastToWindows('update-status', { type: 'error', message: err.message })
 })

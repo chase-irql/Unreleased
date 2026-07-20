@@ -269,11 +269,11 @@ export default function MiniPlayer(): JSX.Element {
   useEffect(() => { baseRef.current = { t: currentTime, at: performance.now() } }, [currentTime])
   const playingRef = useRef(isPlaying)
   playingRef.current = isPlaying
-  // Effective rate (speed × slowed multiplier) — slowedReverb/slowedRate are
-  // mirrored over window-sync precisely so this extrapolation stays in step.
-  const { slowedReverb, slowedRate } = useStorePick('slowedReverb', 'slowedRate')
+  // Effective rate (speed gated by its toggle) — speedActive is mirrored over
+  // window-sync precisely so this extrapolation stays in step.
+  const { speedActive } = useStorePick('speedActive')
   const speedRef = useRef(playbackSpeed)
-  speedRef.current = effectivePlaybackRate({ playbackSpeed, slowedReverb, slowedRate })
+  speedRef.current = effectivePlaybackRate({ playbackSpeed, speedActive })
   const getTime = useCallback((): number => {
     const { t, at } = baseRef.current
     if (!playingRef.current) return t

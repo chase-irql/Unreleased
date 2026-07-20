@@ -51,6 +51,7 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'like',             label: 'Like current song',         category: 'Playback', defaultBinding: 'L' },
   { id: 'song-info',        label: 'Show current song info',    category: 'Playback', defaultBinding: 'I' },
   { id: 'edit-song',        label: 'Edit current song',         category: 'Playback', defaultBinding: 'E' },
+  { id: 'equalizer',        label: 'Toggle equalizer panel',    category: 'Playback', defaultBinding: 'Shift+E' },
   { id: 'crossfade',        label: 'Toggle crossfade',          category: 'Playback', defaultBinding: '' },
   { id: 'smooth-playback',  label: 'Toggle smooth playback',    category: 'Playback', defaultBinding: '' },
   { id: 'prefer-og',        label: 'Toggle prefer OG version',  category: 'Playback', defaultBinding: '' },

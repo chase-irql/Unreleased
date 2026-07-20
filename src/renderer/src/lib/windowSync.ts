@@ -16,9 +16,9 @@ const SYNC_KEYS = [
   'popoutWindows',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
-  // Slowed+reverb changes the *effective* playback rate — the mini player
-  // extrapolates progress/lyrics between syncs, so it needs these mirrored.
-  'slowedReverb', 'slowedRate', 'reverbMix', 'reverbDecay',
+  // The speed toggle gates the *effective* playback rate — the mini player
+  // extrapolates progress/lyrics between syncs, so it needs it mirrored.
+  'speedActive',
   'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
   // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
   // their own store instance — without this, that report only ever reaches

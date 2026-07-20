@@ -130,14 +130,14 @@ export default function Player(): JSX.Element {
   const { libraryTracks } = useStorePick('libraryTracks')
   const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
   const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
-  const { slowedReverb, slowedRate, reverbMix, reverbDecay } = useStorePick('slowedReverb', 'slowedRate', 'reverbMix', 'reverbDecay')
+  const { reverbEnabled, reverbMix, reverbDecay, speedActive, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'speedActive', 'pitchShift')
 
-  // Applies the effective playback rate (speed × slowed multiplier) to an
-  // element, letting the pitch drop with it while slowed+reverb is active.
+  // Applies the effective playback rate to an element, letting the pitch
+  // follow the rate while the pitch-shift option is on.
   const applyRate = (audio: HTMLAudioElement): void => {
     const s = useStore.getState()
     audio.playbackRate = effectivePlaybackRate(s)
-    audio.preservesPitch = !s.slowedReverb
+    audio.preservesPitch = !s.pitchShift
   }
 
 
@@ -294,10 +294,10 @@ export default function Player(): JSX.Element {
       gains: eqGains,
       balance: eqBalance,
       mono: eqMono,
-      reverbMix: slowedReverb ? reverbMix : 0,
+      reverbMix: reverbEnabled ? reverbMix : 0,
       reverbDecay,
     })
-  }, [eqEnabled, eqGains, eqBalance, eqMono, slowedReverb, reverbMix, reverbDecay])
+  }, [eqEnabled, eqGains, eqBalance, eqMono, reverbEnabled, reverbMix, reverbDecay])
 
   // Expose seek and duration to other components
   useEffect(() => {
@@ -550,57 +550,84 @@ export default function Player(): JSX.Element {
     if (!cfActive.current && pauseFadeRaf.current == null) audio.volume = volume
   }, [volume])
 
-  // Playback rate — apply to both audio slots (speed and the slowed+reverb
-  // multiplier both funnel through applyRate)
+  // Playback rate — apply to both audio slots (speed, its toggle, and the
+  // pitch-shift option all funnel through applyRate)
   useEffect(() => {
     for (const ref of [slotA, slotB]) {
       if (ref.current) applyRate(ref.current)
     }
-  }, [playbackSpeed, slowedReverb, slowedRate])
+  }, [playbackSpeed, speedActive, pitchShift])
 
   // ── Skip silence ───────────────────────────────────────────────────────────
-  // Polls the effects chain's analyser and fast-forwards through sustained
-  // silence by boosting playbackRate until sound returns — no seeking, so
-  // streamed tracks don't rebuffer and nothing audible ever gets jumped over.
+  // Polls the effects chain's analyser; once silence is confirmed, playback
+  // leaps forward in JUMP_S-second hops until sound is found, then steps back
+  // one hop and plays the remainder normally — long gaps vanish near-instantly
+  // (a 30s gap costs ~2s of hops + at most one hop of real-time run-in) and
+  // the sound's onset is never clipped by an overshooting hop.
   const silentTicks = useRef(0)
+  // Position before the first hop of the current silence run; null = not
+  // hopping. Doubles as the back-stop so a step-back can't rewind past the
+  // silence we already confirmed.
+  const silenceJumpStart = useRef<number | null>(null)
+  // Wall-clock timestamp until which detection sleeps after a step-back, so
+  // the deliberately replayed (≤ one hop) tail of silence can't re-trigger.
+  const skipCooldownUntil = useRef(0)
   useEffect(() => {
-    const restoreRate = (): void => {
-      silentTicks.current = 0
-      const audio = getActive()
-      if (audio) audio.playbackRate = effectivePlaybackRate(useStore.getState())
-    }
+    silentTicks.current = 0
+    silenceJumpStart.current = null
+    skipCooldownUntil.current = 0
+  }, [currentTrack?.id])
+  useEffect(() => {
     if (!skipSilence) return
+    const JUMP_S = 1.5
+    const reset = (): void => { silentTicks.current = 0; silenceJumpStart.current = null }
     const id = setInterval(() => {
       const audio = getActive()
       // Only ever touch normal, active playback — never mid-crossfade (the
       // fade-out deliberately approaches silence) and never while paused.
-      if (!audio || audio.paused || !useStore.getState().isPlaying || cfActive.current) {
-        silentTicks.current = 0
-        return
-      }
+      if (!audio || audio.paused || !useStore.getState().isPlaying || cfActive.current) { reset(); return }
+      // Wait out an in-flight seek or rebuffer: a stalled element outputs
+      // silence, which would otherwise read as more silence to hop over.
+      if (audio.seeking || audio.readyState < 2) return
+      if (performance.now() < skipCooldownUntil.current) return
       // The analyser reads the element-volume-scaled mix, so silence under
       // mute is indistinguishable from real silence — bail instead of
       // fast-forwarding a muted song into oblivion.
       const vol = volumeRef.current
-      if (vol <= 0.01) { restoreRate(); return }
-      // Don't boost into the track's final moments — the ended/crossfade
-      // boundary logic should run at normal speed.
+      if (vol <= 0.01) { reset(); return }
+      // Leave the track's run-out alone: the ended/crossfade boundary logic
+      // must play out normally, and no hop may land inside that window.
+      const s = useStore.getState()
+      const endGuard = Math.max(2, s.crossfadeEnabled ? s.crossfadeDuration + 0.5 : 0)
       const dur = isFinite(audio.duration) ? audio.duration : 0
-      if (dur > 0 && dur - audio.currentTime < 2) { restoreRate(); return }
+      if (dur > 0 && dur - audio.currentTime < endGuard) { reset(); return }
       // Scale the threshold by volume to undo the element-volume scaling.
       if (getCurrentPeak() < 0.005 * vol) {
         // ~300ms of confirmed silence before engaging, so inter-word gaps
         // and drum rests don't trigger it.
         silentTicks.current++
         if (silentTicks.current >= 3) {
-          const base = effectivePlaybackRate(useStore.getState())
-          audio.playbackRate = Math.min(base * 3, 4)
+          if (silenceJumpStart.current == null) silenceJumpStart.current = audio.currentTime
+          const cap = dur > 0 ? dur - endGuard : audio.currentTime + JUMP_S
+          audio.currentTime = Math.min(audio.currentTime + JUMP_S, cap)
         }
-      } else if (silentTicks.current > 0) {
-        restoreRate()
+      } else {
+        if (silenceJumpStart.current != null) {
+          // Sound found mid-hop — the onset lies somewhere inside the hop we
+          // just crossed. Step back one hop (never before the run's start,
+          // which also no-ops after a user seek reshuffled positions) so the
+          // onset plays from the top.
+          const back = audio.currentTime - JUMP_S
+          if (back > silenceJumpStart.current) {
+            audio.currentTime = back
+            const rate = Math.max(0.25, effectivePlaybackRate(s))
+            skipCooldownUntil.current = performance.now() + (JUMP_S / rate) * 1000 + 500
+          }
+        }
+        reset()
       }
     }, 100)
-    return () => { clearInterval(id); restoreRate() }
+    return () => { clearInterval(id); reset() }
   }, [skipSilence])
 
   // Media Session API — lock screen / notification metadata
@@ -669,7 +696,7 @@ export default function Player(): JSX.Element {
         position:     Math.min(currentTime, audio.duration),
       })
     } catch {/* ignore */}
-  }, [currentTime, playbackSpeed, slowedReverb, slowedRate])
+  }, [currentTime, playbackSpeed, speedActive])
 
   // Audio output device
   useEffect(() => {
@@ -1048,6 +1075,7 @@ export default function Player(): JSX.Element {
     },
     'speed-up':    () => setPlaybackSpeed(clampSpeed(playbackSpeed + 0.25)),
     'speed-down':  () => setPlaybackSpeed(clampSpeed(playbackSpeed - 0.25)),
+    'equalizer':   () => { const s = useStore.getState(); s.setShowEqPanel(!s.showEqPanel) },
     'crossfade':   () => { const s = useStore.getState(); s.setCrossfade(!s.crossfadeEnabled, s.crossfadeDuration) },
     'smooth-playback': () => { const s = useStore.getState(); s.setPauseFade(!s.pauseFadeEnabled) },
     'prefer-og':   () => { const s = useStore.getState(); s.setPreferOgVersion(!s.preferOgVersion) },
@@ -1202,18 +1230,26 @@ export default function Player(): JSX.Element {
   const activeDuration = getActive()?.duration
   const duration = (activeDuration && isFinite(activeDuration) ? activeDuration : 0) || currentTrack?.duration || 0
 
-  // Equalizer popover (also hosts balance/mono/skip-silence + playback speed)
-  const [showEq, setShowEq] = useState(false)
+  // Equalizer popover (also hosts balance/mono/skip-silence + playback speed).
+  // Visibility lives in the store so the 'equalizer' hotkey and the WRLD tab's
+  // button can open it too — this always-mounted component owns the portal.
+  const { showEqPanel, setShowEqPanel } = useStorePick('showEqPanel', 'setShowEqPanel')
   const eqBtnRef = useRef<HTMLButtonElement>(null)
   const [eqPos, setEqPos] = useState({ bottom: 0, right: 0 })
-  const openEqPanel = (): void => {
-    if (!eqBtnRef.current) return
-    const r = eqBtnRef.current.getBoundingClientRect()
-    setEqPos({ bottom: window.innerHeight - r.top + 8, right: Math.max(8, window.innerWidth - r.right - 170) })
-    setShowEq((v) => !v)
-  }
+  // Anchor above the bar button when it's on screen; openers without an
+  // anchor (hotkey, WRLD tab, collapsed bar) get a fixed bottom-right spot.
+  useEffect(() => {
+    if (!showEqPanel) return
+    const btn = eqBtnRef.current
+    if (btn?.isConnected) {
+      const r = btn.getBoundingClientRect()
+      setEqPos({ bottom: window.innerHeight - r.top + 8, right: Math.max(8, window.innerWidth - r.right - 170) })
+    } else {
+      setEqPos({ bottom: 104, right: 16 })
+    }
+  }, [showEqPanel])
   // Accent the button when anything in the panel deviates from neutral.
-  const eqActive = eqEnabled || playbackSpeed !== 1 || eqBalance !== 0 || eqMono || skipSilence || slowedReverb
+  const eqActive = eqEnabled || (speedActive && playbackSpeed !== 1) || eqBalance !== 0 || eqMono || skipSilence || reverbEnabled
 
 
   // (Play/pause on Space is handled by the unified hotkey system above — the
@@ -1271,6 +1307,22 @@ export default function Player(): JSX.Element {
         onEnded={handleEnded}
         onError={(e) => console.error('Audio error (slotB):', e)}
       />
+
+      {/* Equalizer popover — outside the WRLD-page conditional below so the
+          hotkey and the WRLD tab's own button can open it on any view. */}
+      {showEqPanel && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowEqPanel(false)} />
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl"
+            style={{ bottom: eqPos.bottom, right: eqPos.right }}
+          >
+            <EqualizerPanel />
+          </div>
+        </>,
+        document.body
+      )}
 
       {/* Bottom bar hidden on the WRLD page — it has its own full playback controls.
           Audio elements above stay mounted regardless so playback is unaffected. */}
@@ -1585,7 +1637,7 @@ export default function Player(): JSX.Element {
               stream too; only the speed row hides inside the panel. */}
           <button
             ref={eqBtnRef}
-            onClick={openEqPanel}
+            onClick={() => setShowEqPanel(!showEqPanel)}
             title="Equalizer"
             className={`transition-colors ${eqActive ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
@@ -1673,21 +1725,6 @@ export default function Player(): JSX.Element {
               setActiveView('editor')
             } : undefined}
           />
-        )}
-
-        {/* Equalizer popover */}
-        {showEq && createPortal(
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowEq(false)} />
-            <div
-              onMouseDown={(e) => e.stopPropagation()}
-              className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl"
-              style={{ bottom: eqPos.bottom, right: eqPos.right }}
-            >
-              <EqualizerPanel />
-            </div>
-          </>,
-          document.body
         )}
 
         {/* Output device popover */}

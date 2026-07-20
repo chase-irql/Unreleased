@@ -29,12 +29,14 @@ export default function EqualizerPanel(): JSX.Element {
     eqMono, setEqMono,
     skipSilence, setSkipSilence,
     playbackSpeed, setPlaybackSpeed,
-    slowedReverb, setSlowedReverb,
-    slowedRate, setSlowedRate,
+    speedActive, setSpeedActive,
+    pitchShift, setPitchShift,
+    reverbEnabled, setReverbEnabled,
     reverbMix, setReverbMix,
     reverbDecay, setReverbDecay,
+    communityEdits, applyCommunityEdit,
     radioFmActive,
-  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'slowedReverb', 'setSlowedReverb', 'slowedRate', 'setSlowedRate', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'radioFmActive')
+  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'speedActive', 'setSpeedActive', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'applyCommunityEdit', 'radioFmActive')
 
   const balancePct = Math.round(eqBalance * 100)
   const balanceLabel = balancePct === 0 ? 'C' : balancePct < 0 ? `L ${-balancePct}` : `R ${balancePct}`
@@ -60,6 +62,33 @@ export default function EqualizerPanel(): JSX.Element {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+      </div>
+
+      {/* Community edits — shared effect configs, applied like presets but
+          able to set anything in this panel. The API endpoints for them
+          don't exist yet, so the store list stays empty and only the empty
+          state renders for now. Not gated by the EQ toggle: an edit can
+          enable whatever it needs itself. */}
+      <div className="px-4 pb-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted pb-1.5">Community edits</p>
+        {communityEdits.length === 0 ? (
+          <p className="text-[11px] text-text-muted bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg px-3 py-2">
+            Nothing here yet — community-shared edits will appear once they go live.
+          </p>
+        ) : (
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {communityEdits.map((edit) => (
+              <button
+                key={edit.id}
+                onClick={() => applyCommunityEdit(edit)}
+                className="w-full flex items-baseline gap-2 px-3 py-1.5 rounded-lg text-left bg-[var(--surface-overlay)] border border-[var(--border)] hover:border-[var(--accent)] transition-colors"
+              >
+                <span className="text-xs text-text-primary truncate">{edit.name}</span>
+                {edit.author && <span className="text-[10px] text-text-muted truncate shrink-0">by {edit.author}</span>}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Band sliders */}
@@ -121,42 +150,29 @@ export default function EqualizerPanel(): JSX.Element {
       <div className="flex items-center justify-between px-4 py-2.5">
         <div>
           <p className="text-xs text-text-secondary">Skip silence</p>
-          <p className="text-[10px] text-text-muted">Fast-forward through silent parts</p>
+          <p className="text-[10px] text-text-muted">Jump over silent parts</p>
         </div>
         <Toggle on={skipSilence} onClick={() => setSkipSilence(!skipSilence)} />
       </div>
 
-      {/* Slowed + reverb */}
+      {/* Reverb */}
       <div className="border-t border-[var(--border)] mx-4" />
       <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
         <div>
-          <p className="text-xs text-text-secondary">Slowed + reverb</p>
-          <p className="text-[10px] text-text-muted">Slow it down, drop the pitch, add space</p>
+          <p className="text-xs text-text-secondary">Reverb</p>
+          <p className="text-[10px] text-text-muted">Add space and echo</p>
         </div>
-        <Toggle on={slowedReverb} onClick={() => setSlowedReverb(!slowedReverb)} />
+        <Toggle on={reverbEnabled} onClick={() => setReverbEnabled(!reverbEnabled)} />
       </div>
-      <div className={`pb-1 transition-opacity ${slowedReverb ? '' : 'opacity-40 pointer-events-none'}`}>
+      <div className={`pb-1 transition-opacity ${reverbEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
         <div className="flex items-center gap-3 px-4 py-1.5">
-          <span className="text-xs text-text-secondary w-24 shrink-0">Slow</span>
-          <input
-            type="range" min={0.6} max={1} step={0.01}
-            value={slowedRate}
-            onChange={(e) => setSlowedRate(parseFloat(e.target.value))}
-            onDoubleClick={() => setSlowedRate(0.8)}
-            disabled={!slowedReverb}
-            className="flex-1 accent-[var(--accent)]"
-            title="Slowdown amount — double-click to reset"
-          />
-          <span className="text-xs text-text-muted tabular-nums w-12 text-right">{slowedRate.toFixed(2)}x</span>
-        </div>
-        <div className="flex items-center gap-3 px-4 py-1.5">
-          <span className="text-xs text-text-secondary w-24 shrink-0">Reverb</span>
+          <span className="text-xs text-text-secondary w-24 shrink-0">Amount</span>
           <input
             type="range" min={0} max={1} step={0.05}
             value={reverbMix}
             onChange={(e) => setReverbMix(parseFloat(e.target.value))}
             onDoubleClick={() => setReverbMix(0.4)}
-            disabled={!slowedReverb}
+            disabled={!reverbEnabled}
             className="flex-1 accent-[var(--accent)]"
             title="Reverb amount (dry/wet mix) — double-click to reset"
           />
@@ -169,7 +185,7 @@ export default function EqualizerPanel(): JSX.Element {
             value={reverbDecay}
             onChange={(e) => setReverbDecay(parseFloat(e.target.value))}
             onDoubleClick={() => setReverbDecay(3)}
-            disabled={!slowedReverb}
+            disabled={!reverbEnabled}
             className="flex-1 accent-[var(--accent)]"
             title="Reverb tail length — double-click to reset"
           />
@@ -177,30 +193,51 @@ export default function EqualizerPanel(): JSX.Element {
         </div>
       </div>
 
-      {/* Playback speed — lives here now (moved from the player bar/Settings).
-          Hidden during FM: a live stream has no meaningful playback rate. */}
+      {/* Speed — one control for slowed AND sped-up; with pitch shift on,
+          below 1x is the slowed feel, above 1x goes nightcore. Hidden during
+          FM: a live stream has no meaningful playback rate. */}
       {!radioFmActive && (
-        <div className="flex items-center gap-3 px-4 py-2.5 border-t border-[var(--border)]">
-          <span className="text-xs text-text-secondary w-24 shrink-0">Speed</span>
-          <input
-            type="range" min={0.5} max={2} step={0.05}
-            value={playbackSpeed}
-            onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-            onDoubleClick={() => setPlaybackSpeed(1)}
-            className="flex-1 accent-[var(--accent)]"
-            title="Playback speed — double-click to reset"
-          />
-          <span className="text-xs text-text-muted tabular-nums w-12 text-right">{playbackSpeed.toFixed(2)}x</span>
-          {playbackSpeed !== 1 && (
-            <button
-              onClick={() => setPlaybackSpeed(1)}
-              title="Reset speed"
-              className="text-text-muted hover:text-text-primary transition-colors"
-            >
-              <RotateCcw size={12} />
-            </button>
-          )}
-        </div>
+        <>
+          <div className="border-t border-[var(--border)] mx-4" />
+          <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
+            <div>
+              <p className="text-xs text-text-secondary">Speed</p>
+              <p className="text-[10px] text-text-muted">Slow down or speed up playback</p>
+            </div>
+            <Toggle on={speedActive} onClick={() => setSpeedActive(!speedActive)} />
+          </div>
+          <div className={`pb-1 transition-opacity ${speedActive ? '' : 'opacity-40 pointer-events-none'}`}>
+            <div className="flex items-center gap-3 px-4 py-1.5">
+              <span className="text-xs text-text-secondary w-24 shrink-0">Rate</span>
+              <input
+                type="range" min={0.5} max={2} step={0.05}
+                value={playbackSpeed}
+                onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+                onDoubleClick={() => setPlaybackSpeed(1)}
+                disabled={!speedActive}
+                className="flex-1 accent-[var(--accent)]"
+                title="Playback speed — double-click to reset"
+              />
+              <span className="text-xs text-text-muted tabular-nums w-12 text-right">{playbackSpeed.toFixed(2)}x</span>
+              {playbackSpeed !== 1 && (
+                <button
+                  onClick={() => setPlaybackSpeed(1)}
+                  title="Reset speed"
+                  className="text-text-muted hover:text-text-primary transition-colors"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-between px-4 py-1.5">
+              <div>
+                <p className="text-xs text-text-secondary">Pitch shift</p>
+                <p className="text-[10px] text-text-muted">Pitch follows speed — slowed below 1x, nightcore above</p>
+              </div>
+              <Toggle on={pitchShift} onClick={() => setPitchShift(!pitchShift)} />
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
