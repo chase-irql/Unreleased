@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
-import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, HOTKEY_ACTIONS } from '../lib/hotkeys'
+import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -1134,6 +1134,9 @@ export default function Player(): JSX.Element {
     },
     'toggle-devtools': () => (window as any).electron?.toggleDevTools?.(),
   }
+  // Same table, exposed to UI that triggers actions by id (the app menu) — a
+  // stable subscription dispatching into the ref's fresh closures.
+  useEffect(() => registerHotkeyDispatch((id) => hotkeyActionsRef.current[id]?.()), [])
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       const combo = eventToCombo(e)

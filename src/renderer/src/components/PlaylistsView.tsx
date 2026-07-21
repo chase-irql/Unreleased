@@ -1150,6 +1150,30 @@ export default function PlaylistsView(): JSX.Element {
               handleZipDownload(d.items.map(i => userApi.liteSongToTrack(i.song)), name)
             }}
           />
+          {/* Same offline toggle the opened playlist's "⋯" menu carries, so the
+              card menu isn't missing an action you can only reach by opening
+              the playlist first. */}
+          {!!(window as any).electron && (() => {
+            const key = `api-${cardMenu.playlist.id}`
+            const sync = offlineSync[key]
+            const already = !!offlinePlaylists[key]
+            return (
+              <MenuItem
+                icon={sync?.state === 'syncing' ? Loader2 : Download}
+                label={
+                  sync?.state === 'syncing' ? `Downloading… ${sync.current}/${sync.total}`
+                    : already ? 'Remove offline download' : 'Download for offline'
+                }
+                disabled={sync?.state === 'syncing'}
+                onClick={async () => {
+                  setCardMenu(null)
+                  if (already) { await removePlaylistOffline(key); return }
+                  const d = await userApi.getPlaylist(cardMenu.playlist.id)
+                  await downloadPlaylistOffline(key, d.name, d.items.map(i => i.song.id))
+                }}
+              />
+            )
+          })()}
           <div className="border-t border-[var(--border)] my-1" />
           <MenuItem
             icon={Link}
@@ -1255,12 +1279,26 @@ export default function PlaylistsView(): JSX.Element {
   const renderApiCard = (p: PlaylistSummary): JSX.Element => {
     const plKey = `api:${p.id}`
     const plSelected = selectedPlaylistKeys.has(plKey)
+    // Offline state gets a corner badge so you can tell at a glance which
+    // playlists are kept on disk, without opening each one's menu.
+    const offKey = `api-${p.id}`
+    const offSync = offlineSync[offKey]
+    const offlined = !!offlinePlaylists[offKey]
     return (
       <PlaylistCard
         key={p.id}
         name={p.name}
         subtitle={`${p.track_count} ${p.track_count === 1 ? 'track' : 'tracks'}`}
         cover={apiCoverNode(p)}
+        badge={offSync?.state === 'syncing' ? (
+          <span className="flex items-center gap-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-md" title={`Downloading ${offSync.current}/${offSync.total}`}>
+            <Loader2 size={9} className="animate-spin" /> {offSync.current}/{offSync.total}
+          </span>
+        ) : offlined ? (
+          <span className="flex items-center gap-1 bg-black/60 text-emerald-400 text-[10px] px-1.5 py-0.5 rounded-md" title="Downloaded for offline playback">
+            <Download size={9} /> Offline
+          </span>
+        ) : undefined}
         selected={plSelected}
         selectMode={plSelectMode}
         onClick={e => {
