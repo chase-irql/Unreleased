@@ -1,12 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import ReportsTab from './ReportsTab'
+import AdminPage from './AdminPage'
 
 const CATEGORIES = [
   { value: 'released', label: 'Released' },
@@ -301,7 +302,11 @@ export default function EditorProfileView(): JSX.Element {
   // Reports review (moved out of the Admin sidebar entry for editor-only
   // accounts — it now lives as a tab alongside their own proposals).
   const canReviewReports = !!(account?.is_editor || account?.is_administrator)
-  const [profileTab, setProfileTab] = useState<'proposals' | 'reports'>('proposals')
+  // Admin review tools (all-proposals queue, applications, users, stats,
+  // security) live here as a tab now — the standalone Admin side-menu entry
+  // is gone, everything reachable from this one profile page.
+  const isAdmin = !!account?.is_administrator
+  const [profileTab, setProfileTab] = useState<'proposals' | 'reports' | 'admin'>('proposals')
   const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
   const [reports, setReports] = useState<SongReportRow[]>([])
   const [loadingReports, setLoadingReports] = useState(false)
@@ -471,6 +476,7 @@ export default function EditorProfileView(): JSX.Element {
           {([
             { id: 'proposals' as const, label: 'Proposals', icon: <FileEdit size={13} /> },
             { id: 'reports'   as const, label: 'Reports',   icon: <Flag size={13} /> },
+            ...(isAdmin ? [{ id: 'admin' as const, label: 'Admin', icon: <ShieldCheck size={13} /> }] : []),
           ]).map(t => (
             <button key={t.id} onClick={() => setProfileTab(t.id)}
               className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium transition-colors border-b-2 ${
@@ -485,7 +491,13 @@ export default function EditorProfileView(): JSX.Element {
         </div>
       )}
 
-      {profileTab === 'reports' && canReviewReports ? (
+      {profileTab === 'admin' && isAdmin ? (
+        <div className="flex-1 overflow-hidden p-4 md:p-5">
+          <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden flex flex-col">
+            <AdminPage embedded />
+          </div>
+        </div>
+      ) : profileTab === 'reports' && canReviewReports ? (
         <div className="flex-1 overflow-hidden p-5">
           <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden relative">
             {loadingReports && (
@@ -502,7 +514,9 @@ export default function EditorProfileView(): JSX.Element {
           </div>
         </div>
       ) : (
-      <div className="flex-1 flex gap-5 overflow-hidden p-5">
+      // Stacked below md — side by side, the fixed-width leaderboard left
+      // the proposals column 2px wide on a phone.
+      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-5 overflow-hidden p-4 md:p-5">
 
         {/* ── Left: My Proposals ── */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-surface-raised/40">
@@ -590,7 +604,8 @@ export default function EditorProfileView(): JSX.Element {
                           {s.label}
                         </span>
                         {p.status === 'pending' && (
-                          <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          /* Always visible on touch (no hover to reveal them) */
+                          <div className="flex items-center gap-0.5 shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => handleEdit(p)}
                               className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-all"
@@ -632,7 +647,9 @@ export default function EditorProfileView(): JSX.Element {
         </div>
 
         {/* ── Right: Leaderboard ── */}
-        <div className="w-80 flex flex-col min-h-0 overflow-hidden shrink-0 rounded-2xl border border-[var(--border)] bg-surface-raised/40">
+        {/* Mobile: fixed-height strip under the proposals list (which keeps
+            the remaining height); desktop: full-height side column. */}
+        <div className="h-44 md:h-auto w-full md:w-80 flex flex-col min-h-0 overflow-hidden shrink-0 rounded-2xl border border-[var(--border)] bg-surface-raised/40">
           <div className="px-5 pt-4 pb-3 shrink-0 flex items-center gap-2 border-b border-[var(--border)]">
             <Trophy size={13} className="text-text-muted" />
             <h2 className="text-text-secondary text-xs font-semibold uppercase tracking-widest">Leaderboard</h2>

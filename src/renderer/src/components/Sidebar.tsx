@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { Settings, ShieldCheck, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
+import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
@@ -10,9 +10,8 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, showSettings, setShowSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'showSettings', 'setShowSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
+  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
   const isElectron = navigator.userAgent.includes('Electron')
-  const isAdmin = !!account?.is_administrator
 
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(LS_COLLAPSED) === 'true'
@@ -123,15 +122,8 @@ export default function Sidebar(): JSX.Element {
                 <LogIn size={18} />
               </button>
             )}
-            {isAdmin && (
-              <button
-                onClick={() => setActiveView('admin')}
-                title="Admin"
-                className={`${iconBtn} ${activeView === 'admin' ? 'bg-surface-raised !text-text-primary' : ''}`}
-              >
-                <ShieldCheck size={18} />
-              </button>
-            )}
+            {/* Admin tools moved into the editor profile page's Admin tab —
+                reached via the account avatar button above. */}
             {!isElectron && (
               <a
                 href="https://github.com/leanwrldd/unreleased/releases/latest"
@@ -148,7 +140,7 @@ export default function Sidebar(): JSX.Element {
                 <Info size={18} />
               </button>
             )}
-            <button onClick={() => setShowSettings(!showSettings)} title="Settings" className={iconBtn}>
+            <button onClick={() => toggleSettings()} title="Settings" className={iconBtn}>
               <Settings size={18} />
             </button>
           </div>
@@ -281,20 +273,8 @@ export default function Sidebar(): JSX.Element {
             <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Log in</span>
           </button>
         )}
-        {isAdmin && (
-          <button
-            onClick={() => setActiveView('admin')}
-            title={collapsed ? 'Admin' : undefined}
-            className={`flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 px-3 ${
-              activeView === 'admin'
-                ? 'bg-surface-raised text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-            }`}
-          >
-            <span className="w-6 h-6 flex items-center justify-center shrink-0"><ShieldCheck size={18} /></span>
-            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Admin</span>
-          </button>
-        )}
+        {/* Admin tools moved into the editor profile page's Admin tab —
+            reached via the account row above. */}
         {/* Only on the web build — Electron users already have the app. */}
         {!isElectron && (
           <a
@@ -319,7 +299,7 @@ export default function Sidebar(): JSX.Element {
           </button>
         )}
         <button
-          onClick={() => setShowSettings(!showSettings)}
+          onClick={() => toggleSettings()}
           title={collapsed ? 'Settings' : undefined}
           className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
         >

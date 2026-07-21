@@ -1,6 +1,6 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry } from '../types'
+import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
@@ -98,9 +98,9 @@ export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
 // rendering a view inline (see FloatApp). Each can be turned off individually:
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
 // miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
-export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer'
+export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer' | 'convert'
 const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
-  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true,
+  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true, convert: true,
 }
 
 // ─── Non-queue state ──────────────────────────────────────────────────────────
@@ -189,6 +189,15 @@ interface AppState {
   sleepTimerEnd: number | null
   audioOutput: string
   accentColor: string
+  // Text settings. appTextScale multiplies the root font-size (Tailwind's
+  // rem-based sizes/spacing follow it, so it acts as an app-wide text zoom);
+  // the lyrics* keys style synced/plain lyrics in LyricsDisplay and the WRLD
+  // tab's lyrics panel.
+  appTextScale: number
+  lyricsScale: number
+  lyricsAlign: 'left' | 'center'
+  // Soften not-yet-played synced lines with a slight blur (on by default).
+  lyricsBlur: boolean
   // When enabled, if a track has a linked "OG" version (same song, grouped via
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
@@ -235,7 +244,7 @@ interface AppState {
 
   // `convertModal` is the local track whose "Convert format" dialog is open
   // (null = closed). See components/ConvertFormatModal.
-  convertModal: Track | null
+  convertModal: ConvertTarget | null
 
   // Playlist folders — a local-first grouping over both synced and local
   // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
@@ -329,7 +338,7 @@ interface AppActions {
   setReverbDecay: (seconds: number) => void
   setSpeedActive: (active: boolean) => void
   setPitchShift: (enabled: boolean) => void
-  applyCommunityEdit: (edit: CommunityEdit) => void
+  playCommunityEdit: (edit: CommunityEdit) => void
 
   setActiveView: (view: ViewType) => void
   setShowNowPlaying: (show: boolean) => void
@@ -341,6 +350,11 @@ interface AppActions {
   setRadioFmQueuePreview: (preview: string[]) => void
   setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null) => void
   setShowSettings: (show: boolean) => void
+  // For the settings launcher icon: closes it if already open (in either
+  // form) instead of just focusing the pop-out again. setShowSettings(true)
+  // stays "always open/focus" for callers that never want to close it
+  // (the open-settings hotkey, the library empty-state CTA).
+  toggleSettings: () => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setShowEqPanel: (show: boolean) => void
@@ -356,6 +370,10 @@ interface AppActions {
   setSleepTimer: (endTimestamp: number | null) => void
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
+  setAppTextScale: (scale: number) => void
+  setLyricsScale: (scale: number) => void
+  setLyricsAlign: (align: 'left' | 'center') => void
+  setLyricsBlur: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
   setLastfmUser: (name: string | null) => void
   setLastfmEnabled: (enabled: boolean) => void
@@ -401,7 +419,7 @@ interface AppActions {
   openReport: (target: ReportTarget) => void
   closeReport: () => void
   /** Opens / closes the "Convert format" dialog for a local track. */
-  openConvert: (track: Track) => void
+  openConvert: (target: ConvertTarget) => void
   closeConvert: () => void
   /** Queues a general feedback report and tries to deliver it. `contact` is
    *  the optional reach-me field the endpoint accepts. Resolves once that
@@ -471,6 +489,14 @@ interface AppActions {
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
   addLibraryTrack: (track: LibraryTrack) => void
+  /** Sends the file to the OS trash (after a confirm prompt raised by the main
+   *  process) and purges it from the library, art cache, local playlists and
+   *  queue. Resolves false if the user cancelled or the delete failed. */
+  deleteLibraryTrack: (id: string) => Promise<boolean>
+  /** Prompts for a destination folder, moves the file there, and re-keys it
+   *  everywhere (the track id is derived from its path). Resolves false if the
+   *  user cancelled or the move failed. */
+  moveLibraryTrack: (id: string) => Promise<boolean>
   updateLibraryTrack: (id: string, updates: Partial<LibraryTrack>) => void
   applyLibraryArt: (id: string, art: string | null) => void
   addLibraryFolder: (folder: string) => void
@@ -696,27 +722,26 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSpeedActive: (speedActive) => { set({ speedActive }); ls.set('speedActive', speedActive) },
   setPitchShift: (pitchShift) => { set({ pitchShift }); ls.set('pitchShift', pitchShift) },
   communityEdits: [],
-  // Applies whatever subset of settings the edit carries, through the normal
-  // setters so persistence and the auto speed-toggle behavior stay in one
-  // place. EQ gains land as a bulk write ('custom' preset — there's no
-  // per-band setter path for them, so persist here like setEqBand does).
-  applyCommunityEdit: (edit) => {
-    const a = get()
-    const s = edit.settings
-    if (s.eqEnabled !== undefined) a.setEqEnabled(s.eqEnabled)
-    if (Array.isArray(s.eqGains) && s.eqGains.length === EQ_BANDS.length) {
-      const eqGains = [...s.eqGains]
-      set({ eqGains, eqPreset: 'custom' })
-      ls.set('eqGains', eqGains); ls.set('eqPreset', 'custom')
+  // A community edit is a real audio file, so playing one goes through the
+  // normal queue machinery as a single-track play — the effects chain, prefs,
+  // scrobbling etc. all apply to it like any other track.
+  playCommunityEdit: (edit) => {
+    const track: Track = {
+      id: `community-edit-${edit.id}`,
+      path: edit.path,
+      title: edit.name,
+      artist: edit.author ? `Community edit · ${edit.author}` : 'Community edit',
+      album: '',
+      albumArtist: '',
+      year: null,
+      trackNumber: null,
+      duration: edit.duration ?? 0,
+      genre: '',
+      hasAlbumArt: !!edit.imageUrl,
+      streamUrl: buildStreamUrl(edit.path),
+      imageUrl: edit.imageUrl ?? '',
     }
-    if (s.eqBalance !== undefined) a.setEqBalance(s.eqBalance)
-    if (s.eqMono !== undefined) a.setEqMono(s.eqMono)
-    if (s.reverbEnabled !== undefined) a.setReverbEnabled(s.reverbEnabled)
-    if (s.reverbMix !== undefined) a.setReverbMix(s.reverbMix)
-    if (s.reverbDecay !== undefined) a.setReverbDecay(s.reverbDecay)
-    if (s.playbackSpeed !== undefined) a.setPlaybackSpeed(s.playbackSpeed)
-    if (s.speedActive !== undefined) a.setSpeedActive(s.speedActive)
-    if (s.pitchShift !== undefined) a.setPitchShift(s.pitchShift)
+    get().playTrack(track, [track])
   },
 
   // ── UI ────────────────────────────────────────────────────────────────────
@@ -777,6 +802,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
     set({ showSettings })
   },
+  toggleSettings: () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (el?.toggleFloatWindow && get().popoutWindows.settings) {
+      // The pop-out's open/closed state lives in the main process (it's a
+      // separate window), not in this renderer's `showSettings` — which
+      // never flips true in pop-out mode — so main decides open vs. close.
+      el.toggleFloatWindow('settings')
+      return
+    }
+    set((s) => ({ showSettings: !s.showSettings }))
+  },
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
@@ -794,6 +831,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   sleepTimerEnd: null,
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
+  appTextScale: ls.get<number>('appTextScale') ?? 1,
+  lyricsScale: ls.get<number>('lyricsScale') ?? 1,
+  lyricsAlign: ls.get<'left' | 'center'>('lyricsAlign') ?? 'left',
+  lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
@@ -821,6 +862,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('popoutWindows', popoutWindows)
   },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
+  setAppTextScale: (appTextScale) => { set({ appTextScale }); ls.set('appTextScale', appTextScale) },
+  setLyricsScale: (lyricsScale) => { set({ lyricsScale }); ls.set('lyricsScale', lyricsScale) },
+  setLyricsAlign: (lyricsAlign) => { set({ lyricsAlign }); ls.set('lyricsAlign', lyricsAlign) },
+  setLyricsBlur: (lyricsBlur) => { set({ lyricsBlur }); ls.set('lyricsBlur', lyricsBlur) },
 
   setHotkeyBinding: (actionId, combo) => {
     const current = get().hotkeyBindings
@@ -977,7 +1022,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   openReport: (target) => set({ reportModal: target }),
   closeReport: () => set({ reportModal: null }),
-  openConvert: (track) => set({ convertModal: track }),
+  openConvert: (target) => {
+    // Same pop-out-or-dock branch the editors use: with the "Convert format"
+    // pop-out enabled, this opens its own window instead of an in-app dialog.
+    // Only the three plain fields ride the URL params (see ConvertTarget).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (el?.openFloatWindow && get().popoutWindows.convert) {
+      el.openFloatWindow('convert', { trackId: target.id, filePath: target.path, title: target.title })
+      return
+    }
+    set({ convertModal: { id: target.id, path: target.path, title: target.title } })
+  },
   closeConvert: () => set({ convertModal: null }),
 
   _enqueueReport: async (report: PendingReport) => {
@@ -1398,6 +1454,92 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
     return { libraryTracks: [...s.libraryTracks, track] }
   }),
+  deleteLibraryTrack: async (id) => {
+    const el = (window as any).electron
+    const track = get().libraryTracks.find((t) => t.id === id)
+    if (!el?.deleteLibraryFile || !track) return false
+
+    // Stop first when we're deleting what's currently playing: it keeps the app
+    // from "playing" a trashed file, and releases our own read handle — Windows
+    // refuses to move a file that's still open. The confirm prompt itself lives
+    // in the main process (see the delete-library-file handler).
+    if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
+
+    const res = await el.deleteLibraryFile(track.filePath)
+    // Cancelled, or the delete failed — main already surfaced the error dialog.
+    if (!res?.ok) return false
+
+    const { libraryTracks, libraryArt, localPlaylists, queue, queueIndex, libraryFolders, libraryLastScanned } = get()
+    const nextTracks = libraryTracks.filter((t) => t.id !== id)
+    const nextArt = { ...libraryArt }
+    delete nextArt[id]
+    // Drop the now-dead id from any local playlist that referenced it.
+    const touchedPlaylists = localPlaylists.some((p) => p.trackIds.includes(id))
+    const nextPlaylists = touchedPlaylists
+      ? localPlaylists.map((p) => p.trackIds.includes(id)
+        ? { ...p, trackIds: p.trackIds.filter((t) => t !== id) } : p)
+      : localPlaylists
+    // Same for the queue, shifting queueIndex by however many copies sat ahead
+    // of it so it keeps pointing at the entry it pointed at before.
+    const removedBefore = queue.reduce((n, t, i) => n + (t.id === id && i < queueIndex ? 1 : 0), 0)
+    const nextQueue = queue.filter((t) => t.id !== id)
+    set({
+      libraryTracks: nextTracks,
+      libraryArt: nextArt,
+      localPlaylists: nextPlaylists,
+      queue: nextQueue,
+      // -1 is the "nothing queued" sentinel the slice starts from.
+      queueIndex: nextQueue.length ? Math.max(0, Math.min(queueIndex - removedBefore, nextQueue.length - 1)) : -1,
+    })
+
+    // Persist both, or the track reappears from library-data.json next load.
+    el.saveLibraryData({ tracks: nextTracks, folders: libraryFolders, lastScanned: libraryLastScanned })
+    if (touchedPlaylists) el.saveLocalPlaylists(nextPlaylists)
+    return true
+  },
+  moveLibraryTrack: async (id) => {
+    const el = (window as any).electron
+    const track = get().libraryTracks.find((t) => t.id === id)
+    if (!el?.moveLibraryFile || !track) return false
+
+    // Playing the file holds a read handle open, which blocks the rename on
+    // Windows — same reasoning as deleteLibraryTrack.
+    if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
+
+    const res = await el.moveLibraryFile(track.filePath)
+    // Cancelled, or the move failed — main already surfaced the error dialog.
+    if (!res?.ok || !res.path) return false
+
+    const newPath: string = res.path
+    const newId = `local-${newPath}`
+    const { libraryTracks, libraryArt, localPlaylists, queue, currentTrack, libraryFolders, libraryLastScanned } = get()
+
+    // A track's id is derived from its path, so moving it re-keys the track
+    // everywhere it's referenced rather than just editing one field.
+    const nextTracks = libraryTracks.map((t) => t.id === id ? { ...t, id: newId, filePath: newPath } : t)
+    const nextArt = { ...libraryArt }
+    if (id in nextArt) { nextArt[newId] = nextArt[id]; delete nextArt[id] }
+    const touchedPlaylists = localPlaylists.some((p) => p.trackIds.includes(id))
+    const nextPlaylists = touchedPlaylists
+      ? localPlaylists.map((p) => p.trackIds.includes(id)
+        ? { ...p, trackIds: p.trackIds.map((t) => t === id ? newId : t) } : p)
+      : localPlaylists
+    // Clearing streamUrl (rather than rebuilding it) lets the Player re-derive
+    // it from the new path — see its `track.streamUrl ?? toFileUrl(track.path)`.
+    const rekey = <T extends { id: string }>(t: T): T =>
+      t.id === id ? { ...t, id: newId, path: newPath, streamUrl: undefined } : t
+    set({
+      libraryTracks: nextTracks,
+      libraryArt: nextArt,
+      localPlaylists: nextPlaylists,
+      queue: queue.map(rekey),
+      currentTrack: currentTrack ? rekey(currentTrack) : currentTrack,
+    })
+
+    el.saveLibraryData({ tracks: nextTracks, folders: libraryFolders, lastScanned: libraryLastScanned })
+    if (touchedPlaylists) el.saveLocalPlaylists(nextPlaylists)
+    return true
+  },
   updateLibraryTrack: (id, updates) => set((s) => {
     const artChanged = updates.albumArt !== undefined
     // Cover art lives in libraryArt, never on the track objects — keep the
@@ -1889,6 +2031,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowDownloadManager: (show) => set({ showDownloadManager: show }),
   setUpdateStatus: (updateStatus) => set({ updateStatus }),
 }))
+
+// Dev-only console handle for driving store state while debugging (e.g.
+// forcing auth-gated views to render without an account). Never set in
+// production builds.
+if (import.meta.env.DEV) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).__store = useStore
+}
 
 // Subscribe to a shallow-compared subset of the store. A bare `useStore()`
 // re-renders the component on EVERY store write — including the ~4x/sec

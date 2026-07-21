@@ -4,7 +4,7 @@ import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, showSettings, setShowSettings, account } = useStorePick('activeView', 'setActiveView', 'showSettings', 'setShowSettings', 'account')
+  const { activeView, setActiveView, toggleSettings, account } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account')
   const isAdmin = !!account?.is_administrator
   // Editor-only accounts don't get the Admin page — their review tools
   // (Proposals/Reports) live in their own profile page instead.
@@ -14,7 +14,13 @@ export default function BottomNav(): JSX.Element {
     { icon: <img src={logo} alt="WRLD" className="w-8 h-8 object-contain" />, label: 'WRLD', view: 'wrld' },
     { icon: <SearchCode size={24} />, label: 'Tracker', view: 'api-tracker' },
     { icon: <ListMusic size={24} />, label: 'Playlists', view: 'playlists' },
-    { icon: <Disc size={24} />, label: 'Albums', view: 'albums-admin' },
+    // The wrlddata.json album editor — an internal tool, not a listener
+    // feature. Desktop only reaches it via the editor profile's "Edit
+    // albums" button, so mirror that gating here instead of showing an
+    // admin surface to every mobile user.
+    ...(isAdmin || isEditor
+      ? [{ icon: <Disc size={24} />, label: 'Albums', view: 'albums-admin' as ViewType }]
+      : []),
   ]
 
   return (
@@ -46,19 +52,10 @@ export default function BottomNav(): JSX.Element {
           </button>
         )
       })}
-      {isAdmin && (
-        <button
-          onClick={() => setActiveView('admin')}
-          className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'admin' ? 'text-accent' : 'text-text-muted'}`}
-        >
-          {activeView === 'admin' && (
-            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: 'var(--accent)' }} />
-          )}
-          <ShieldCheck size={24} />
-          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">Admin</span>
-        </button>
-      )}
-      {!isAdmin && isEditor && (
+      {/* Admin review tools live inside the editor profile page (Admin tab)
+          now — one profile entry for both roles instead of a separate Admin
+          view in the nav. */}
+      {(isAdmin || isEditor) && (
         <button
           onClick={() => setActiveView('editor-profile')}
           className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'editor-profile' ? 'text-accent' : 'text-text-muted'}`}
@@ -67,11 +64,11 @@ export default function BottomNav(): JSX.Element {
             <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: 'var(--accent)' }} />
           )}
           <ShieldCheck size={24} />
-          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">Editor</span>
+          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">{isAdmin ? 'Admin' : 'Editor'}</span>
         </button>
       )}
       <button
-        onClick={() => setShowSettings(!showSettings)}
+        onClick={() => toggleSettings()}
         className="flex-1 flex flex-col items-center justify-center py-2.5 gap-1 text-text-muted transition-colors overflow-hidden"
       >
         <Settings size={24} />

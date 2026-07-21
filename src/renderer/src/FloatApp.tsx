@@ -7,6 +7,7 @@ const Settings = lazy(() => import('./components/Settings'))
 const EditorPage = lazy(() => import('./components/EditorPage'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const MiniPlayer = lazy(() => import('./components/MiniPlayer'))
+const EqualizerPanel = lazy(() => import('./components/EqualizerPanel'))
 // Not lazy: every list view already imports the info modal statically, so
 // it lives in the main chunk regardless — a dynamic import here would just
 // trigger Vite's mixed-import warning without splitting anything.
@@ -125,6 +126,28 @@ function FloatLocalEditor(): JSX.Element {
   )
 }
 
+function FloatConvert(): JSX.Element {
+  // Unlike the local editor, this needs no library load — the convert dialog
+  // only wants id/path/title, and all three ride the URL params as strings
+  // (see ConvertTarget). Seed the store's convertModal from them, and keep
+  // following float-params so "Convert format" on another track retargets
+  // this window instead of stacking a second one.
+  useEffect(() => {
+    const apply = (p: Record<string, string | null>): void => {
+      if (!p?.trackId || !p?.filePath) return
+      useStore.setState({ convertModal: { id: p.trackId, path: p.filePath, title: p.title || '' } })
+    }
+    apply({ trackId: initialParam('trackId'), filePath: initialParam('filePath'), title: initialParam('title') })
+    return el?.onFloatParams?.((p: Record<string, string>) => apply(p))
+  }, [])
+
+  return (
+    <div className="flex-1 min-h-0 overflow-hidden flex">
+      <ConvertFormatModal floating />
+    </div>
+  )
+}
+
 // Shell for floating pop-out windows: main.js createFloatWindow opens a second
 // frameless BrowserWindow on the same bundle with ?float=<view> (+ params),
 // and main.tsx mounts this instead of <App/> — a single view filling the whole
@@ -141,20 +164,29 @@ export default function FloatApp({ view }: { view: string }): JSX.Element {
 
   return (
     <div className="h-dvh bg-surface overflow-hidden flex flex-col">
-      {(view === 'editor' || view === 'local-editor') && <FloatTitleBar />}
+      {(view === 'editor' || view === 'local-editor' || view === 'equalizer') && <FloatTitleBar />}
       <Suspense fallback={null}>
         {view === 'settings' ? <Settings floating />
           : view === 'song-info' ? <FloatSongInfo />
           : view === 'editor' ? <FloatEditor />
           : view === 'local-editor' ? <FloatLocalEditor />
           : view === 'mini-player' ? <MiniPlayer />
+          : view === 'convert' ? <FloatConvert />
+          : view === 'equalizer' ? (
+            <div className="flex-1 min-h-0 overflow-y-auto flex justify-center">
+              <EqualizerPanel floating />
+            </div>
+          )
           : null}
       </Suspense>
       {/* Report dialog opened from a pop-out (Settings feedback, or a song
           info report) — reportModal is per-window state, so the pop-out mounts
           its own instance rather than routing to the main window. */}
       <ReportModal />
-      <ConvertFormatModal />
+      {/* Convert dialog opened from *another* pop-out (with the convert pop-out
+          setting off, openConvert falls back to an in-app dialog). The convert
+          window itself renders it as its own view above, so skip it there. */}
+      {view !== 'convert' && <ConvertFormatModal />}
     </div>
   )
 }

@@ -43,25 +43,20 @@ export const EQ_PRESETS: EqPreset[] = [
   { id: 'small-speakers', name: 'Small Speakers', gains: [5.5, 4.5, 4, 2.5, 1.5, 0, -1.5, -3, -4, -4.5] },
 ]
 
-// A community-shared effects configuration ("community edit") — any subset of
-// the equalizer panel's settings, to be fetched from the API once its
-// endpoints exist. Partial on purpose: an edit only overrides what it sets.
+// A community-made edit of a song — an actual audio FILE (sped-up, remix,
+// mashup, …) served by the API, not an effects preset. The endpoints don't
+// exist yet; this models what the panel will list and play once they do,
+// using the same /files/download/ path convention as regular songs.
 export interface CommunityEdit {
   id: string
   name: string
   author?: string
-  settings: Partial<{
-    eqEnabled: boolean
-    eqGains: number[]
-    eqBalance: number
-    eqMono: boolean
-    reverbEnabled: boolean
-    reverbMix: number
-    reverbDecay: number
-    speedActive: boolean
-    playbackSpeed: number
-    pitchShift: boolean
-  }>
+  // API file path, streamable via buildStreamUrl().
+  path: string
+  // The tracker song this is an edit of, when it's tied to one.
+  songId?: number
+  duration?: number
+  imageUrl?: string
 }
 
 export interface AudioEffectSettings {

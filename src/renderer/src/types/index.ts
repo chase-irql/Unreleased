@@ -68,6 +68,15 @@ export interface LibraryTrack {
   albumArt?: string | null    // base64 data URL
 }
 
+// The local file a "Convert format" dialog is working on. Deliberately just the
+// three fields the dialog needs (rather than a whole Track/LibraryTrack) so it
+// round-trips through pop-out window URL params as plain strings.
+export interface ConvertTarget {
+  id: string        // LibraryTrack id ('local-' + filePath)
+  path: string      // absolute filesystem path of the source file
+  title: string
+}
+
 export interface LocalPlaylist {
   id: string
   name: string

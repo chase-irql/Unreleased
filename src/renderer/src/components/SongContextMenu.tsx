@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Info, ListPlus, ListEnd, Plus, Folder, Pencil, Download, HardDrive, PackageOpen,
-  ChevronDown, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag, FileAudio2,
+  ChevronDown, ChevronRight, Check, Loader2, CheckSquare2, Heart, Trash2, ListMusic, CircleArrowDown, Flag, FileAudio2,
+  Clipboard, ClipboardCopy, Copy, FolderInput, FileCog,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -63,11 +64,15 @@ interface Props {
   disableChangeVersion?: boolean
 }
 
-function MenuItem({ icon, label, onClick, destructive }: {
+function MenuItem({ icon, label, onClick, destructive, trailing, innerRef }: {
   icon: React.ReactNode; label: string; onClick: () => void; destructive?: boolean
+  /** Right-aligned adornment — the submenu chevron. */
+  trailing?: React.ReactNode
+  innerRef?: React.Ref<HTMLButtonElement>
 }): JSX.Element {
   return (
     <button
+      ref={innerRef}
       onClick={(e) => { e.stopPropagation(); onClick() }}
       className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors hover:bg-surface-raised ${
         destructive ? 'text-red-400' : 'text-text-secondary hover:text-text-primary'
@@ -75,6 +80,7 @@ function MenuItem({ icon, label, onClick, destructive }: {
     >
       {icon}
       {label}
+      {trailing && <span className="ml-auto flex items-center">{trailing}</span>}
     </button>
   )
 }
@@ -121,7 +127,12 @@ export default function SongContextMenu({
   )
   const { track, songId } = state
   const menuRef = useRef<HTMLDivElement>(null)
-  const [panel, setPanel] = useState<'main' | 'playlists' | 'zip'>('main')
+  const [panel, setPanel] = useState<'main' | 'playlists' | 'zip' | 'file'>('main')
+  // "Add to playlist" opens a flyout beside the menu rather than replacing it.
+  const [playlistsOpen, setPlaylistsOpen] = useState(false)
+  const addItemRef = useRef<HTMLButtonElement>(null)
+  const submenuRef = useRef<HTMLDivElement>(null)
+  const [subPos, setSubPos] = useState({ top: 0, left: 0 })
   const [busyId, setBusyId] = useState<number | null>(null)
   const [doneId, setDoneId] = useState<number | null>(null)
   const [localDoneId, setLocalDoneId] = useState<string | null>(null)
@@ -249,6 +260,23 @@ export default function SongContextMenu({
     setPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
   }, [state.x, state.y, panel, zipCandidates])
 
+  // Flyout placement: to the right of the menu, flipped to the left when
+  // there isn't room, top-aligned with the item that opened it and clamped
+  // to the viewport (the list can be much taller than the item).
+  useLayoutEffect(() => {
+    if (!playlistsOpen) return
+    const item = addItemRef.current, menu = menuRef.current, sub = submenuRef.current
+    if (!item || !menu || !sub) return
+    const ir = item.getBoundingClientRect()
+    const mr = menu.getBoundingClientRect()
+    const sr = sub.getBoundingClientRect()
+    let left = mr.right + 4
+    if (left + sr.width > window.innerWidth - 8) left = mr.left - sr.width - 4
+    left = Math.max(8, left)
+    const top = Math.max(8, Math.min(ir.top - 4, window.innerHeight - sr.height - 8))
+    setSubPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [playlistsOpen, creating, pos, playlists.length, localPlaylists.length, contained])
+
   return (
     <div
       ref={menuRef}
@@ -264,14 +292,15 @@ export default function SongContextMenu({
         <p className="text-text-muted text-[10px] truncate">{track.artist}</p>
       </div>
 
-      {panel === 'playlists' ? (
-        <>
-          <button
-            onClick={(e) => { e.stopPropagation(); setPanel('main') }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
-          >
-            <ChevronDown size={12} className="rotate-90" /> Back
-          </button>
+      {playlistsOpen && panel === 'main' && (
+        // Rendered inside the menu element (so the outside-click handler still
+        // counts it as "inside") but positioned as a fixed flyout beside it.
+        <div
+          ref={submenuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', zIndex: 10000, top: subPos.top, left: subPos.left }}
+          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+        >
           {isLocalOnly ? (
             <div className="max-h-44 overflow-y-auto">
               {localPlaylists.length === 0 && (
@@ -354,8 +383,10 @@ export default function SongContextMenu({
               )}
             </div>
           )}
-        </>
-      ) : panel === 'zip' ? (
+        </div>
+      )}
+
+      {panel === 'zip' ? (
         <>
           <button
             onClick={(e) => { e.stopPropagation(); setPanel('main') }}
@@ -381,8 +412,37 @@ export default function SongContextMenu({
             <p className="px-3 py-3 text-xs text-text-muted">No matching ZIP found for this session.</p>
           )}
         </>
-      ) : (
+      ) : panel === 'file' ? (
         <>
+          <button
+            onClick={(e) => { e.stopPropagation(); setPanel('main') }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
+          >
+            <ChevronDown size={12} className="rotate-90" /> Back
+          </button>
+          {/* Actions on the local file itself. Copy/move prompt for a
+              destination in the main process; delete goes to the OS trash. */}
+          <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
+          <MenuItem icon={<ClipboardCopy size={14} />} label="Copy file" onClick={() => { el.copyFileToClipboard(track.path); onClose() }} />
+          <MenuItem icon={<Clipboard size={14} />} label="Copy path" onClick={() => { el.copyTextToClipboard(track.path); onClose() }} />
+          <MenuItem icon={<Copy size={14} />} label="Copy to folder…" onClick={() => { el.copyLibraryFile(track.path); onClose() }} />
+          <MenuItem icon={<FolderInput size={14} />} label="Move to folder…" onClick={() => { useStore.getState().moveLibraryTrack(track.id); onClose() }} />
+          <Divider />
+          {/* Deletes the user's actual file (to the OS trash) rather than just
+              un-listing it — confirmed in main before anything moves. */}
+          <MenuItem
+            icon={<Trash2 size={14} />}
+            label="Delete from disk"
+            destructive
+            onClick={() => { useStore.getState().deleteLibraryTrack(track.id); onClose() }}
+          />
+        </>
+      ) : (
+        // Hovering "Add to playlist" opens the flyout; hovering any other row
+        // closes it again, the way a native submenu behaves.
+        <div
+          onMouseOver={(e) => setPlaylistsOpen(addItemRef.current?.contains(e.target as Node) ?? false)}
+        >
           {onPlay && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play" onClick={() => { onPlay(); onClose() }} />}
           {onPlayNext && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play next" onClick={() => { onPlayNext(); onClose() }} />}
           {hasValidSong && (
@@ -400,7 +460,13 @@ export default function SongContextMenu({
             <MenuItem icon={<ListPlus size={14} />} label="Add to queue" onClick={() => { onAddToQueue(); onClose() }} />
           )}
           {canAddToPlaylist && (
-            <MenuItem icon={<Plus size={14} />} label="Add to playlist" onClick={() => setPanel('playlists')} />
+            <MenuItem
+              innerRef={addItemRef}
+              icon={<Plus size={14} />}
+              label="Add to playlist"
+              trailing={<ChevronRight size={13} className="text-text-muted" />}
+              onClick={() => setPlaylistsOpen(o => !o)}
+            />
           )}
           {onShowInFiles && track.path && (
             <MenuItem icon={<Folder size={14} />} label="Show in Files" onClick={() => { onShowInFiles(); onClose() }} />
@@ -411,8 +477,10 @@ export default function SongContextMenu({
           {onEditLocalMetadata && (
             <MenuItem icon={<Pencil size={14} />} label="Edit metadata" onClick={() => { onEditLocalMetadata(); onClose() }} />
           )}
+          {/* Everything that touches the user's actual file lives one level
+              down — see the 'file' panel. */}
           {isLocalOnly && !!track.path && el && (
-            <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
+            <MenuItem icon={<FileCog size={14} />} label="File actions" onClick={() => setPanel('file')} />
           )}
           {onToggleLike && (
             <MenuItem
@@ -488,7 +556,7 @@ export default function SongContextMenu({
               <MenuItem icon={<Trash2 size={14} />} label={removeAction.label} destructive onClick={() => { removeAction.onClick(); onClose() }} />
             </>
           )}
-        </>
+        </div>
       )}
     </div>
   )
