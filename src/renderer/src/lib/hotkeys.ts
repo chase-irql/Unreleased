@@ -118,6 +118,25 @@ export function resolveAction(combo: string, overrides: Record<string, string>):
   return null
 }
 
+// ─── Action dispatch bridge ─────────────────────────────────────────────────
+// Player.tsx owns what each action *does* (those handlers need the audio
+// element and the live player closures). UI outside the player — the app menu —
+// triggers actions by id through this bridge instead of duplicating that logic,
+// so a menu entry and its keyboard shortcut always run the exact same code.
+
+let dispatchHotkeyAction: ((id: string) => void) | null = null
+
+export function registerHotkeyDispatch(fn: (id: string) => void): () => void {
+  dispatchHotkeyAction = fn
+  return () => { if (dispatchHotkeyAction === fn) dispatchHotkeyAction = null }
+}
+
+/** Run a hotkey action by id. No-op until the Player has mounted and
+ *  registered its dispatch table. */
+export function runHotkeyAction(id: string): void {
+  dispatchHotkeyAction?.(id)
+}
+
 // ─── Event → combo ─────────────────────────────────────────────────────────
 
 const MODIFIER_CODES = new Set([

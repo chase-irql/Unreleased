@@ -1415,9 +1415,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     Open logs
                   </button>
                 </Row>
-                <Row icon={Trash2} iconColor="#dc2626" label="Clear cache" sub="Removes cached API responses used for offline browsing">
+                <Row icon={Trash2} iconColor="#dc2626" label="Clear cache" sub="Removes cached API responses and cover art used for offline browsing">
                   <button
-                    onClick={() => { setCacheCleared(cacheClearAll()); setTimeout(() => setCacheCleared(null), 3000) }}
+                    onClick={() => {
+                      // Cover art is cached by Chromium, not apiCache — clear both.
+                      setCacheCleared(cacheClearAll())
+                      el?.clearImageCache?.()
+                      setTimeout(() => setCacheCleared(null), 3000)
+                    }}
                     className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
                   >
                     <Trash2 size={13} />

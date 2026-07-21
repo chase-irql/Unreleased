@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard, session } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -969,6 +969,22 @@ ipcMain.handle('open-online-installer', async () => {
 ipcMain.on('run-log', (_, scope, message) => runLog(scope || 'renderer', message))
 ipcMain.handle('open-logs-folder', () => shell.showItemInFolder(runLogPath))
 ipcMain.handle('get-log-paths', () => ({ current: runLogPath, previous: prevRunLogPath }))
+
+// Cover images live in Chromium's own disk cache (see the onHeadersReceived
+// max-age injection in whenReady), not apiCache, so Settings' "Clear cache"
+// has to reach them separately. Reports the bytes freed so the button can say
+// something useful. clearCache() drops all cached HTTP responses, which for
+// this app is essentially just images — every JSON response is cached in
+// localStorage by apiCache instead.
+ipcMain.handle('clear-image-cache', async () => {
+  try {
+    const before = await session.defaultSession.getCacheSize()
+    await session.defaultSession.clearCache()
+    return { ok: true, bytes: before }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
 
 // ── IPC: app settings ─────────────────────────────────────────────────────────
 ipcMain.handle('get-app-settings', () => appSettings)
@@ -2027,6 +2043,46 @@ app.whenReady().then(() => {
       return new Response('Error: ' + e.message, { status: 500 })
     }
   })
+
+  // ── Remote cover-art caching ────────────────────────────────────────────────
+  // Cover images (a song's own art, the cover picker's thumbnails, and custom
+  // covers pointing at /files/download/) load straight into <img> elements, so
+  // they never pass through apiFetch and get none of apiCache's persistence.
+  // Whether they're refetched on every render therefore comes down entirely to
+  // what Cache-Control juicewrldapi.com sends — which for /files/download/ is
+  // nothing, so scrolling a list re-downloaded full-size images every time.
+  //
+  // Rewriting those URLs to a custom protocol (the local-media:// approach
+  // above) was the other option and was rejected: a cover URL isn't purely a
+  // render-time value. It's persisted in songPrefs — synced to the server
+  // profile and read by the web build, where a custom scheme means nothing —
+  // and it's handed to the Media Session API, which drops any artwork src that
+  // isn't http (see Player.tsx's artSrc). Injecting a max-age instead leaves
+  // every URL canonical and lets Chromium's own disk cache, which already
+  // survives restarts, do the work.
+  //
+  // Scoped to image/* 200s so audio streaming (same /files/download/ endpoint,
+  // needs its Range/revalidation behaviour left alone) is never touched.
+  const IMAGE_CACHE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ['https://juicewrldapi.com/*'] },
+    (details, callback) => {
+      const headers = details.responseHeaders
+      if (!headers || details.statusCode !== 200) return callback({ cancel: false })
+      const typeKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+      const contentType = typeKey ? String(headers[typeKey]) : ''
+      if (!contentType.toLowerCase().includes('image/')) return callback({ cancel: false })
+
+      // Drop the server's own directives rather than appending to them — a
+      // lingering `no-store`/`Pragma: no-cache` wins over anything we add.
+      for (const k of Object.keys(headers)) {
+        const lk = k.toLowerCase()
+        if (lk === 'cache-control' || lk === 'pragma' || lk === 'expires') delete headers[k]
+      }
+      headers['Cache-Control'] = [`public, max-age=${IMAGE_CACHE_MAX_AGE}`]
+      callback({ responseHeaders: headers })
+    }
+  )
 
   createWindow()
   createTray()

@@ -10,7 +10,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder')
+  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'offlinePlaylists')
   const isElectron = navigator.userAgent.includes('Electron')
 
   const [collapsed, setCollapsed] = useState<boolean>(
@@ -229,6 +229,9 @@ export default function Sidebar(): JSX.Element {
                     className="flex items-center w-full py-1.5 px-2 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors truncate"
                   >
                     <span className="truncate">{pl.name}</span>
+                    {offlinePlaylists[`api-${pl.id}`] && (
+                      <Download size={10} className="ml-1.5 shrink-0 text-emerald-400" aria-label="Downloaded for offline playback" />
+                    )}
                   </button>
                 ))}
               </div>

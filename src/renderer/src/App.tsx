@@ -38,6 +38,7 @@ import NowPlaying from './components/NowPlaying'
 import QueuePanel from './components/QueuePanel'
 import DownloadManager from './components/DownloadManager'
 import LibraryTab from './components/LibraryTab'
+import AppMenu from './components/AppMenu'
 import ErrorBoundary from './components/ErrorBoundary'
 
 // Rarely-visited views load on first navigation instead of inflating the
@@ -250,6 +251,10 @@ export default function App(): JSX.Element {
           come after any drag strip that can extend under them — with the nav
           on top/right, the sidebar's strip does, and when this rendered first
           clicking min/max/close dragged the window instead. */}
+      {/* Same ordering rule as WindowControls below — the menu button's no-drag
+          rect has to come after the title-bar drag strips it sits on top of,
+          or clicking it would drag the window instead of opening the menu. */}
+      {isElectron && !wrldFullscreen && <AppMenu />}
       {isElectron && !wrldFullscreen && <WindowControls />}
     </div>
   )

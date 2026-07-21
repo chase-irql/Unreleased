@@ -88,6 +88,9 @@ contextBridge.exposeInMainWorld('electron', {
   openLogsFolder: ()             => ipcRenderer.invoke('open-logs-folder'),
   openOnlineInstaller: ()        => ipcRenderer.invoke('open-online-installer'),
   getLogPaths:   ()              => ipcRenderer.invoke('get-log-paths'),
+  // Chromium's HTTP cache (cover art) — separate from apiCache's localStorage
+  // JSON cache, so Settings' "Clear cache" clears both.
+  clearImageCache: ()            => ipcRenderer.invoke('clear-image-cache'),
 
   // Tray — playback state up to main, media commands back down
   setTrayPlayback: (state) => ipcRenderer.send('tray-playback-state', state),
