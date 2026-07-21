@@ -298,6 +298,7 @@ function createFloatWindow(view, params) {
     show: false,
   })
   floatWindows.set(view, win)
+  broadcastFloatWindows()
   win.once('ready-to-show', () => {
     win.show()
     // Hide the other windows only once the mini player is actually on screen,
@@ -306,6 +307,7 @@ function createFloatWindow(view, params) {
   })
   win.on('closed', () => {
     if (floatWindows.get(view) === win) floatWindows.delete(view)
+    broadcastFloatWindows()
     // Always restore on close (even if the setting was turned off meanwhile) so
     // hidden windows can never be stranded.
     if (view === 'mini-player') restoreWindowsAfterMiniPlayer()
@@ -326,6 +328,18 @@ function closeAllFloatWindows() {
     if (!win.isDestroyed()) win.close()
   }
   floatWindows.clear()
+  broadcastFloatWindows()
+}
+
+// Which pop-outs are currently open, pushed to every window. Lets a renderer
+// avoid rendering an in-app copy of a view that's already popped out (the
+// equalizer panel) and route its button to the existing window instead.
+function openFloatViews() {
+  return [...floatWindows.entries()].filter(([, w]) => !w.isDestroyed()).map(([view]) => view)
+}
+
+function broadcastFloatWindows() {
+  broadcastToWindows('float-windows', openFloatViews())
 }
 
 // ── Mini-player "solo" mode (setting: miniPlayerHidesWindows) ─────────────────
@@ -722,6 +736,9 @@ ipcMain.handle('open-float-window', (_, view, params) => {
 // Closes every pop-out (mini player, settings, editor, …) but leaves the main
 // window alone — backs the "close all pop-out windows" shortcut.
 ipcMain.handle('close-float-windows', () => closeAllFloatWindows())
+
+// Boot-time read of what's already open (the broadcast only covers changes).
+ipcMain.handle('get-float-windows', () => openFloatViews())
 
 // Open/focus-vs-close toggle for a single-content pop-out (currently just
 // Settings) — clicking its launcher icon again should close the window

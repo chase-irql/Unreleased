@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electron', {
   openFloatWindow: (view, params) => ipcRenderer.invoke('open-float-window', view, params),
   toggleFloatWindow: (view, params) => ipcRenderer.invoke('toggle-float-window', view, params),
   closeFloatWindows: ()   => ipcRenderer.invoke('close-float-windows'),
+  getFloatWindows: ()     => ipcRenderer.invoke('get-float-windows'),
   closeSelf:       ()     => ipcRenderer.invoke('close-self'),
 
   // OS-global shortcuts. The renderer sends the full desired set (accelerator →
@@ -53,6 +54,13 @@ contextBridge.exposeInMainWorld('electron', {
   },
   // Fired when an already-open pop-out is asked to show something new
   // (e.g. "Info" clicked on a different song).
+  // Which pop-out views are currently open — fires on every open/close so a
+  // window can avoid showing an in-app copy of an already-popped-out view.
+  onFloatWindows: (cb) => {
+    const fn = (_, views) => cb(views)
+    ipcRenderer.on('float-windows', fn)
+    return () => ipcRenderer.removeListener('float-windows', fn)
+  },
   onFloatParams: (cb) => {
     const fn = (_, params) => cb(params)
     ipcRenderer.on('float-params', fn)

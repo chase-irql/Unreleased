@@ -24,7 +24,10 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif']
+        // Resolves to the user's chosen app font (lib/fonts.ts), written onto
+        // <html> by useThemeEffects. index.css seeds the same system stack as
+        // the :root default, so first paint matches the old hardcoded value.
+        sans: 'var(--font-app)'
       }
     }
   },

@@ -9,6 +9,7 @@ import {
 import { useStore, useStorePick, type SidebarPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
 import { SKINS } from '../lib/skins'
+import { FONTS } from '../lib/fonts'
 import { orderedNavItems, DEFAULT_NAV_ORDER } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
 import {
@@ -162,7 +163,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     lyricsScale, setLyricsScale,
     lyricsAlign, setLyricsAlign,
     lyricsBlur, setLyricsBlur,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur')
+    appFont, setAppFont,
+    lyricsFont, setLyricsFont,
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -658,6 +661,84 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       className="w-7 h-7 rounded-full cursor-pointer border-0 p-0 bg-transparent"
                       title="Custom color"
                     />
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#7c3aed' }}>
+                      <Type size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">App font</span>
+                      <p className="text-text-muted text-[11px]">Typeface for the whole app — each option previews in its own font</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                    {FONTS.map((font) => {
+                      const active = appFont === font.id
+                      return (
+                        <button
+                          key={font.id}
+                          onClick={() => setAppFont(font.id)}
+                          title={font.name}
+                          className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
+                            active
+                              ? 'bg-accent/15 border-[var(--accent)]'
+                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          {/* Specimen renders in the stack it selects, so the
+                              list previews itself without applying anything. */}
+                          <span
+                            className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`}
+                            style={{ fontFamily: font.stack }}
+                          >
+                            Ag
+                          </span>
+                          <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>
+                            {font.name}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#e11d48' }}>
+                      <Type size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">Lyrics font</span>
+                      <p className="text-text-muted text-[11px]">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                    {FONTS.map((font) => {
+                      const active = lyricsFont === font.id
+                      return (
+                        <button
+                          key={font.id}
+                          onClick={() => setLyricsFont(font.id)}
+                          title={font.name}
+                          className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
+                            active
+                              ? 'bg-accent/15 border-[var(--accent)]'
+                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          <span
+                            className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`}
+                            style={{ fontFamily: font.stack }}
+                          >
+                            Ag
+                          </span>
+                          <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>
+                            {font.name}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">

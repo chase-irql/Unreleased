@@ -35,7 +35,7 @@ export default function WrldView(): JSX.Element {
     nextTrack, prevTrack,
     showQueue, setShowQueue,
     audioOutput, setAudioOutput,
-    showEqPanel, setShowEqPanel, eqFxActive,
+    toggleEqPanel, eqFxActive,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -65,8 +65,7 @@ export default function WrldView(): JSX.Element {
     setShowQueue: s.setShowQueue,
     audioOutput: s.audioOutput,
     setAudioOutput: s.setAudioOutput,
-    showEqPanel: s.showEqPanel,
-    setShowEqPanel: s.setShowEqPanel,
+    toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
     eqFxActive: s.eqEnabled || (s.speedActive && s.playbackSpeed !== 1) || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
   })))
@@ -879,7 +878,7 @@ export default function WrldView(): JSX.Element {
               )}
               <div className="flex items-center gap-2.5">
                 <button
-                  onClick={() => setShowEqPanel(!showEqPanel)}
+                  onClick={toggleEqPanel}
                   title="Equalizer"
                   className="shrink-0 transition-opacity hover:opacity-70"
                   style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
@@ -1092,7 +1091,7 @@ export default function WrldView(): JSX.Element {
                 {/* Volume row */}
                 <div className="flex items-center gap-2.5">
                   <button
-                    onClick={() => setShowEqPanel(!showEqPanel)}
+                    onClick={toggleEqPanel}
                     title="Equalizer"
                     className="shrink-0 transition-opacity hover:opacity-70"
                     style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
@@ -2060,6 +2059,7 @@ const LyricsPanel = memo(function LyricsPanel({
                   // that even the largest growth (the active state) still
                   // fits.
                   maxWidth:   padded ? '80%' : '82%',
+                  fontFamily: 'var(--font-lyrics)',
                   fontSize:   baseFontSize,
                   // Bold weight is the active line's CSS class only — not
                   // animated. Most fonts (including this app's system-font
@@ -2102,9 +2102,10 @@ const LyricsPanel = memo(function LyricsPanel({
   return (
     <div className={`flex-1 min-h-0 overflow-y-auto ${padded ? 'py-16 pr-16 pl-8' : 'py-4 px-4 md:py-8 md:pr-12 md:pl-6'}`} style={{ scrollbarWidth: 'none' }}>
       <pre
-        className="text-xs md:text-sm leading-6 md:leading-7 whitespace-pre-wrap font-sans"
+        className="text-xs md:text-sm leading-6 md:leading-7 whitespace-pre-wrap"
         style={{
           color: txtSec,
+          fontFamily: 'var(--font-lyrics)',
           textAlign: lyricsAlign,
           // Only override the responsive size classes when the user actually
           // changed the size; unitless line-height keeps spacing proportional.

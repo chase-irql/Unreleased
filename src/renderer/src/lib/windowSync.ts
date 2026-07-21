@@ -12,7 +12,7 @@ import type { ViewType, LibraryTrack } from '../types'
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition', 'navOrder',
-  'appTextScale', 'lyricsScale', 'lyricsAlign', 'lyricsBlur',
+  'appTextScale', 'lyricsScale', 'lyricsAlign', 'lyricsBlur', 'appFont', 'lyricsFont',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   // Last.fm connect/disconnect can happen in the pop-out Settings window; the
   // session itself is in shared localStorage, but the scrobbler (main window

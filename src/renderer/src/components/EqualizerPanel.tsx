@@ -78,6 +78,9 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
         <div className="flex items-center gap-2.5">
           {!floating && (window as any).electron?.openFloatWindow && (
             <button
+              // Detach: the pop-out replaces this in-app copy (the
+              // float-windows broadcast closes it too, but do it here so the
+              // panel disappears on click rather than on the round trip).
               onClick={() => { (window as any).electron.openFloatWindow('equalizer'); setShowEqPanel(false) }}
               title="Pop out equalizer"
               className="text-text-muted hover:text-text-primary transition-colors"
