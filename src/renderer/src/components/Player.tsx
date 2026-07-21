@@ -23,7 +23,7 @@ import {
   Loader2,
   SlidersHorizontal,
 } from 'lucide-react'
-import { useStore, useStorePick, effectivePlaybackRate } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
@@ -130,15 +130,22 @@ export default function Player(): JSX.Element {
   const { libraryTracks } = useStorePick('libraryTracks')
   const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
   const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
-  const { reverbEnabled, reverbMix, reverbDecay, speedActive, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'speedActive', 'pitchShift')
+  const { reverbEnabled, reverbMix, reverbDecay, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift')
 
-  // Applies the effective playback rate to an element, letting the pitch
-  // follow the rate while the pitch-shift option is on.
+  // Applies the playback rate to an element, letting the pitch follow the
+  // rate while the pitch-shift option is on.
   const applyRate = (audio: HTMLAudioElement): void => {
     const s = useStore.getState()
-    audio.playbackRate = effectivePlaybackRate(s)
+    audio.playbackRate = s.playbackSpeed
     audio.preservesPitch = !s.pitchShift
   }
+
+  // Re-assert the rate once a slot has actually loaded a resource. Setting
+  // playbackRate/preservesPitch right after assigning .src (or on a slot the
+  // crossfade preloaded) can be dropped when the element loads the new
+  // media — which is what made a slowed/pitched track silently revert to 1x
+  // partway through a playlist until some setting was toggled.
+  const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLAudioElement>): void => applyRate(e.currentTarget)
 
 
   // FM elapsed time — ticks locally between WS updates
@@ -278,6 +285,9 @@ export default function Player(): JSX.Element {
     if (!na || na.src === url) return
     na.src = url
     na.load()
+    // Preloaded slots inherit the current rate too — the loadedmetadata
+    // handler re-asserts it once this load settles.
+    applyRate(na)
   }, [queueIndex, queue.length, isPlaying, repeat, crossfadeEnabled, radioMode])
 
   // Route both slots through the shared Web Audio effects chain (EQ, balance,
@@ -405,6 +415,9 @@ export default function Player(): JSX.Element {
       // Crossfade just swapped — audio already playing on active slot
       skipNextLoad.current = false
       audio.volume = volumeRef.current
+      // This slot was loaded by the crossfade preload, which never ran the
+      // rate setup below — apply it now or the faded-in track plays at 1x.
+      applyRate(audio)
       return
     }
 
@@ -550,13 +563,13 @@ export default function Player(): JSX.Element {
     if (!cfActive.current && pauseFadeRaf.current == null) audio.volume = volume
   }, [volume])
 
-  // Playback rate — apply to both audio slots (speed, its toggle, and the
-  // pitch-shift option all funnel through applyRate)
+  // Playback rate — apply to both audio slots (speed and the pitch-shift
+  // option both funnel through applyRate)
   useEffect(() => {
     for (const ref of [slotA, slotB]) {
       if (ref.current) applyRate(ref.current)
     }
-  }, [playbackSpeed, speedActive, pitchShift])
+  }, [playbackSpeed, pitchShift])
 
   // ── Skip silence ───────────────────────────────────────────────────────────
   // Polls the effects chain's analyser; once silence is confirmed, playback
@@ -620,7 +633,7 @@ export default function Player(): JSX.Element {
           const back = audio.currentTime - JUMP_S
           if (back > silenceJumpStart.current) {
             audio.currentTime = back
-            const rate = Math.max(0.25, effectivePlaybackRate(s))
+            const rate = Math.max(0.25, s.playbackSpeed)
             skipCooldownUntil.current = performance.now() + (JUMP_S / rate) * 1000 + 500
           }
         }
@@ -692,11 +705,11 @@ export default function Player(): JSX.Element {
     try {
       navigator.mediaSession.setPositionState({
         duration:     audio.duration,
-        playbackRate: effectivePlaybackRate(useStore.getState()),
+        playbackRate: playbackSpeed,
         position:     Math.min(currentTime, audio.duration),
       })
     } catch {/* ignore */}
-  }, [currentTime, playbackSpeed, speedActive])
+  }, [currentTime, playbackSpeed])
 
   // Audio output device
   useEffect(() => {
@@ -791,6 +804,7 @@ export default function Player(): JSX.Element {
           // Only reassign src if not already preloaded
           if (na.src !== url) na.src = url
           na.volume = 0
+          applyRate(na)
           na.play().catch(console.error)
 
           // Fade OUT active audio
@@ -1258,7 +1272,7 @@ export default function Player(): JSX.Element {
     }
   }, [showEqPanel])
   // Accent the button when anything in the panel deviates from neutral.
-  const eqActive = eqEnabled || (speedActive && playbackSpeed !== 1) || eqBalance !== 0 || eqMono || skipSilence || reverbEnabled
+  const eqActive = eqEnabled || playbackSpeed !== 1 || eqBalance !== 0 || eqMono || skipSilence || reverbEnabled
 
 
   // (Play/pause on Space is handled by the unified hotkey system above — the
@@ -1304,6 +1318,7 @@ export default function Player(): JSX.Element {
         ref={slotA}
         preload="none"
         crossOrigin="anonymous"
+        onLoadedMetadata={handleLoadedMetadata}
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
         onError={(e) => console.error('Audio error (slotA):', e)}
@@ -1312,6 +1327,7 @@ export default function Player(): JSX.Element {
         ref={slotB}
         preload="none"
         crossOrigin="anonymous"
+        onLoadedMetadata={handleLoadedMetadata}
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
         onError={(e) => console.error('Audio error (slotB):', e)}
@@ -1333,6 +1349,23 @@ export default function Player(): JSX.Element {
           </div>
         </>,
         document.body
+      )}
+
+      {/* Song info — mounted outside the bottom-bar block below, which is
+          unmounted on the WRLD page. It's what redirects to the song-info
+          pop-out window, so gating it on the bottom bar meant the `I` hotkey
+          set the state on the WRLD tab but nothing opened until navigating
+          away remounted this and finally fired the redirect. */}
+      {showSongInfo && (
+        <SongInfoModal
+          song={songInfoData}
+          onClose={() => { setShowSongInfo(false); setSongInfoData(null) }}
+          onEdit={canEditSong ? (songId) => {
+            setShowSongInfo(false); setSongInfoData(null)
+            setPendingEditorSongId(songId)
+            setActiveView('editor')
+          } : undefined}
+        />
       )}
 
       {/* Bottom bar hidden on the WRLD page — it has its own full playback controls.
@@ -1560,6 +1593,8 @@ export default function Player(): JSX.Element {
                       canEdit={canEditSong}
                       onInfo={openSongInfo}
                       onPlayNext={() => playNext(currentTrack)}
+                      liked={likedTrackIds.includes(currentTrack.id)}
+                      onToggleLike={() => toggleLike(currentTrack.id)}
                       onEditLocalMetadata={currentSongId == null && currentTrack.id.startsWith('local-') ? () => {
                         const lt = libraryTracks.find(t => t.id === currentTrack.id)
                         if (lt) useStore.getState().openLocalEditor(lt)
@@ -1723,19 +1758,6 @@ export default function Player(): JSX.Element {
           </button>
         </div>
         </>
-        )}
-
-        {/* Song info modal */}
-        {showSongInfo && (
-          <SongInfoModal
-            song={songInfoData}
-            onClose={() => { setShowSongInfo(false); setSongInfoData(null) }}
-            onEdit={canEditSong ? (songId) => {
-              setShowSongInfo(false); setSongInfoData(null)
-              setPendingEditorSongId(songId)
-              setActiveView('editor')
-            } : undefined}
-          />
         )}
 
         {/* Output device popover */}

@@ -32,16 +32,16 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
     eqMono, setEqMono,
     skipSilence, setSkipSilence,
     playbackSpeed, setPlaybackSpeed,
-    speedActive, setSpeedActive,
     pitchShift, setPitchShift,
     reverbEnabled, setReverbEnabled,
     reverbMix, setReverbMix,
     reverbDecay, setReverbDecay,
     communityEdits, playCommunityEdit,
+    preferOgVersion, setPreferOgVersion,
     sleepTimerEnd, setSleepTimer,
     audioOutput, setAudioOutput,
     radioFmActive, setShowEqPanel,
-  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'speedActive', 'setSpeedActive', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'playCommunityEdit', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'radioFmActive', 'setShowEqPanel')
+  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'playCommunityEdit', 'preferOgVersion', 'setPreferOgVersion', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'radioFmActive', 'setShowEqPanel')
 
   const balancePct = Math.round(eqBalance * 100)
   const balanceLabel = balancePct === 0 ? 'C' : balancePct < 0 ? `L ${-balancePct}` : `R ${balancePct}`
@@ -137,28 +137,41 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
       {/* Band sliders */}
       <div className={`px-4 pb-2 transition-opacity ${eqEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
         <div className="flex justify-between">
-          {EQ_BANDS.map((freq, i) => (
-            <div key={freq} className="flex flex-col items-center gap-1">
-              <span className="text-[9px] text-text-muted tabular-nums h-3">
-                {eqGains[i] !== 0 ? `${eqGains[i] > 0 ? '+' : ''}${eqGains[i]}` : ''}
-              </span>
-              {/* Vertical slider: a rotated horizontal range input */}
-              <div className="relative h-24 w-6 flex items-center justify-center">
-                <input
-                  type="range"
-                  min={-EQ_GAIN_LIMIT} max={EQ_GAIN_LIMIT} step={1}
-                  value={eqGains[i]}
-                  onChange={(e) => setEqBand(i, parseInt(e.target.value, 10))}
-                  onDoubleClick={() => setEqBand(i, 0)}
-                  disabled={!eqEnabled}
-                  className="absolute w-24 accent-[var(--accent)]"
-                  style={{ transform: 'rotate(-90deg)' }}
-                  title={`${bandLabel(freq)} Hz — double-click to reset`}
-                />
+          {EQ_BANDS.map((freq, i) => {
+            const gain = eqGains[i] ?? 0
+            // Track fill runs from the 0 dB center out to the current gain.
+            // The input is rotated -90°, so its own 0–100% axis reads
+            // bottom-to-top on screen.
+            const pct = ((gain + EQ_GAIN_LIMIT) / (EQ_GAIN_LIMIT * 2)) * 100
+            return (
+              <div key={freq} className="flex flex-col items-center gap-1">
+                {/* Always shown (including "0") — a band's setting should be
+                    readable without hovering it. */}
+                <span className={`text-[9px] tabular-nums h-3 ${gain !== 0 ? 'text-accent font-semibold' : 'text-text-muted'}`}>
+                  {gain > 0 ? `+${gain}` : gain}
+                </span>
+                {/* Vertical slider: a rotated horizontal range input */}
+                <div className="eq-band relative h-24 w-6 flex items-center justify-center">
+                  <input
+                    type="range"
+                    min={-EQ_GAIN_LIMIT} max={EQ_GAIN_LIMIT} step={1}
+                    value={gain}
+                    onChange={(e) => setEqBand(i, parseInt(e.target.value, 10))}
+                    onDoubleClick={() => setEqBand(i, 0)}
+                    disabled={!eqEnabled}
+                    className="absolute w-24 accent-[var(--accent)]"
+                    style={{
+                      transform: 'rotate(-90deg)',
+                      '--lo': `${Math.min(pct, 50)}%`,
+                      '--hi': `${Math.max(pct, 50)}%`,
+                    } as React.CSSProperties}
+                    title={`${bandLabel(freq)} Hz: ${gain > 0 ? '+' : ''}${gain} dB — double-click to reset`}
+                  />
+                </div>
+                <span className="text-[9px] text-text-muted">{bandLabel(freq)}</span>
               </div>
-              <span className="text-[9px] text-text-muted">{bandLabel(freq)}</span>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -242,14 +255,12 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
       {!radioFmActive && (
         <>
           <div className="border-t border-[var(--border)] mx-4" />
-          <div className="flex items-center justify-between px-4 pt-2.5 pb-1">
-            <div>
-              <p className="text-xs text-text-secondary">Speed</p>
-              <p className="text-[10px] text-text-muted">Slow down or speed up playback</p>
-            </div>
-            <Toggle on={speedActive} onClick={() => setSpeedActive(!speedActive)} />
+          {/* No on/off toggle here: 1x already *is* off. */}
+          <div className="px-4 pt-2.5 pb-1">
+            <p className="text-xs text-text-secondary">Speed</p>
+            <p className="text-[10px] text-text-muted">Slow down or speed up playback</p>
           </div>
-          <div className={`pb-1 transition-opacity ${speedActive ? '' : 'opacity-40 pointer-events-none'}`}>
+          <div className="pb-1">
             <div className="flex items-center gap-3 px-4 py-1.5">
               <span className="text-xs text-text-secondary w-24 shrink-0">Rate</span>
               <input
@@ -257,7 +268,6 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
                 value={playbackSpeed}
                 onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
                 onDoubleClick={() => setPlaybackSpeed(1)}
-                disabled={!speedActive}
                 className="flex-1 accent-[var(--accent)]"
                 title="Playback speed — double-click to reset"
               />
@@ -283,8 +293,18 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
         </>
       )}
 
-      {/* Sleep timer */}
+      {/* Prefer OG version — a playback preference rather than an effect, so
+          it sits with the sleep timer / output group at the bottom. */}
       <div className="border-t border-[var(--border)] mx-4" />
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div className="min-w-0">
+          <p className="text-xs text-text-secondary">Prefer OG file</p>
+          <p className="text-[10px] text-text-muted">Play a song's OG version when it has one</p>
+        </div>
+        <Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} />
+      </div>
+
+      {/* Sleep timer */}
       <div className="flex items-center justify-between gap-3 px-4 py-2.5">
         <div className="min-w-0">
           <p className="text-xs text-text-secondary">Sleep timer</p>

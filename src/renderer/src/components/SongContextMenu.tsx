@@ -10,6 +10,7 @@ import * as userApi from '../lib/userApi'
 import { buildStreamUrl, findSessionZips, songToTrack, JWApiSong, JWApiFileEntry } from '../lib/juicewrldApi'
 import { Track } from '../types'
 import ChangeVersionMenuItem from './ChangeVersionMenuItem'
+import { placeFlyout } from '../lib/menuFlyout'
 import { versionsEnabled } from '../lib/versionsApi'
 
 // The one context menu used everywhere a song can be right-clicked (Tracker,
@@ -89,20 +90,6 @@ function Divider(): JSX.Element {
   return <div className="my-1 border-t border-[var(--border)]" />
 }
 
-/** Places a submenu beside the menu, level with the row that opened it, and
- *  flips it to the menu's left when it would run off the right edge. Shared by
- *  the "Add to playlist" and "File actions" flyouts. */
-function placeFlyout(item: HTMLElement, menu: HTMLElement, sub: HTMLElement): { top: number; left: number } {
-  const ir = item.getBoundingClientRect()
-  const mr = menu.getBoundingClientRect()
-  const sr = sub.getBoundingClientRect()
-  let left = mr.right + 4
-  if (left + sr.width > window.innerWidth - 8) left = mr.left - sr.width - 4
-  return {
-    left: Math.max(8, left),
-    top: Math.max(8, Math.min(ir.top - 4, window.innerHeight - sr.height - 8)),
-  }
-}
 
 function downloadTrack(track: Track): void {
   const a = document.createElement('a')
@@ -153,6 +140,11 @@ export default function SongContextMenu({
   const fileItemRef = useRef<HTMLButtonElement>(null)
   const fileSubmenuRef = useRef<HTMLDivElement>(null)
   const [fileSubPos, setFileSubPos] = useState({ top: 0, left: 0 })
+  // "Change version" is a flyout too, but ChangeVersionMenuItem owns its own
+  // placement (it has to re-place itself when its list finishes loading) — the
+  // open state stays here so all three submenus remain mutually exclusive.
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const versionItemRef = useRef<HTMLButtonElement>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [doneId, setDoneId] = useState<number | null>(null)
   const [localDoneId, setLocalDoneId] = useState<string | null>(null)
@@ -261,9 +253,10 @@ export default function SongContextMenu({
 
   // Estimated clamp for the very first paint; corrected against the real
   // rendered size in the layout effect below. The estimate alone isn't enough
-  // because the menu's height varies a lot (extra items, long titles, the full
-  // playlists list), so near a screen edge the guess undershoots and the menu
-  // spills off-screen. Measuring the actual box fixes every case.
+  // because the menu's height varies a lot (which optional items a caller
+  // enables, long titles), so near a screen edge the guess undershoots and the
+  // menu spills off-screen. Measuring the actual box fixes every case. The
+  // submenus don't factor in — they're flyouts positioned separately.
   const menuWidth = 208
   const menuHeight = panel !== 'main' ? 320 : 240
   const [pos, setPos] = useState(() => ({
@@ -303,9 +296,9 @@ export default function SongContextMenu({
     <div
       ref={menuRef}
       // Height-capped to the viewport: a fully-loaded menu (queue actions +
-      // an expanded "Change version" list + Download/Remove) is taller than a
-      // short phone screen, and the position clamp alone would leave the
-      // bottom items clipped and unreachable — scroll instead.
+      // playlist/version/file rows + Download/Remove) is taller than a short
+      // phone screen, and the position clamp alone would leave the bottom
+      // items clipped and unreachable — scroll instead.
       style={{ position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left, maxHeight: window.innerHeight - 16 }}
       className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-x-hidden overflow-y-auto py-1"
     >
@@ -471,6 +464,7 @@ export default function SongContextMenu({
             const t = e.target as Node
             setPlaylistsOpen(addItemRef.current?.contains(t) ?? false)
             setFileOpen(fileItemRef.current?.contains(t) ?? false)
+            setVersionsOpen(versionItemRef.current?.contains(t) ?? false)
           }}
         >
           {onPlay && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play" onClick={() => { onPlay(); onClose() }} />}
@@ -529,6 +523,11 @@ export default function SongContextMenu({
             <ChangeVersionMenuItem
               songId={songId}
               onChangeVersion={(s) => { const t = songToTrack(s); playTrack(t, [t]); onClose() }}
+              open={versionsOpen && panel === 'main'}
+              onToggle={() => setVersionsOpen(o => !o)}
+              itemRef={versionItemRef}
+              menuRef={menuRef}
+              menuPos={pos}
             />
           )}
           {song && !track.path && track.genre === 'recording_session' && (

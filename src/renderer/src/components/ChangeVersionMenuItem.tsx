@@ -1,22 +1,33 @@
-import { useMemo, useState } from 'react'
-import { Layers, ChevronDown, Loader2, Star } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Layers, ChevronRight, Loader2, Star } from 'lucide-react'
 import { getVersionGroup } from '../lib/versionsApi'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
+import { placeFlyout } from '../lib/menuFlyout'
 
 interface Props {
   songId: number
   onChangeVersion: (song: JWApiSong) => void
+  /** Open state lives in the parent menu so only one submenu is open at a time. */
+  open: boolean
+  onToggle: () => void
+  /** Created by the parent (it hover-tests the row); attached here. */
+  itemRef: React.RefObject<HTMLButtonElement>
+  /** The menu element this flyout positions itself beside. */
+  menuRef: React.RefObject<HTMLElement>
+  /** The menu's own position — reposition the flyout when the menu moves. */
+  menuPos: { top: number; left: number }
 }
 
 interface VersionOption { song: JWApiSong; label: string | null; version: string | null }
 
-/** "Change version" menu item — dropped into every song context menu in the
- *  app (see ApiTrackerView, LikedSongsView, PlaylistsView, Player, WrldView).
- *  Self-contained (owns its own expand/collapse + fetch state) so it plugs
- *  into any existing menu without touching that menu's own state shape.
- *  Siblings are fetched lazily on first expand rather than eagerly whenever
+/** "Change version" row + submenu for the song context menu (which every view
+ *  in the app funnels through — Tracker, Liked Songs, Playlists, Player, WRLD).
+ *  Renders as a flyout beside the menu, like "Add to playlist" and "File
+ *  actions". The parent owns the open state so only one submenu shows at a
+ *  time; everything else (the sibling fetch, its own placement) stays here.
+ *  Siblings are fetched lazily on first open rather than eagerly whenever
  *  the parent menu opens — doing that for every song regardless of whether
  *  the user ever clicks this item is exactly the kind of needless-fetch
  *  pattern that made compact view laggy before.
@@ -25,10 +36,13 @@ interface VersionOption { song: JWApiSong; label: string | null; version: string
  *  group's *default* version (lib/songPrefs) so every future play of any
  *  version of this song resolves to it — the persistent counterpart to the
  *  one-off switch, set right where the user is already comparing versions. */
-export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props): JSX.Element {
-  const [expanded, setExpanded] = useState(false)
+export default function ChangeVersionMenuItem({
+  songId, onChangeVersion, open, onToggle, itemRef, menuRef, menuPos,
+}: Props): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [versions, setVersions] = useState<VersionOption[] | null>(null)
+  const flyoutRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
   const { songPrefs, setSongDefaultVersion } = useStore(
     useShallow((s) => ({
       songPrefs: s.songPrefs,
@@ -50,44 +64,68 @@ export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props
     return null
   }, [songPrefs, songId, versions])
 
-  const toggle = async (): Promise<void> => {
-    if (expanded) { setExpanded(false); return }
-    setExpanded(true)
-    if (versions != null) return
+  // Siblings load on first open, not when the parent menu mounts — see the
+  // needless-fetch note above.
+  useEffect(() => {
+    if (!open || versions != null || loading) return
+    let cancelled = false
     setLoading(true)
-    try {
-      const metas = await getVersionGroup(songId)
-      const fetched = await Promise.all(metas.map(m =>
-        apiFetch<JWApiSong>(`/songs/${m.songId}/`)
-          .then(song => ({
-            song,
-            version: m.version,
-            label: m.version
-              ? (m.versionTitle ? `${m.version} — ${m.versionTitle}` : m.version)
-              : m.versionTitle,
-          }))
-          .catch(() => null)
-      ))
-      // Songs with no `path` (recording sessions, some unsurfaced entries)
-      // have nothing to actually play — hidden here since both switching to
-      // one and starring it as the group default would break playback.
-      setVersions(fetched.filter((v): v is VersionOption => !!v && !!v.song.path))
-    } finally {
-      setLoading(false)
-    }
-  }
+    ;(async () => {
+      try {
+        const metas = await getVersionGroup(songId)
+        const fetched = await Promise.all(metas.map(m =>
+          apiFetch<JWApiSong>(`/songs/${m.songId}/`)
+            .then(song => ({
+              song,
+              version: m.version,
+              label: m.version
+                ? (m.versionTitle ? `${m.version} — ${m.versionTitle}` : m.version)
+                : m.versionTitle,
+            }))
+            .catch(() => null)
+        ))
+        // Songs with no `path` (recording sessions, some unsurfaced entries)
+        // have nothing to actually play — hidden here since both switching to
+        // one and starring it as the group default would break playback.
+        if (!cancelled) setVersions(fetched.filter((v): v is VersionOption => !!v && !!v.song.path))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [open, songId])
+
+  // Re-placed once the list has loaded, since the flyout's height jumps from
+  // the one-line "Loading…" to the full list.
+  useLayoutEffect(() => {
+    if (!open) return
+    const item = itemRef.current, menu = menuRef.current, sub = flyoutRef.current
+    if (!item || !menu || !sub) return
+    const next = placeFlyout(item, menu, sub)
+    setPos(prev => (prev.top === next.top && prev.left === next.left ? prev : next))
+  }, [open, loading, versions, menuPos])
 
   return (
     <>
       <button
-        onClick={(e) => { e.stopPropagation(); toggle() }}
+        ref={itemRef}
+        onClick={(e) => { e.stopPropagation(); onToggle() }}
         className="w-full flex items-center justify-between gap-2.5 px-3 py-2 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
       >
         <span className="flex items-center gap-2.5"><Layers size={14} /> Change version</span>
-        <ChevronDown size={12} className={`text-text-muted transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} />
+        <ChevronRight size={13} className="text-text-muted shrink-0" />
       </button>
-      {expanded && (
-        <div className="border-t border-[var(--border)] max-h-44 overflow-y-auto">
+      {open && (
+        // Same flyout treatment as the menu's other submenus: rendered inside
+        // the menu element (so its outside-click handler still counts this as
+        // "inside") but positioned as a fixed panel beside it.
+        <div
+          ref={flyoutRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', zIndex: 10000, top: pos.top, left: pos.left }}
+          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+        >
+          <div className="max-h-44 overflow-y-auto">
           {loading ? (
             <p className="px-3.5 py-2 text-xs text-text-muted flex items-center gap-1.5">
               <Loader2 size={12} className="animate-spin" /> Loading…
@@ -136,6 +174,7 @@ export default function ChangeVersionMenuItem({ songId, onChangeVersion }: Props
               )
             })
           )}
+          </div>
         </div>
       )}
     </>

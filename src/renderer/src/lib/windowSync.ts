@@ -21,9 +21,6 @@ const SYNC_KEYS = [
   'popoutWindows',
   'hotkeyBindings', 'hotkeySeekSeconds', 'globalHotkeysEnabled',
   'playbackSpeed', 'lyricsOffset', 'audioOutput', 'sleepTimerEnd',
-  // The speed toggle gates the *effective* playback rate — the mini player
-  // extrapolates progress/lyrics between syncs, so it needs it mirrored.
-  'speedActive',
   // Full equalizer/effects state, so the EQ pop-out window's controls drive
   // the main window's audio chain (only the main window owns audio elements).
   'eqEnabled', 'eqGains', 'eqPreset', 'eqBalance', 'eqMono', 'skipSilence',

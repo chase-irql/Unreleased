@@ -20,7 +20,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react'
-import { useStorePick, effectivePlaybackRate } from '../store/useStore'
+import { useStorePick } from '../store/useStore'
 import { sendPlayerCommand } from '../lib/windowSync'
 import { formatDuration } from '../lib/format'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
@@ -269,11 +269,8 @@ export default function MiniPlayer(): JSX.Element {
   useEffect(() => { baseRef.current = { t: currentTime, at: performance.now() } }, [currentTime])
   const playingRef = useRef(isPlaying)
   playingRef.current = isPlaying
-  // Effective rate (speed gated by its toggle) — speedActive is mirrored over
-  // window-sync precisely so this extrapolation stays in step.
-  const { speedActive } = useStorePick('speedActive')
   const speedRef = useRef(playbackSpeed)
-  speedRef.current = effectivePlaybackRate({ playbackSpeed, speedActive })
+  speedRef.current = playbackSpeed
   const getTime = useCallback((): number => {
     const { t, at } = baseRef.current
     if (!playingRef.current) return t

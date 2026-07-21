@@ -128,6 +128,7 @@ interface AppSettings {
   offlineLibraryPath: string
   miniPlayerHidesWindows: boolean
   confirmCloseWhilePlaying: boolean
+  windowTitleNowPlaying: boolean
 }
 
 // `floating` — rendered as the sole content of a pop-out BrowserWindow (see
@@ -229,6 +230,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     offlineLibraryPath: '',
     miniPlayerHidesWindows: false,
     confirmCloseWhilePlaying: true,
+    windowTitleNowPlaying: true,
   })
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
@@ -1337,6 +1339,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 </Row>
                 <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">
                   <Toggle on={appSettings.minimizeToTray} onClick={() => setSetting('minimizeToTray', !appSettings.minimizeToTray)} />
+                </Row>
+                <Row
+                  icon={AppWindow}
+                  iconColor="#8b5cf6"
+                  label="Show current song in the window title"
+                  sub="The taskbar and alt-tab label follows what's playing instead of just saying Unreleased"
+                >
+                  <Toggle on={appSettings.windowTitleNowPlaying} onClick={() => setSetting('windowTitleNowPlaying', !appSettings.windowTitleNowPlaying)} />
                 </Row>
                 <Row
                   icon={Minus}

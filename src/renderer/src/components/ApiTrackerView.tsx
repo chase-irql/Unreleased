@@ -1235,7 +1235,7 @@ export default function ApiTrackerView(): JSX.Element {
     apiTrackerCategory, setApiTrackerCategory,
     apiTrackerEra, setApiTrackerEra,
     setActiveView, setApiFilesPath, setPendingEditorSongId,
-    playlists, refreshPlaylists, setShowUserAuth,
+    playlists, refreshPlaylists, setShowUserAuth, likedTrackIds, toggleLike,
   } = useStore(useShallow(s => ({
     playTrack: s.playTrack, startRadio: s.startRadio, addToQueue: s.addToQueue,
     account: s.account, shuffle: s.shuffle,
@@ -1244,6 +1244,7 @@ export default function ApiTrackerView(): JSX.Element {
     setActiveView: s.setActiveView, setApiFilesPath: s.setApiFilesPath,
     setPendingEditorSongId: s.setPendingEditorSongId,
     playlists: s.playlists, refreshPlaylists: s.refreshPlaylists, setShowUserAuth: s.setShowUserAuth,
+    likedTrackIds: s.likedTrackIds, toggleLike: s.toggleLike,
   })))
 
   const canEdit = !!(account?.is_editor || account?.is_administrator)
@@ -2949,6 +2950,8 @@ export default function ApiTrackerView(): JSX.Element {
           onShowInFiles={() => handleShowInFiles(contextMenu.song)}
           canEdit={canEdit}
           onSelect={() => toggleSelect(contextMenu.song)}
+          liked={likedTrackIds.includes(`jw-${contextMenu.song.id}`)}
+          onToggleLike={() => toggleLike(`jw-${contextMenu.song.id}`)}
         />
       )}
 
