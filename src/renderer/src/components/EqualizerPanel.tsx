@@ -1,4 +1,5 @@
-import { RotateCcw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { RotateCcw, PictureInPicture2 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { EQ_BANDS, EQ_GAIN_LIMIT, EQ_PRESETS } from '../lib/audioEffects'
 
@@ -20,7 +21,9 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Elem
 
 // The equalizer popover's contents. Positioning (portal + backdrop) is owned
 // by the caller (Player), matching how the output-device picker works.
-export default function EqualizerPanel(): JSX.Element {
+// `floating` = rendered as its own pop-out window (FloatApp) — hides the
+// pop-out button since it's already popped out.
+export default function EqualizerPanel({ floating = false }: { floating?: boolean }): JSX.Element {
   const {
     eqEnabled, setEqEnabled,
     eqGains, setEqBand,
@@ -34,19 +37,56 @@ export default function EqualizerPanel(): JSX.Element {
     reverbEnabled, setReverbEnabled,
     reverbMix, setReverbMix,
     reverbDecay, setReverbDecay,
-    communityEdits, applyCommunityEdit,
-    radioFmActive,
-  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'speedActive', 'setSpeedActive', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'applyCommunityEdit', 'radioFmActive')
+    communityEdits, playCommunityEdit,
+    sleepTimerEnd, setSleepTimer,
+    audioOutput, setAudioOutput,
+    radioFmActive, setShowEqPanel,
+  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'speedActive', 'setSpeedActive', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'playCommunityEdit', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'radioFmActive', 'setShowEqPanel')
 
   const balancePct = Math.round(eqBalance * 100)
   const balanceLabel = balancePct === 0 ? 'C' : balancePct < 0 ? `L ${-balancePct}` : `R ${balancePct}`
 
+  // Sleep timer — duration picked before starting (mirrors Settings), plus a
+  // periodic re-render while running so the countdown stays fresh.
+  const [sleepMinutes, setSleepMinutes] = useState(30)
+  const [, sleepTick] = useState(0)
+  useEffect(() => {
+    if (!sleepTimerEnd) return
+    const id = setInterval(() => sleepTick((t) => t + 1), 30000)
+    return () => clearInterval(id)
+  }, [sleepTimerEnd])
+
+  // Output devices — same enumeration the player bar's picker uses.
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([])
+  useEffect(() => {
+    const enumerate = async (): Promise<void> => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        setOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
+      } catch { /* ignore */ }
+    }
+    enumerate()
+    navigator.mediaDevices.addEventListener('devicechange', enumerate)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate)
+  }, [])
+
   return (
     <div className="w-[340px] select-none">
-      {/* Header: title + enable toggle */}
+      {/* Header: title + pop-out + enable toggle */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">Equalizer</p>
-        <Toggle on={eqEnabled} onClick={() => setEqEnabled(!eqEnabled)} />
+        <div className="flex items-center gap-2.5">
+          {!floating && (window as any).electron?.openFloatWindow && (
+            <button
+              onClick={() => { (window as any).electron.openFloatWindow('equalizer'); setShowEqPanel(false) }}
+              title="Pop out equalizer"
+              className="text-text-muted hover:text-text-primary transition-colors"
+            >
+              <PictureInPicture2 size={13} />
+            </button>
+          )}
+          <Toggle on={eqEnabled} onClick={() => setEqEnabled(!eqEnabled)} />
+        </div>
       </div>
 
       {/* Preset picker */}
@@ -64,23 +104,23 @@ export default function EqualizerPanel(): JSX.Element {
         </select>
       </div>
 
-      {/* Community edits — shared effect configs, applied like presets but
-          able to set anything in this panel. The API endpoints for them
-          don't exist yet, so the store list stays empty and only the empty
-          state renders for now. Not gated by the EQ toggle: an edit can
-          enable whatever it needs itself. */}
+      {/* Community edits — community-made audio FILES (sped-up, remixes, …),
+          not effect presets: clicking one plays that file through the normal
+          queue. The API endpoints for them don't exist yet, so the store list
+          stays empty and only the empty state renders for now. */}
       <div className="px-4 pb-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted pb-1.5">Community edits</p>
         {communityEdits.length === 0 ? (
           <p className="text-[11px] text-text-muted bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg px-3 py-2">
-            Nothing here yet — community-shared edits will appear once they go live.
+            Nothing here yet — community-made edits will appear once they go live.
           </p>
         ) : (
           <div className="space-y-1 max-h-32 overflow-y-auto">
             {communityEdits.map((edit) => (
               <button
                 key={edit.id}
-                onClick={() => applyCommunityEdit(edit)}
+                onClick={() => playCommunityEdit(edit)}
+                title="Play this edit"
                 className="w-full flex items-baseline gap-2 px-3 py-1.5 rounded-lg text-left bg-[var(--surface-overlay)] border border-[var(--border)] hover:border-[var(--accent)] transition-colors"
               >
                 <span className="text-xs text-text-primary truncate">{edit.name}</span>
@@ -238,6 +278,57 @@ export default function EqualizerPanel(): JSX.Element {
             </div>
           </div>
         </>
+      )}
+
+      {/* Sleep timer */}
+      <div className="border-t border-[var(--border)] mx-4" />
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div className="min-w-0">
+          <p className="text-xs text-text-secondary">Sleep timer</p>
+          {sleepTimerEnd ? (
+            <p className="text-[10px] text-accent font-medium">
+              {Math.max(0, Math.ceil((sleepTimerEnd - Date.now()) / 60000))} min left
+            </p>
+          ) : (
+            <p className="text-[10px] text-text-muted">Pause playback after a delay</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {!sleepTimerEnd && (
+            <select
+              value={sleepMinutes}
+              onChange={(e) => setSleepMinutes(parseInt(e.target.value, 10))}
+              className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+            >
+              {[15, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => setSleepTimer(sleepTimerEnd ? null : Date.now() + sleepMinutes * 60 * 1000)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              sleepTimerEnd ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'bg-accent/15 text-accent hover:bg-accent/25'
+            }`}
+          >
+            {sleepTimerEnd ? 'Cancel' : 'Start'}
+          </button>
+        </div>
+      </div>
+
+      {/* Output device */}
+      {outputDevices.length > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-0.5">
+          <p className="text-xs text-text-secondary shrink-0">Output</p>
+          <select
+            value={audioOutput}
+            onChange={(e) => setAudioOutput(e.target.value)}
+            className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)] max-w-[200px] truncate"
+          >
+            <option value="">Default</option>
+            {outputDevices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>{d.label || `Output ${d.deviceId.slice(0, 8)}`}</option>
+            ))}
+          </select>
+        </div>
       )}
     </div>
   )

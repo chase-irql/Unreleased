@@ -149,7 +149,7 @@ let songAccentActive = false
 // <html>. Shared by App and the pop-out window shell (FloatApp) so a floating
 // window restyles itself exactly like the main one.
 export function useThemeEffects(): void {
-  const { theme, accentColor } = useStorePick('theme', 'accentColor')
+  const { theme, accentColor, appTextScale } = useStorePick('theme', 'accentColor', 'appTextScale')
   const skin = getSkin(theme)
   // Only the dynamic skin subscribes to the current song's art (same source
   // chain WrldView uses for the big cover); null otherwise so track changes
@@ -195,6 +195,14 @@ export function useThemeEffects(): void {
     if (songAccentActive) return
     applyAccentVars(accentColor)
   }, [accentColor, theme])
+
+  // App-wide text size. Tailwind's type scale (and rem-based spacing) keys
+  // off the root font-size, so one declaration scales text everywhere —
+  // cleared back to the stylesheet default at 1 so nothing is overridden.
+  useEffect(() => {
+    document.documentElement.style.fontSize =
+      appTextScale === 1 ? '' : `${appTextScale * 100}%`
+  }, [appTextScale])
 
   // Palette cross-fades (index.css transitions the registered vars) switch on
   // only after the persisted skin has painted once — two rAFs so the browser

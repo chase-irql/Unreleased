@@ -147,7 +147,10 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function AdminPage(): JSX.Element {
+// `embedded` renders the page as a panel inside another view (the editor
+// profile's Admin tab) — no back button, page title, or window-control
+// clearance, since the host view owns that chrome.
+export default function AdminPage({ embedded = false }: { embedded?: boolean }): JSX.Element {
   const { account, setActiveView, loadAccount, showNowPlaying, showQueue } = useStorePick('account', 'setActiveView', 'loadAccount', 'showNowPlaying', 'showQueue')
   // The header's rightmost controls (refresh + tabs) sit at the same corner
   // as the custom frameless-window buttons (see WindowControls in App.tsx,
@@ -155,7 +158,7 @@ export default function AdminPage(): JSX.Element {
   // only needed when this page actually reaches the window's right edge, i.e.
   // no side panel is open to its right (mirrors NowPlaying's same check).
   const isElectron = navigator.userAgent.includes('Electron')
-  const needsWindowControlClearance = isElectron && !showNowPlaying && !showQueue
+  const needsWindowControlClearance = !embedded && isElectron && !showNowPlaying && !showQueue
   const isAdmin    = !!account?.is_administrator
   const otpEnabled = !!account?.otp_enabled
 
@@ -226,28 +229,33 @@ export default function AdminPage(): JSX.Element {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 flex items-center gap-3 px-6 pb-0 border-b border-[var(--border)]"
-        style={{ paddingTop: needsWindowControlClearance ? 36 : 16, paddingRight: needsWindowControlClearance ? 148 : undefined }}>
-        <button onClick={() => setActiveView('api-tracker')}
-          className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">
-          <ChevronLeft size={16} />
-        </button>
-        <div className="mb-3">
-          <span className="text-text-primary font-bold text-sm">Admin</span>
-          {account?.discord_username && (
-            <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
-          )}
-        </div>
+      <div className={`shrink-0 flex items-center gap-3 pb-0 border-b border-[var(--border)] ${embedded ? 'px-4' : 'px-6'}`}
+        style={{ paddingTop: needsWindowControlClearance ? 36 : embedded ? 4 : 16, paddingRight: needsWindowControlClearance ? 148 : undefined }}>
+        {!embedded && (
+          <button onClick={() => setActiveView('api-tracker')}
+            className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        {!embedded && (
+          <div className="mb-3">
+            <span className="text-text-primary font-bold text-sm">Admin</span>
+            {account?.discord_username && (
+              <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
+            )}
+          </div>
+        )}
         <button onClick={() => setRefreshKey(k => k + 1)} disabled={loading}
           className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3 disabled:opacity-40">
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
         </button>
 
-        {/* Tabs */}
-        <div className="flex items-end gap-0 ml-2">
+        {/* Tabs — scroll horizontally rather than wrap/overflow on narrow
+            (mobile) widths, where six of them don't fit. */}
+        <div className="flex items-end gap-0 ml-2 min-w-0 flex-1 overflow-x-auto">
           {nav.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)}
-              className={`relative flex items-center gap-1.5 px-4 py-3 text-[12px] font-medium transition-colors border-b-2 ${
+              className={`relative flex items-center gap-1.5 px-4 py-3 text-[12px] font-medium transition-colors border-b-2 shrink-0 whitespace-nowrap ${
                 tab === n.id
                   ? 'text-accent border-accent'
                   : 'text-text-muted hover:text-text-primary border-transparent'

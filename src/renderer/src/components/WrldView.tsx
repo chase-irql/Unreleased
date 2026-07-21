@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
-import { useStore } from '../store/useStore'
+import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
 import { formatDuration } from '../lib/format'
@@ -1837,6 +1837,7 @@ const LyricsPanel = memo(function LyricsPanel({
   const linesRef    = useRef<HTMLDivElement>(null)
   const activeRef   = useRef<HTMLDivElement>(null)
   const lyricsOffset = useStore(s => s.lyricsOffset)
+  const { lyricsScale, lyricsAlign, lyricsBlur } = useStorePick('lyricsScale', 'lyricsAlign', 'lyricsBlur')
 
   // Driven by requestAnimationFrame against the LIVE audio.currentTime rather
   // than the Zustand-stored value (which only updates on the native
@@ -1936,9 +1937,10 @@ const LyricsPanel = memo(function LyricsPanel({
     const active = activeRef.current
     if (!active) return
     // offsetTop is relative to linesRef (position: relative), unaffected by the
-    // transform — so this stays correct mid-animation.
+    // transform — so this stays correct mid-animation. lyricsScale is a dep
+    // because changing the text size reflows every line's offsetTop.
     setTranslateY(active.offsetTop + active.offsetHeight / 2 - vpHalf)
-  }, [currentLineIdx, vpHalf])
+  }, [currentLineIdx, vpHalf, lyricsScale])
 
   // Right-click → "Download synced lyrics" — only offered for LRC-format
   // lyrics (the .lrc file needs the timestamps; plain unsynced text has
@@ -2039,14 +2041,14 @@ const LyricsPanel = memo(function LyricsPanel({
             // frames after the scroll settled, reading as a sudden late pop.
             // A transform never affects layout/offsetHeight, so the centering
             // stays correct for the whole transition with no second jump.
-            const baseFontSize = padded ? '1.4rem' : '1.15rem'
+            const baseFontSize = `${(padded ? 1.4 : 1.15) * lyricsScale}rem`
             const scale = isActive ? (padded ? 1.25 : 1.217) : 1
             return (
               <div
                 key={i}
                 ref={isActive ? activeRef : undefined}
                 onClick={() => seekAudio(line.time)}
-                className="cursor-pointer select-none origin-left"
+                className={`cursor-pointer select-none ${lyricsAlign === 'center' ? 'origin-center mx-auto text-center' : 'origin-left'}`}
                 style={{
                   // The active line grows via `scale()`, anchored at its left
                   // edge (`origin-left`) so it doesn't jump around — but scale
@@ -2070,7 +2072,7 @@ const LyricsPanel = memo(function LyricsPanel({
                   lineHeight: 1.25,
                   color:      isActive ? txtPri : txtSec,
                   opacity:    isActive ? 1 : dist === 1 ? 0.55 : dist === 2 ? 0.35 : 0.2,
-                  filter:     (!isActive && !isPast && dist >= 2) ? 'blur(0.6px)' : 'none',
+                  filter:     (!isActive && !isPast && dist >= 2 && lyricsBlur) ? 'blur(0.6px)' : 'none',
                   transform:  `scale(${scale})`,
                   transition: 'opacity 0.4s cubic-bezier(0.4,0,0.2,1), color 0.4s cubic-bezier(0.4,0,0.2,1), transform 0.4s cubic-bezier(0.4,0,0.2,1), filter 0.4s cubic-bezier(0.4,0,0.2,1)',
                   textShadow: isActive ? '0 0 30px rgba(255,255,255,0.12)' : 'none',
@@ -2099,7 +2101,16 @@ const LyricsPanel = memo(function LyricsPanel({
 
   return (
     <div className={`flex-1 min-h-0 overflow-y-auto ${padded ? 'py-16 pr-16 pl-8' : 'py-4 px-4 md:py-8 md:pr-12 md:pl-6'}`} style={{ scrollbarWidth: 'none' }}>
-      <pre className="text-xs md:text-sm leading-6 md:leading-7 whitespace-pre-wrap font-sans" style={{ color: txtSec }}>{rawLyrics}</pre>
+      <pre
+        className="text-xs md:text-sm leading-6 md:leading-7 whitespace-pre-wrap font-sans"
+        style={{
+          color: txtSec,
+          textAlign: lyricsAlign,
+          // Only override the responsive size classes when the user actually
+          // changed the size; unitless line-height keeps spacing proportional.
+          ...(lyricsScale !== 1 ? { fontSize: `${0.875 * lyricsScale}rem`, lineHeight: 1.9 } : {}),
+        }}
+      >{rawLyrics}</pre>
     </div>
   )
 })

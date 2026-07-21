@@ -258,7 +258,7 @@ export default function PlaylistsView(): JSX.Element {
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, sidebarPosition } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'sidebarPosition')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -1943,25 +1943,73 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         ) : (
           <div className="px-2 pb-8">
-            {/* Search + compact toggle share the sticky header with the
-                column labels (used to be a near-empty row of their own) —
-                sticky so scrolled track rows never reach the top of the
-                scroll container, where they'd render behind the frameless
-                window's fixed min/max/close buttons. That 188px gutter only
-                applies when this row actually sits under the window
-                controls — with the sidebar on top/right, main content
-                doesn't reach that corner, so reserving it there would just
-                leave dead space. */}
-            <div
-              className="sticky top-0 z-20 px-4 py-2 mb-2 flex items-center gap-3 bg-surface"
-              style={{ paddingRight: (window as any).electron && sidebarPosition !== 'top' && sidebarPosition !== 'right' ? 188 : undefined }}
-            >
-              {compactView ? (
-                <span className="flex-1 text-text-muted text-xs uppercase tracking-widest">
-                  {loadingCompact ? 'Loading…' : `${filteredCompactGroups.length} version group${filteredCompactGroups.length === 1 ? '' : 's'}`}
-                </span>
-              ) : (
-                <div className="grid flex-1 items-center gap-3 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
+            {/* Pinned list header: controls on one row, column labels on their
+                own full-width row beneath. Sticky so scrolled track rows never
+                reach the top of the scroll container, where they'd render
+                behind the frameless window's fixed min/max/close buttons; the
+                opaque background is what stops that.
+                The controls sit on the LEFT on purpose. Right-aligned they'd
+                land under those window buttons, which forces the 188px gutter
+                the other toolbars carry — and that gutter is pure dead space
+                next to the controls. Nothing here may share the column row
+                either: anything in that grid steals width from the columns and
+                knocks the duration header out of line with the rows.
+                -mx-2 px-6 backs the full container width while keeping the
+                grid's content box lined up with the rows' px-4. */}
+            <div className="sticky top-0 z-20 -mx-2 px-6 pt-2 pb-1 bg-surface">
+              <div className="flex items-center gap-2 mb-2">
+                {searchOpen ? (
+                  <div className="relative w-64">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                    <input
+                      ref={searchInputRef}
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      onBlur={() => { if (!search) setSearchOpen(false) }}
+                      onKeyDown={e => { if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur() } }}
+                      placeholder={`Search ${tracks.length} tracks…`}
+                      className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-8 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+                    />
+                    <button
+                      onClick={() => { setSearch(''); setSearchOpen(false) }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                      title="Close search"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setSearchOpen(true)}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl text-text-muted hover:text-text-primary bg-surface-overlay transition-colors"
+                    title="Search tracks"
+                  >
+                    <Search size={15} />
+                  </button>
+                )}
+                {versionsEnabled && (
+                  <button
+                    onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
+                    className={`flex items-center gap-1.5 px-3 h-9 rounded-xl text-xs font-medium transition-colors ${
+                      compactView
+                        ? 'bg-accent/15 text-accent border border-accent/30'
+                        : 'bg-surface-overlay text-text-muted hover:text-text-secondary border border-transparent'
+                    }`}
+                    title="Collapse tracks into their version groups"
+                  >
+                    <Layers size={13} />
+                    <span className="hidden sm:inline">Compact</span>
+                  </button>
+                )}
+                {compactView && (
+                  <span className="text-text-muted text-xs uppercase tracking-widest ml-1">
+                    {loadingCompact ? 'Loading…' : `${filteredCompactGroups.length} group${filteredCompactGroups.length === 1 ? '' : 's'}`}
+                  </span>
+                )}
+              </div>
+
+              {!compactView && (
+                <div className="grid items-center gap-3 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
                   {selectMode && (
                     <button
                       onClick={() => {
@@ -1985,50 +2033,6 @@ export default function PlaylistsView(): JSX.Element {
                   </div>
                   <span />
                 </div>
-              )}
-
-              {searchOpen ? (
-                <div className="relative w-56 shrink-0">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  <input
-                    ref={searchInputRef}
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    onBlur={() => { if (!search) setSearchOpen(false) }}
-                    onKeyDown={e => { if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur() } }}
-                    placeholder={`Search ${tracks.length} tracks…`}
-                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-8 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
-                  />
-                  <button
-                    onClick={() => { setSearch(''); setSearchOpen(false) }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-                    title="Close search"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setSearchOpen(true)}
-                  className="shrink-0 flex items-center justify-center w-9 h-9 rounded-xl text-text-muted hover:text-text-primary bg-surface-overlay border border-transparent transition-colors"
-                  title="Search tracks"
-                >
-                  <Search size={15} />
-                </button>
-              )}
-              {versionsEnabled && (
-                <button
-                  onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors ${
-                    compactView
-                      ? 'bg-accent/15 text-accent border border-accent/30'
-                      : 'bg-surface-overlay text-text-muted hover:text-text-secondary border border-transparent'
-                  }`}
-                  title="Collapse tracks into their version groups"
-                >
-                  <Layers size={13} />
-                  <span className="hidden sm:inline">Compact</span>
-                </button>
               )}
             </div>
 

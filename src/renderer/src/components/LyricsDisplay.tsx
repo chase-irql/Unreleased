@@ -22,10 +22,13 @@ interface LyricsDisplayProps {
 }
 
 export default function LyricsDisplay({ getTime, onSeek, compact, override }: LyricsDisplayProps = {}): JSX.Element {
-  const { currentTrackFull, account, lyricsOffset } = useStore(useShallow(s => ({
+  const { currentTrackFull, account, lyricsOffset, lyricsScale, lyricsAlign, lyricsBlur } = useStore(useShallow(s => ({
     currentTrackFull: s.currentTrackFull,
     account: s.account,
     lyricsOffset: s.lyricsOffset,
+    lyricsScale: s.lyricsScale,
+    lyricsAlign: s.lyricsAlign,
+    lyricsBlur: s.lyricsBlur,
   })))
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -148,8 +151,10 @@ export default function LyricsDisplay({ getTime, onSeek, compact, override }: Ly
           const lineStyle: React.CSSProperties = {
             opacity: isActive ? 1 : isPast ? 0.35 : 0.2,
             color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-            filter: (!isActive && !isPast) ? 'blur(1px)' : 'blur(0px)',
+            filter: (!isActive && !isPast && lyricsBlur) ? 'blur(1px)' : 'blur(0px)',
             transition: 'opacity 0.35s ease, color 0.35s ease, filter 0.35s ease',
+            fontSize: `${(compact ? 1.125 : 1.5) * lyricsScale}rem`,
+            textAlign: lyricsAlign,
           }
 
           return (
@@ -157,7 +162,7 @@ export default function LyricsDisplay({ getTime, onSeek, compact, override }: Ly
               key={i}
               ref={isActive ? activeRef : undefined}
               onClick={() => (onSeek ?? seekAudio)(line.time)}
-              className={`lyric-line text-left leading-snug cursor-pointer font-bold ${compact ? 'text-lg' : 'text-2xl'}`}
+              className="lyric-line leading-snug cursor-pointer font-bold"
               style={lineStyle}
             >
               {line.text}
@@ -172,7 +177,16 @@ export default function LyricsDisplay({ getTime, onSeek, compact, override }: Ly
 
   return (
     <div className={`h-full overflow-y-auto ${compact ? 'py-6 px-5' : 'py-8 px-8'}`}>
-      <pre className={`text-text-secondary whitespace-pre-wrap font-sans ${compact ? 'text-xs leading-6' : 'text-sm leading-8'}`}>
+      <pre
+        className="text-text-secondary whitespace-pre-wrap font-sans"
+        style={{
+          fontSize: `${(compact ? 0.75 : 0.875) * lyricsScale}rem`,
+          // Unitless so line spacing tracks the chosen size (the old fixed
+          // leading-6/8 cramped lines once the font grew past default).
+          lineHeight: compact ? 2 : 2.3,
+          textAlign: lyricsAlign,
+        }}
+      >
         {rawLyrics}
       </pre>
     </div>

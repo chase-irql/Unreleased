@@ -4,7 +4,7 @@ import {
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
-  ListOrdered, GripVertical, CloudUpload,
+  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
@@ -25,6 +25,20 @@ const ACCENT_PRESETS = [
   '#ea580c', '#d97706', '#059669', '#db2777',
 ]
 
+const APP_TEXT_SIZES: { label: string; value: number }[] = [
+  { label: 'Small', value: 0.9 },
+  { label: 'Default', value: 1 },
+  { label: 'Large', value: 1.1 },
+  { label: 'Larger', value: 1.2 },
+]
+
+const LYRIC_TEXT_SIZES: { label: string; value: number }[] = [
+  { label: 'Small', value: 0.85 },
+  { label: 'Default', value: 1 },
+  { label: 'Large', value: 1.2 },
+  { label: 'Huge', value: 1.4 },
+]
+
 const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[] = [
   { id: 'left', label: 'Left', icon: PanelLeft },
   { id: 'right', label: 'Right', icon: PanelRight },
@@ -40,6 +54,7 @@ const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
   { key: 'songInfo', label: 'Song info' },
   { key: 'editor', label: 'Song editor' },
   { key: 'localEditor', label: 'Local metadata editor' },
+  { key: 'convert', label: 'Convert format' },
   { key: 'miniPlayer', label: 'Mini player', sub: 'No in-app version — off hides the pop-out button' },
 ]
 
@@ -143,7 +158,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
     lastfmUser, setLastfmUser, lastfmEnabled, setLastfmEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled')
+    appTextScale, setAppTextScale,
+    lyricsScale, setLyricsScale,
+    lyricsAlign, setLyricsAlign,
+    lyricsBlur, setLyricsBlur,
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -641,6 +660,105 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     />
                   </div>
                 </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ca8a04' }}>
+                      <Type size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">App text size</span>
+                      <p className="text-text-muted text-[11px]">Scales text across the whole app</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                    {APP_TEXT_SIZES.map(({ label, value }) => {
+                      const active = appTextScale === value
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => setAppTextScale(value)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            active
+                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
+                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#db2777' }}>
+                      <FileText size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">Lyrics text size</span>
+                      <p className="text-text-muted text-[11px]">Synced and plain lyrics everywhere — WRLD tab, now playing, mini player</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                    {LYRIC_TEXT_SIZES.map(({ label, value }) => {
+                      const active = lyricsScale === value
+                      return (
+                        <button
+                          key={value}
+                          onClick={() => setLyricsScale(value)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            active
+                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
+                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0ea5e9' }}>
+                      <AlignCenter size={13} className="text-white" strokeWidth={2.25} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-text-primary text-sm">Lyrics alignment</span>
+                      <p className="text-text-muted text-[11px]">How lyric lines line up</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                    {([
+                      { id: 'left' as const, label: 'Left', icon: AlignLeft },
+                      { id: 'center' as const, label: 'Center', icon: AlignCenter },
+                    ]).map(({ id, label, icon: AlignIcon }) => {
+                      const active = lyricsAlign === id
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => setLyricsAlign(id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            active
+                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
+                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          <AlignIcon size={14} className="shrink-0" />
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <Row
+                  icon={Eye}
+                  iconColor="#64748b"
+                  label="Blur upcoming lyrics"
+                  sub="Soften synced lines that haven't played yet"
+                >
+                  <Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />
+                </Row>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0d9488' }}>

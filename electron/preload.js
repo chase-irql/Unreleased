@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electron', {
   // variants act on whichever window called them — pop-outs must not use
   // closeWindow/minimizeWindow/maximizeWindow, which target the main window.
   openFloatWindow: (view, params) => ipcRenderer.invoke('open-float-window', view, params),
+  toggleFloatWindow: (view, params) => ipcRenderer.invoke('toggle-float-window', view, params),
   closeFloatWindows: ()   => ipcRenderer.invoke('close-float-windows'),
   closeSelf:       ()     => ipcRenderer.invoke('close-self'),
 
@@ -100,6 +101,18 @@ contextBridge.exposeInMainWorld('electron', {
   readTrackMetadata:  (filePath)      => ipcRenderer.invoke('read-track-metadata', filePath),
   writeTrackMetadata: (filePath, meta) => ipcRenderer.invoke('write-track-metadata', filePath, meta),
   downloadToLibrary:  (payload)       => ipcRenderer.invoke('download-to-library', payload),
+  // Prompts (in the main process) and moves the file to the OS trash.
+  // Resolves { ok } | { canceled } | { error }.
+  deleteLibraryFile:  (filePath)      => ipcRenderer.invoke('delete-library-file', filePath),
+  // Copy/move prompt for a destination folder first. Both resolve
+  // { ok, path } | { canceled } | { error }; `path` is the new file's location.
+  copyLibraryFile:    (filePath)      => ipcRenderer.invoke('copy-library-file', filePath),
+  moveLibraryFile:    (filePath)      => ipcRenderer.invoke('move-library-file', filePath),
+  // copyFileToClipboard puts the actual file on the clipboard (paste into
+  // Explorer/Finder); on Linux it falls back to the path and reports
+  // { fallback: 'path' }.
+  copyFileToClipboard: (filePath)     => ipcRenderer.invoke('copy-file-to-clipboard', filePath),
+  copyTextToClipboard: (text)         => ipcRenderer.invoke('copy-text-to-clipboard', text),
 
   // Local audio format conversion (bundled ffmpeg). Progress arrives on
   // 'convert-progress' keyed by the id passed into convertAudio.

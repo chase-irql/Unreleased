@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 
-// Global "Convert format" dialog, mounted once at the app root and driven by the
-// store's `convertModal` target (a local Track). Transcodes the file via the
-// bundled ffmpeg (main process `convert-audio`), writing the result next to the
-// original and registering it in the library.
+// "Convert format" dialog for a local file, driven by the store's `convertModal`
+// target. Transcodes via the bundled ffmpeg (main process `convert-audio`),
+// writing the result next to the original and registering it in the library.
+//
+// Two mounts: the app root mounts it as an in-app modal (backdrop + centered
+// card), and the pop-out window (FloatApp's `convert` view) mounts it with
+// floating=true, which drops the backdrop, fills the window, turns the header
+// into the drag handle, and closes the window itself instead of the dialog.
 
 type FormatId = 'mp3' | 'm4a' | 'flac' | 'wav' | 'ogg' | 'opus'
 
@@ -32,7 +37,7 @@ const BITRATES = ['320k', '256k', '192k', '128k']
 const extOf = (p: string): string => (p.split('.').pop() || '').toLowerCase()
 const fileName = (p: string): string => p.split(/[/\\]/).pop() || p
 
-export default function ConvertFormatModal(): JSX.Element | null {
+export default function ConvertFormatModal({ floating = false }: { floating?: boolean } = {}): JSX.Element | null {
   const track = useStore((s) => s.convertModal)
   const closeConvert = useStore((s) => s.closeConvert)
   const addLibraryTrack = useStore((s) => s.addLibraryTrack)
@@ -94,7 +99,13 @@ export default function ConvertFormatModal(): JSX.Element | null {
         stripMetadata: stripMeta,
       })
       if (result?.error) { setError(result.error); return }
-      if (result?.track) addLibraryTrack(result.track as LibraryTrack)
+      if (result?.track) {
+        // Apply locally, then tell the other windows — libraryTracks isn't in
+        // the blanket sync mirror, so without this a converted file made in the
+        // pop-out wouldn't show up in the main window's Library until a rescan.
+        addLibraryTrack(result.track as LibraryTrack)
+        broadcastLibraryTrackAdd(result.track as LibraryTrack)
+      }
       setProgress(100)
       setDone({ outPath: result?.outPath || '' })
     } catch (e: any) {
@@ -104,19 +115,36 @@ export default function ConvertFormatModal(): JSX.Element | null {
     }
   }
 
-  const close = (): void => { if (!busy) closeConvert() }
+  // In a pop-out there's no dialog to dismiss — closing means closing the window.
+  const close = (): void => {
+    if (busy) return
+    if (floating) el?.closeSelf?.()
+    else closeConvert()
+  }
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
-      onClick={(e) => { if (e.currentTarget === e.target) close() }}
+      className={`fixed inset-0 z-[60] flex ${
+        floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'
+      }`}
+      onClick={(e) => { if (!floating && e.currentTarget === e.target) close() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10">
+      <div className={`bg-surface flex flex-col ${floating
+        ? 'w-full h-full overflow-y-auto'
+        : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto'}`}>
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0"
+          style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
+        >
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
             <FileAudio2 size={15} className="text-accent" /> Convert format
           </h2>
-          <button onClick={close} disabled={busy} className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40">
+          <button
+            onClick={close}
+            disabled={busy}
+            style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
+            className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+          >
             <X size={18} />
           </button>
         </div>
@@ -148,7 +176,7 @@ export default function ConvertFormatModal(): JSX.Element | null {
                   </button>
                 )}
                 <button
-                  onClick={closeConvert}
+                  onClick={close}
                   className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white hover:bg-accent/90 transition-colors"
                 >
                   Done

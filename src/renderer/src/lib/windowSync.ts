@@ -12,6 +12,7 @@ import type { ViewType, LibraryTrack } from '../types'
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
   'theme', 'accentColor', 'sidebarPosition', 'navOrder',
+  'appTextScale', 'lyricsScale', 'lyricsAlign', 'lyricsBlur',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   // Last.fm connect/disconnect can happen in the pop-out Settings window; the
   // session itself is in shared localStorage, but the scrobbler (main window
@@ -23,6 +24,10 @@ const SYNC_KEYS = [
   // The speed toggle gates the *effective* playback rate — the mini player
   // extrapolates progress/lyrics between syncs, so it needs it mirrored.
   'speedActive',
+  // Full equalizer/effects state, so the EQ pop-out window's controls drive
+  // the main window's audio chain (only the main window owns audio elements).
+  'eqEnabled', 'eqGains', 'eqPreset', 'eqBalance', 'eqMono', 'skipSilence',
+  'reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift', 'communityEdits',
   'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
   // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
   // their own store instance — without this, that report only ever reaches
@@ -69,6 +74,11 @@ type SyncMessage =
   // tab behind a pop-out local editor) from showing stale metadata until
   // their next rescan.
   | { type: 'library-patch'; id: string; updates: Partial<LibraryTrack> }
+  // A brand-new local file appearing in one window (the convert pop-out writing
+  // a transcoded file). Same reasoning as library-patch — one whole track is
+  // cheap to ship, and without it the main window's Library wouldn't show the
+  // new file until its next rescan.
+  | { type: 'library-add'; track: LibraryTrack }
 
 // Playback commands from pop-outs land here — the main window's Player
 // registers its dispatch table (the same one the tray menu uses) so remote
@@ -161,6 +171,8 @@ export function initWindowSync(isFloat: boolean): void {
       }
     } else if (msg.type === 'library-patch') {
       useStore.getState().updateLibraryTrack(msg.id, msg.updates)
+    } else if (msg.type === 'library-add') {
+      useStore.getState().addLibraryTrack(msg.track)
     }
   })
 
@@ -175,6 +187,15 @@ export function broadcastLibraryTrackUpdate(id: string, updates: Partial<Library
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const el = (window as any).electron
   el?.windowSyncSend?.({ type: 'library-patch', id, updates })
+}
+
+// Tell every other open window about a newly created local file (a converted
+// track), so a Library tab open elsewhere picks it up without a rescan. Caller
+// adds it to its own store first — this only relays it onward.
+export function broadcastLibraryTrackAdd(track: LibraryTrack): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const el = (window as any).electron
+  el?.windowSyncSend?.({ type: 'library-add', track })
 }
 
 // Ask the main window to switch views (e.g. the pop-out Settings' "API Docs"

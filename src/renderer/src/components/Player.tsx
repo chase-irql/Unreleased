@@ -1095,8 +1095,8 @@ export default function Player(): JSX.Element {
     'view-library':   () => setActiveView('library'),
     'view-wrld':      () => setActiveView('wrld'),
     'view-admin':     () => {
-      if (account?.is_administrator) setActiveView('admin')
-      else if (account?.is_editor) setActiveView('editor-profile')
+      // Admin tools live in the editor profile page's Admin tab now.
+      if (account?.is_administrator || account?.is_editor) setActiveView('editor-profile')
     },
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
@@ -1315,8 +1315,10 @@ export default function Player(): JSX.Element {
           <div className="fixed inset-0 z-40" onClick={() => setShowEqPanel(false)} />
           <div
             onMouseDown={(e) => e.stopPropagation()}
-            className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl"
-            style={{ bottom: eqPos.bottom, right: eqPos.right }}
+            className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl overflow-y-auto"
+            // Cap below the title bar so a full panel scrolls internally
+            // instead of growing under the window controls.
+            style={{ bottom: eqPos.bottom, right: eqPos.right, maxHeight: `calc(100vh - ${eqPos.bottom + 48}px)` }}
           >
             <EqualizerPanel />
           </div>

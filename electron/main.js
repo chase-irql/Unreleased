@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -218,11 +218,21 @@ const FLOAT_SIZES = {
   settings:      { width: 860,  height: 640, minWidth: 520, minHeight: 420 },
   'song-info':   { width: 540,  height: 760, minWidth: 420, minHeight: 480 },
   editor:        { width: 1000, height: 760, minWidth: 700, minHeight: 520 },
-  'local-editor': { width: 1000, height: 760, minWidth: 700, minHeight: 520 },
+  // Wider than the API editor: the local tag editor carries more field cards
+  // (credits/numbers/details/lyrics). 1200 clears Tailwind's lg breakpoint
+  // (1024px) so the art rail sits beside the fields instead of stacking above
+  // them, and fits the body's max-w-6xl (1152px) plus its px-6 padding.
+  'local-editor': { width: 1200, height: 860, minWidth: 700, minHeight: 520 },
   // Compact bar height — must match MiniPlayer.tsx's h-[192px]. The window
   // stays height-locked at this until the lyrics/queue panel expands it
   // (see 'mini-player-set-expanded' below).
   'mini-player': { width: 480,  height: 192, minWidth: 420, minHeight: 192 },
+  // Sized to the panel's fixed w-[340px] plus chrome; content scrolls
+  // vertically when the window is shorter than the full panel.
+  equalizer:     { width: 384,  height: 720, minWidth: 372, minHeight: 420 },
+  // Fits the convert dialog's max-w-md body (format grid + bitrate + options)
+  // without scrolling; content scrolls if the user shrinks it.
+  convert:       { width: 460,  height: 660, minWidth: 380, minHeight: 440 },
 }
 // Extra per-view BrowserWindow options on top of FLOAT_SIZES. The mini
 // player floats above other apps by default (its pin button toggles this).
@@ -260,6 +270,13 @@ function centerOnActiveDisplay(view) {
 }
 
 function createFloatWindow(view, params) {
+  // A real OS-fullscreen main window (e.g. the WRLD tab's fullscreen toggle)
+  // sits above its own sibling windows, so a freshly-created pop-out would be
+  // created and shown but stay hidden behind it until fullscreen was exited by
+  // some other means. Drop out of fullscreen first so the pop-out is visible
+  // immediately — the renderer's 'fullscreen-changed' listener keeps the WRLD
+  // tab's own UI in sync with this.
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()) mainWindow.setFullScreen(false)
   const query = { float: view, ...sanitizeFloatParams(params) }
   const existing = floatWindows.get(view)
   if (existing && !existing.isDestroyed()) {
@@ -706,6 +723,19 @@ ipcMain.handle('open-float-window', (_, view, params) => {
 // window alone — backs the "close all pop-out windows" shortcut.
 ipcMain.handle('close-float-windows', () => closeAllFloatWindows())
 
+// Open/focus-vs-close toggle for a single-content pop-out (currently just
+// Settings) — clicking its launcher icon again should close the window
+// instead of just refocusing it. Distinct from open-float-window, which
+// always focuses/retargets an existing window (the right behavior for
+// e.g. the song editor, where reclicking "Edit" on another song should
+// swap its content rather than close it).
+ipcMain.handle('toggle-float-window', (_, view, params) => {
+  const existing = floatWindows.get(view)
+  if (existing && !existing.isDestroyed()) { existing.close(); return { open: false } }
+  if (Object.prototype.hasOwnProperty.call(FLOAT_SIZES, view)) createFloatWindow(view, params)
+  return { open: true }
+})
+
 // ── OS-global shortcuts ──────────────────────────────────────────────────────
 // The renderer owns which accelerators map to which action; main just registers
 // them and relays a fire back to the main window's hotkey dispatcher. Each
@@ -978,6 +1008,147 @@ ipcMain.handle('load-library-data', () => loadLibraryData())
 ipcMain.handle('save-library-data', (_, data) => { saveLibraryData(data); return true })
 ipcMain.handle('load-local-playlists', () => loadLocalPlaylists())
 ipcMain.handle('save-local-playlists', (_, playlists) => { saveLocalPlaylists(playlists); return true })
+
+// Deleting a song is the only thing the library does to a user's *own* files
+// that can't be undone from inside the app, so it goes through the OS trash
+// (recoverable) rather than a hard unlink, and never happens without a modal
+// confirm. The renderer purges its own state only after this returns { ok }.
+ipcMain.handle('delete-library-file', async (event, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  const name = path.basename(filePath)
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const binName = process.platform === 'darwin' ? 'Trash'
+    : process.platform === 'win32' ? 'Recycle Bin' : 'trash'
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Delete', 'Cancel'],
+    // Cancel is both the default and the escape action — a stray Enter/Esc on
+    // a destructive prompt must never be the one that deletes the file.
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Delete song',
+    message: `Delete "${name}"?`,
+    detail: `The file is moved to the ${binName} and removed from your library. Any local playlists that reference it are updated.`,
+  })
+  if (response !== 0) return { canceled: true }
+  try {
+    await shell.trashItem(filePath)
+    return { ok: true }
+  } catch (e) {
+    // Usually the file is still open (playing) or sits on a volume with no
+    // trash folder. Report it here so the failure can't pass silently.
+    dialog.showMessageBox(win, {
+      type: 'error', buttons: ['OK'], title: 'Delete failed',
+      message: `Couldn't delete "${name}".`, detail: e.message,
+    })
+    return { error: e.message }
+  }
+})
+
+// ── IPC: local file operations (copy / move / clipboard) ────────────────────
+// These all act on the user's own files, so they share two rules: never
+// overwrite something that's already there (collisions get a " (n)" suffix),
+// and never touch anything before the user has picked a destination.
+
+// Returns a path in destDir that doesn't exist yet, so a copy/move can never
+// clobber an unrelated file that happens to share a name.
+function uniqueDestPath(destDir, baseName) {
+  const ext = path.extname(baseName)
+  const stem = baseName.slice(0, baseName.length - ext.length)
+  let candidate = path.join(destDir, baseName)
+  for (let n = 1; fs.existsSync(candidate); n++) {
+    candidate = path.join(destDir, `${stem} (${n})${ext}`)
+  }
+  return candidate
+}
+
+async function pickDestFolder(event, filePath, title) {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const result = await dialog.showOpenDialog(win, {
+    title,
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: path.dirname(filePath),
+  })
+  return result.canceled ? null : result.filePaths[0]
+}
+
+function fileOpError(event, action, name, message) {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  dialog.showMessageBox(win, {
+    type: 'error', buttons: ['OK'], title: `${action} failed`,
+    message: `Couldn't ${action.toLowerCase()} "${name}".`, detail: message,
+  })
+}
+
+ipcMain.handle('copy-library-file', async (event, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  const destDir = await pickDestFolder(event, filePath, 'Copy song to folder')
+  if (!destDir) return { canceled: true }
+  const target = uniqueDestPath(destDir, path.basename(filePath))
+  try {
+    fs.copyFileSync(filePath, target)
+    return { ok: true, path: target }
+  } catch (e) {
+    fileOpError(event, 'Copy', path.basename(filePath), e.message)
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('move-library-file', async (event, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  const destDir = await pickDestFolder(event, filePath, 'Move song to folder')
+  if (!destDir) return { canceled: true }
+  // Moving into the folder it already lives in would otherwise "succeed" by
+  // leaving a " (1)" duplicate behind — nothing to do.
+  if (path.resolve(destDir) === path.resolve(path.dirname(filePath))) return { canceled: true }
+  const target = uniqueDestPath(destDir, path.basename(filePath))
+  try {
+    try {
+      fs.renameSync(filePath, target)
+    } catch (e) {
+      // rename() can't cross volumes — fall back to copy-then-remove so moving
+      // to another drive still works.
+      if (e.code !== 'EXDEV') throw e
+      fs.copyFileSync(filePath, target)
+      fs.unlinkSync(filePath)
+    }
+    return { ok: true, path: target }
+  } catch (e) {
+    fileOpError(event, 'Move', path.basename(filePath), e.message)
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('copy-text-to-clipboard', (_, text) => {
+  clipboard.writeText(String(text ?? ''))
+  return { ok: true }
+})
+
+// Putting a real *file* on the clipboard (so Explorer/Finder pastes the file,
+// not its name) needs the platform's native file-list format. Electron can't
+// write it: clipboard.writeBuffer('CF_HDROP', …) registers a new *custom*
+// format under that name, which Explorer ignores. So shell out to the OS.
+ipcMain.handle('copy-file-to-clipboard', async (_, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  if (!fs.existsSync(filePath)) return { error: 'File not found' }
+  const { execFile } = require('child_process')
+  const run = (cmd, args) => new Promise((resolve) => {
+    execFile(cmd, args, { windowsHide: true }, (err) => resolve(err ? { error: err.message } : { ok: true }))
+  })
+  if (process.platform === 'win32') {
+    // Single-quoted PowerShell literal — the only escape needed is doubling '.
+    return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `Set-Clipboard -LiteralPath '${filePath.replace(/'/g, "''")}'`])
+  }
+  if (process.platform === 'darwin') {
+    const esc = filePath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return run('osascript', ['-e', `set the clipboard to POSIX file "${esc}"`])
+  }
+  // No portable file-clipboard on Linux — fall back to the path as text and
+  // say so, rather than silently doing something different than advertised.
+  clipboard.writeText(filePath)
+  return { ok: true, fallback: 'path' }
+})
 
 // ── IPC: offline playlist sync (download API songs for offline playback) ─────
 //

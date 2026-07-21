@@ -4,7 +4,7 @@ import {
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
-  Filter,
+  Filter, MoreHorizontal,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import {
@@ -973,6 +973,19 @@ export default function ApiFilesView(): JSX.Element {
                       <span className="hidden md:inline-block text-text-muted text-xs shrink-0 w-14 text-right">{(entry.size / 1_048_576).toFixed(1)} MB</span>
                     )}
                     {!isDir && <span className="hidden md:inline-block text-center text-[10px] uppercase tracking-wide text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded shrink-0 w-12">{ext}</span>}
+                    {/* Touch devices can't right-click (long-press enters
+                        select mode instead), so the context menu needs a
+                        visible trigger: always shown on mobile, hover-reveal
+                        on desktop where right-click already works. */}
+                    {!selectMode && (
+                      <button
+                        className="shrink-0 p-2 -my-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                        onClick={(e) => { e.stopPropagation(); openContextMenu(entry, e.clientX, e.clientY) }}
+                        title="More options"
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                    )}
                   </div>
                 )
               })}
@@ -1075,9 +1088,22 @@ export default function ApiFilesView(): JSX.Element {
                       )}
                     </div>
                     {/* Label */}
-                    <div className="px-2 py-2">
-                      <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
-                      {!isDir && <p className="text-text-muted text-[10px] uppercase tracking-wide mt-0.5">{ext}</p>}
+                    <div className="px-2 py-2 flex items-center gap-1">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
+                        {!isDir && <p className="text-text-muted text-[10px] uppercase tracking-wide mt-0.5">{ext}</p>}
+                      </div>
+                      {/* Same visible context-menu trigger as the list rows —
+                          right-click/long-press aren't discoverable on touch. */}
+                      {!selectMode && (
+                        <button
+                          className="shrink-0 p-1.5 -m-1 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                          onClick={(e) => { e.stopPropagation(); openContextMenu(entry, e.clientX, e.clientY) }}
+                          title="More options"
+                        >
+                          <MoreHorizontal size={15} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
