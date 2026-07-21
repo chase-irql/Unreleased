@@ -20,6 +20,7 @@ import { newFolderId, normalizeFolderName, pruneFolders } from '../lib/playlistF
 import type { PlaylistFolder, ServerPlaylistFolder } from '../lib/playlistFolders'
 import { createQueueSlice, QueueSlice } from './queueSlice'
 import { getSkin, type SkinId } from '../lib/skins'
+import { getFont } from '../lib/fonts'
 import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
 import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
@@ -155,6 +156,10 @@ interface AppState {
   // tab's button and the 'equalizer' hotkey can open it from anywhere — the
   // always-mounted Player owns the actual portal.
   showEqPanel: boolean
+  // Pop-out views currently open (from main's 'float-windows' broadcast).
+  // Per-window state, deliberately NOT synced: it's pushed to every window
+  // already, and mirroring it would fight that.
+  openFloatViews: string[]
   // Song whose info modal is shown by the main window's global host (App's
   // <GlobalSongInfoHost>). Only used to "attach" a floating song-info window
   // back into the main window — the per-view list modals keep their own local
@@ -194,6 +199,10 @@ interface AppState {
   // the lyrics* keys style synced/plain lyrics in LyricsDisplay and the WRLD
   // tab's lyrics panel.
   appTextScale: number
+  // Font-stack ids from lib/fonts.ts — appFont styles the whole UI,
+  // lyricsFont only the lyric panels (so lyrics can differ from the chrome).
+  appFont: string
+  lyricsFont: string
   lyricsScale: number
   lyricsAlign: 'left' | 'center'
   // Soften not-yet-played synced lines with a slight blur (on by default).
@@ -358,6 +367,11 @@ interface AppActions {
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setShowEqPanel: (show: boolean) => void
+  setOpenFloatViews: (views: string[]) => void
+  /** Single entry point for every equalizer opener (player bar, WRLD tab,
+   *  hotkey): focuses the pop-out when one is open instead of showing a
+   *  second copy of the same panel in-app. */
+  toggleEqPanel: () => void
   setInfoSongId: (id: number | null) => void
   setPlayerCollapsed: (collapsed: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
@@ -371,6 +385,8 @@ interface AppActions {
   setAudioOutput: (deviceId: string) => void
   setAccentColor: (color: string) => void
   setAppTextScale: (scale: number) => void
+  setAppFont: (id: string) => void
+  setLyricsFont: (id: string) => void
   setLyricsScale: (scale: number) => void
   setLyricsAlign: (align: 'left' | 'center') => void
   setLyricsBlur: (enabled: boolean) => void
@@ -752,6 +768,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showDiagnostics: false,
   showQueue: false,
   showEqPanel: false,
+  openFloatViews: [],
   infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
   wrldFullscreen: false,
@@ -817,6 +834,24 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
+  setOpenFloatViews: (openFloatViews) => {
+    // The equalizer just popped out — retire the in-app copy so the two can
+    // never be on screen at once (they drive the same synced state).
+    const dismissInApp = openFloatViews.includes('equalizer') && get().showEqPanel
+    set(dismissInApp ? { openFloatViews, showEqPanel: false } : { openFloatViews })
+  },
+  toggleEqPanel: () => {
+    const { openFloatViews, showEqPanel } = get()
+    if (openFloatViews.includes('equalizer')) {
+      // Already its own window — bring that forward rather than duplicating
+      // the panel in-app. (openFloatWindow focuses an existing pop-out.)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(window as any).electron?.openFloatWindow?.('equalizer')
+      if (showEqPanel) set({ showEqPanel: false })
+      return
+    }
+    set({ showEqPanel: !showEqPanel })
+  },
   setInfoSongId: (infoSongId) => set({ infoSongId }),
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
@@ -832,6 +867,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   audioOutput: ls.get<string>('audioOutput') ?? '',
   accentColor: ls.get<string>('accentColor') ?? '#1db954',
   appTextScale: ls.get<number>('appTextScale') ?? 1,
+  // getFont() maps unknown persisted ids (a renamed/removed stack) to System.
+  appFont: getFont(ls.get<string>('appFont')).id,
+  lyricsFont: getFont(ls.get<string>('lyricsFont')).id,
   lyricsScale: ls.get<number>('lyricsScale') ?? 1,
   lyricsAlign: ls.get<'left' | 'center'>('lyricsAlign') ?? 'left',
   lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
@@ -863,6 +901,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
   setAppTextScale: (appTextScale) => { set({ appTextScale }); ls.set('appTextScale', appTextScale) },
+  setAppFont: (appFont) => { set({ appFont }); ls.set('appFont', appFont) },
+  setLyricsFont: (lyricsFont) => { set({ lyricsFont }); ls.set('lyricsFont', lyricsFont) },
   setLyricsScale: (lyricsScale) => { set({ lyricsScale }); ls.set('lyricsScale', lyricsScale) },
   setLyricsAlign: (lyricsAlign) => { set({ lyricsAlign }); ls.set('lyricsAlign', lyricsAlign) },
   setLyricsBlur: (lyricsBlur) => { set({ lyricsBlur }); ls.set('lyricsBlur', lyricsBlur) },

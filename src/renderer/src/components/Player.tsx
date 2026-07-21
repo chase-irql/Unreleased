@@ -1075,7 +1075,7 @@ export default function Player(): JSX.Element {
     },
     'speed-up':    () => setPlaybackSpeed(clampSpeed(playbackSpeed + 0.25)),
     'speed-down':  () => setPlaybackSpeed(clampSpeed(playbackSpeed - 0.25)),
-    'equalizer':   () => { const s = useStore.getState(); s.setShowEqPanel(!s.showEqPanel) },
+    'equalizer':   () => useStore.getState().toggleEqPanel(),
     'crossfade':   () => { const s = useStore.getState(); s.setCrossfade(!s.crossfadeEnabled, s.crossfadeDuration) },
     'smooth-playback': () => { const s = useStore.getState(); s.setPauseFade(!s.pauseFadeEnabled) },
     'prefer-og':   () => { const s = useStore.getState(); s.setPreferOgVersion(!s.preferOgVersion) },
@@ -1233,7 +1233,16 @@ export default function Player(): JSX.Element {
   // Equalizer popover (also hosts balance/mono/skip-silence + playback speed).
   // Visibility lives in the store so the 'equalizer' hotkey and the WRLD tab's
   // button can open it too — this always-mounted component owns the portal.
-  const { showEqPanel, setShowEqPanel } = useStorePick('showEqPanel', 'setShowEqPanel')
+  const { showEqPanel, setShowEqPanel, toggleEqPanel, openFloatViews } = useStorePick('showEqPanel', 'setShowEqPanel', 'toggleEqPanel', 'openFloatViews')
+  // Track which pop-outs are open so the EQ button can route to an existing
+  // equalizer window instead of opening a duplicate panel in-app.
+  useEffect(() => {
+    const el = (window as any).electron
+    if (!el?.onFloatWindows) return
+    el.getFloatWindows?.().then((views: string[]) => useStore.getState().setOpenFloatViews(views)).catch(() => {})
+    return el.onFloatWindows((views: string[]) => useStore.getState().setOpenFloatViews(views))
+  }, [])
+  const eqPoppedOut = openFloatViews.includes('equalizer')
   const eqBtnRef = useRef<HTMLButtonElement>(null)
   const [eqPos, setEqPos] = useState({ bottom: 0, right: 0 })
   // Anchor above the bar button when it's on screen; openers without an
@@ -1310,7 +1319,7 @@ export default function Player(): JSX.Element {
 
       {/* Equalizer popover — outside the WRLD-page conditional below so the
           hotkey and the WRLD tab's own button can open it on any view. */}
-      {showEqPanel && createPortal(
+      {showEqPanel && !eqPoppedOut && createPortal(
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowEqPanel(false)} />
           <div
@@ -1639,8 +1648,8 @@ export default function Player(): JSX.Element {
               stream too; only the speed row hides inside the panel. */}
           <button
             ref={eqBtnRef}
-            onClick={() => setShowEqPanel(!showEqPanel)}
-            title="Equalizer"
+            onClick={toggleEqPanel}
+            title={eqPoppedOut ? 'Equalizer (open in its own window)' : 'Equalizer'}
             className={`transition-colors ${eqActive ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
             <SlidersHorizontal size={16} />

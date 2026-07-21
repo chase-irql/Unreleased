@@ -89,6 +89,21 @@ function Divider(): JSX.Element {
   return <div className="my-1 border-t border-[var(--border)]" />
 }
 
+/** Places a submenu beside the menu, level with the row that opened it, and
+ *  flips it to the menu's left when it would run off the right edge. Shared by
+ *  the "Add to playlist" and "File actions" flyouts. */
+function placeFlyout(item: HTMLElement, menu: HTMLElement, sub: HTMLElement): { top: number; left: number } {
+  const ir = item.getBoundingClientRect()
+  const mr = menu.getBoundingClientRect()
+  const sr = sub.getBoundingClientRect()
+  let left = mr.right + 4
+  if (left + sr.width > window.innerWidth - 8) left = mr.left - sr.width - 4
+  return {
+    left: Math.max(8, left),
+    top: Math.max(8, Math.min(ir.top - 4, window.innerHeight - sr.height - 8)),
+  }
+}
+
 function downloadTrack(track: Track): void {
   const a = document.createElement('a')
   a.href = buildStreamUrl(track.path)
@@ -127,12 +142,17 @@ export default function SongContextMenu({
   )
   const { track, songId } = state
   const menuRef = useRef<HTMLDivElement>(null)
-  const [panel, setPanel] = useState<'main' | 'playlists' | 'zip' | 'file'>('main')
+  const [panel, setPanel] = useState<'main' | 'zip'>('main')
   // "Add to playlist" opens a flyout beside the menu rather than replacing it.
   const [playlistsOpen, setPlaylistsOpen] = useState(false)
   const addItemRef = useRef<HTMLButtonElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
   const [subPos, setSubPos] = useState({ top: 0, left: 0 })
+  // "File actions" works the same way — its own flyout beside the menu.
+  const [fileOpen, setFileOpen] = useState(false)
+  const fileItemRef = useRef<HTMLButtonElement>(null)
+  const fileSubmenuRef = useRef<HTMLDivElement>(null)
+  const [fileSubPos, setFileSubPos] = useState({ top: 0, left: 0 })
   const [busyId, setBusyId] = useState<number | null>(null)
   const [doneId, setDoneId] = useState<number | null>(null)
   const [localDoneId, setLocalDoneId] = useState<string | null>(null)
@@ -267,15 +287,17 @@ export default function SongContextMenu({
     if (!playlistsOpen) return
     const item = addItemRef.current, menu = menuRef.current, sub = submenuRef.current
     if (!item || !menu || !sub) return
-    const ir = item.getBoundingClientRect()
-    const mr = menu.getBoundingClientRect()
-    const sr = sub.getBoundingClientRect()
-    let left = mr.right + 4
-    if (left + sr.width > window.innerWidth - 8) left = mr.left - sr.width - 4
-    left = Math.max(8, left)
-    const top = Math.max(8, Math.min(ir.top - 4, window.innerHeight - sr.height - 8))
+    const { top, left } = placeFlyout(item, menu, sub)
     setSubPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
   }, [playlistsOpen, creating, pos, playlists.length, localPlaylists.length, contained])
+
+  useLayoutEffect(() => {
+    if (!fileOpen) return
+    const item = fileItemRef.current, menu = menuRef.current, sub = fileSubmenuRef.current
+    if (!item || !menu || !sub) return
+    const { top, left } = placeFlyout(item, menu, sub)
+    setFileSubPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [fileOpen, pos])
 
   return (
     <div
@@ -386,6 +408,34 @@ export default function SongContextMenu({
         </div>
       )}
 
+      {fileOpen && panel === 'main' && (
+        // Same flyout treatment as the playlists submenu above: inside the menu
+        // element so the outside-click handler still counts it as "inside".
+        <div
+          ref={fileSubmenuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', zIndex: 10000, top: fileSubPos.top, left: fileSubPos.left }}
+          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+        >
+          {/* Actions on the local file itself. Copy/move prompt for a
+              destination in the main process; delete goes to the OS trash. */}
+          <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
+          <MenuItem icon={<ClipboardCopy size={14} />} label="Copy file" onClick={() => { el.copyFileToClipboard(track.path); onClose() }} />
+          <MenuItem icon={<Clipboard size={14} />} label="Copy path" onClick={() => { el.copyTextToClipboard(track.path); onClose() }} />
+          <MenuItem icon={<Copy size={14} />} label="Copy to folder…" onClick={() => { el.copyLibraryFile(track.path); onClose() }} />
+          <MenuItem icon={<FolderInput size={14} />} label="Move to folder…" onClick={() => { useStore.getState().moveLibraryTrack(track.id); onClose() }} />
+          <Divider />
+          {/* Deletes the user's actual file (to the OS trash) rather than just
+              un-listing it — confirmed in main before anything moves. */}
+          <MenuItem
+            icon={<Trash2 size={14} />}
+            label="Delete from disk"
+            destructive
+            onClick={() => { useStore.getState().deleteLibraryTrack(track.id); onClose() }}
+          />
+        </div>
+      )}
+
       {panel === 'zip' ? (
         <>
           <button
@@ -412,36 +462,16 @@ export default function SongContextMenu({
             <p className="px-3 py-3 text-xs text-text-muted">No matching ZIP found for this session.</p>
           )}
         </>
-      ) : panel === 'file' ? (
-        <>
-          <button
-            onClick={(e) => { e.stopPropagation(); setPanel('main') }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
-          >
-            <ChevronDown size={12} className="rotate-90" /> Back
-          </button>
-          {/* Actions on the local file itself. Copy/move prompt for a
-              destination in the main process; delete goes to the OS trash. */}
-          <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
-          <MenuItem icon={<ClipboardCopy size={14} />} label="Copy file" onClick={() => { el.copyFileToClipboard(track.path); onClose() }} />
-          <MenuItem icon={<Clipboard size={14} />} label="Copy path" onClick={() => { el.copyTextToClipboard(track.path); onClose() }} />
-          <MenuItem icon={<Copy size={14} />} label="Copy to folder…" onClick={() => { el.copyLibraryFile(track.path); onClose() }} />
-          <MenuItem icon={<FolderInput size={14} />} label="Move to folder…" onClick={() => { useStore.getState().moveLibraryTrack(track.id); onClose() }} />
-          <Divider />
-          {/* Deletes the user's actual file (to the OS trash) rather than just
-              un-listing it — confirmed in main before anything moves. */}
-          <MenuItem
-            icon={<Trash2 size={14} />}
-            label="Delete from disk"
-            destructive
-            onClick={() => { useStore.getState().deleteLibraryTrack(track.id); onClose() }}
-          />
-        </>
       ) : (
-        // Hovering "Add to playlist" opens the flyout; hovering any other row
-        // closes it again, the way a native submenu behaves.
+        // Hovering a submenu row opens its flyout; hovering any other row
+        // closes it again, the way a native submenu behaves. Driving both from
+        // one handler also makes them mutually exclusive.
         <div
-          onMouseOver={(e) => setPlaylistsOpen(addItemRef.current?.contains(e.target as Node) ?? false)}
+          onMouseOver={(e) => {
+            const t = e.target as Node
+            setPlaylistsOpen(addItemRef.current?.contains(t) ?? false)
+            setFileOpen(fileItemRef.current?.contains(t) ?? false)
+          }}
         >
           {onPlay && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play" onClick={() => { onPlay(); onClose() }} />}
           {onPlayNext && canQueue && <MenuItem icon={<ListEnd size={14} />} label="Play next" onClick={() => { onPlayNext(); onClose() }} />}
@@ -477,10 +507,16 @@ export default function SongContextMenu({
           {onEditLocalMetadata && (
             <MenuItem icon={<Pencil size={14} />} label="Edit metadata" onClick={() => { onEditLocalMetadata(); onClose() }} />
           )}
-          {/* Everything that touches the user's actual file lives one level
-              down — see the 'file' panel. */}
+          {/* Everything that touches the user's actual file lives in its own
+              flyout, so the destructive entries aren't one stray click away. */}
           {isLocalOnly && !!track.path && el && (
-            <MenuItem icon={<FileCog size={14} />} label="File actions" onClick={() => setPanel('file')} />
+            <MenuItem
+              innerRef={fileItemRef}
+              icon={<FileCog size={14} />}
+              label="File actions"
+              trailing={<ChevronRight size={13} className="text-text-muted" />}
+              onClick={() => setFileOpen(o => !o)}
+            />
           )}
           {onToggleLike && (
             <MenuItem

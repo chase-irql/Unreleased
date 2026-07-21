@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useStore, useStorePick } from '../store/useStore'
 import { buildImageUrl } from './juicewrldApi'
+import { getFont } from './fonts'
 import { getSkin, type Skin } from './skins'
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -149,7 +150,9 @@ let songAccentActive = false
 // <html>. Shared by App and the pop-out window shell (FloatApp) so a floating
 // window restyles itself exactly like the main one.
 export function useThemeEffects(): void {
-  const { theme, accentColor, appTextScale } = useStorePick('theme', 'accentColor', 'appTextScale')
+  const { theme, accentColor, appTextScale, appFont, lyricsFont } = useStorePick(
+    'theme', 'accentColor', 'appTextScale', 'appFont', 'lyricsFont',
+  )
   const skin = getSkin(theme)
   // Only the dynamic skin subscribes to the current song's art (same source
   // chain WrldView uses for the big cover); null otherwise so track changes
@@ -203,6 +206,15 @@ export function useThemeEffects(): void {
     document.documentElement.style.fontSize =
       appTextScale === 1 ? '' : `${appTextScale * 100}%`
   }, [appTextScale])
+
+  // Font stacks. --font-app backs Tailwind's font-sans (so it reaches every
+  // screen through preflight's <html> rule); --font-lyrics is read by the
+  // lyric panels only.
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--font-app', getFont(appFont).stack)
+    root.style.setProperty('--font-lyrics', getFont(lyricsFont).stack)
+  }, [appFont, lyricsFont])
 
   // Palette cross-fades (index.css transitions the registered vars) switch on
   // only after the persisted skin has painted once — two rAFs so the browser

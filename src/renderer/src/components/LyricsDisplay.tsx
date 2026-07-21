@@ -155,6 +155,7 @@ export default function LyricsDisplay({ getTime, onSeek, compact, override }: Ly
             transition: 'opacity 0.35s ease, color 0.35s ease, filter 0.35s ease',
             fontSize: `${(compact ? 1.125 : 1.5) * lyricsScale}rem`,
             textAlign: lyricsAlign,
+            fontFamily: 'var(--font-lyrics)',
           }
 
           return (
@@ -178,8 +179,9 @@ export default function LyricsDisplay({ getTime, onSeek, compact, override }: Ly
   return (
     <div className={`h-full overflow-y-auto ${compact ? 'py-6 px-5' : 'py-8 px-8'}`}>
       <pre
-        className="text-text-secondary whitespace-pre-wrap font-sans"
+        className="text-text-secondary whitespace-pre-wrap"
         style={{
+          fontFamily: 'var(--font-lyrics)',
           fontSize: `${(compact ? 0.75 : 0.875) * lyricsScale}rem`,
           // Unitless so line spacing tracks the chosen size (the old fixed
           // leading-6/8 cramped lines once the font grew past default).
