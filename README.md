@@ -2,7 +2,7 @@
 
 A music player for Juice WRLD — stream the full catalog of released and unreleased songs in your browser, or install the desktop app for local files, offline playback, and Discord integration. Powered by the [Juice WRLD API](https://juicewrldapi.com).
 
-![Version](https://img.shields.io/badge/version-1.15.0-blue)
+![Version](https://img.shields.io/badge/version-1.16.3-blue)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron&logoColor=white)
@@ -31,31 +31,43 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 - **Radio mode** — 📻 toggle in the player bar plays endless random tracks, pre-fetching the next song and respecting your active category/era filters
 - **Queue** — drag to reorder, history and upcoming split, lazy loading for filtered queues
 - **Synced lyrics** — karaoke-style highlighting with smooth scrolling, cached per session
-- **Fine control** — crossfade (1–12 s), playback speed (0.5×–2×), sleep timer, and audio output device picker
+- **Fine control** — crossfade (1–12 s), playback speed (0.5×–2× with an optional pitch-preserve toggle), sleep timer, and audio output device picker
+- **10-band equalizer & audio effects** — genre presets, L/R balance, mono downmix, reverb, and a safety limiter, in a panel you can pop out into its own always-on-top window (`Shift+E`)
+- **Last.fm scrobbling** — connect your account in Settings to scrobble what you play, on web or desktop
 - **Lock screen support** — Media Session integration shows track info and playback controls on mobile lock screens and notification shades
 
 ### Playlists & library
 
 - **Playlists** — Spotify-style hero with 2×2 cover mosaic, custom cover upload, descriptions, drag-to-reorder, and zip-download of all tracks
+- **Playlist folders** — organize playlists into folders, including folders within folders
 - **Sharing** — share any playlist via public link; anyone can play it without an account
 - **Liked songs** — heart in the player bar, synced to your account
+
+### Personalization
+
+- **Custom themes** — 8 built-in color themes, or a dynamic "Now Playing" theme that recolors the app to match the current song's cover art
+- **Configurable layout** — sidebar position, reorderable side menu, and fully rebindable keyboard shortcuts (with optional global/OS-wide bindings on desktop)
+- **Song personalization** — set a custom name, cover art, and preferred version for any song, and track your own play count for it
+- **Report & feedback** — flag an issue with any song, or send general feedback, right from the app
 
 ### Accounts & community
 
 - **Discord sign-in** — liked songs and playlists sync to the API across devices
-- **Editor tools** — submit song edits and propose new songs for admin review, track proposal status, climb the leaderboard, earn badges
-- **Admin tools** — review proposals and manage albums, versions, and tracklists
+- **Editor tools** — submit song edits and propose new songs for admin review, link song versions, track proposal status, climb the leaderboard, earn badges
+- **Admin tools** — review proposals and reports, and manage albums, versions, and tracklists
 
 ### Desktop app
 
 - **Local library** — point the app at your music folders; it reads tags and cover art, supports synced lyrics, and plays everything alongside the API catalog
 - **Metadata editor** — edit tags, cover art, and plain or synced lyrics on your local files
-- **Add to Library** — download any API song for offline playback
+- **Convert format** — transcode local files to MP3, M4A, Opus, OGG, FLAC, or WAV using bundled ffmpeg
+- **Add to Library** — download any API song, or an entire playlist, for offline playback
 - **Discord Rich Presence** — show what you're playing (or the 999 FM stream) on your Discord profile with a live progress bar
+- **Mini player & pop-out windows** — Settings, Song info, the editor, and a small always-on-top mini player can float as separate windows
 - **System tray** — now-playing info and media controls in the tray menu, with optional minimize-to-tray
 - **Download manager** — live progress and speed for every download
 - **Auto-updates** — updates install themselves via GitHub releases; join the beta channel with an access code for pre-release builds
-- **Maintenance installer** — re-running the installer offers update, version switch, and uninstall
+- **Maintenance installer** — re-running the installer offers update, version switch, and uninstall, plus a standalone repair tool for when the app won't launch at all
 
 ---
 
