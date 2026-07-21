@@ -175,6 +175,22 @@ input[type='range']:active::-webkit-slider-thumb {
   background: linear-gradient(to right, var(--accent) var(--val, 0%), var(--surface-overlay) var(--val, 0%));
 }
 
+/* Equalizer band sliders. Unlike seek/volume, a band's setting has to be
+   readable at a glance without hovering each one — so the thumb stays
+   visible, and the track fills from the 0 dB center out to the current
+   gain (--lo/--hi are the low/high ends of that span, set by the panel). */
+.eq-band input[type='range']::-webkit-slider-thumb { opacity: 1; }
+.eq-band input[type='range']::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--surface-overlay) var(--lo, 50%),
+    var(--accent) var(--lo, 50%),
+    var(--accent) var(--hi, 50%),
+    var(--surface-overlay) var(--hi, 50%)
+  );
+}
+.eq-band input[type='range']:disabled::-webkit-slider-thumb { opacity: 0.5; }
+
 /* Synced lyrics */
 .lyric-active { color: var(--text-primary); font-weight: 700; font-size: 1.25rem; }
 .lyric-past   { color: var(--text-muted); }

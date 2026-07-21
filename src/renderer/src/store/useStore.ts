@@ -46,14 +46,6 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 // so two windows flushing the same queue would double-send every report.
 export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
-// The rate audio actually plays at: the speed slider's value while the speed
-// toggle is on, else 1. Every consumer of a "current playback rate" (element
-// rates, progress extrapolation, Discord timestamps, Media Session position)
-// must go through this, not raw playbackSpeed.
-export function effectivePlaybackRate(s: { playbackSpeed: number; speedActive: boolean }): number {
-  return s.speedActive ? s.playbackSpeed : 1
-}
-
 // Lightweight localStorage persistence helper
 const ls = {
   get: <T>(key: string): T | null => {
@@ -126,10 +118,6 @@ interface AppState {
   reverbEnabled: boolean
   reverbMix: number
   reverbDecay: number
-  // Speed on/off gate: while false playback runs at 1x and playbackSpeed just
-  // remembers the slider. setPlaybackSpeed flips it automatically (≠1 → on,
-  // =1 → off) so the speed hotkeys keep working with the toggle off.
-  speedActive: boolean
   // Let the pitch follow the rate (preservesPitch off) — slowed feel below
   // 1x, sped-up/nightcore feel above. Combine with reverb for slowed+reverb.
   pitchShift: boolean
@@ -345,7 +333,6 @@ interface AppActions {
   setReverbEnabled: (enabled: boolean) => void
   setReverbMix: (mix: number) => void
   setReverbDecay: (seconds: number) => void
-  setSpeedActive: (active: boolean) => void
   setPitchShift: (enabled: boolean) => void
   playCommunityEdit: (edit: CommunityEdit) => void
 
@@ -688,12 +675,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
   setVolume: (volume) => { set({ volume }); ls.set('volume', volume) },
-  // Touching the speed flips its toggle to match (≠1 on, =1 off) so slider
-  // moves and the speed hotkeys always take effect even when toggled off.
-  setPlaybackSpeed: (speed) => {
-    set({ playbackSpeed: speed, speedActive: speed !== 1 })
-    ls.set('playbackSpeed', speed); ls.set('speedActive', speed !== 1)
-  },
+  setPlaybackSpeed: (speed) => { set({ playbackSpeed: speed }); ls.set('playbackSpeed', speed) },
   setLyricsOffset: (offset) => { set({ lyricsOffset: offset }); ls.set('lyricsOffset', offset) },
 
   // ── Equalizer / audio effects ─────────────────────────────────────────────
@@ -730,12 +712,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   reverbEnabled: ls.get<boolean>('reverbEnabled') ?? ls.get<boolean>('slowedReverb') ?? false,
   reverbMix: ls.get<number>('reverbMix') ?? 0.4,
   reverbDecay: ls.get<number>('reverbDecay') ?? 3,
-  speedActive: ls.get<boolean>('speedActive') ?? ((ls.get<number>('playbackSpeed') ?? 1) !== 1),
   pitchShift: ls.get<boolean>('pitchShift') ?? ls.get<boolean>('slowedReverb') ?? false,
   setReverbEnabled: (reverbEnabled) => { set({ reverbEnabled }); ls.set('reverbEnabled', reverbEnabled) },
   setReverbMix: (reverbMix) => { set({ reverbMix }); ls.set('reverbMix', reverbMix) },
   setReverbDecay: (reverbDecay) => { set({ reverbDecay }); ls.set('reverbDecay', reverbDecay) },
-  setSpeedActive: (speedActive) => { set({ speedActive }); ls.set('speedActive', speedActive) },
   setPitchShift: (pitchShift) => { set({ pitchShift }); ls.set('pitchShift', pitchShift) },
   communityEdits: [],
   // A community edit is a real audio file, so playing one goes through the

@@ -6,6 +6,73 @@ All notable changes to the web version of unreleased, from v1.10.6 onward. This 
 
 ---
 
+## [1.16.5] — 2026-07-21
+
+- **New** Selectable app font in Settings → Appearance — System, Grotesk, Humanist, Wide, Serif, Mono, and Display, each previewing in its own typeface
+- **New** Separate lyrics font, so lyric panels can use a different typeface from the rest of the app
+- **Improve** Local-file context menu's file actions tidied into their own submenu
+
+---
+
+## [1.16.4] — 2026-07-21
+
+- **New** App text size and lyrics text size are now adjustable separately in Settings → Appearance
+- **New** Lyrics alignment option, plus a "blur upcoming lyrics" toggle
+- **New** Equalizer panel gained a sleep timer and an audio-output picker, so playback settings live in one place
+- **New** "Community edits" section in the equalizer panel — community-made edits (sped-up versions, remixes, mashups) will be playable from here once they go live
+- **Improve** Admin tools now render as a tab inside the Editor Profile page instead of a separate top-level page
+
+---
+
+## [1.16.3] — 2026-07-20
+
+- **New** Last.fm scrobbling — connect your account in Settings → Playback and everything you listen to gets scrobbled to your profile
+
+---
+
+## [1.16.2] — 2026-07-20
+
+- **Improve** Effects panel reworked — Reverb and Speed are now independent toggles instead of one combined "slowed + reverb" switch
+- **New** "Pitch shift" option makes pitch follow playback speed — slowed below 1×, nightcore above
+- **New** Shift+E toggles the equalizer panel (rebindable), and the WRLD view got its own equalizer button
+- **Improve** "Skip silence" now jumps over silent stretches near-instantly instead of fast-forwarding through them, without clipping the start of the next sound
+
+---
+
+## [1.16.1] — 2026-07-20
+
+- **New** Equalizer — 10-band EQ with 14 presets (Bass Boost, Vocal, Rock, Hip-Hop, Small Speakers and more), left/right balance, mono, and skip-silence, opened from a new button in the player bar
+- **New** Slowed + reverb effect, with adjustable slowdown, reverb mix, and decay
+- **Fix** "Change version" no longer lists linked versions that have no playable file
+
+---
+
+## [1.16.0] — 2026-07-19
+
+- **New** The Files tab is now available on the web, not just in the desktop app
+- **Fix** Tracker searches on mobile could randomly come back empty while typing
+- **Fix** Playlist, folder, and song context menus now always stay fully on-screen and scroll when too tall, instead of getting clipped on short screens
+- **Fix** iOS no longer zooms in when you tap a text field
+
+---
+
+## [1.15.14] — 2026-07-19
+
+- **New** Back buttons on the Song editor, API Docs, and shared-playlist pages
+- **Improve** Clicking Settings while it's already open now closes it
+- **Fix** Song info now opens while 999 FM is playing, instead of doing nothing
+- **Fix** Compact (version-group) views in the Tracker and Playlists now refresh immediately after a version edit made elsewhere in the app
+- **Fix** Cover-picker search results are now filtered to actual matches for the search term
+
+---
+
+## [1.15.12] — 2026-07-18
+
+- **Improve** A playlist's track search collapsed into an icon that expands when clicked, freeing up the toolbar
+- **Improve** The Tracker's compact-view toggle is now remembered between sessions
+
+---
+
 ## [1.15.11] — 2026-07-18
 
 - **New** Files tab gained a media-type filter (All/Audio/Images/Videos)

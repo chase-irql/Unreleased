@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore, effectivePlaybackRate } from '../store/useStore'
+import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { discordCoverUrl } from '../lib/juicewrldApi'
 import { eraFullName, loadEraFullNames } from '../lib/eras'
@@ -144,7 +144,7 @@ export default function DiscordRpcSync(): JSX.Element | null {
       // estimate falls behind real playback immediately, tripping the drift
       // threshold over and over and re-sending the activity every few
       // seconds: exactly the RPC rate-limit spam this check exists to avoid.
-      const expected = last.currentTime + ((Date.now() - last.at) / 1000) * effectivePlaybackRate(useStore.getState())
+      const expected = last.currentTime + ((Date.now() - last.at) / 1000) * useStore.getState().playbackSpeed
       const actual = getCurrentTime()
       if (Math.abs(actual - expected) < SEEK_DRIFT_THRESHOLD_S) return
       lastSentPosRef.current = { currentTime: actual, at: Date.now() }

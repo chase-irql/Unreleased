@@ -67,7 +67,7 @@ export default function WrldView(): JSX.Element {
     setAudioOutput: s.setAudioOutput,
     toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
-    eqFxActive: s.eqEnabled || (s.speedActive && s.playbackSpeed !== 1) || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
+    eqFxActive: s.eqEnabled || s.playbackSpeed !== 1 || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
   })))
 
   // Skins beyond the classic pair mean `theme === 'dark'` no longer covers

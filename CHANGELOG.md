@@ -6,6 +6,87 @@ All notable changes to this project are documented here.
 
 ---
 
+## [1.16.5] — 2026-07-21
+
+- **New** Selectable app font in Settings → Appearance — System, Grotesk, Humanist, Wide, Serif, Mono, and Display, each previewing in its own typeface
+- **New** Separate lyrics font, so lyric panels can use a different typeface from the rest of the app
+- **Improve** Local-file context menu's file actions (convert, copy, move, delete) tidied into their own submenu
+- **Improve** *(Desktop)* The player bar's equalizer button now routes to the pop-out window when the equalizer is already open there, instead of opening a second copy in-app
+
+---
+
+## [1.16.4] — 2026-07-21
+
+- **New** App text size and lyrics text size are now adjustable separately in Settings → Appearance
+- **New** Lyrics alignment option, plus a "blur upcoming lyrics" toggle
+- **New** Equalizer panel gained a sleep timer and an audio-output picker, so playback settings live in one place
+- **New** "Community edits" section in the equalizer panel — community-made edits (sped-up versions, remixes, mashups) will be playable from here once they go live
+- **Improve** Admin tools now render as a tab inside the Editor Profile page instead of a separate top-level page
+- **New** *(Desktop)* Local-file "File actions" menu — copy the file itself to the clipboard, copy its path, copy it to another folder, move it, or delete it (to the OS trash, with a confirmation)
+- **New** *(Desktop)* The equalizer and the Convert-format dialog can each be popped out into their own window
+- **Improve** *(Desktop)* Clicking the Settings icon while its pop-out window is open now closes that window instead of just refocusing it
+
+---
+
+## [1.16.3] — 2026-07-20
+
+- **New** Last.fm scrobbling — connect your account in Settings → Playback and everything you listen to gets scrobbled to your profile
+
+---
+
+## [1.16.2] — 2026-07-20
+
+- **Improve** Effects panel reworked — Reverb and Speed are now independent toggles instead of one combined "slowed + reverb" switch
+- **New** "Pitch shift" option makes pitch follow playback speed — slowed below 1×, nightcore above
+- **New** Shift+E toggles the equalizer panel (rebindable), and the WRLD view got its own equalizer button
+- **Improve** "Skip silence" now jumps over silent stretches near-instantly instead of fast-forwarding through them, without clipping the start of the next sound
+- **Fix** *(Desktop)* A download interrupted mid-release could poison the updater's cache and make every later update check fail — the bad cache is now detected and cleared
+
+---
+
+## [1.16.1] — 2026-07-20
+
+- **New** Equalizer — 10-band EQ with 14 presets (Bass Boost, Vocal, Rock, Hip-Hop, Small Speakers and more), left/right balance, mono, and skip-silence, opened from a new button in the player bar
+- **New** Slowed + reverb effect, with adjustable slowdown, reverb mix, and decay
+- **Fix** "Change version" no longer lists linked versions that have no playable file
+- **Change** *(Desktop)* New app icon
+- **New** *(Desktop)* Local metadata editor gained many more tag fields — BPM, publisher, copyright, grouping, subtitle, key, ISRC, mood, comment, conductor, remix/original artist, and encoded-by
+- **New** *(Desktop)* The local metadata editor can be popped out into its own window, and a metadata edit made in one window now updates the Library in every other window
+- **New** *(Desktop)* "Remove metadata" option when converting a file's format — strips tags and cover art from the new file
+- **Fix** *(Desktop)* "Edit metadata" now returns you to wherever you opened it from instead of always dropping you in the Library
+- **Remove** *(Desktop)* The "notification tray" minimize mode (an always-pin-the-tray-icon experiment Windows wouldn't reliably honor) is gone — it falls back to plain "tray", and the icon can be pinned from Windows' own Taskbar settings
+
+---
+
+## [1.16.0] — 2026-07-19
+
+- **New** The Files tab is now available on the web, not just in the desktop app
+- **Fix** Tracker searches on mobile could randomly come back empty while typing
+- **Fix** Playlist, folder, and song context menus now always stay fully on-screen and scroll when too tall, instead of getting clipped on short screens
+- **Fix** iOS no longer zooms in when you tap a text field
+
+---
+
+## [1.15.14] — 2026-07-19
+
+- **New** Pop-out windows (Settings, Song info, Song editor) can now be docked back into the main window
+- **New** Back buttons on the Song editor, API Docs, and shared-playlist pages
+- **Improve** Clicking Settings while it's already open now closes it
+- **Fix** Song info now opens while 999 FM is playing, instead of doing nothing
+- **Fix** Compact (version-group) views in the Tracker and Playlists now refresh immediately after a version edit made elsewhere in the app
+- **Fix** Cover-picker search results are now filtered to actual matches for the search term
+- **Remove** *(Desktop)* The "Pin now" tray button in Settings
+
+---
+
+## [1.15.12] — 2026-07-18
+
+- **Improve** A playlist's track search collapsed into an icon that expands when clicked, freeing up the toolbar
+- **Improve** The Tracker's compact-view toggle is now remembered between sessions
+- **New** *(Desktop)* Settings, Song info, and the Song editor can each be popped out into their own window from an icon in their header, even when automatic pop-outs are turned off
+
+---
+
 ## [1.15.11] — 2026-07-18
 
 - **New** Files tab gained a media-type filter (All/Audio/Images/Videos)

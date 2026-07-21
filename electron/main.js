@@ -54,6 +54,9 @@ let appSettings = {
   // window close (X button / Alt+F4); deliberate quits skip it (see
   // skipCloseConfirm + the before-quit handler).
   confirmCloseWhilePlaying: true,
+  // When on, the main window's title (taskbar / alt-tab label) follows the
+  // current track instead of staying "Unreleased".
+  windowTitleNowPlaying: true,
 }
 try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
@@ -234,6 +237,23 @@ const FLOAT_SIZES = {
   // without scrolling; content scrolls if the user shrinks it.
   convert:       { width: 460,  height: 660, minWidth: 380, minHeight: 440 },
 }
+// Window titles for the pop-outs. Every window boots the same renderer bundle,
+// whose <title> is "unreleased", so without these each pop-out would be an
+// indistinguishable "unreleased" entry in the taskbar / alt-tab list. The
+// windows are frameless, so this is the only place the name shows.
+const FLOAT_TITLES = {
+  settings:       'Settings',
+  'song-info':    'Song Info',
+  editor:         'Song Editor',
+  'local-editor': 'Tag Editor',
+  'mini-player':  'Mini Player',
+  equalizer:      'Equalizer',
+  convert:        'Convert Format',
+}
+function floatTitle(view) {
+  return `${FLOAT_TITLES[view] || 'Unreleased'} — Unreleased`
+}
+
 // Extra per-view BrowserWindow options on top of FLOAT_SIZES. The mini
 // player floats above other apps by default (its pin button toggles this).
 const FLOAT_OPTIONS = {
@@ -270,13 +290,6 @@ function centerOnActiveDisplay(view) {
 }
 
 function createFloatWindow(view, params) {
-  // A real OS-fullscreen main window (e.g. the WRLD tab's fullscreen toggle)
-  // sits above its own sibling windows, so a freshly-created pop-out would be
-  // created and shown but stay hidden behind it until fullscreen was exited by
-  // some other means. Drop out of fullscreen first so the pop-out is visible
-  // immediately — the renderer's 'fullscreen-changed' listener keeps the WRLD
-  // tab's own UI in sync with this.
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()) mainWindow.setFullScreen(false)
   const query = { float: view, ...sanitizeFloatParams(params) }
   const existing = floatWindows.get(view)
   if (existing && !existing.isDestroyed()) {
@@ -291,12 +304,16 @@ function createFloatWindow(view, params) {
     ...FLOAT_SIZES[view],
     ...centerOnActiveDisplay(view),
     ...(FLOAT_OPTIONS[view] || {}),
+    title: floatTitle(view),
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
     webPreferences: {
       nodeIntegration: false, contextIsolation: true, webSecurity: true, preload: preloadPath,
     },
     show: false,
   })
+  // The shared bundle's <title> would otherwise overwrite the title above the
+  // moment the page loads.
+  win.on('page-title-updated', (e) => e.preventDefault())
   floatWindows.set(view, win)
   broadcastFloatWindows()
   win.once('ready-to-show', () => {
@@ -450,12 +467,28 @@ ipcMain.on('tray-playback-state', (_, state) => {
     liked: !!state.liked,
   }
   updateTray()
+  updateMainWindowTitle()
 })
+
+// The main window's taskbar / alt-tab label. With `windowTitleNowPlaying` on
+// (the default) it follows the current track; otherwise — and whenever nothing
+// is loaded — it falls back to the plain app name.
+function updateMainWindowTitle() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  // Follows `title` rather than `hasTrack` for the same reason the tray's
+  // now-playing label does: during FM radio `hasTrack` is false (it gates the
+  // transport controls) but there is still a track name worth showing.
+  const { title, artist } = trayPlayback
+  mainWindow.setTitle(appSettings.windowTitleNowPlaying !== false && title
+    ? `${title}${artist ? ` — ${artist}` : ''} • Unreleased`
+    : 'Unreleased')
+}
 
 // ── Window creation ───────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, minWidth: 960, minHeight: 600,
+    title: 'Unreleased',
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
     webPreferences: {
       nodeIntegration: false, contextIsolation: true, webSecurity: true, preload: preloadPath,
@@ -463,7 +496,13 @@ function createWindow() {
     show: false,
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  // The renderer's <title> would otherwise clobber the now-playing title.
+  mainWindow.on('page-title-updated', (e) => e.preventDefault())
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
+    updateMainWindowTitle()
+  })
 
   // Renderer crash / freeze diagnostics. `render-process-gone` fires when the
   // renderer dies (crash, OOM-kill) even though the main process — and thus the
@@ -939,6 +978,7 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
+  if (key === 'windowTitleNowPlaying') updateMainWindowTitle()
   return true
 })
 
