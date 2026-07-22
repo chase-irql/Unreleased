@@ -1,5 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronRight, ChevronDown, Menu, Check } from 'lucide-react'
+import React, { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { ChevronRight, ChevronDown, Menu, Check, RefreshCw, AlertTriangle } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { effectiveBinding, comboTokens, runHotkeyAction } from '../lib/hotkeys'
 import { trackIdToSongId } from '../lib/userApi'
@@ -34,6 +34,9 @@ type Entry =
       combo?: string
       checked?: boolean
       disabled?: boolean
+      /** Right-aligned status adornment (e.g. the update-check spinner). Shown
+       *  in place of a combo. */
+      trailing?: ReactNode
     }
 
 interface MenuDef { id: string; label: string; entries: Entry[] }
@@ -100,6 +103,14 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const [subPos, setSubPos] = useState({ top: 0, left: 0 })
   const [panelPos, setPanelPos] = useState({ top: 28, left: 4 })
+  // Whether the panel opened above the trigger instead of below (bottom bar) —
+  // drives the grow-from-bottom origin so the pop animation feels right.
+  const [flipUp, setFlipUp] = useState(false)
+  // In-menu updater status so "Check for updates" gives feedback in place
+  // rather than silently closing the menu (mirrors Settings' own state machine).
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'>('idle')
+  const [updatePercent, setUpdatePercent] = useState(0)
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -124,6 +135,53 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
+
+  // Follow updater progress so the "Check for updates" row reflects it live
+  // (available → downloading% → ready). Auto-updates fired elsewhere land here
+  // too, so the row is accurate even if the user didn't start the check.
+  useEffect(() => {
+    if (!el?.onUpdateStatus) return
+    return el.onUpdateStatus((d: { type: string; version?: string; percent?: number }) => {
+      if (d.type === 'checking') { setUpdateState('checking'); setUpdateVersion(null) }
+      else if (d.type === 'available') { setUpdateState('available'); setUpdateVersion(d.version ?? null) }
+      else if (d.type === 'not-available') { setUpdateState('latest'); setTimeout(() => setUpdateState('idle'), 5000) }
+      else if (d.type === 'downloading') { setUpdateState('downloading'); setUpdatePercent(d.percent ?? 0) }
+      else if (d.type === 'downloaded') { setUpdateState('downloaded'); setUpdateVersion(d.version ?? null) }
+      else if (d.type === 'error') { setUpdateState('error'); setTimeout(() => setUpdateState('idle'), 5000) }
+    })
+  }, [el])
+
+  // Kicks off a check (or installs a ready download). Deliberately does NOT
+  // close the menu — the row updates in place instead.
+  const checkForUpdates = async (): Promise<void> => {
+    if (updateState === 'downloaded') { el?.installUpdate?.(); return }
+    if (updateState === 'checking' || updateState === 'downloading') return
+    setUpdateState('checking')
+    try {
+      await el?.checkForUpdates?.()
+      // If nothing came back through onUpdateStatus, assume up to date.
+      setUpdateState((s) => (s === 'checking' ? 'latest' : s))
+      setTimeout(() => setUpdateState((s) => (s === 'latest' ? 'idle' : s)), 4000)
+    } catch {
+      setUpdateState('error')
+      setTimeout(() => setUpdateState('idle'), 4000)
+    }
+  }
+
+  const updateLabel = updateState === 'checking' ? 'Checking for updates…'
+    : updateState === 'downloading' ? `Downloading update… ${updatePercent}%`
+    : updateState === 'downloaded' ? 'Restart to update'
+    : updateState === 'available' ? `Update available${updateVersion ? ` (v${updateVersion})` : ''}`
+    : updateState === 'latest' ? 'Up to date'
+    : updateState === 'error' ? 'Update check failed'
+    : 'Check for updates'
+  const updateTrailing: ReactNode =
+    updateState === 'checking' || updateState === 'downloading' ? <RefreshCw size={12} className="animate-spin text-text-muted" />
+    : updateState === 'downloaded' ? <RefreshCw size={12} className="text-emerald-400" />
+    : updateState === 'latest' ? <Check size={12} className="text-emerald-400" />
+    : updateState === 'available' ? <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+    : updateState === 'error' ? <AlertTriangle size={12} className="text-red-400" />
+    : null
 
   // Local library files have no backing API song, so song-scoped entries
   // (report) stay disabled for them.
@@ -279,7 +337,8 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
         { kind: 'item', label: 'Keyboard shortcuts', onClick: run(() => openSettings('shortcuts')) },
         { kind: 'item', label: 'Send feedback…', onClick: run(() => openReport({ kind: 'feedback' })) },
         { kind: 'sep' },
-        { kind: 'item', label: 'Check for updates', onClick: run(() => el?.checkForUpdates?.()) },
+        // No `run` wrapper — keeps the menu open so the row can report progress.
+        { kind: 'item', label: updateLabel, trailing: updateTrailing, onClick: () => { void checkForUpdates() } },
         { kind: 'item', label: 'Reinstall latest release', onClick: run(() => el?.forceUpdate?.()) },
         { kind: 'sep' },
         { kind: 'item', label: 'GitHub', onClick: run(() => openExternal('https://github.com/leanwrldd/unreleased')) },
@@ -291,15 +350,21 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     },
   ]
 
-  // Anchor the dropdown to the trigger button wherever it sits — below it,
-  // left-aligned, then clamped so it can't spill off the right/bottom edge
-  // (the sidebar variant on the right side would otherwise overflow).
+  // Anchor the dropdown to the trigger button wherever it sits: below it by
+  // default, but flipped above when it wouldn't fit (the menu button in a
+  // bottom nav bar), and left-aligned but clamped off the right edge (the
+  // sidebar on the right). Uses the panel's measured height, so it only lands
+  // right once the panel exists — hence keying off `open` and its content.
   useLayoutEffect(() => {
     if (!open) return
     const r = triggerRef.current?.getBoundingClientRect()
     if (!r) return
+    const panelH = panelRef.current?.offsetHeight ?? 0
     const left = Math.max(4, Math.min(r.left, window.innerWidth - PANEL_W - 8))
-    const top = Math.max(4, Math.min(r.bottom + 2, window.innerHeight - 8))
+    const below = r.bottom + 2
+    const up = below + panelH > window.innerHeight - 8 && r.top - panelH - 2 >= 4
+    const top = up ? r.top - panelH - 2 : Math.min(below, window.innerHeight - panelH - 8)
+    setFlipUp(up)
     setPanelPos((prev) => (prev.top === top && prev.left === left ? prev : { top, left }))
   }, [open, variant, sidebarPosition])
 
@@ -361,8 +426,8 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
             const hovered = menus.find((m) => rowRefs.current[m.id]?.contains(e.target as Node))
             if (hovered) setActiveMenu(hovered.id)
           }}
-          style={{ position: 'fixed', zIndex: 10000, top: panelPos.top, left: panelPos.left, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          className="w-44 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1"
+          style={{ position: 'fixed', zIndex: 10000, top: panelPos.top, left: panelPos.left, transformOrigin: flipUp ? 'bottom left' : 'top left', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className="w-44 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 animate-menu-pop"
         >
           {menus.map((m) => (
             <button
@@ -382,10 +447,11 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
 
           {activeMenu && (
             <div
+              key={activeMenu}
               ref={subRef}
               onClick={(e) => e.stopPropagation()}
               style={{ position: 'fixed', zIndex: 10001, top: subPos.top, left: subPos.left, maxHeight: window.innerHeight - 16 }}
-              className="w-60 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden"
+              className="w-60 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden animate-menu-pop"
             >
               {activeEntries.map((entry, i) =>
                 entry.kind === 'sep' ? (
@@ -402,6 +468,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
                     </span>
                     <span className="flex-1 truncate">{entry.label}</span>
                     <span className="ml-auto flex items-center gap-1 shrink-0">
+                      {entry.trailing}
                       {comboTokens(entry.combo ?? (entry.hotkey ? effectiveBinding(entry.hotkey, hotkeyBindings) : '')).map((t, ti) => (
                         <kbd
                           key={ti}

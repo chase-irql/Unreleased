@@ -182,6 +182,7 @@ export default function WrldView(): JSX.Element {
   const [localSecondsLeft, setLocalSecondsLeft] = useState<number | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [proposed, setProposed]             = useState<string | null>(null)
+  const [proposeError, setProposeError]     = useState<string | null>(null)
   const [textIsDark, setTextIsDark]          = useState(false)
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const proposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -231,13 +232,23 @@ export default function WrldView(): JSX.Element {
   }, [suggestQuery])
 
   const handlePropose = (song: JWApiSong) => {
-    getActiveRadioClient()?.proposeQueue(String(song.id))
+    // Only confirm if the proposal actually went out over the socket — a
+    // closed/absent connection used to still flash "Proposed" while nothing
+    // was ever sent.
+    const sent = getActiveRadioClient()?.proposeQueue(song.id) ?? false
     const name = song.track_titles?.[0] || song.name
-    setProposed(name)
     setSuggestQuery('')
     setSuggestResults([])
     if (proposeTimer.current) clearTimeout(proposeTimer.current)
-    proposeTimer.current = setTimeout(() => setProposed(null), 4000)
+    if (sent) {
+      setProposeError(null)
+      setProposed(name)
+      proposeTimer.current = setTimeout(() => setProposed(null), 4000)
+    } else {
+      setProposed(null)
+      setProposeError('Not connected to 999 FM — try again in a moment')
+      proposeTimer.current = setTimeout(() => setProposeError(null), 4000)
+    }
   }
 
   const artSrc = radioFmActive
@@ -498,6 +509,9 @@ export default function WrldView(): JSX.Element {
           </div>
         ) : (
           <>
+            {proposeError && (
+              <p className="text-red-400/80 text-xs pl-1">{proposeError}</p>
+            )}
             <div className="relative">
               <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
               <input

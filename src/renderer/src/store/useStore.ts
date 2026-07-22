@@ -19,12 +19,12 @@ import * as foldersApi from '../lib/foldersApi'
 import { newFolderId, normalizeFolderName, pruneFolders } from '../lib/playlistFolders'
 import type { PlaylistFolder, ServerPlaylistFolder } from '../lib/playlistFolders'
 import { createQueueSlice, QueueSlice } from './queueSlice'
-import { getSkin, type SkinId } from '../lib/skins'
+import { getSkin, setCustomSkinsCache, type Skin, type SkinId } from '../lib/skins'
 import { getFont } from '../lib/fonts'
 import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
 import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
-import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY } from '../lib/navItems'
+import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getLastfmSession } from '../lib/lastfm'
 
 // Key used to track songs downloaded individually (song context menu →
@@ -180,6 +180,10 @@ interface AppState {
   radioFmQueuePreview: string[]
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
   theme: SkinId
+  // User-created skins (built in the in-app editor or imported). Local-first
+  // and persisted; mirrored into lib/skins' module cache on every write so
+  // getSkin() resolves them everywhere. Synced across windows (windowSync).
+  customSkins: Skin[]
   sidebarPosition: SidebarPosition
   appMenuPosition: AppMenuPosition
   // User-defined order of the primary side-menu nav items, by view id. Only
@@ -191,6 +195,10 @@ interface AppState {
   // own default for anything absent, so lets the user hide built-ins and add
   // the off-by-default extras.
   navVisibility: Record<string, boolean>
+  // Order + visibility for the foot-of-menu controls (Profile, Log out,
+  // Diagnostics, Download, Settings) — same model as navOrder/navVisibility.
+  navControlOrder: string[]
+  navControlVisibility: Record<string, boolean>
 
   // Settings
   crossfadeEnabled: boolean
@@ -385,10 +393,18 @@ interface AppActions {
   setPlayerCollapsed: (collapsed: boolean) => void
   setWrldFullscreen: (fullscreen: boolean) => void
   setTheme: (theme: SkinId) => void
+  /** Creates or updates a custom skin (upsert by id). Since editing the active
+   *  skin's palette re-runs the theme effect, the editor uses this for live
+   *  preview — every color change saves through here. */
+  saveCustomSkin: (skin: Skin) => void
+  /** Removes a custom skin; if it was the active theme, falls back to dark. */
+  deleteCustomSkin: (id: string) => void
   setSidebarPosition: (position: SidebarPosition) => void
   setAppMenuPosition: (position: AppMenuPosition) => void
   setNavOrder: (order: ViewType[]) => void
   setNavItemVisible: (view: ViewType, visible: boolean) => void
+  setNavControlOrder: (order: string[]) => void
+  setNavControlVisible: (id: string, visible: boolean) => void
 
   setCrossfade: (enabled: boolean, duration: number) => void
   setPauseFade: (enabled: boolean) => void
@@ -631,6 +647,19 @@ function hydrateSongPrefs(): SongPrefMap {
   return stored
 }
 
+/** Loads the persisted custom skins and seeds lib/skins' module cache with them
+ *  before the store's `theme` initializer resolves the active id via getSkin —
+ *  so a saved custom skin is the active look on the very first paint. */
+function hydrateCustomSkins(): Skin[] {
+  const stored = ls.get<Skin[]>('customSkins') ?? []
+  // Guard against a corrupted blob: keep only well-formed rows.
+  const valid = Array.isArray(stored)
+    ? stored.filter((s): s is Skin => !!s && typeof s.id === 'string' && !!s.vars)
+    : []
+  setCustomSkinsCache(valid)
+  return valid
+}
+
 // ─── Report outbox helpers ────────────────────────────────────────────────────
 
 // Guards _flushReports against overlapping runs (boot + login + a fresh submit
@@ -784,12 +813,17 @@ export const useStore = create<AppStore>((set, get, store) => ({
   radioFmUpNext: null,
   radioFmQueuePreview: [],
   radioFmMatchedSong: null,
+  // Seeds lib/skins' cache as a side effect — MUST stay above `theme` so a
+  // persisted custom skin id resolves (getSkin) instead of falling back to dark.
+  customSkins: hydrateCustomSkins(),
   // getSkin() maps unknown persisted ids (renamed/removed skins) back to dark.
   theme: getSkin(ls.get<string>('theme') ?? 'dark').id,
   sidebarPosition: ls.get<SidebarPosition>('sidebarPosition') ?? 'left',
   appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
   navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
+  navControlOrder: ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER,
+  navControlVisibility: { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...(ls.get<Record<string, boolean>>('navControlVisibility') ?? {}) },
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
@@ -870,6 +904,24 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
+  saveCustomSkin: (skin) => {
+    const list = get().customSkins
+    const idx = list.findIndex((s) => s.id === skin.id)
+    const next = idx >= 0 ? list.map((s) => (s.id === skin.id ? skin : s)) : [...list, skin]
+    set({ customSkins: next })
+    ls.set('customSkins', next)
+    // Keep the module cache getSkin() reads in step — the theme effect reruns
+    // on this state change and repaints from the cache (live preview when the
+    // edited skin is the active one).
+    setCustomSkinsCache(next)
+  },
+  deleteCustomSkin: (id) => {
+    const next = get().customSkins.filter((s) => s.id !== id)
+    set({ customSkins: next })
+    ls.set('customSkins', next)
+    setCustomSkinsCache(next)
+    if (get().theme === id) get().setTheme('dark')
+  },
   setSidebarPosition: (sidebarPosition) => { set({ sidebarPosition }); ls.set('sidebarPosition', sidebarPosition) },
   setAppMenuPosition: (appMenuPosition) => { set({ appMenuPosition }); ls.set('appMenuPosition', appMenuPosition) },
   setNavOrder: (navOrder) => { set({ navOrder }); ls.set('navOrder', navOrder) },
@@ -877,6 +929,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const navVisibility = { ...get().navVisibility, [view]: visible }
     set({ navVisibility })
     ls.set('navVisibility', navVisibility)
+  },
+  setNavControlOrder: (navControlOrder) => { set({ navControlOrder }); ls.set('navControlOrder', navControlOrder) },
+  setNavControlVisible: (id, visible) => {
+    const navControlVisibility = { ...get().navControlVisibility, [id]: visible }
+    set({ navControlVisibility })
+    ls.set('navControlVisibility', navControlVisibility)
   },
 
   // ── Settings ──────────────────────────────────────────────────────────────

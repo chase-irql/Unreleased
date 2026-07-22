@@ -4,13 +4,14 @@ import {
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
-  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu,
+  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
-import { SKINS } from '../lib/skins'
+import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
+import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
-import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
@@ -149,12 +150,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     setShowSettings, setActiveView,
     account,
     theme, setTheme,
+    customSkins, saveCustomSkin, deleteCustomSkin,
     accentColor, setAccentColor,
     settingsTab, setSettingsTab,
     sidebarPosition, setSidebarPosition,
     appMenuPosition, setAppMenuPosition,
     navOrder, setNavOrder,
     navVisibility, setNavItemVisible,
+    navControlOrder, setNavControlOrder,
+    navControlVisibility, setNavControlVisible,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
@@ -175,7 +179,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     lyricsBlur, setLyricsBlur,
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -183,12 +187,41 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   // nav list (see shownNav below). null = nothing being dragged / hovered.
   const [navDragIdx, setNavDragIdx] = useState<number | null>(null)
   const [navOverIdx, setNavOverIdx] = useState<number | null>(null)
+  // Same, for the separate "Menu controls" list below.
+  const [ctrlDragIdx, setCtrlDragIdx] = useState<number | null>(null)
+  const [ctrlOverIdx, setCtrlOverIdx] = useState<number | null>(null)
   const [sleepMinutes, setSleepMinutes] = useState(30)
   const [updateState, setUpdateState] = useState<UpdateState>('idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updatePercent, setUpdatePercent] = useState(0)
   const accentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  // Custom skins — which one the editor modal is open on (null = closed), the
+  // hidden file input for Import, and a transient "that file wasn't a skin"
+  // message shown under the section.
+  const [editingSkinId, setEditingSkinId] = useState<string | null>(null)
+  const skinImportRef = useRef<HTMLInputElement>(null)
+  const [skinImportError, setSkinImportError] = useState<string | null>(null)
+
+  // Clone the current look into a new editable skin, make it active (so the
+  // editor previews live), and open the editor on it.
+  const createSkin = (): void => {
+    const skin = createCustomSkin(getSkin(theme), 'My skin')
+    saveCustomSkin(skin)
+    setTheme(skin.id)
+    if (skin.accent) setCustomAccent(skin.accent)
+    setEditingSkinId(skin.id)
+  }
+
+  const importSkinFile = async (file: File): Promise<void> => {
+    setSkinImportError(null)
+    const skin = parseSkinFile(await file.text())
+    if (!skin) { setSkinImportError('That file isn’t a valid skin.'); return }
+    saveCustomSkin(skin)
+    setTheme(skin.id)
+    if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
+    setEditingSkinId(skin.id)
+  }
   const isElectron = navigator.userAgent.includes('Electron')
   const el = (window as any).electron
   // Master pop-out switch reflects "any kind still on"; flipping it turns them
@@ -224,6 +257,34 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     const targetIdx = next.indexOf(targetView)
     next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragView)
     setNavOrder(next)
+  }
+
+  // ── Menu controls — the foot-of-menu buttons (Profile, Log out, Diagnostics,
+  // Download, Settings). Same reorder/hide model, filtered to the controls
+  // that actually apply to this session (account state, platform, dev mode).
+  const controlCtx = { account: !!account, isElectron, developerMode }
+  const ctrlRows = orderedNavControls(navControlOrder).filter((c) => isNavControlAvailable(c.id, controlCtx))
+  const ctrlOrderIsDefault = navControlOrder.length === DEFAULT_NAV_CONTROL_ORDER.length && navControlOrder.every((v, i) => v === DEFAULT_NAV_CONTROL_ORDER[i])
+  const ctrlVisIsDefault = ctrlRows.every((c) => (navControlVisibility[c.id] ?? true) === (DEFAULT_NAV_CONTROL_VISIBILITY[c.id] ?? true))
+  const ctrlIsDefault = ctrlOrderIsDefault && ctrlVisIsDefault
+  const resetControls = (): void => {
+    setNavControlOrder(DEFAULT_NAV_CONTROL_ORDER)
+    for (const c of ctrlRows) {
+      const def = DEFAULT_NAV_CONTROL_VISIBILITY[c.id] ?? true
+      if ((navControlVisibility[c.id] ?? true) !== def) setNavControlVisible(c.id, def)
+    }
+  }
+  const moveNavControl = (fromRow: number, toRow: number): void => {
+    if (fromRow === toRow) return
+    const full = orderedNavControls(navControlOrder).map((c) => c.id as string)
+    const dragId = ctrlRows[fromRow].id
+    const targetId = ctrlRows[toRow].id
+    const from = full.indexOf(dragId)
+    const next = [...full]
+    next.splice(from, 1)
+    const targetIdx = next.indexOf(targetId)
+    next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragId)
+    setNavControlOrder(next)
   }
 
   const closeSettings = (): void => {
@@ -476,6 +537,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
       className={`fixed inset-0 z-50 flex items-center justify-center ${floating ? '' : 'bg-black/60 backdrop-blur-sm'}`}
       onClick={(e) => { if (e.target === overlayRef.current) closeSettings() }}
     >
+      {/* Custom-skin editor (portals to <body>, so placement here is fine) */}
+      {editingSkinId && (
+        <SkinEditorModal
+          skinId={editingSkinId}
+          onClose={() => setEditingSkinId(null)}
+          onEditSkin={setEditingSkinId}
+        />
+      )}
       <div className={`bg-surface flex flex-col overflow-hidden ${floating
         ? 'w-full h-full'
         : 'border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh]'}`}
@@ -607,60 +676,107 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#4b5563' }}>
                       <Brush size={13} className="text-white" strokeWidth={2.25} />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <span className="text-text-primary text-sm">Skin</span>
-                      <p className="text-text-muted text-[11px]">Skins with a signature color also set the accent — customize it below anytime</p>
+                      <p className="text-text-muted text-[11px]">Skins with a signature color also set the accent — or build your own below</p>
                     </div>
+                    <button
+                      onClick={() => skinImportRef.current?.click()}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0"
+                      title="Import a skin file"
+                    >
+                      <Upload size={13} /> Import
+                    </button>
+                    <input
+                      ref={skinImportRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) importSkinFile(file)
+                        e.target.value = ''
+                      }}
+                    />
                   </div>
+                  {skinImportError && (
+                    <p className="text-red-400 text-[11px] mb-2 pl-[34px]">{skinImportError}</p>
+                  )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
-                    {SKINS.map((skin) => {
+                    {[...SKINS, ...customSkins].map((skin) => {
                       const active = theme === skin.id
                       return (
-                        <button
-                          key={skin.id}
-                          onClick={() => {
-                            setTheme(skin.id)
-                            if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
-                          }}
-                          className="group text-left"
-                          title={skin.dynamic ? 'Palette follows the current song’s cover art' : skin.name}
-                        >
-                          {/* Mini app mock: sidebar strip, two "text" lines, and a
-                              player bar with the skin's accent — a live swatch of
-                              the actual palette values, not approximations. */}
-                          <div
-                            className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
-                            style={{
-                              background: skin.vars['--surface'],
-                              borderColor: active ? 'var(--accent)' : 'var(--border)',
-                              boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
+                        <div key={skin.id} className="relative group">
+                          <button
+                            onClick={() => {
+                              setTheme(skin.id)
+                              if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
                             }}
+                            onDoubleClick={() => { if (skin.custom) setEditingSkinId(skin.id) }}
+                            className="w-full text-left"
+                            title={skin.dynamic ? 'Palette follows the current song’s cover art' : skin.name}
                           >
-                            <div className="w-1/4 h-full border-r" style={{ background: skin.vars['--sidebar'], borderColor: skin.vars['--border'] }} />
-                            <div className="flex-1 p-1.5 flex flex-col gap-1 min-w-0">
-                              <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
-                              <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
-                              <div className="mt-auto flex items-center gap-1">
-                                <div
-                                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                                  style={{
-                                    // Dynamic skin has no fixed accent — a color wheel
-                                    // signals "follows the song's cover art".
-                                    background: skin.dynamic
-                                      ? 'conic-gradient(#f43f5e, #f59e0b, #10b981, #38bdf8, #a78bfa, #f43f5e)'
-                                      : skin.accent ?? accentColor,
-                                  }}
-                                />
-                                <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
+                            {/* Mini app mock: sidebar strip, two "text" lines, and a
+                                player bar with the skin's accent — a live swatch of
+                                the actual palette values, not approximations. */}
+                            <div
+                              className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
+                              style={{
+                                background: skin.vars['--surface'],
+                                borderColor: active ? 'var(--accent)' : 'var(--border)',
+                                boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
+                              }}
+                            >
+                              <div className="w-1/4 h-full border-r" style={{ background: skin.vars['--sidebar'], borderColor: skin.vars['--border'] }} />
+                              <div className="flex-1 p-1.5 flex flex-col gap-1 min-w-0">
+                                <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
+                                <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
+                                <div className="mt-auto flex items-center gap-1">
+                                  <div
+                                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                                    style={{
+                                      // Dynamic skin has no fixed accent — a color wheel
+                                      // signals "follows the song's cover art".
+                                      background: skin.dynamic
+                                        ? 'conic-gradient(#f43f5e, #f59e0b, #10b981, #38bdf8, #a78bfa, #f43f5e)'
+                                        : skin.accent ?? accentColor,
+                                    }}
+                                  />
+                                  <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
-                            {skin.name}
-                          </p>
-                        </button>
+                            <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
+                              {skin.name}
+                            </p>
+                          </button>
+                          {/* Custom skins get an edit button (sibling, not nested,
+                              to keep the markup button-in-button free). */}
+                          {skin.custom && (
+                            <button
+                              onClick={() => setEditingSkinId(skin.id)}
+                              className="absolute top-1 right-1 p-1 rounded-md bg-black/45 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/65 transition-opacity"
+                              title="Edit skin"
+                            >
+                              <Pencil size={11} />
+                            </button>
+                          )}
+                        </div>
                       )
                     })}
+                    {/* Create-a-skin tile */}
+                    <button
+                      onClick={createSkin}
+                      className="group text-left"
+                      title="Create a new skin"
+                    >
+                      <div className="h-14 rounded-lg border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-0.5 text-text-muted group-hover:text-accent group-hover:border-accent transition-colors">
+                        <Plus size={16} />
+                      </div>
+                      <p className="mt-1 text-[11px] font-medium text-center text-text-muted group-hover:text-text-primary transition-colors">
+                        Create
+                      </p>
+                    </button>
                   </div>
                 </div>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
@@ -984,6 +1100,61 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     })}
                   </div>
                 </div>
+                {ctrlRows.length > 0 && (
+                  <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                    <div className="flex items-center gap-2.5 mb-2.5">
+                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#8b5cf6' }}>
+                        <ListOrdered size={13} className="text-white" strokeWidth={2.25} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-text-primary text-sm">Menu controls</span>
+                        <p className="text-text-muted text-[11px]">The buttons at the foot of the menu — reorder or hide them</p>
+                      </div>
+                      {!ctrlIsDefault && (
+                        <button
+                          onClick={resetControls}
+                          title="Restore the default controls and order"
+                          className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
+                        >
+                          <RotateCcw size={11} /> Reset
+                        </button>
+                      )}
+                    </div>
+                    <div className="pl-[34px] space-y-1.5">
+                      {ctrlRows.map((ctrl, idx) => {
+                        const shown = navControlVisibility[ctrl.id] ?? true
+                        return (
+                          <div
+                            key={ctrl.id}
+                            draggable
+                            onDragStart={(e) => { setCtrlDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
+                            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setCtrlOverIdx(idx) }}
+                            onDrop={(e) => { e.preventDefault(); if (ctrlDragIdx !== null) moveNavControl(ctrlDragIdx, idx); setCtrlDragIdx(null); setCtrlOverIdx(null) }}
+                            onDragEnd={() => { setCtrlDragIdx(null); setCtrlOverIdx(null) }}
+                            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
+                              ctrlDragIdx === idx
+                                ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
+                                : ctrlOverIdx === idx
+                                  ? 'border-[var(--accent)] bg-accent/10'
+                                  : 'border-[var(--border)] bg-[var(--surface-overlay)]'
+                            }`}
+                          >
+                            <GripVertical size={14} className="text-text-muted shrink-0" />
+                            <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{ctrl.icon}</span>
+                            <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{ctrl.label}</span>
+                            <button
+                              onClick={() => setNavControlVisible(ctrl.id, !shown)}
+                              title={shown ? 'Hide from menu' : 'Show in menu'}
+                              className="ml-auto shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                            >
+                              {shown ? <Eye size={15} /> : <EyeOff size={15} />}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -26,6 +26,7 @@ import ApiFilesView from './components/ApiFilesView'
 import LikedSongsView from './components/LikedSongsView'
 import PlaylistsView from './components/PlaylistsView'
 import RadioFmPlayer from './components/RadioFmPlayer'
+import RadioVotePopup from './components/RadioVotePopup'
 import DiscordRpcSync from './components/DiscordRpcSync'
 import LastfmScrobbler from './components/LastfmScrobbler'
 import UserAuthModal from './components/UserAuthModal'
@@ -232,6 +233,7 @@ export default function App(): JSX.Element {
       </div>
       <Player />
       <RadioFmPlayer />
+      <RadioVotePopup />
       <DiscordRpcSync />
       <LastfmScrobbler />
       <BottomNav />

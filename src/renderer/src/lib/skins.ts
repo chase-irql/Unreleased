@@ -5,7 +5,10 @@
 // which remain only for first paint before React mounts). Adding a skin here
 // is all it takes for it to show up in Settings → Appearance.
 
-export type SkinId =
+// Built-in skin ids are a closed set; user-created skins get generated string
+// ids (see newSkinId). The `(string & {})` arm keeps autocomplete for the
+// built-ins while still accepting any custom id where a SkinId is expected.
+export type BuiltinSkinId =
   | 'light'
   | 'dark'
   | 'midnight'
@@ -15,6 +18,23 @@ export type SkinId =
   | 'forest'
   | 'blossom'
   | 'song'
+
+// eslint-disable-next-line @typescript-eslint/ban-types
+export type SkinId = BuiltinSkinId | (string & {})
+
+export interface SkinVars {
+  '--surface': string
+  '--surface-raised': string
+  '--surface-overlay': string
+  '--surface-highest': string
+  '--sidebar': string
+  '--titlebar': string
+  '--text-primary': string
+  '--text-secondary': string
+  '--text-muted': string
+  '--border': string
+  '--scrollbar': string
+}
 
 export interface Skin {
   id: SkinId
@@ -30,20 +50,29 @@ export interface Skin {
   // cover art — see useThemeEffects); `vars` is only the fallback shown while
   // nothing is playing or extraction fails.
   dynamic?: boolean
-  vars: {
-    '--surface': string
-    '--surface-raised': string
-    '--surface-overlay': string
-    '--surface-highest': string
-    '--sidebar': string
-    '--titlebar': string
-    '--text-primary': string
-    '--text-secondary': string
-    '--text-muted': string
-    '--border': string
-    '--scrollbar': string
-  }
+  // User-created (built in the in-app skin editor / imported). Custom skins
+  // live in the store's `customSkins`, not this hardcoded registry, and are
+  // editable, deletable, and exportable — see lib/skins helpers below.
+  custom?: boolean
+  vars: SkinVars
 }
+
+// The palette variables in edit order, with UI labels/hints — the single
+// source the skin editor iterates over and importer validates against, so a
+// new variable only has to be added here (and to SkinVars) once.
+export const SKIN_VAR_META: { key: keyof SkinVars; label: string; hint: string }[] = [
+  { key: '--surface', label: 'Background', hint: 'Main app background' },
+  { key: '--surface-raised', label: 'Raised surface', hint: 'Cards, rows, panels' },
+  { key: '--surface-overlay', label: 'Overlay', hint: 'Hover / menus' },
+  { key: '--surface-highest', label: 'Highest surface', hint: 'Active / pressed' },
+  { key: '--sidebar', label: 'Sidebar', hint: 'Side navigation' },
+  { key: '--titlebar', label: 'Title bar', hint: 'Window title strip' },
+  { key: '--text-primary', label: 'Primary text', hint: 'Headings, main text' },
+  { key: '--text-secondary', label: 'Secondary text', hint: 'Subtitles' },
+  { key: '--text-muted', label: 'Muted text', hint: 'Hints, captions' },
+  { key: '--border', label: 'Border', hint: 'Dividers, outlines' },
+  { key: '--scrollbar', label: 'Scrollbar', hint: 'Scrollbar thumb' },
+]
 
 export const SKINS: Skin[] = [
   {
@@ -220,8 +249,120 @@ export const SKINS: Skin[] = [
   },
 ]
 
+// ── Custom-skin cache ─────────────────────────────────────────────────────────
+// User-created skins live in the Zustand store (persisted to localStorage), but
+// getSkin() is a pure lookup called from places that can't reach the store —
+// the store's own `theme` initializer, and songToTrack-style module code. So the
+// store mirrors its `customSkins` array into this module cache on every write
+// (setCustomSkinsCache), exactly like lib/songPrefs. Seed it before the store's
+// `theme` initializer runs so a persisted custom skin resolves on first paint.
+let _customSkins: Skin[] = []
+
+export function setCustomSkinsCache(skins: Skin[]): void {
+  _customSkins = skins
+}
+
+/** Built-in skins followed by the user's custom skins — the full pick list. */
+export function allSkins(): Skin[] {
+  return [...SKINS, ..._customSkins]
+}
+
 // Fallback to classic dark for unknown ids (e.g. a persisted value from a
-// build where a skin was renamed/removed).
+// build where a skin was renamed/removed, or a deleted custom skin).
 export function getSkin(id: string | null | undefined): Skin {
-  return SKINS.find((s) => s.id === id) ?? SKINS[1]
+  return SKINS.find((s) => s.id === id) ?? _customSkins.find((s) => s.id === id) ?? SKINS[1]
+}
+
+// ── Custom-skin authoring / import-export ─────────────────────────────────────
+
+const SKIN_FILE_FORMAT = 'unreleased-skin'
+const SKIN_FILE_VERSION = 1
+
+// Generated id for a user skin — the `custom-` prefix keeps it clear of every
+// built-in id, and the random suffix avoids collisions across quick creates.
+export function newSkinId(): string {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+// Accepts the CSS color forms the palettes actually use — hex, rgb/rgba,
+// hsl/hsla, and bare keywords — while rejecting anything long or structural, so
+// an imported file can't smuggle arbitrary text into a style property.
+function isColor(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 64 &&
+    /^(#[0-9a-fA-F]{3,8}|rgba?\([\d.,\s%]*\)|hsla?\([\d.,\s%deg]*\)|[a-zA-Z]+)$/.test(value.trim())
+  )
+}
+
+/** A fresh editable skin cloned from `base` (defaults to classic dark). */
+export function createCustomSkin(base: Skin = SKINS[1], name?: string): Skin {
+  return {
+    id: newSkinId(),
+    name: (name ?? `${base.name} copy`).slice(0, 40),
+    dark: base.dark,
+    custom: true,
+    accent: base.accent,
+    // Never carry `dynamic` onto a custom skin — its vars are the real palette.
+    vars: { ...base.vars },
+  }
+}
+
+/** Serializes a skin to the text written to an exported `.json` file. */
+export function skinToFileText(skin: Skin): string {
+  return JSON.stringify(
+    {
+      format: SKIN_FILE_FORMAT,
+      version: SKIN_FILE_VERSION,
+      skin: { name: skin.name, dark: skin.dark, accent: skin.accent, vars: skin.vars },
+    },
+    null,
+    2,
+  )
+}
+
+/** A filesystem-safe base name for the exported file. */
+export function skinFileName(skin: Skin): string {
+  const base = skin.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return `${base || 'skin'}.jwskin.json`
+}
+
+/**
+ * Parses (and validates) an exported skin file back into a fresh Skin with a
+ * new id. Accepts either the wrapped `{ format, version, skin }` envelope or a
+ * bare skin object. Returns null on anything malformed — every palette variable
+ * must be present and a plausible color, so a bad file can't half-apply.
+ */
+export function parseSkinFile(text: string): Skin | null {
+  let obj: unknown
+  try {
+    obj = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!obj || typeof obj !== 'object') return null
+  const wrapped = obj as { skin?: unknown }
+  const src = (wrapped.skin && typeof wrapped.skin === 'object' ? wrapped.skin : obj) as {
+    name?: unknown
+    dark?: unknown
+    accent?: unknown
+    vars?: Record<string, unknown>
+  }
+  const vars = {} as SkinVars
+  for (const { key } of SKIN_VAR_META) {
+    const v = src.vars?.[key]
+    if (!isColor(v)) return null
+    vars[key] = v
+  }
+  const name =
+    typeof src.name === 'string' && src.name.trim() ? src.name.trim().slice(0, 40) : 'Imported skin'
+  return {
+    id: newSkinId(),
+    name,
+    dark: !!src.dark,
+    custom: true,
+    accent: isColor(src.accent) ? src.accent : undefined,
+    vars,
+  }
 }

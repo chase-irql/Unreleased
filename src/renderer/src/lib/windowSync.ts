@@ -1,5 +1,6 @@
 import { useStore, type AppStore } from '../store/useStore'
 import { setSongPrefsCache } from './songPrefs'
+import { setCustomSkinsCache } from './skins'
 import type { ViewType, LibraryTrack } from '../types'
 
 // State mirrored between the main window and pop-out windows (see FloatApp).
@@ -11,8 +12,8 @@ import type { ViewType, LibraryTrack } from '../types'
 // track list is deliberately absent: it's reloaded from disk instead
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
-  'theme', 'accentColor', 'sidebarPosition', 'navOrder', 'navVisibility', 'appMenuPosition',
-  'settingsTab',
+  'theme', 'customSkins', 'accentColor', 'sidebarPosition', 'navOrder', 'navVisibility', 'appMenuPosition',
+  'navControlOrder', 'navControlVisibility', 'settingsTab',
   'appTextScale', 'lyricsScale', 'lyricsAlign', 'lyricsBlur', 'appFont', 'lyricsFont',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   // Last.fm connect/disconnect can happen in the pop-out Settings window; the
@@ -135,6 +136,10 @@ export function initWindowSync(isFloat: boolean): void {
       // rename made in one window would leave every other window converting
       // songs against stale overrides.
       if ('songPrefs' in msg.payload) setSongPrefsCache(msg.payload.songPrefs ?? {})
+      // Same as songPrefs: setState bypasses saveCustomSkin, so mirror the
+      // module cache getSkin() reads or the other window would style custom
+      // skins against a stale (or empty) list.
+      if ('customSkins' in msg.payload) setCustomSkinsCache(msg.payload.customSkins ?? [])
       // A pop-out just queued (or the main window's own outbox otherwise
       // changed) — only the main window actually sends (see _flushReports),
       // so it's the one that needs to react and attempt delivery.

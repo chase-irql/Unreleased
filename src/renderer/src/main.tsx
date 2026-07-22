@@ -49,3 +49,20 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     {floatView ? <FloatApp view={floatView} /> : <App />}
   </React.StrictMode>
 )
+
+// Register the PWA service worker — web build only. Skipped in Electron (it
+// injects window.electron and loads over file://, where SW registration throws
+// and would only get in the way), and only over http(s). Registered after load
+// so it never competes with first paint. Not registered for pop-out windows.
+if (
+  !floatView &&
+  !(window as unknown as { electron?: unknown }).electron &&
+  'serviceWorker' in navigator &&
+  (location.protocol === 'https:' || location.protocol === 'http:')
+) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err)
+    })
+  })
+}

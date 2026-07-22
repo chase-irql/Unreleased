@@ -309,7 +309,19 @@ input[type='range']:active::-webkit-slider-thumb {
 .wrld-q-row:nth-child(10)  { animation-delay: 166ms; }
 .wrld-q-row:nth-child(n+11) { animation-delay: 172ms; }
 
+/* App-menu dropdown / submenu entrance — a quick, subtle scale-fade. The panel
+   sets transform-origin inline (top vs bottom) so it grows out of the trigger
+   whether it opens downward or flips above it (bottom nav bar). */
+@keyframes menu-pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.animate-menu-pop {
+  animation: menu-pop 0.13s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-wrld-queue-in,
-  .wrld-q-row { animation-duration: 0.01ms; animation-delay: 0ms; }
+  .wrld-q-row,
+  .animate-menu-pop { animation-duration: 0.01ms; animation-delay: 0ms; }
 }

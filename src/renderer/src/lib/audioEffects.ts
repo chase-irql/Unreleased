@@ -72,6 +72,34 @@ export interface AudioEffectSettings {
   reverbDecay: number
 }
 
+// ── iOS background-audio guard ──────────────────────────────────────────────
+// On iOS/iPadOS (every browser there is WebKit), a bare <audio> element keeps
+// playing when the tab is backgrounded / the screen locks — that's what drives
+// lock-screen playback. But the moment its output is routed through a Web Audio
+// AudioContext (createMediaElementSource → … → ctx.destination), iOS ties the
+// sound to the context's lifetime and *suspends the context* on background,
+// then tears it down after a couple of minutes of inactivity. Result: music
+// dies ~minutes after the user leaves the app, with no event we can catch — and
+// no gesture available in the background to resume() it. This is architectural,
+// not a bug we can patch with watchdogs (we tried; see Player's interval +
+// visibilitychange handlers), so the only reliable fix is to *not* route
+// through Web Audio on iOS: play the bare element and forfeit EQ/balance/mono/
+// reverb/skip-silence there. Uninterrupted background playback >> effects.
+//
+// iPadOS 13+ reports a desktop ("MacIntel") UA, so the touch-point check is
+// what distinguishes it from a real Mac (Electron desktop = MacIntel, 0 touch
+// points → NOT flagged, effects stay on there as before).
+export const IS_IOS =
+  typeof navigator !== 'undefined' &&
+  (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1))
+
+// Whether the Web Audio effects chain can run at all. False on iOS (see above),
+// where attaching would sacrifice background playback — the UI reads this to
+// explain why EQ/balance/reverb are unavailable instead of silently doing
+// nothing.
+export const EFFECTS_SUPPORTED = !IS_IOS
+
 let ctx: AudioContext | null = null
 let chainInput: GainNode | null = null
 let analyser: AnalyserNode | null = null
@@ -113,6 +141,9 @@ function buildImpulseResponse(context: AudioContext, seconds: number): AudioBuff
 
 function ensureGraph(): AudioContext | null {
   if (ctx) return ctx
+  // iOS: never build the graph — routing through Web Audio would kill
+  // background playback (see IS_IOS above). Elements play bare instead.
+  if (IS_IOS) return null
   try {
     ctx = new AudioContext()
   } catch (e) {
