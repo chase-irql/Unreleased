@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Download, Copy, Trash2, Moon, Sun, Check } from 'lucide-react'
+import { X, Download, Copy, Trash2, Moon, Sun, Check, RotateCcw } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import {
-  SKIN_VAR_META, createCustomSkin, skinToFileText, skinFileName,
+  SKIN_VAR_META, SKIN_OPTIONAL_VAR_META, createCustomSkin, skinToFileText, skinFileName,
   type Skin, type SkinVars,
 } from '../lib/skins'
 
@@ -67,6 +67,13 @@ export default function SkinEditorModal({
   const patch = (updates: Partial<Skin>): void => saveCustomSkin({ ...skin, ...updates })
   const setVar = (key: keyof SkinVars, value: string): void =>
     patch({ vars: { ...skin.vars, [key]: value } })
+  // Optional vars: an empty value removes the key so it inherits again.
+  const setOptionalVar = (key: keyof SkinVars, value: string): void => {
+    const vars = { ...skin.vars }
+    if (value) vars[key] = value
+    else delete vars[key]
+    patch({ vars })
+  }
 
   const handleDelete = (): void => {
     deleteCustomSkin(skin.id)
@@ -158,18 +165,56 @@ export default function SkinEditorModal({
               </div>
               <input
                 type="color"
-                value={toColorInputValue(skin.vars[key])}
+                value={toColorInputValue(skin.vars[key] ?? '')}
                 onChange={(e) => setVar(key, e.target.value)}
                 className="w-8 h-8 rounded-md cursor-pointer border-0 p-0 bg-transparent shrink-0"
                 title={`Pick ${label}`}
               />
               <input
-                value={skin.vars[key]}
+                value={skin.vars[key] ?? ''}
                 onChange={(e) => setVar(key, e.target.value)}
                 className="w-28 bg-[var(--surface-overlay)] rounded-md px-2 py-1.5 text-text-primary text-xs font-mono outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
           ))}
+
+          {/* Advanced — optional overrides that inherit when left blank. */}
+          <div className="mt-3 pt-3 border-t border-[var(--border)]">
+            <p className="text-text-secondary text-[11px] font-semibold uppercase tracking-wide mb-1">Advanced</p>
+            {SKIN_OPTIONAL_VAR_META.map(({ key, label, hint }) => {
+              const value = skin.vars[key]
+              return (
+                <div key={key} className="flex items-center gap-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-text-primary text-sm truncate">{label}</p>
+                    <p className="text-text-muted text-[11px] truncate">{hint}</p>
+                  </div>
+                  {value && (
+                    <button
+                      onClick={() => setOptionalVar(key, '')}
+                      className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0"
+                      title="Reset to inherit"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
+                  <input
+                    type="color"
+                    value={toColorInputValue(value ?? '#808080')}
+                    onChange={(e) => setOptionalVar(key, e.target.value)}
+                    className="w-8 h-8 rounded-md cursor-pointer border-0 p-0 bg-transparent shrink-0"
+                    title={`Pick ${label}`}
+                  />
+                  <input
+                    value={value ?? ''}
+                    onChange={(e) => setOptionalVar(key, e.target.value)}
+                    placeholder="inherits"
+                    className="w-28 bg-[var(--surface-overlay)] rounded-md px-2 py-1.5 text-text-primary text-xs font-mono outline-none focus:ring-1 focus:ring-accent placeholder:text-text-muted"
+                  />
+                </div>
+              )
+            })}
+          </div>
         </div>
 
         {/* Footer actions */}

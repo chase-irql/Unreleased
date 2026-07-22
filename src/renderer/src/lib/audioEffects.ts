@@ -15,6 +15,8 @@
 // <audio> elements must carry crossOrigin="anonymous" for any of that to
 // apply.
 
+import { IS_IOS } from './platform'
+
 export const EQ_BANDS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 export const EQ_GAIN_LIMIT = 12
 
@@ -85,14 +87,6 @@ export interface AudioEffectSettings {
 // visibilitychange handlers), so the only reliable fix is to *not* route
 // through Web Audio on iOS: play the bare element and forfeit EQ/balance/mono/
 // reverb/skip-silence there. Uninterrupted background playback >> effects.
-//
-// iPadOS 13+ reports a desktop ("MacIntel") UA, so the touch-point check is
-// what distinguishes it from a real Mac (Electron desktop = MacIntel, 0 touch
-// points → NOT flagged, effects stay on there as before).
-export const IS_IOS =
-  typeof navigator !== 'undefined' &&
-  (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1))
 
 // Whether the Web Audio effects chain can run at all. False on iOS (see above),
 // where attaching would sacrifice background playback — the UI reads this to

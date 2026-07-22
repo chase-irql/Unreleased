@@ -94,7 +94,7 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
 
       {/* iOS: the EQ/balance/mono/reverb chain is disabled so audio keeps
           playing in the background (routing through Web Audio forfeits that on
-          iOS — see audioEffects IS_IOS). Speed, sleep timer, and community
+          iOS — see platform IS_IOS). Speed, sleep timer, and community
           edits below don't use the chain and still work. */}
       {!EFFECTS_SUPPORTED && (
         <p className="mx-4 mb-2 text-[11px] text-text-muted bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg px-3 py-2">

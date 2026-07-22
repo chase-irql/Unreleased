@@ -34,6 +34,13 @@ export interface SkinVars {
   '--text-muted': string
   '--border': string
   '--scrollbar': string
+  // Optional overrides for the frameless-window title-bar cluster (minimize /
+  // maximize / close and the downloads trigger). Absent on the built-in skins,
+  // which inherit --text-muted (idle) / --text-primary (hover) via CSS var
+  // fallback — see WindowControls. A custom skin can set these to make the
+  // window controls legible on a title bar where muted text is too faint.
+  '--titlebar-icon'?: string
+  '--titlebar-icon-hover'?: string
 }
 
 export interface Skin {
@@ -73,6 +80,16 @@ export const SKIN_VAR_META: { key: keyof SkinVars; label: string; hint: string }
   { key: '--border', label: 'Border', hint: 'Dividers, outlines' },
   { key: '--scrollbar', label: 'Scrollbar', hint: 'Scrollbar thumb' },
 ]
+
+// Optional palette variables — editable in the skin editor but not required in
+// a skin file (they fall back via CSS var() when unset). Kept apart from the
+// core meta above so import validation only *requires* the core keys.
+export const SKIN_OPTIONAL_VAR_META: { key: keyof SkinVars; label: string; hint: string }[] = [
+  { key: '--titlebar-icon', label: 'Title-bar icons', hint: 'Min / max / close, downloads' },
+  { key: '--titlebar-icon-hover', label: 'Title-bar icons (hover)', hint: 'Hover state of those icons' },
+]
+
+export const SKIN_OPTIONAL_VAR_KEYS = SKIN_OPTIONAL_VAR_META.map((m) => m.key)
 
 export const SKINS: Skin[] = [
   {
@@ -354,6 +371,12 @@ export function parseSkinFile(text: string): Skin | null {
     const v = src.vars?.[key]
     if (!isColor(v)) return null
     vars[key] = v
+  }
+  // Optional vars only carry over when present and valid; a missing one just
+  // stays unset (and inherits at render time).
+  for (const key of SKIN_OPTIONAL_VAR_KEYS) {
+    const v = src.vars?.[key]
+    if (isColor(v)) vars[key] = v
   }
   const name =
     typeof src.name === 'string' && src.name.trim() ? src.name.trim().slice(0, 40) : 'Imported skin'

@@ -111,6 +111,9 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'>('idle')
   const [updatePercent, setUpdatePercent] = useState(0)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  // Discord Rich Presence on/off lives in main-process app settings, not the
+  // store — mirror it here so the Tools entry can show a checkmark.
+  const [discordOn, setDiscordOn] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -150,6 +153,25 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
       else if (d.type === 'error') { setUpdateState('error'); setTimeout(() => setUpdateState('idle'), 5000) }
     })
   }, [el])
+
+  // Refresh the Discord toggle from app settings each time the menu opens, so
+  // the checkmark is accurate even if it changed elsewhere (Settings, hotkey).
+  useEffect(() => {
+    if (!open || !el?.getAppSettings) return
+    el.getAppSettings().then((s: { discordRpcEnabled?: boolean }) => setDiscordOn(!!s.discordRpcEnabled)).catch(() => {})
+  }, [open, el])
+
+  // Read the source of truth, flip it, persist, and reflect it — kept open so
+  // the checkmark toggles in place.
+  const toggleDiscord = async (): Promise<void> => {
+    if (!el?.getAppSettings || !el?.setAppSetting) return
+    try {
+      const s = await el.getAppSettings()
+      const next = !s?.discordRpcEnabled
+      setDiscordOn(next)
+      await el.setAppSetting('discordRpcEnabled', next)
+    } catch { /* ignore */ }
+  }
 
   // Kicks off a check (or installs a ready download). Deliberately does NOT
   // close the menu — the row updates in place instead.
@@ -315,7 +337,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
         { kind: 'item', label: 'Mini player', hotkey: 'mini-player', onClick: hk('mini-player') },
         { kind: 'item', label: 'Close pop-out windows', hotkey: 'close-float-windows', onClick: hk('close-float-windows') },
         { kind: 'sep' },
-        { kind: 'item', label: 'Discord status', hotkey: 'discord-status', onClick: hk('discord-status') },
+        { kind: 'item', label: 'Discord status', hotkey: 'discord-status', checked: discordOn, onClick: () => { void toggleDiscord() } },
         { kind: 'item', label: 'Last.fm scrobbling', onClick: run(() => setLastfmEnabled(!lastfmEnabled)), checked: lastfmEnabled },
         { kind: 'item', label: 'Global shortcuts', onClick: run(() => setGlobalHotkeysEnabled(!globalHotkeysEnabled)), checked: globalHotkeysEnabled },
         { kind: 'sep' },

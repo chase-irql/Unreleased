@@ -1,4 +1,4 @@
-import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, User, LogOut, Download, Info, Settings } from 'lucide-react'
+import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, Newspaper, User, LogOut, Download, Info, Settings } from 'lucide-react'
 import type { ReactNode } from 'react'
 import logo from '../assets/logo.png'
 import type { ViewType } from '../types'
@@ -24,6 +24,7 @@ export const NAV_ITEMS: NavItemDef[] = [
   { view: 'library', label: 'Library', icon: <Library size={18} />, electronOnly: true },
   { view: 'playlists', label: 'Playlists', icon: <ListMusic size={18} /> },
   // Extras — off by default, addable from Settings → Appearance → Menu items.
+  { view: 'news', label: 'News', icon: <Newspaper size={18} />, defaultHidden: true },
   { view: 'liked', label: 'Liked Songs', icon: <Heart size={18} />, defaultHidden: true },
   { view: 'docs', label: 'API Docs', icon: <BookOpen size={18} />, defaultHidden: true },
 ]

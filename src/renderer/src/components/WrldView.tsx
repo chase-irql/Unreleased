@@ -36,6 +36,7 @@ export default function WrldView(): JSX.Element {
     showQueue, setShowQueue,
     audioOutput, setAudioOutput,
     toggleEqPanel, eqFxActive,
+    appMenuPosition,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -68,6 +69,7 @@ export default function WrldView(): JSX.Element {
     toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
     eqFxActive: s.eqEnabled || s.playbackSpeed !== 1 || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
+    appMenuPosition: s.appMenuPosition,
   })))
 
   // Skins beyond the classic pair mean `theme === 'dark'` no longer covers
@@ -730,8 +732,12 @@ export default function WrldView(): JSX.Element {
       {/* 999 FM toggle + fullscreen toggle, grouped together so they move as
           one unit — 999FM sits top-right on mobile, top-left on desktop
           (md:), and fullscreen now rides along right next to it instead of
-          living in its own corner. */}
-      <div className="absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:left-4 md:right-auto">
+          living in its own corner. When the app-menu button occupies the
+          title strip's top-left corner (desktop, not fullscreen — it's hidden
+          in fullscreen), shift right so the two don't overlap. */}
+      <div className={`absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:right-auto ${
+        isElectronApp && appMenuPosition === 'title-bar' && !fullscreen ? 'md:left-28' : 'md:left-4'
+      }`}>
         <button
           onClick={() => setRadioFmActive(!radioFmActive)}
           disabled={fmDisabled}
@@ -1242,7 +1248,10 @@ export default function WrldView(): JSX.Element {
       <div className="group absolute right-0 top-0 bottom-0 z-20 flex items-center">
 
         {/* Expanded panel — slides in on hover */}
-        <div className="overflow-hidden max-w-0 group-hover:max-w-[272px] transition-[max-width] duration-200 ease-out">
+        {/* Clip width is in rem (17rem = 272px at scale 1) so it grows together
+            with the rem-based `w-64` panel inside — a fixed px clamp here chopped
+            off the right column of album covers at UI scales above normal. */}
+        <div className="overflow-hidden max-w-0 group-hover:max-w-[17rem] transition-[max-width] duration-200 ease-out">
           <div
             className="w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-150 delay-75
               bg-black/85 backdrop-blur-2xl rounded-l-2xl border-l border-t border-b border-white/[0.07]
