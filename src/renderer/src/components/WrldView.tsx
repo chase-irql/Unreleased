@@ -1242,7 +1242,10 @@ export default function WrldView(): JSX.Element {
       <div className="group absolute right-0 top-0 bottom-0 z-20 flex items-center">
 
         {/* Expanded panel — slides in on hover */}
-        <div className="overflow-hidden max-w-0 group-hover:max-w-[272px] transition-[max-width] duration-200 ease-out">
+        {/* Clip width is in rem (17rem = 272px at scale 1) so it grows together
+            with the rem-based `w-64` panel inside — a fixed px clamp here chopped
+            off the right column of album covers at UI scales above normal. */}
+        <div className="overflow-hidden max-w-0 group-hover:max-w-[17rem] transition-[max-width] duration-200 ease-out">
           <div
             className="w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-150 delay-75
               bg-black/85 backdrop-blur-2xl rounded-l-2xl border-l border-t border-b border-white/[0.07]

@@ -6,6 +6,31 @@ All notable changes to the web version of unreleased, from v1.10.6 onward. This 
 
 ---
 
+## [1.16.9] — 2026-07-22
+
+- **New** Custom skins — build your own theme from any preset, tweak its colors in a live editor, set a signature accent, and import/export skins as files to share
+- **New** App-wide 999 FM vote popup — skip/queue votes now float over every view so you don't miss them while browsing another page
+- **New** The top-of-sidebar controls (account, settings, info…) can now be reordered and individually hidden, like the nav items
+- **New** The web app is now an installable PWA — add it to your home screen or desktop and it keeps working offline via a service worker
+
+---
+
+## [1.16.8] — 2026-07-22
+
+- **New** Nav items can be shown or hidden individually in Settings → Appearance, and Liked Songs, API Docs, and Categories joined the reorderable nav list
+- **Change** The standalone Categories page was folded into the nav instead of being a fixed top-level view
+- **Improve** Opening Settings from a menu can now jump straight to a specific tab (e.g. Keyboard shortcuts, About)
+
+---
+
+## [1.16.6] — 2026-07-21
+
+- **Improve** "Change version" now opens as a side flyout from the song menu (matching "Add to playlist" and "File actions") instead of expanding inline, and its versions load only when you open it
+- **New** "Prefer OG file" toggle added directly to the effects panel
+- **Improve** Equalizer band tooltips now show the exact gain in dB
+
+---
+
 ## [1.16.5] — 2026-07-21
 
 - **New** Selectable app font in Settings → Appearance — System, Grotesk, Humanist, Wide, Serif, Mono, and Display, each previewing in its own typeface

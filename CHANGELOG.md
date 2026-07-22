@@ -6,6 +6,41 @@ All notable changes to this project are documented here.
 
 ---
 
+## [1.16.9] — 2026-07-22
+
+- **New** Custom skins — build your own theme from any preset, tweak its colors in a live editor, set a signature accent, and import/export skins as files to share
+- **New** App-wide 999 FM vote popup — skip/queue votes now float over every view so you don't miss them while browsing another page
+- **New** The top-of-sidebar controls (account, settings, info…) can now be reordered and individually hidden, like the nav items
+- **New** *(Web)* The web app is now an installable PWA — add it to your home screen or desktop and it keeps working offline via a service worker
+
+---
+
+## [1.16.8] — 2026-07-22
+
+- **New** Nav items can be shown or hidden individually in Settings → Appearance, and Liked Songs, API Docs, and Categories joined the reorderable nav list
+- **Change** The standalone Categories page was folded into the nav instead of being a fixed top-level view
+- **Improve** Opening Settings from a menu can now jump straight to a specific tab (e.g. Keyboard shortcuts, About)
+- **New** *(Desktop)* The application menu can be placed in the title bar, in the side menu, or hidden, and gained a "Convert current song" entry
+
+---
+
+## [1.16.7] — 2026-07-22
+
+- **New** *(Desktop)* A full application menu (File / Edit / View / Playback / Help) in the title bar — every entry mirrors a real action and shows its current keyboard shortcut
+- **Improve** *(Desktop)* Settings "Clear cache" now also frees cached cover images and reports how much space it recovered
+- **Improve** *(Desktop)* Playlist tiles show a live badge while downloading for offline, and a checkmark once complete
+
+---
+
+## [1.16.6] — 2026-07-21
+
+- **Improve** "Change version" now opens as a side flyout from the song menu (matching "Add to playlist" and "File actions") instead of expanding inline, and its versions load only when you open it
+- **New** "Prefer OG file" toggle added directly to the effects panel
+- **Improve** Equalizer band tooltips now show the exact gain in dB
+- **New** *(Desktop)* Optional "Show current song in the window title" — the taskbar / alt-tab label follows what's playing instead of just saying Unreleased
+
+---
+
 ## [1.16.5] — 2026-07-21
 
 - **New** Selectable app font in Settings → Appearance — System, Grotesk, Humanist, Wide, Serif, Mono, and Display, each previewing in its own typeface

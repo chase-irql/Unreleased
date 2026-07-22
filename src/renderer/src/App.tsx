@@ -13,6 +13,7 @@ function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/playlists') return 'playlists'
   if (pathname === '/docs') return 'docs'
   if (pathname === '/wrld') return 'wrld'
+  if (pathname === '/news') return 'news'
   if (pathname.startsWith('/shared/')) return 'shared-playlist'
   if (pathname === '/library') return 'library'
   if (pathname === '/auth/discord/callback') return 'api-tracker'
@@ -32,6 +33,7 @@ import LastfmScrobbler from './components/LastfmScrobbler'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
+import InstallPrompt from './components/InstallPrompt'
 import { GlobalSongInfoHost } from './components/SongInfoModal'
 import Player from './components/Player'
 import NowPlaying from './components/NowPlaying'
@@ -51,6 +53,7 @@ const EditorProfileView = lazy(() => import('./components/EditorProfileView'))
 const NotFoundView = lazy(() => import('./components/NotFoundView'))
 const DocsPage = lazy(() => import('./components/DocsPage'))
 const WrldView = lazy(() => import('./components/WrldView'))
+const NewsView = lazy(() => import('./components/NewsView'))
 const AlbumsAdminView = lazy(() => import('./components/AlbumsAdminView'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const Settings = lazy(() => import('./components/Settings'))
@@ -64,7 +67,9 @@ function WindowControls(): JSX.Element {
     el?.isMaximized().then((v: boolean) => setMaximized(v))
   }, [])
 
-  const btn = "flex items-center justify-center w-11 h-7 text-text-muted hover:text-text-primary transition-colors"
+  // Idle/hover colors resolve to --titlebar-icon / --titlebar-icon-hover when a
+  // (custom) skin sets them, otherwise fall back to muted/primary text.
+  const btn = "flex items-center justify-center w-11 h-7 text-[var(--titlebar-icon,var(--text-muted))] hover:text-[var(--titlebar-icon-hover,var(--text-primary))] transition-colors"
   return (
     <div className="fixed top-0 right-0 z-[10000] flex" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
       <button className={btn} onClick={() => el?.minimizeWindow()} title="Minimize">
@@ -219,6 +224,7 @@ export default function App(): JSX.Element {
               : activeView === 'editor-profile' ? <EditorProfileView />
               : activeView === 'docs' ? <DocsPage />
               : activeView === 'wrld' ? <WrldView />
+              : activeView === 'news' ? <NewsView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />
               : activeView === 'albums-admin' ? <AlbumsAdminView />
@@ -242,6 +248,7 @@ export default function App(): JSX.Element {
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <ReportModal />
       <ConvertFormatModal />
+      <InstallPrompt />
       <GlobalSongInfoHost />
       <DownloadManager />
       {/* Rendered last on purpose: Chromium builds the frameless window's

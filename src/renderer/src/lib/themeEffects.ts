@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useStore, useStorePick } from '../store/useStore'
 import { buildImageUrl } from './juicewrldApi'
 import { getFont } from './fonts'
-import { getSkin, type Skin } from './skins'
+import { getSkin, SKIN_OPTIONAL_VAR_KEYS, type Skin } from './skins'
 
 function hexToRgb(hex: string): [number, number, number] {
   const num = parseInt(hex.replace('#', ''), 16)
@@ -28,6 +28,12 @@ function hslToHex(h: number, s: number, l: number): string {
 function applyVars(vars: Skin['vars']): void {
   const root = document.documentElement
   for (const [key, value] of Object.entries(vars)) root.style.setProperty(key, value)
+  // Optional vars must be actively cleared when a skin omits them — unlike the
+  // core keys (which every skin sets), a leftover value from a previously
+  // active skin would otherwise persist and override the CSS var() fallback.
+  for (const key of SKIN_OPTIONAL_VAR_KEYS) {
+    if (vars[key] == null) root.style.removeProperty(key)
+  }
 }
 
 function applyAccentVars(accent: string): void {
