@@ -3,14 +3,15 @@ import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, Chevro
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { orderedNavItems } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
+import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
 
 const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'offlinePlaylists')
+  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, navVisibility, appMenuPosition, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'navVisibility', 'appMenuPosition', 'offlinePlaylists')
   const isElectron = navigator.userAgent.includes('Electron')
 
   const [collapsed, setCollapsed] = useState<boolean>(
@@ -51,9 +52,10 @@ export default function Sidebar(): JSX.Element {
 
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
 
-  // Order comes from Settings → Appearance → Menu order (drag-to-reorder);
-  // orderedNavItems sanitizes the saved list and drops web-hidden destinations.
-  const items = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
+  // Order + which tabs appear both come from Settings → Appearance → Menu
+  // items. orderedNavItems sanitizes the saved order; isNavItemVisible drops
+  // web-only tabs on web and anything the user has toggled off.
+  const items = orderedNavItems(navOrder).filter((i) => isNavItemVisible(i, navVisibility, isElectron))
 
   const navClick = (view: ViewType): void => {
     if (activeView === view && view === 'playlists') {
@@ -81,6 +83,9 @@ export default function Sidebar(): JSX.Element {
           <div className="shrink-0 h-7 mr-[188px] select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         )}
         <div className="flex items-center gap-1 px-3 py-1.5 min-w-0">
+          {isElectron && appMenuPosition === 'sidebar' && (
+            <div className="shrink-0 mr-0.5"><AppMenu variant="sidebar-icon" /></div>
+          )}
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
             {items.map(({ icon, label, view }) => (
               <button
@@ -182,6 +187,14 @@ export default function Sidebar(): JSX.Element {
           </span>
         </div>
       </div>
+
+      {/* App menu (File/Edit/View…) parked in the side menu, above the tabs —
+          only when the user chose the 'sidebar' spot over the title-bar pill. */}
+      {isElectron && appMenuPosition === 'sidebar' && (
+        <div className="px-3 pb-1 shrink-0">
+          <AppMenu variant="sidebar" collapsed={collapsed} />
+        </div>
+      )}
 
       {/* Nav items */}
       <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto px-3">

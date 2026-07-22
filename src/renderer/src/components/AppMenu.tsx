@@ -5,10 +5,17 @@ import { effectiveBinding, comboTokens, runHotkeyAction } from '../lib/hotkeys'
 import { trackIdToSongId } from '../lib/userApi'
 import { placeFlyout } from '../lib/menuFlyout'
 
-// MusicBee-style application menu: a title-bar button that drops down the
-// top-level menus (File, Edit, View…), each opening its own submenu flyout.
-// Desktop only — it lives in the frameless window's title strip, which the web
-// build doesn't have.
+// MusicBee-style application menu: a button that drops down the top-level menus
+// (File, Edit, View…), each opening its own submenu flyout. Desktop only — the
+// web build has no frameless title strip and no `window.electron`.
+//
+// `variant` decides where it lives (Settings → Appearance → Menu button):
+//   'bar'     — floating pill pinned to the window's title strip (top-left).
+//   'sidebar' — a normal row rendered inside the Sidebar (App.tsx skips the
+//               floating one). Avoids overlapping whatever sits in the content
+//               area's top-left corner (radio widget, WRLD controls…).
+// The dropdown itself anchors to the trigger button's measured position either
+// way, so it opens in the right spot wherever the button is placed.
 //
 // Entries that mirror a keyboard shortcut dispatch by hotkey id through
 // runHotkeyAction rather than reimplementing the behavior, so a menu click and
@@ -41,9 +48,15 @@ function openExternal(url: string): void {
   document.body.removeChild(a)
 }
 
-export default function AppMenu(): JSX.Element | null {
+// 'bar' — floating title-strip pill · 'sidebar' — full-width row for the
+// vertical side menu · 'sidebar-icon' — compact icon button for the collapsed
+// side menu and the horizontal top/bottom bar.
+type AppMenuVariant = 'bar' | 'sidebar' | 'sidebar-icon'
+
+export default function AppMenu({ variant = 'bar', collapsed = false }: { variant?: AppMenuVariant; collapsed?: boolean } = {}): JSX.Element | null {
   const {
     account, logoutAccount, setShowUserAuth,
+    openSettings, openConvert,
     setActiveView, setShowDownloadManager, clearCompletedDownloads,
     showQueue, showNowPlaying, setShowNowPlaying,
     playerCollapsed, setPlayerCollapsed,
@@ -63,6 +76,7 @@ export default function AppMenu(): JSX.Element | null {
     hotkeyBindings,
   } = useStorePick(
     'account', 'logoutAccount', 'setShowUserAuth',
+    'openSettings', 'openConvert',
     'setActiveView', 'setShowDownloadManager', 'clearCompletedDownloads',
     'showQueue', 'showNowPlaying', 'setShowNowPlaying',
     'playerCollapsed', 'setPlayerCollapsed',
@@ -85,11 +99,14 @@ export default function AppMenu(): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const [subPos, setSubPos] = useState({ top: 0, left: 0 })
+  const [panelPos, setPanelPos] = useState({ top: 28, left: 4 })
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const subRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const el = (window as any).electron
+  const PANEL_W = 176 // w-44
 
   // Close on outside click / Escape, and reset the open submenu with it.
   useEffect(() => {
@@ -111,6 +128,9 @@ export default function AppMenu(): JSX.Element | null {
   // Local library files have no backing API song, so song-scoped entries
   // (report) stay disabled for them.
   const currentSongId = currentTrack ? trackIdToSongId(currentTrack.id) : null
+  // Convert only works on an on-disk local file (it transcodes the source);
+  // API/stream tracks have no local path to read.
+  const canConvert = !!currentTrack?.path && currentTrack.id.startsWith('local-')
 
   const close = (): void => { setOpen(false); setActiveMenu(null) }
   // Wraps an entry's action so every click also dismisses the menu.
@@ -173,7 +193,6 @@ export default function AppMenu(): JSX.Element | null {
         { kind: 'item', label: 'Library', hotkey: 'view-library', onClick: hk('view-library') },
         { kind: 'item', label: 'Playlists', hotkey: 'view-playlists', onClick: hk('view-playlists') },
         { kind: 'item', label: 'Liked songs', onClick: run(() => setActiveView('liked')) },
-        { kind: 'item', label: 'Categories', onClick: run(() => setActiveView('api-categories')) },
         { kind: 'item', label: 'WRLD', hotkey: 'view-wrld', onClick: hk('view-wrld') },
         { kind: 'sep' },
         { kind: 'item', label: 'Queue panel', hotkey: 'toggle-queue', onClick: hk('toggle-queue'), checked: showQueue },
@@ -233,6 +252,8 @@ export default function AppMenu(): JSX.Element | null {
     {
       id: 'tools', label: 'Tools',
       entries: [
+        { kind: 'item', label: 'Convert current song…', onClick: run(() => { if (canConvert && currentTrack) openConvert({ id: currentTrack.id, path: currentTrack.path, title: currentTrack.title }) }), disabled: !canConvert },
+        { kind: 'sep' },
         { kind: 'item', label: 'Mini player', hotkey: 'mini-player', onClick: hk('mini-player') },
         { kind: 'item', label: 'Close pop-out windows', hotkey: 'close-float-windows', onClick: hk('close-float-windows') },
         { kind: 'sep' },
@@ -255,7 +276,7 @@ export default function AppMenu(): JSX.Element | null {
       id: 'help', label: 'Help',
       entries: [
         { kind: 'item', label: 'API docs', onClick: run(() => setActiveView('docs')) },
-        { kind: 'item', label: 'Keyboard shortcuts', onClick: hk('open-settings') },
+        { kind: 'item', label: 'Keyboard shortcuts', onClick: run(() => openSettings('shortcuts')) },
         { kind: 'item', label: 'Send feedback…', onClick: run(() => openReport({ kind: 'feedback' })) },
         { kind: 'sep' },
         { kind: 'item', label: 'Check for updates', onClick: run(() => el?.checkForUpdates?.()) },
@@ -265,10 +286,22 @@ export default function AppMenu(): JSX.Element | null {
         { kind: 'item', label: 'Discord', onClick: run(() => openExternal('https://discord.gg/jwa')) },
         { kind: 'item', label: 'Juice WRLD API', onClick: run(() => openExternal('https://juicewrldapi.com')) },
         { kind: 'sep' },
-        { kind: 'item', label: `Version ${__APP_VERSION__}`, onClick: hk('open-settings') },
+        { kind: 'item', label: `Version ${__APP_VERSION__}`, onClick: run(() => openSettings('about')) },
       ],
     },
   ]
+
+  // Anchor the dropdown to the trigger button wherever it sits — below it,
+  // left-aligned, then clamped so it can't spill off the right/bottom edge
+  // (the sidebar variant on the right side would otherwise overflow).
+  useLayoutEffect(() => {
+    if (!open) return
+    const r = triggerRef.current?.getBoundingClientRect()
+    if (!r) return
+    const left = Math.max(4, Math.min(r.left, window.innerWidth - PANEL_W - 8))
+    const top = Math.max(4, Math.min(r.bottom + 2, window.innerHeight - 8))
+    setPanelPos((prev) => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [open, variant, sidebarPosition])
 
   // Place the open submenu beside the panel, level with its row — the same
   // flyout placement the song context menu's submenus use.
@@ -284,22 +317,39 @@ export default function AppMenu(): JSX.Element | null {
 
   const activeEntries = menus.find((m) => m.id === activeMenu)?.entries ?? []
 
+  const active = open ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+  const btnClass = variant === 'bar'
+    ? `flex items-center gap-1.5 h-7 pl-2 pr-2 text-xs font-medium transition-colors ${active}`
+    : variant === 'sidebar-icon'
+      ? `flex items-center justify-center w-8 h-8 rounded transition-colors shrink-0 ${active}`
+      : `flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 pl-2 pr-3 ${active}`
+
   return (
     <div
       ref={rootRef}
-      className="fixed top-0 left-0 z-[10000] flex items-center h-7"
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      className={variant === 'bar' ? 'fixed top-0 left-0 z-[10000] flex items-center h-7' : variant === 'sidebar' ? 'w-full' : 'shrink-0'}
+      style={variant === 'bar' ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
     >
       <button
+        ref={triggerRef}
         onClick={() => { setOpen((o) => !o); setActiveMenu(null) }}
         title="Menu"
-        className={`flex items-center gap-1.5 h-7 pl-2 pr-2 text-xs font-medium transition-colors ${
-          open ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-        }`}
+        className={btnClass}
       >
-        <Menu size={14} className="shrink-0" />
-        <span className="whitespace-nowrap">unreleased</span>
-        <ChevronDown size={12} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className={variant === 'bar' ? 'shrink-0' : variant === 'sidebar-icon' ? 'flex items-center justify-center' : 'w-6 h-6 flex items-center justify-center shrink-0'}>
+          <Menu size={variant === 'bar' ? 14 : 18} />
+        </span>
+        {variant !== 'sidebar-icon' && (
+          <>
+            <span
+              aria-hidden={collapsed}
+              className={`whitespace-nowrap truncate transition-opacity duration-200 ${variant === 'sidebar' ? 'flex-1 text-left' : ''} ${collapsed ? 'w-0 flex-none opacity-0 pointer-events-none' : 'opacity-100'}`}
+            >
+              Menu
+            </span>
+            {!collapsed && <ChevronDown size={12} className={`shrink-0 transition-transform ${variant === 'sidebar' ? 'ml-auto' : ''} ${open ? 'rotate-180' : ''}`} />}
+          </>
+        )}
       </button>
 
       {open && (
@@ -311,7 +361,7 @@ export default function AppMenu(): JSX.Element | null {
             const hovered = menus.find((m) => rowRefs.current[m.id]?.contains(e.target as Node))
             if (hovered) setActiveMenu(hovered.id)
           }}
-          style={{ position: 'fixed', top: 28, left: 4 }}
+          style={{ position: 'fixed', zIndex: 10000, top: panelPos.top, left: panelPos.left, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           className="w-44 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1"
         >
           {menus.map((m) => (

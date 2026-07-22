@@ -4,13 +4,13 @@ import {
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
-  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter,
+  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu,
 } from 'lucide-react'
-import { useStore, useStorePick, type SidebarPosition, type PopoutWindowKind } from '../store/useStore'
+import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
 import { SKINS } from '../lib/skins'
 import { FONTS } from '../lib/fonts'
-import { orderedNavItems, DEFAULT_NAV_ORDER } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
@@ -45,6 +45,12 @@ const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[]
   { id: 'right', label: 'Right', icon: PanelRight },
   { id: 'top', label: 'Top', icon: PanelTop },
   { id: 'bottom', label: 'Bottom', icon: PanelBottom },
+]
+
+const APP_MENU_POSITIONS: { id: AppMenuPosition; label: string; icon: ElementType }[] = [
+  { id: 'sidebar', label: 'Side menu', icon: PanelLeft },
+  { id: 'title-bar', label: 'Title bar', icon: PanelTop },
+  { id: 'hidden', label: 'Hidden', icon: EyeOff },
 ]
 
 // The detached pop-out windows the user can turn on/off individually. Order =
@@ -144,8 +150,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     account,
     theme, setTheme,
     accentColor, setAccentColor,
+    settingsTab, setSettingsTab,
     sidebarPosition, setSidebarPosition,
+    appMenuPosition, setAppMenuPosition,
     navOrder, setNavOrder,
+    navVisibility, setNavItemVisible,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
@@ -166,7 +175,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     lyricsBlur, setLyricsBlur,
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -186,25 +195,34 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   // all off (or, from all-off, back on).
   const anyPopout = POPOUT_KINDS.some((k) => popoutWindows[k.key])
 
-  // ── Menu order (Appearance) ──────────────────────────────────────────────
-  // The nav items exactly as the side menu renders them: the saved order,
-  // sanitized, with web-hidden destinations dropped so what you drag here
-  // matches what you see in the sidebar.
-  const shownNav = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
-  const navIsDefault = navOrder.length === DEFAULT_NAV_ORDER.length && navOrder.every((v, i) => v === DEFAULT_NAV_ORDER[i])
-  // Move a visible item to sit adjacent to a visible target. Reordering happens
-  // on the FULL order (including any web-hidden items) so their relative spots
-  // are preserved even when a web user rearranges the visible ones.
-  const moveNavItem = (fromVisible: number, toVisible: number): void => {
-    if (fromVisible === toVisible) return
+  // ── Menu items (Appearance) ──────────────────────────────────────────────
+  // Every platform-eligible nav item in saved order — visible ones and the
+  // toggled-off extras alike — so the list is where you both reorder and
+  // show/hide. Web-only tabs (Library) are dropped on web.
+  const navRows = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
+  const navOrderIsDefault = navOrder.length === DEFAULT_NAV_ORDER.length && navOrder.every((v, i) => v === DEFAULT_NAV_ORDER[i])
+  const navVisIsDefault = navRows.every((i) => (navVisibility[i.view] ?? true) === (DEFAULT_NAV_VISIBILITY[i.view] ?? true))
+  const navIsDefault = navOrderIsDefault && navVisIsDefault
+  const resetNav = (): void => {
+    setNavOrder(DEFAULT_NAV_ORDER)
+    for (const item of navRows) {
+      const def = DEFAULT_NAV_VISIBILITY[item.view] ?? true
+      if ((navVisibility[item.view] ?? true) !== def) setNavItemVisible(item.view, def)
+    }
+  }
+  // Move a row to sit adjacent to a target row. Reordering happens on the FULL
+  // order (including any web-hidden items) so their relative spots are preserved
+  // even when a web user rearranges the visible ones.
+  const moveNavItem = (fromRow: number, toRow: number): void => {
+    if (fromRow === toRow) return
     const full = orderedNavItems(navOrder).map((i) => i.view)
-    const dragView = shownNav[fromVisible].view
-    const targetView = shownNav[toVisible].view
+    const dragView = navRows[fromRow].view
+    const targetView = navRows[toRow].view
     const from = full.indexOf(dragView)
     const next = [...full]
     next.splice(from, 1)
     const targetIdx = next.indexOf(targetView)
-    next.splice(toVisible > fromVisible ? targetIdx + 1 : targetIdx, 0, dragView)
+    next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragView)
     setNavOrder(next)
   }
 
@@ -316,7 +334,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     return () => window.removeEventListener('keydown', onKey, true)
   }, [recordingId, setHotkeyBinding])
 
-  const [tab, setTab] = useState<Tab>('appearance')
+  const [tab, setTab] = useState<Tab>((settingsTab as Tab) ?? 'appearance')
   const tabs: { id: Tab; label: string; icon: ElementType }[] = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'playback', label: 'Playback', icon: Volume2 },
@@ -331,6 +349,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   useEffect(() => {
     if (tab === 'developer' && !developerMode) setTab('app')
   }, [tab, developerMode])
+
+  // A deep-linked open (app menu → "Keyboard shortcuts"/"Version") sets
+  // settingsTab; jump to it, then clear so a later plain open lands wherever
+  // the user last was rather than snapping back here.
+  useEffect(() => {
+    if (!settingsTab) return
+    setTab(settingsTab as Tab)
+    setSettingsTab(null)
+  }, [settingsTab, setSettingsTab])
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then((devs) => {
@@ -872,19 +899,51 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     })}
                   </div>
                 </div>
+                {isElectron && (
+                  <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                    <div className="flex items-center gap-2.5 mb-2.5">
+                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
+                        <Menu size={13} className="text-white" strokeWidth={2.25} />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-text-primary text-sm">App menu button</span>
+                        <p className="text-text-muted text-[11px]">Where the File / Edit / View… menu opens from</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                      {APP_MENU_POSITIONS.map(({ id, label, icon: MenuIcon }) => {
+                        const active = appMenuPosition === id
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => setAppMenuPosition(id)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                              active
+                                ? 'bg-accent/15 text-accent border-[var(--accent)]'
+                                : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                            }`}
+                          >
+                            <MenuIcon size={14} className="shrink-0" />
+                            {label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#6366f1' }}>
                       <ListOrdered size={13} className="text-white" strokeWidth={2.25} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="text-text-primary text-sm">Menu order</span>
-                      <p className="text-text-muted text-[11px]">Drag to reorder the side menu tabs</p>
+                      <span className="text-text-primary text-sm">Menu items</span>
+                      <p className="text-text-muted text-[11px]">Drag to reorder · tap the eye to show or hide a tab</p>
                     </div>
                     {!navIsDefault && (
                       <button
-                        onClick={() => setNavOrder(DEFAULT_NAV_ORDER)}
-                        title="Restore the default menu order"
+                        onClick={resetNav}
+                        title="Restore the default menu items and order"
                         className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
                       >
                         <RotateCcw size={11} /> Reset
@@ -892,27 +951,37 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     )}
                   </div>
                   <div className="pl-[34px] space-y-1.5">
-                    {shownNav.map((item, idx) => (
-                      <div
-                        key={item.view}
-                        draggable
-                        onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
-                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
-                        onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
-                        onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
-                        className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
-                          navDragIdx === idx
-                            ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
-                            : navOverIdx === idx
-                              ? 'border-[var(--accent)] bg-accent/10'
-                              : 'border-[var(--border)] bg-[var(--surface-overlay)]'
-                        }`}
-                      >
-                        <GripVertical size={14} className="text-text-muted shrink-0" />
-                        <span className="w-6 h-6 shrink-0 flex items-center justify-center text-text-secondary">{item.icon}</span>
-                        <span className="text-text-primary text-sm truncate">{item.label}</span>
-                      </div>
-                    ))}
+                    {navRows.map((item, idx) => {
+                      const shown = isNavItemVisible(item, navVisibility, isElectron)
+                      return (
+                        <div
+                          key={item.view}
+                          draggable
+                          onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
+                          onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
+                          onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
+                          className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
+                            navDragIdx === idx
+                              ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
+                              : navOverIdx === idx
+                                ? 'border-[var(--accent)] bg-accent/10'
+                                : 'border-[var(--border)] bg-[var(--surface-overlay)]'
+                          }`}
+                        >
+                          <GripVertical size={14} className="text-text-muted shrink-0" />
+                          <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
+                          <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
+                          <button
+                            onClick={() => setNavItemVisible(item.view, !shown)}
+                            title={shown ? 'Hide from menu' : 'Add to menu'}
+                            className="ml-auto shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                          >
+                            {shown ? <Eye size={15} /> : <EyeOff size={15} />}
+                          </button>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
@@ -1279,7 +1348,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   >
                     <option value="api-tracker">Tracker</option>
                     <option value="api-files">Files</option>
-                    <option value="api-categories">Categories</option>
                     <option value="liked">Liked Songs</option>
                     <option value="playlists">Playlists</option>
                   </select>

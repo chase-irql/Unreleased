@@ -24,7 +24,7 @@ import { getFont } from '../lib/fonts'
 import { EQ_BANDS, EQ_PRESETS, FLAT_GAINS } from '../lib/audioEffects'
 import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
-import { DEFAULT_NAV_ORDER } from '../lib/navItems'
+import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY } from '../lib/navItems'
 import { getLastfmSession } from '../lib/lastfm'
 
 // Key used to track songs downloaded individually (song context menu →
@@ -87,6 +87,15 @@ export interface DownloadItem {
 // horizontal bar above/below the content. Mobile always uses the bottom tab bar.
 export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
 
+// Where the File/Edit/View… app-menu button lives (desktop only): the floating
+// title-strip pill, tucked inside the side menu, or off entirely.
+export type AppMenuPosition = 'title-bar' | 'sidebar' | 'hidden'
+
+// The Settings dialog's tabs — the union Settings.tsx keys its content off, and
+// the target for a deep-link open (see settingsTab). Keep in sync with the
+// `tab` state there.
+export type SettingsTab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
+
 // The detached ("pop-out") BrowserWindows the desktop build can open instead of
 // rendering a view inline (see FloatApp). Each can be turned off individually:
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
@@ -138,6 +147,10 @@ interface AppState {
   previousView: ViewType | null
   showNowPlaying: boolean
   showSettings: boolean
+  // Which Settings tab to show on next open (deep-link from the app menu, e.g.
+  // "Keyboard shortcuts" → the Shortcuts tab). Settings applies it then clears
+  // it back to null. Synced so it also reaches the pop-out Settings window.
+  settingsTab: SettingsTab | null
   showDiagnostics: boolean
   showQueue: boolean
   // Equalizer popover visibility. Store-level (not Player-local) so the WRLD
@@ -168,10 +181,16 @@ interface AppState {
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
   theme: SkinId
   sidebarPosition: SidebarPosition
+  appMenuPosition: AppMenuPosition
   // User-defined order of the primary side-menu nav items, by view id. Only
   // ever a permutation of the known ids — orderedNavItems() sanitizes it on
   // read, so a stale/partial saved order can't drop or duplicate a tab.
   navOrder: ViewType[]
+  // Per-item side-menu visibility (view id → shown). Sparse overrides merged
+  // onto DEFAULT_NAV_VISIBILITY; isNavItemVisible() falls back to each item's
+  // own default for anything absent, so lets the user hide built-ins and add
+  // the off-by-default extras.
+  navVisibility: Record<string, boolean>
 
   // Settings
   crossfadeEnabled: boolean
@@ -346,6 +365,9 @@ interface AppActions {
   setRadioFmQueuePreview: (preview: string[]) => void
   setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null) => void
   setShowSettings: (show: boolean) => void
+  setSettingsTab: (tab: SettingsTab | null) => void
+  // Open Settings, optionally jumping straight to a tab (e.g. 'shortcuts').
+  openSettings: (tab?: SettingsTab) => void
   // For the settings launcher icon: closes it if already open (in either
   // form) instead of just focusing the pop-out again. setShowSettings(true)
   // stays "always open/focus" for callers that never want to close it
@@ -364,7 +386,9 @@ interface AppActions {
   setWrldFullscreen: (fullscreen: boolean) => void
   setTheme: (theme: SkinId) => void
   setSidebarPosition: (position: SidebarPosition) => void
+  setAppMenuPosition: (position: AppMenuPosition) => void
   setNavOrder: (order: ViewType[]) => void
+  setNavItemVisible: (view: ViewType, visible: boolean) => void
 
   setCrossfade: (enabled: boolean, duration: number) => void
   setPauseFade: (enabled: boolean) => void
@@ -745,6 +769,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   previousView: null,
   showNowPlaying: false,
   showSettings: false,
+  settingsTab: null,
   showDiagnostics: false,
   showQueue: false,
   showEqPanel: false,
@@ -762,11 +787,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // getSkin() maps unknown persisted ids (renamed/removed skins) back to dark.
   theme: getSkin(ls.get<string>('theme') ?? 'dark').id,
   sidebarPosition: ls.get<SidebarPosition>('sidebarPosition') ?? 'left',
+  appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
+  navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
-      'api-categories': '/categories',
       'api-tracker': '/tracker',
       'api-files': '/files',
       'editor': '/editor',
@@ -798,6 +824,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
       return
     }
     set({ showSettings })
+  },
+  setSettingsTab: (settingsTab) => set({ settingsTab }),
+  // Set the target tab BEFORE opening so a freshly-spawned pop-out Settings
+  // window picks it up in its boot snapshot; if one's already open, the change
+  // reaches it over windowSync and Settings switches tabs in response.
+  openSettings: (tab) => {
+    if (tab) set({ settingsTab: tab })
+    get().setShowSettings(true)
   },
   toggleSettings: () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -837,7 +871,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
   setSidebarPosition: (sidebarPosition) => { set({ sidebarPosition }); ls.set('sidebarPosition', sidebarPosition) },
+  setAppMenuPosition: (appMenuPosition) => { set({ appMenuPosition }); ls.set('appMenuPosition', appMenuPosition) },
   setNavOrder: (navOrder) => { set({ navOrder }); ls.set('navOrder', navOrder) },
+  setNavItemVisible: (view, visible) => {
+    const navVisibility = { ...get().navVisibility, [view]: visible }
+    set({ navVisibility })
+    ls.set('navVisibility', navVisibility)
+  },
 
   // ── Settings ──────────────────────────────────────────────────────────────
   crossfadeEnabled: ls.get<boolean>('crossfadeEnabled') ?? false,
