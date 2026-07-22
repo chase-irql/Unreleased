@@ -7,7 +7,6 @@ import { ViewType } from './types'
 function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/' || pathname === '/tracker') return 'api-tracker'
   if (pathname.startsWith('/files')) return 'api-files'
-  if (pathname === '/categories') return 'api-categories'
   if (pathname === '/editor') return 'editor'
   if (pathname === '/admin') return 'admin'
   if (pathname === '/liked') return 'liked'
@@ -44,7 +43,6 @@ import ErrorBoundary from './components/ErrorBoundary'
 // Rarely-visited views load on first navigation instead of inflating the
 // startup bundle. Suspense fallback is null: these chunks are local (Electron)
 // or small (web), so a spinner would just flash.
-const ApiCategoryView = lazy(() => import('./components/ApiCategoryView'))
 const EditorPage = lazy(() => import('./components/EditorPage'))
 const AdminPage = lazy(() => import('./components/AdminPage'))
 const SharedPlaylistView = lazy(() => import('./components/SharedPlaylistView'))
@@ -84,8 +82,8 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
+  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, sidebarPosition, appMenuPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'sidebarPosition', 'appMenuPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
   useThemeEffects()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
@@ -212,7 +210,6 @@ export default function App(): JSX.Element {
             <Suspense fallback={null}>
             {activeView === 'api-tracker' ? <ApiTrackerView />
               : activeView === 'api-files' ? <ApiFilesView />
-              : activeView === 'api-categories' ? <ApiCategoryView />
               : activeView === 'editor' ? <EditorPage />
               : activeView === 'admin' ? <AdminPage />
               : activeView === 'liked' ? <LikedSongsView />
@@ -251,10 +248,12 @@ export default function App(): JSX.Element {
           come after any drag strip that can extend under them — with the nav
           on top/right, the sidebar's strip does, and when this rendered first
           clicking min/max/close dragged the window instead. */}
-      {/* Same ordering rule as WindowControls below — the menu button's no-drag
-          rect has to come after the title-bar drag strips it sits on top of,
-          or clicking it would drag the window instead of opening the menu. */}
-      {isElectron && !wrldFullscreen && <AppMenu />}
+      {/* Floating title-strip menu — only when the user parks it there; the
+          'sidebar' option renders it inside Sidebar instead. Same ordering rule
+          as WindowControls below: the menu button's no-drag rect must come
+          after the title-bar drag strips it sits on top of, or clicking it
+          would drag the window instead of opening the menu. */}
+      {isElectron && !wrldFullscreen && appMenuPosition === 'title-bar' && <AppMenu />}
       {isElectron && !wrldFullscreen && <WindowControls />}
     </div>
   )

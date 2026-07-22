@@ -11,7 +11,8 @@ import type { ViewType, LibraryTrack } from '../types'
 // track list is deliberately absent: it's reloaded from disk instead
 // (see the libraryLastScanned handling below).
 const SYNC_KEYS = [
-  'theme', 'accentColor', 'sidebarPosition', 'navOrder',
+  'theme', 'accentColor', 'sidebarPosition', 'navOrder', 'navVisibility', 'appMenuPosition',
+  'settingsTab',
   'appTextScale', 'lyricsScale', 'lyricsAlign', 'lyricsBlur', 'appFont', 'lyricsFont',
   'crossfadeEnabled', 'crossfadeDuration', 'pauseFadeEnabled', 'preferOgVersion',
   // Last.fm connect/disconnect can happen in the pop-out Settings window; the
