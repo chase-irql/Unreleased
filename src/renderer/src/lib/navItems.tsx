@@ -1,4 +1,4 @@
-import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen } from 'lucide-react'
+import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, User, LogOut, Download, Info, Settings } from 'lucide-react'
 import type { ReactNode } from 'react'
 import logo from '../assets/logo.png'
 import type { ViewType } from '../types'
@@ -58,4 +58,64 @@ export function orderedNavItems(order: ViewType[]): NavItemDef[] {
 export function isNavItemVisible(item: NavItemDef, visibility: Record<string, boolean>, isElectron: boolean): boolean {
   if (item.electronOnly && !isElectron) return false
   return visibility[item.view] ?? !item.defaultHidden
+}
+
+// ─── Bottom-section controls ─────────────────────────────────────────────────
+// The account/utility buttons at the foot of the side menu — reorderable and
+// hideable just like the nav tabs, but they're actions rather than views, so
+// the Sidebar owns their behavior and renders each by id. `login` and the
+// collapse toggle are deliberately NOT here: they stay pinned so the user can
+// never hide the only ways to sign in or re-expand a collapsed menu.
+export type NavControlId = 'profile' | 'logout' | 'diagnostics' | 'download' | 'settings'
+
+export interface NavControlDef {
+  id: NavControlId
+  label: string
+  icon: ReactNode
+  defaultHidden?: boolean
+}
+
+export const NAV_CONTROLS: NavControlDef[] = [
+  { id: 'profile', label: 'Profile', icon: <User size={18} /> },
+  { id: 'logout', label: 'Log out', icon: <LogOut size={18} /> },
+  { id: 'diagnostics', label: 'Diagnostics', icon: <Info size={18} /> },
+  { id: 'download', label: 'Download app', icon: <Download size={18} /> },
+  { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
+]
+
+export const DEFAULT_NAV_CONTROL_ORDER: NavControlId[] = NAV_CONTROLS.map((c) => c.id)
+
+export const DEFAULT_NAV_CONTROL_VISIBILITY: Record<string, boolean> = Object.fromEntries(
+  NAV_CONTROLS.map((c) => [c.id, !c.defaultHidden]),
+)
+
+export function orderedNavControls(order: string[]): NavControlDef[] {
+  const byId = new Map(NAV_CONTROLS.map((c) => [c.id, c]))
+  const seen = new Set<string>()
+  const out: NavControlDef[] = []
+  for (const id of order) {
+    const c = byId.get(id as NavControlId)
+    if (c && !seen.has(id)) { out.push(c); seen.add(id) }
+  }
+  for (const c of NAV_CONTROLS) if (!seen.has(c.id)) out.push(c)
+  return out
+}
+
+export interface NavControlCtx { account: boolean; isElectron: boolean; developerMode: boolean }
+
+// Whether a control applies to the current session at all (regardless of the
+// user's show/hide choice): profile/logout need an account, download is web
+// only, diagnostics needs developer mode, settings is always available.
+export function isNavControlAvailable(id: NavControlId, ctx: NavControlCtx): boolean {
+  switch (id) {
+    case 'profile':
+    case 'logout': return ctx.account
+    case 'download': return !ctx.isElectron
+    case 'diagnostics': return ctx.developerMode
+    case 'settings': return true
+  }
+}
+
+export function isNavControlVisible(def: NavControlDef, visibility: Record<string, boolean>, ctx: NavControlCtx): boolean {
+  return isNavControlAvailable(def.id, ctx) && (visibility[def.id] ?? !def.defaultHidden)
 }

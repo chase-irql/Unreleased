@@ -7,6 +7,19 @@
          works — iOS ignores the cap for user gestures. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/png" href="/favicon.png" />
+
+    <!-- PWA / installability. These are inert in the Electron build (it loads
+         over file://, never installs, and the service worker is not registered
+         there — see main.tsx). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#121212" />
+    <!-- iOS ignores the web manifest for "Add to Home Screen" — it reads these
+         Apple-specific tags instead to launch fullscreen with our own icon. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Unreleased" />
+    <link rel="apple-touch-icon" href="/icon-512.png" />
+
     <title>unreleased</title>
     <!-- Apply saved theme before React renders to prevent flash -->
     <script>

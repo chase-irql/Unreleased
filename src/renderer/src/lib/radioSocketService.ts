@@ -121,8 +121,15 @@ export class RadioStreamClient {
     return this.send({ type: 'propose_skip' })
   }
 
-  proposeQueue(trackId: string): boolean {
-    return this.send({ type: 'propose_queue', track_id: trackId })
+  proposeQueue(songId: number | string): boolean {
+    // The rest of the ecosystem (REST /plays/, /library/favorites/, and the
+    // radio metadata's RadioTrack) all key songs as a numeric `song_id` — this
+    // was the lone caller sending a stringified `track_id`, which the server
+    // ignored (proposal "accepted" client-side but never queued). Send the
+    // canonical `song_id` number; keep `track_id` too in case anything old
+    // still reads it.
+    const id = Number(songId)
+    return this.send({ type: 'propose_queue', song_id: id, track_id: String(songId) })
   }
 
   castVote(value: 'yes' | 'no'): boolean {

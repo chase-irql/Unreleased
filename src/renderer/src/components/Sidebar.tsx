@@ -3,7 +3,7 @@ import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, Chevro
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible, orderedNavControls, isNavControlVisible, type NavControlId } from '../lib/navItems'
 import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
 
@@ -11,7 +11,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, navVisibility, appMenuPosition, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'navVisibility', 'appMenuPosition', 'offlinePlaylists')
+  const { activeView, setActiveView, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, navVisibility, navControlOrder, navControlVisibility, appMenuPosition, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'navVisibility', 'navControlOrder', 'navControlVisibility', 'appMenuPosition', 'offlinePlaylists')
   const isElectron = navigator.userAgent.includes('Electron')
 
   const [collapsed, setCollapsed] = useState<boolean>(
@@ -65,6 +65,88 @@ export default function Sidebar(): JSX.Element {
     }
   }
 
+  // Foot-of-menu controls (Profile, Log out, Diagnostics, Download, Settings) —
+  // ordered and filtered to what's both available and toggled on in Settings.
+  // Log in and the collapse toggle are rendered separately (never hideable).
+  const controlCtx = { account: !!account, isElectron, developerMode }
+  const controls = orderedNavControls(navControlOrder).filter((c) => isNavControlVisible(c, navControlVisibility, controlCtx))
+
+  const rowCls = 'flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3'
+  const iconWrap = 'w-6 h-6 flex items-center justify-center shrink-0'
+  const labelCls = `truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`
+
+  // Full-width control row for the vertical (left/right) side menu.
+  const renderControl = (id: NavControlId): JSX.Element | null => {
+    switch (id) {
+      case 'profile':
+        if (!account) return null
+        return (
+          <button key="profile" onClick={() => setActiveView('editor-profile')} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
+            <span className={iconWrap}>
+              {account.discord_avatar
+                ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+                : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+            </span>
+            <span aria-hidden={collapsed} className={labelCls}>{account.display_name || account.discord_username}</span>
+          </button>
+        )
+      case 'logout':
+        if (!account) return null
+        return (
+          <button key="logout" onClick={() => logoutAccount()} title={collapsed ? 'Log out' : undefined} className={rowCls}>
+            <span className={iconWrap}><LogOut size={18} /></span>
+            <span aria-hidden={collapsed} className={labelCls}>Log out</span>
+          </button>
+        )
+      case 'diagnostics':
+        return (
+          <button key="diagnostics" onClick={() => setShowDiagnostics(true)} title={collapsed ? 'Diagnostics' : undefined} className={rowCls}>
+            <span className={iconWrap}><Info size={18} /></span>
+            <span aria-hidden={collapsed} className={labelCls}>Diagnostics</span>
+          </button>
+        )
+      case 'download':
+        return (
+          <a key="download" href="https://github.com/leanwrldd/unreleased/releases/latest" target="_blank" rel="noopener noreferrer" title={collapsed ? 'Download desktop app' : undefined} className={rowCls}>
+            <span className={iconWrap}><Download size={18} /></span>
+            <span aria-hidden={collapsed} className={labelCls}>Download app</span>
+          </a>
+        )
+      case 'settings':
+        return (
+          <button key="settings" onClick={() => toggleSettings()} title={collapsed ? 'Settings' : undefined} className={rowCls}>
+            <span className={iconWrap}><Settings size={18} /></span>
+            <span aria-hidden={collapsed} className={labelCls}>Settings</span>
+          </button>
+        )
+    }
+  }
+
+  // Icon-only control button for the horizontal (top/bottom) bar cluster.
+  const barIconBtn = 'flex items-center justify-center w-8 h-8 rounded text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors shrink-0'
+  const renderControlIcon = (id: NavControlId): JSX.Element | null => {
+    switch (id) {
+      case 'profile':
+        if (!account) return null
+        return (
+          <button key="profile" onClick={() => setActiveView('editor-profile')} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
+            {account.discord_avatar
+              ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+              : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+          </button>
+        )
+      case 'logout':
+        if (!account) return null
+        return <button key="logout" onClick={() => logoutAccount()} title="Log out" className={barIconBtn}><LogOut size={16} /></button>
+      case 'diagnostics':
+        return <button key="diagnostics" onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={barIconBtn}><Info size={18} /></button>
+      case 'download':
+        return <a key="download" href="https://github.com/leanwrldd/unreleased/releases/latest" target="_blank" rel="noopener noreferrer" title="Download desktop app" className={barIconBtn}><Download size={18} /></a>
+      case 'settings':
+        return <button key="settings" onClick={() => toggleSettings()} title="Settings" className={barIconBtn}><Settings size={18} /></button>
+    }
+  }
+
   // ── Horizontal bar (Settings → Appearance → Navigation position: top/bottom).
   // Nav items keep icon+label; the account/admin/settings cluster goes
   // icon-only, and the collapse toggle + inline playlist tree don't apply.
@@ -103,51 +185,14 @@ export default function Sidebar(): JSX.Element {
             ))}
           </nav>
           <div className="flex items-center gap-1 shrink-0">
-            {account ? (
-              <>
-                <button
-                  onClick={() => setActiveView('editor-profile')}
-                  title={account.display_name || account.discord_username}
-                  className={`${iconBtn} hover:bg-transparent hover:opacity-80`}
-                >
-                  {account.discord_avatar ? (
-                    <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">
-                      {(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                </button>
-                <button onClick={() => logoutAccount()} title="Log out" className={iconBtn}>
-                  <LogOut size={16} />
-                </button>
-              </>
-            ) : (
+            {/* Log in stays pinned (never hideable) so signing in is always
+                reachable; the rest are user-ordered/hideable controls. */}
+            {!account && (
               <button onClick={() => setShowUserAuth(true)} title="Log in" className={iconBtn}>
                 <LogIn size={18} />
               </button>
             )}
-            {/* Admin tools moved into the editor profile page's Admin tab —
-                reached via the account avatar button above. */}
-            {!isElectron && (
-              <a
-                href="https://github.com/leanwrldd/unreleased/releases/latest"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Download desktop app"
-                className={iconBtn}
-              >
-                <Download size={18} />
-              </a>
-            )}
-            {developerMode && (
-              <button onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={iconBtn}>
-                <Info size={18} />
-              </button>
-            )}
-            <button onClick={() => toggleSettings()} title="Settings" className={iconBtn}>
-              <Settings size={18} />
-            </button>
+            {controls.map((c) => renderControlIcon(c.id))}
           </div>
         </div>
       </aside>
@@ -253,75 +298,20 @@ export default function Sidebar(): JSX.Element {
         ))}
       </nav>
 
-      {/* Bottom section */}
+      {/* Bottom section — Log in stays pinned (never hideable); the rest are
+          user-ordered/hideable controls (Settings → Appearance → Menu controls). */}
       <div className="pb-4 space-y-1 px-2">
-        {account ? (
-          <div className="flex items-center gap-3 py-2 rounded text-sm px-3">
-            <button
-              onClick={() => setActiveView('editor-profile')}
-              title={collapsed ? (account.display_name || account.discord_username) : undefined}
-              className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              {account.discord_avatar ? (
-                <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
-              ) : (
-                <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold shrink-0">
-                  {(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}
-                </div>
-              )}
-              {showExpanded && (
-                <span className="min-w-0 truncate text-text-secondary text-sm font-medium">{account.display_name || account.discord_username}</span>
-              )}
-            </button>
-            {showExpanded && (
-              <button onClick={() => logoutAccount()} title="Log out" className="text-text-muted hover:text-text-primary transition-colors shrink-0">
-                <LogOut size={16} />
-              </button>
-            )}
-          </div>
-        ) : (
+        {!account && (
           <button
             onClick={() => setShowUserAuth(true)}
             title={collapsed ? 'Log in' : undefined}
-            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
+            className={rowCls}
           >
-            <span className="w-6 h-6 flex items-center justify-center shrink-0"><LogIn size={18} /></span>
-            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Log in</span>
+            <span className={iconWrap}><LogIn size={18} /></span>
+            <span aria-hidden={collapsed} className={labelCls}>Log in</span>
           </button>
         )}
-        {/* Admin tools moved into the editor profile page's Admin tab —
-            reached via the account row above. */}
-        {/* Only on the web build — Electron users already have the app. */}
-        {!isElectron && (
-          <a
-            href="https://github.com/leanwrldd/unreleased/releases/latest"
-            target="_blank"
-            rel="noopener noreferrer"
-            title={collapsed ? 'Download desktop app' : undefined}
-            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
-          >
-            <span className="w-6 h-6 flex items-center justify-center shrink-0"><Download size={18} /></span>
-            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Download app</span>
-          </a>
-        )}
-        {developerMode && (
-          <button
-            onClick={() => setShowDiagnostics(true)}
-            title={collapsed ? 'Diagnostics' : undefined}
-            className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
-          >
-            <span className="w-6 h-6 flex items-center justify-center shrink-0"><Info size={18} /></span>
-            <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Diagnostics</span>
-          </button>
-        )}
-        <button
-          onClick={() => toggleSettings()}
-          title={collapsed ? 'Settings' : undefined}
-          className="flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3"
-        >
-          <span className="w-6 h-6 flex items-center justify-center shrink-0"><Settings size={18} /></span>
-          <span aria-hidden={collapsed} className={`truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>Settings</span>
-        </button>
+        {controls.map((c) => renderControl(c.id))}
 
         {/* Collapse toggle */}
         <button

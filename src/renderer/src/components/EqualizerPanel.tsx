@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RotateCcw, PictureInPicture2 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
-import { EQ_BANDS, EQ_GAIN_LIMIT, EQ_PRESETS } from '../lib/audioEffects'
+import { EQ_BANDS, EQ_GAIN_LIMIT, EQ_PRESETS, EFFECTS_SUPPORTED } from '../lib/audioEffects'
 
 // Short axis labels for the band sliders (32 … 16K).
 function bandLabel(freq: number): string {
@@ -88,9 +88,19 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
               <PictureInPicture2 size={13} />
             </button>
           )}
-          <Toggle on={eqEnabled} onClick={() => setEqEnabled(!eqEnabled)} />
+          <Toggle on={eqEnabled && EFFECTS_SUPPORTED} onClick={() => { if (EFFECTS_SUPPORTED) setEqEnabled(!eqEnabled) }} />
         </div>
       </div>
+
+      {/* iOS: the EQ/balance/mono/reverb chain is disabled so audio keeps
+          playing in the background (routing through Web Audio forfeits that on
+          iOS — see audioEffects IS_IOS). Speed, sleep timer, and community
+          edits below don't use the chain and still work. */}
+      {!EFFECTS_SUPPORTED && (
+        <p className="mx-4 mb-2 text-[11px] text-text-muted bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg px-3 py-2">
+          Equalizer & sound effects are off on iOS so music keeps playing when you leave the app.
+        </p>
+      )}
 
       {/* Preset picker */}
       <div className="px-4 pb-3">
@@ -133,6 +143,11 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
           </div>
         )}
       </div>
+
+      {/* Graph-dependent effects (EQ bands, balance, mono, skip-silence,
+          reverb) — all routed through the Web Audio chain, so all unavailable
+          on iOS where the chain is off for background playback. */}
+      <div className={!EFFECTS_SUPPORTED ? 'opacity-40 pointer-events-none' : ''}>
 
       {/* Band sliders */}
       <div className={`px-4 pb-2 transition-opacity ${eqEnabled ? '' : 'opacity-40 pointer-events-none'}`}>
@@ -248,6 +263,8 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
           <span className="text-xs text-text-muted tabular-nums w-12 text-right">{reverbDecay.toFixed(1)}s</span>
         </div>
       </div>
+
+      </div>{/* end graph-dependent effects block */}
 
       {/* Speed — one control for slowed AND sped-up; with pitch shift on,
           below 1x is the slowed feel, above 1x goes nightcore. Hidden during
