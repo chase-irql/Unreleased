@@ -1376,7 +1376,12 @@ export default function Player(): JSX.Element {
       {activeView !== 'wrld' && (
       <>
       {/* ── Mobile player ── */}
-      <div className="md:hidden bg-surface border-t border-[var(--border)] shrink-0" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }} onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
+      {/* No safe-area-inset-bottom padding here: the BottomNav sits directly
+          below this bar and already reserves the home-indicator space for the
+          whole stack. Adding it here too (it reads ~0 in Safari, where the URL
+          bar occupies the inset, but the real ~34px once installed as a
+          standalone PWA) injected a dead gap between the player and the nav. */}
+      <div className="md:hidden bg-surface border-t border-[var(--border)] shrink-0" onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
         {/* Thin progress bar */}
         {radioFmActive ? (
           <div className="h-[2px] bg-red-900/40 relative">

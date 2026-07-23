@@ -1,6 +1,6 @@
 {
   "name": "unreleased",
-  "version": "1.16.11",
+  "version": "1.17.0",
   "description": "A music player for Juice WRLD",
   "main": "electron/main.js",
   "scripts": {
@@ -73,6 +73,7 @@
       "node_modules/ffmpeg-static/**"
     ],
     "mac": {
+      "icon": "resources/icon-512.png",
       "category": "public.app-category.music",
       "target": [
         {

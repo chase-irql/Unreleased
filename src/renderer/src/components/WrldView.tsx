@@ -36,7 +36,6 @@ export default function WrldView(): JSX.Element {
     showQueue, setShowQueue,
     audioOutput, setAudioOutput,
     toggleEqPanel, eqFxActive,
-    appMenuPosition,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -69,7 +68,6 @@ export default function WrldView(): JSX.Element {
     toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
     eqFxActive: s.eqEnabled || s.playbackSpeed !== 1 || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
-    appMenuPosition: s.appMenuPosition,
   })))
 
   // Skins beyond the classic pair mean `theme === 'dark'` no longer covers
@@ -732,12 +730,8 @@ export default function WrldView(): JSX.Element {
       {/* 999 FM toggle + fullscreen toggle, grouped together so they move as
           one unit — 999FM sits top-right on mobile, top-left on desktop
           (md:), and fullscreen now rides along right next to it instead of
-          living in its own corner. When the app-menu button occupies the
-          title strip's top-left corner (desktop, not fullscreen — it's hidden
-          in fullscreen), shift right so the two don't overlap. */}
-      <div className={`absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:right-auto ${
-        isElectronApp && appMenuPosition === 'title-bar' && !fullscreen ? 'md:left-28' : 'md:left-4'
-      }`}>
+          living in its own corner. */}
+      <div className="absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:left-4 md:right-auto">
         <button
           onClick={() => setRadioFmActive(!radioFmActive)}
           disabled={fmDisabled}

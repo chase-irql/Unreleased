@@ -5,7 +5,7 @@ import {
   X, Check, Heart, Shuffle, Music2, Clock, GripVertical,
   ListPlus, Download, Archive, Info, FolderInput, MoreHorizontal,
   Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, CircleArrowDown, Layers,
-  CheckSquare2, Square,
+  CheckSquare2, Square, FileUp, FileDown,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -253,12 +253,12 @@ function LocalPlaylistMosaic({ trackIds, className = '' }: {
 
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, toggleLike, setActiveView, setPendingEditorSongId,
-    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist,
+    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, importM3uPlaylist, exportLocalPlaylistM3u,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uPlaylist', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -338,6 +338,29 @@ export default function PlaylistsView(): JSX.Element {
   const [addingAll, setAddingAll] = useState(false)
   const [isSharedView, setIsSharedView] = useState(false)
   const [importState, setImportState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+
+  // M3U import: a busy flag for the toolbar button plus a dismissible summary
+  // banner reporting how many paths matched the local library (and which
+  // didn't). Electron-only — the IPC bridge doesn't exist in the browser build.
+  const isElectron = !!(window as any).electron
+  const [m3uImporting, setM3uImporting] = useState(false)
+  const [m3uSummary, setM3uSummary] = useState<{ name: string; matched: number; total: number; unmatched: string[] } | null>(null)
+
+  const handleImportM3u = useCallback(async () => {
+    if (m3uImporting) return
+    setM3uImporting(true)
+    try {
+      const res = await importM3uPlaylist()
+      if (res.ok) {
+        setLocalSelectedId(res.playlistId)
+        setM3uSummary({ name: res.name, matched: res.matched, total: res.total, unmatched: res.unmatched })
+      } else if (!res.canceled && res.error) {
+        setM3uSummary({ name: '', matched: 0, total: 0, unmatched: [res.error] })
+      }
+    } finally {
+      setM3uImporting(false)
+    }
+  }, [m3uImporting, importM3uPlaylist, setLocalSelectedId])
 
   // Song info modal
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
@@ -1105,6 +1128,17 @@ export default function PlaylistsView(): JSX.Element {
             <span className="text-text-muted text-xs">›</span>
           </button>
           {cardMenu.showFolders && folderSubmenuItems([`local:${cardMenu.playlist.id}`], () => setCardMenu(null))}
+          {isElectron && (
+            <>
+              <div className="border-t border-[var(--border)] my-1" />
+              <MenuItem
+                icon={FileDown}
+                label="Export as M3U"
+                disabled={cardMenu.playlist.trackIds.length === 0}
+                onClick={() => { const id = cardMenu.playlist.id; setCardMenu(null); exportLocalPlaylistM3u(id) }}
+              />
+            </>
+          )}
           <div className="border-t border-[var(--border)] my-1" />
           <MenuItem
             icon={Trash2}
@@ -2379,6 +2413,11 @@ export default function PlaylistsView(): JSX.Element {
                     <Pencil size={15} />
                   </button>
                 )}
+                {isElectron && localTracks.length > 0 && (
+                  <button onClick={() => exportLocalPlaylistM3u(localPl.id)} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Export as M3U">
+                    <FileDown size={15} />
+                  </button>
+                )}
                 {localPl.coverImage && (
                   <button onClick={() => updateLocalPlaylist(localPl.id, { coverImage: null })} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Remove custom cover">
                     <ImageOff size={15} />
@@ -2451,6 +2490,11 @@ export default function PlaylistsView(): JSX.Element {
           </div>
           {!creating && !creatingFolder && (
             <div className="flex items-center gap-2">
+              {isElectron && (
+                <button onClick={handleImportM3u} disabled={m3uImporting} title="Import an .m3u/.m3u8 playlist into your library" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all disabled:opacity-50">
+                  {m3uImporting ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} strokeWidth={2.2} />} Import M3U
+                </button>
+              )}
               <button onClick={() => { setCreatingFolder(true); setNewFolderName('') }} title="New folder" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all">
                 <FolderPlus size={16} strokeWidth={2.2} /> New Folder
               </button>
@@ -2460,6 +2504,29 @@ export default function PlaylistsView(): JSX.Element {
             </div>
           )}
         </div>
+
+        {m3uSummary && (
+          <div className="flex items-start gap-3 mb-6 px-4 py-3 rounded-xl bg-surface-overlay border border-[var(--border)]">
+            <FileUp size={16} className="text-accent shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1 text-sm">
+              {m3uSummary.total === 0 && m3uSummary.unmatched.length === 1 && !m3uSummary.name ? (
+                <p className="text-red-400">Import failed: {m3uSummary.unmatched[0]}</p>
+              ) : (
+                <>
+                  <p className="text-text-primary font-medium">
+                    Imported “{m3uSummary.name}” — {m3uSummary.matched} of {m3uSummary.total} track{m3uSummary.total === 1 ? '' : 's'} matched your library.
+                  </p>
+                  {m3uSummary.unmatched.length > 0 && (
+                    <p className="text-text-muted text-xs mt-1">
+                      Skipped {m3uSummary.unmatched.length} not in your library: {m3uSummary.unmatched.slice(0, 8).join(', ')}{m3uSummary.unmatched.length > 8 ? `, +${m3uSummary.unmatched.length - 8} more` : ''}. Add their folders in the Library tab, then re-import.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+            <button onClick={() => setM3uSummary(null)} className="p-1 rounded-lg text-text-muted hover:text-text-primary shrink-0"><X size={15} /></button>
+          </div>
+        )}
 
         {creating && (
           <div className="flex items-center gap-2 mb-6 max-w-md">

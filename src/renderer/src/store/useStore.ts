@@ -556,6 +556,11 @@ interface AppActions {
   addToLocalPlaylist: (playlistId: string, trackId: string) => void
   removeFromLocalPlaylist: (playlistId: string, trackId: string) => void
   reorderLocalPlaylist: (playlistId: string, trackIds: string[]) => void
+  // Import an .m3u/.m3u8 into a new local playlist, matching its file paths to
+  // scanned library tracks. Resolves a summary (matched/total + names of the
+  // paths that weren't in the library) so the UI can report skips.
+  importM3uPlaylist: () => Promise<{ ok: true; playlistId: string; name: string; matched: number; total: number; unmatched: string[] } | { ok: false; canceled?: boolean; error?: string }>
+  exportLocalPlaylistM3u: (id: string) => Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }>
   loadLibrary: (force?: boolean) => Promise<void>
 
   loadOfflineLibrary: () => Promise<void>
@@ -1823,6 +1828,48 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = get().localPlaylists.map((p) => p.id === playlistId ? { ...p, trackIds } : p)
     set({ localPlaylists: next })
     el?.saveLocalPlaylists(next)
+  },
+  importM3uPlaylist: async () => {
+    const el = (window as any).electron
+    if (!el?.importM3u) return { ok: false as const, error: 'Not supported' }
+    const res = await el.importM3u()
+    if (!res || res.canceled) return { ok: false as const, canceled: true }
+    if (res.error || !Array.isArray(res.entries)) return { ok: false as const, error: res.error || 'Import failed' }
+    // Library paths are the source of truth; the .m3u may use either slash
+    // style or differ in case (Windows is case-insensitive), so normalise both
+    // sides before matching.
+    const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
+    const byPath = new Map<string, string>()
+    for (const t of get().libraryTracks) byPath.set(norm(t.filePath), t.id)
+    const entries = res.entries as { path: string; title: string | null }[]
+    const trackIds: string[] = []
+    const unmatched: string[] = []
+    const seen = new Set<string>()
+    for (const e of entries) {
+      const id = byPath.get(norm(e.path))
+      if (id) { if (!seen.has(id)) { seen.add(id); trackIds.push(id) } }
+      else unmatched.push(e.title || e.path.split(/[\\/]/).pop() || e.path)
+    }
+    const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name: res.name || 'Imported Playlist', trackIds, createdAt: Date.now() }
+    const next = [...get().localPlaylists, playlist]
+    set({ localPlaylists: next, activeLocalPlaylistId: playlist.id })
+    el.saveLocalPlaylists(next)
+    return { ok: true as const, playlistId: playlist.id, name: playlist.name, matched: trackIds.length, total: entries.length, unmatched }
+  },
+  exportLocalPlaylistM3u: async (id) => {
+    const el = (window as any).electron
+    if (!el?.exportM3u) return { ok: false as const, error: 'Not supported' }
+    const pl = get().localPlaylists.find((p) => p.id === id)
+    if (!pl) return { ok: false as const, error: 'Playlist not found' }
+    const byId = new Map(get().libraryTracks.map((t) => [t.id, t]))
+    const tracks = pl.trackIds
+      .map((tid) => byId.get(tid))
+      .filter((t): t is LibraryTrack => !!t)
+      .map((t) => ({ path: t.filePath, title: t.title, artist: t.artist, duration: t.duration }))
+    const res = await el.exportM3u({ name: pl.name, tracks })
+    if (!res || res.canceled) return { ok: false as const, canceled: true }
+    if (res.error) return { ok: false as const, error: res.error }
+    return { ok: true as const, path: res.path }
   },
   loadLibrary: async (force = false) => {
     const el = (window as any).electron
