@@ -34,6 +34,7 @@ import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
 import InstallPrompt from './components/InstallPrompt'
+import CookieNotice from './components/CookieNotice'
 import { GlobalSongInfoHost } from './components/SongInfoModal'
 import Player from './components/Player'
 import NowPlaying from './components/NowPlaying'
@@ -263,6 +264,7 @@ export default function App(): JSX.Element {
       <ReportModal />
       <ConvertFormatModal />
       <InstallPrompt />
+      <CookieNotice />
       <GlobalSongInfoHost />
       <DownloadManager />
       {/* Rendered last on purpose: Chromium builds the frameless window's
