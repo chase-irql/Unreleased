@@ -137,6 +137,10 @@ contextBridge.exposeInMainWorld('electron', {
   // Local playlists
   loadLocalPlaylists: ()          => ipcRenderer.invoke('load-local-playlists'),
   saveLocalPlaylists: (playlists) => ipcRenderer.invoke('save-local-playlists', playlists),
+  // M3U import/export. importM3u resolves { ok, name, entries:[{path,title,duration}] }
+  // | { canceled } | { error }; exportM3u resolves { ok, path } | { canceled } | { error }.
+  importM3u: ()                   => ipcRenderer.invoke('import-m3u'),
+  exportM3u: (payload)            => ipcRenderer.invoke('export-m3u', payload),
 
   // Offline playlist sync
   offlineGetLibrary:    ()                        => ipcRenderer.invoke('offline-get-library'),

@@ -161,7 +161,7 @@ export default function Sidebar(): JSX.Element {
             144px + 36px wide — see DownloadManager) — a drag rect under
             them would win the draggable-region ordering and swallow their
             clicks (see WindowControls in App.tsx). */}
-        {isElectron && sidebarPosition === 'top' && (
+        {isElectron && sidebarPosition === 'top' && appMenuPosition !== 'title-bar' && (
           <div className="shrink-0 h-7 mr-[188px] select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         )}
         <div className="flex items-center gap-1 px-3 py-1.5 min-w-0">
@@ -211,7 +211,7 @@ export default function Sidebar(): JSX.Element {
           it doesn't visually run into the buttons when the sidebar is wide
           enough to sit under them (expanded width, or any width once
           collapsed still tucks under the min/max/close cluster). */}
-      {isElectron && (
+      {isElectron && appMenuPosition !== 'title-bar' && (
         <div
           className={`shrink-0 select-none ${sidebarPosition === 'right' ? 'h-9 mr-[188px]' : 'h-7'}`}
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}

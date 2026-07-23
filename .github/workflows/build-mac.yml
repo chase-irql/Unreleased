@@ -1,0 +1,67 @@
+name: Build macOS release
+
+# release.py builds and uploads the Windows installer from the dev machine,
+# then publishes the GitHub release. DMGs can't be built from Windows (mac
+# packaging needs hdiutil), so this workflow fires on that publish, builds
+# the mac side on a macOS runner, and attaches the artifacts to the same
+# release.
+#
+# Unsigned/not notarized: no Apple Developer account yet, so the app isn't
+# code-signed. Users will need to right-click -> Open (or run
+# `xattr -cr /Applications/Unreleased.app`) on first launch to get past
+# Gatekeeper. CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder from
+# trying to ad-hoc sign with whatever keychain identity happens to exist on
+# the runner.
+#
+# latest-mac.yml is what electron-updater's MacUpdater reads to find
+# updates — without it, mac clients log an update error on every launch.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v1.14.2)"
+        required: true
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.release.tag_name || inputs.tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Package DMG
+        run: npx electron-builder --mac --publish never
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            release/*.dmg release/latest-mac.yml \
+            --clobber --repo "${{ github.repository }}"

@@ -188,8 +188,22 @@ export default function App(): JSX.Element {
 
   const isElectron = navigator.userAgent.includes("Electron")
 
+  const titleBarMenu = isElectron && !wrldFullscreen && appMenuPosition === 'title-bar'
+
   return (
     <div className="flex flex-col h-dvh bg-surface overflow-hidden">
+      {/* Reserved title bar — only when the app-menu button is parked here. A
+          real row (not an overlay) so content flows BELOW it and the menu can
+          never overlap a view's top-left corner. It carries the window's drag
+          region; the fixed WindowControls/menu button sit within its height. */}
+      {titleBarMenu && (
+        <div
+          className="shrink-0 h-9 flex items-center px-1 bg-sidebar border-b border-[var(--border)] select-none"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        >
+          <AppMenu variant="titlebar" />
+        </div>
+      )}
       {/* Sidebar stays first in the DOM; reverse variants place it visually
           on the right/bottom without reordering focus/tab order. */}
       <div className={`flex flex-1 overflow-hidden ${
@@ -205,7 +219,7 @@ export default function App(): JSX.Element {
               edge instead and carries its own strip. mr-[188px] clears the
               min/max/close buttons (132px) plus the fixed downloads trigger
               next to them (right: 144px + 36px wide — see DownloadManager). */}
-          {isElectron && (
+          {isElectron && appMenuPosition !== 'title-bar' && (
             <div
               className={`absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[188px] pointer-events-none ${sidebarPosition === 'top' ? 'md:hidden' : ''}`}
               style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
@@ -257,12 +271,11 @@ export default function App(): JSX.Element {
           come after any drag strip that can extend under them — with the nav
           on top/right, the sidebar's strip does, and when this rendered first
           clicking min/max/close dragged the window instead. */}
-      {/* Floating title-strip menu — only when the user parks it there; the
-          'sidebar' option renders it inside Sidebar instead. Same ordering rule
-          as WindowControls below: the menu button's no-drag rect must come
-          after the title-bar drag strips it sits on top of, or clicking it
-          would drag the window instead of opening the menu. */}
-      {isElectron && !wrldFullscreen && appMenuPosition === 'title-bar' && <AppMenu />}
+      {/* The title-bar menu is rendered inside its reserved row above (not
+          here) so content flows below it; the 'sidebar' option renders it
+          inside Sidebar. WindowControls stays last — Chromium builds the
+          draggable region in DOM order, so its no-drag carve-out must come
+          after every drag strip that can extend under the buttons. */}
       {isElectron && !wrldFullscreen && <WindowControls />}
     </div>
   )

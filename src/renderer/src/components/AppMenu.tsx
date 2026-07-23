@@ -51,10 +51,11 @@ function openExternal(url: string): void {
   document.body.removeChild(a)
 }
 
-// 'bar' — floating title-strip pill · 'sidebar' — full-width row for the
-// vertical side menu · 'sidebar-icon' — compact icon button for the collapsed
-// side menu and the horizontal top/bottom bar.
-type AppMenuVariant = 'bar' | 'sidebar' | 'sidebar-icon'
+// 'bar' — floating title-strip pill · 'titlebar' — the same pill but rendered
+// inline inside App's reserved title-bar row (so it never overlaps content) ·
+// 'sidebar' — full-width row for the vertical side menu · 'sidebar-icon' —
+// compact icon button for the collapsed side menu and the horizontal bar.
+type AppMenuVariant = 'bar' | 'titlebar' | 'sidebar' | 'sidebar-icon'
 
 export default function AppMenu({ variant = 'bar', collapsed = false }: { variant?: AppMenuVariant; collapsed?: boolean } = {}): JSX.Element | null {
   const {
@@ -404,9 +405,11 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
 
   const activeEntries = menus.find((m) => m.id === activeMenu)?.entries ?? []
 
+  // 'bar' and 'titlebar' share the compact-pill look.
+  const isPill = variant === 'bar' || variant === 'titlebar'
   const active = open ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-  const btnClass = variant === 'bar'
-    ? `flex items-center gap-1.5 h-7 pl-2 pr-2 text-xs font-medium transition-colors ${active}`
+  const btnClass = isPill
+    ? `flex items-center gap-1.5 h-7 pl-2 pr-2 rounded text-xs font-medium transition-colors ${active}`
     : variant === 'sidebar-icon'
       ? `flex items-center justify-center w-8 h-8 rounded transition-colors shrink-0 ${active}`
       : `flex items-center w-full py-2 rounded text-sm font-medium transition-colors gap-3 pl-2 pr-3 ${active}`
@@ -414,8 +417,10 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
   return (
     <div
       ref={rootRef}
-      className={variant === 'bar' ? 'fixed top-0 left-0 z-[10000] flex items-center h-7' : variant === 'sidebar' ? 'w-full' : 'shrink-0'}
-      style={variant === 'bar' ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
+      className={variant === 'bar' ? 'fixed top-0 left-0 z-[10000] flex items-center h-7'
+        : variant === 'titlebar' ? 'flex items-center h-full'
+        : variant === 'sidebar' ? 'w-full' : 'shrink-0'}
+      style={isPill ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties) : undefined}
     >
       <button
         ref={triggerRef}
@@ -423,8 +428,8 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
         title="Menu"
         className={btnClass}
       >
-        <span className={variant === 'bar' ? 'shrink-0' : variant === 'sidebar-icon' ? 'flex items-center justify-center' : 'w-6 h-6 flex items-center justify-center shrink-0'}>
-          <Menu size={variant === 'bar' ? 14 : 18} />
+        <span className={isPill ? 'shrink-0' : variant === 'sidebar-icon' ? 'flex items-center justify-center' : 'w-6 h-6 flex items-center justify-center shrink-0'}>
+          <Menu size={isPill ? 14 : 18} />
         </span>
         {variant !== 'sidebar-icon' && (
           <>

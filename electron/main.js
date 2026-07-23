@@ -3,7 +3,7 @@ const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
-const { pathToFileURL } = require('url')
+const { pathToFileURL, fileURLToPath } = require('url')
 const { Readable } = require('stream')
 const discordRpc = require('./discordRpc')
 
@@ -951,15 +951,24 @@ ipcMain.handle('open-path', (_, p) => shell.openPath(p))
 // if the app itself is broken, since it's a standalone .exe next to the
 // install, not something the app has to run. Prefer that local copy (no
 // download needed); fall back to the GitHub download link when it's missing
-// (dev builds, non-Windows platforms, or an old install predating this).
+// (dev builds or an old install predating this).
+// macOS/Linux have no bundled repair stub (nothing analogous to the NSIS
+// installer), so they always fall back to the releases page.
 ipcMain.handle('open-online-installer', async () => {
-  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'Unreleased-Setup.exe') : null
-  if (bundled && fs.existsSync(bundled)) {
-    const err = await shell.openPath(bundled)
-    if (!err) return { source: 'bundled' }
-    log('Bundled installer failed to launch, falling back to web:', err)
+  if (process.platform === 'win32') {
+    const bundled = app.isPackaged ? path.join(process.resourcesPath, 'Unreleased-Setup.exe') : null
+    if (bundled && fs.existsSync(bundled)) {
+      const err = await shell.openPath(bundled)
+      if (!err) return { source: 'bundled' }
+      log('Bundled installer failed to launch, falling back to web:', err)
+    }
+    shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest/download/Unreleased-Setup.exe')
+    return { source: 'web' }
   }
-  shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest/download/Unreleased-Setup.exe')
+  // Unlike the Windows .exe, mac/Linux asset filenames are versioned (and mac
+  // also varies by arch), so there's no fixed "latest/download/<name>" URL to
+  // link straight to — send the user to the releases page instead.
+  shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest')
   return { source: 'web' }
 })
 
@@ -1081,6 +1090,101 @@ ipcMain.handle('load-library-data', () => loadLibraryData())
 ipcMain.handle('save-library-data', (_, data) => { saveLibraryData(data); return true })
 ipcMain.handle('load-local-playlists', () => loadLocalPlaylists())
 ipcMain.handle('save-local-playlists', (_, playlists) => { saveLocalPlaylists(playlists); return true })
+
+// ── IPC: M3U import / export ────────────────────────────────────────────────
+// M3U is a plain text playlist: one file path per line, optional `#EXTINF`
+// header lines carrying duration + display title. We only parse/serialize the
+// text here — matching paths to the user's scanned library happens in the
+// renderer, which is where the library list lives.
+
+// Parse .m3u/.m3u8 text into ordered entries. `baseDir` resolves relative
+// paths (they're relative to the playlist file's own folder).
+function parseM3u(text, baseDir) {
+  const entries = []
+  let pendingTitle = null
+  let pendingDuration = null
+  // Strip a UTF-8 BOM so the first path doesn't get a stray ﻿ prefix.
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/)
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    if (line.startsWith('#')) {
+      // #EXTINF:<seconds>,<Artist - Title>
+      const m = /^#EXTINF:\s*(-?\d+(?:\.\d+)?)\s*,\s*(.*)$/i.exec(line)
+      if (m) {
+        const secs = parseFloat(m[1])
+        pendingDuration = Number.isFinite(secs) && secs > 0 ? secs : null
+        pendingTitle = m[2].trim() || null
+      }
+      continue // every other #directive (#EXTM3U, #PLAYLIST, …) is ignored
+    }
+    // Skip remote URLs — they can't map to a local library track.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(line) && !/^file:/i.test(line)) {
+      pendingTitle = null; pendingDuration = null
+      continue
+    }
+    let p = line
+    if (/^file:/i.test(p)) {
+      try { p = fileURLToPath(p) } catch { /* fall through with raw value */ }
+    }
+    if (!path.isAbsolute(p)) p = path.resolve(baseDir, p)
+    entries.push({ path: path.normalize(p), title: pendingTitle, duration: pendingDuration })
+    pendingTitle = null; pendingDuration = null
+  }
+  return entries
+}
+
+ipcMain.handle('import-m3u', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Import M3U playlist',
+    properties: ['openFile'],
+    filters: [{ name: 'M3U Playlists', extensions: ['m3u', 'm3u8'] }],
+  })
+  if (result.canceled || !result.filePaths.length) return { canceled: true }
+  const file = result.filePaths[0]
+  try {
+    const text = fs.readFileSync(file, 'utf-8')
+    const entries = parseM3u(text, path.dirname(file))
+    // Suggested playlist name = the file's basename without extension.
+    const name = path.basename(file, path.extname(file)) || 'Imported Playlist'
+    return { ok: true, name, entries }
+  } catch (e) {
+    log('import-m3u error:', e.message)
+    return { error: e.message }
+  }
+})
+
+// tracks: [{ path, title, artist, duration }] in playlist order. We write
+// absolute paths so the file survives being opened from anywhere; #EXTINF
+// lines carry duration + "Artist - Title" for players that show metadata.
+ipcMain.handle('export-m3u', async (event, { name, tracks }) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const safeName = String(name || 'playlist').replace(/[\\/:*?"<>|]/g, '_').trim() || 'playlist'
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Export playlist as M3U',
+    defaultPath: `${safeName}.m3u8`,
+    filters: [{ name: 'M3U Playlist', extensions: ['m3u8', 'm3u'] }],
+  })
+  if (result.canceled || !result.filePath) return { canceled: true }
+  try {
+    const lines = ['#EXTM3U']
+    for (const t of tracks || []) {
+      if (!t || !t.path) continue
+      const dur = Number.isFinite(t.duration) && t.duration > 0 ? Math.round(t.duration) : -1
+      const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(t.path)
+      lines.push(`#EXTINF:${dur},${label}`)
+      lines.push(t.path)
+    }
+    // BOM so non-ASCII paths/titles round-trip on players that assume Latin-1
+    // for a bare .m3u; .m3u8 is UTF-8 by definition either way.
+    fs.writeFileSync(result.filePath, '﻿' + lines.join('\r\n') + '\r\n', 'utf-8')
+    return { ok: true, path: result.filePath }
+  } catch (e) {
+    log('export-m3u error:', e.message)
+    return { error: e.message }
+  }
+})
 
 // Deleting a song is the only thing the library does to a user's *own* files
 // that can't be undone from inside the app, so it goes through the OS trash
