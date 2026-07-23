@@ -6,6 +6,14 @@ All notable changes to the web version of unreleased, from v1.10.6 onward. This 
 
 ---
 
+## [1.16.10] — 2026-07-22
+
+- **New** News feed — a dedicated News page with channels and article pages (starts empty until the backend feed goes live)
+- **New** Skin editor gained an "Advanced" section for overriding the title-bar icon colors, so window controls stay legible on custom title bars
+- **New** Mobile install prompt — a one-time nudge showing how to add the app to your home screen (one-tap install on Android, Share → "Add to Home Screen" steps on iOS)
+
+---
+
 ## [1.16.9] — 2026-07-22
 
 - **New** Custom skins — build your own theme from any preset, tweak its colors in a live editor, set a signature accent, and import/export skins as files to share
