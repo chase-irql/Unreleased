@@ -5,6 +5,7 @@ import {
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
   ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
+  ScrollText, ShieldCheck,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
@@ -21,6 +22,7 @@ import { formatBytes } from '../lib/format'
 import { navigateMainWindow, attachToMainWindow } from '../lib/windowSync'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
+import LegalModal, { type LegalDoc } from './LegalModal'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -146,6 +148,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [showToken, setShowToken] = useState(false)
   const [tokenCopied, setTokenCopied] = useState(false)
   const [openAbout, setOpenAbout] = useState<string | null>(null)
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null)
   const {
     setShowSettings, setActiveView,
     account,
@@ -1785,6 +1788,23 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   API Docs
                 </button>
 
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button
+                    onClick={() => setLegalDoc('terms')}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
+                  >
+                    <ScrollText size={15} />
+                    Terms of Service
+                  </button>
+                  <button
+                    onClick={() => setLegalDoc('privacy')}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
+                  >
+                    <ShieldCheck size={15} />
+                    Privacy Policy
+                  </button>
+                </div>
+
                 <div className="mt-4 rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
                   {([
                     {
@@ -1833,6 +1853,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
           </div>
         </div>
       </div>
+
+      {legalDoc && <LegalModal initialDoc={legalDoc} onClose={() => setLegalDoc(null)} />}
     </div>
   )
 }

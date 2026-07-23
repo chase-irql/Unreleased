@@ -6,6 +6,14 @@ All notable changes to this project are documented here.
 
 ---
 
+## [1.17.0] — 2026-07-22
+
+- **New** *(Desktop)* macOS builds — signed DMGs for Intel and Apple Silicon are now built and published alongside the Windows and Linux releases
+- **New** *(Desktop)* Import and export local playlists as M3U — importing matches each path to your scanned library and reports which tracks weren't found
+- **Improve** *(Desktop)* The title-bar application menu now sits in its own reserved row, so it can never overlap page content
+
+---
+
 ## [1.16.11] — 2026-07-22
 
 - **Fix** *(Desktop)* WRLD view's top controls no longer overlap the title-bar application-menu button
