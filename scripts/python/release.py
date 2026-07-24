@@ -385,6 +385,35 @@ def step_apply_version(new_ver):
     set_version(new_ver)
 
 
+def refresh_bundled_binaries():
+    """Update the bundled tools whose upstream rots between releases, in place,
+    right before packaging. These binaries live in node_modules (gitignored) and
+    are pulled into the installer at build time via package.json asarUnpack, so
+    refreshing them here means every release ships current versions without a
+    commit. Each refresh is NON-FATAL — a failed update (offline, rate-limited)
+    just ships the copy already on disk, never blocking a release.
+
+    yt-dlp is the one that actually needs this: YouTube changes break old
+    extractors within weeks, so a months-old bundled binary would silently fail
+    every import. ffmpeg-static and the other deps are version-pinned and stable
+    — add them here only if one starts needing the same babysitting."""
+    exe = ROOT / "node_modules" / "youtube-dl-exec" / "bin" / (
+        "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
+    if not exe.exists():
+        warn(f"yt-dlp binary not found — skipping update ({exe})")
+        return
+    before = capture(f'"{exe}" --version')
+    info(f"Refreshing bundled yt-dlp (current: {before or 'unknown'})…")
+    r = subprocess.run(f'"{exe}" -U', shell=True, cwd=ROOT)
+    after = capture(f'"{exe}" --version')
+    if r.returncode != 0:
+        warn("yt-dlp self-update failed — shipping the existing binary")
+    elif after and after != before:
+        ok(f"yt-dlp updated: {before} → {after}")
+    else:
+        ok(f"yt-dlp already current ({after or before})")
+
+
 def step_commit(version, msg):
     section(4, TOTAL, f"Commit → {APP_BRANCH}")
 
@@ -403,6 +432,11 @@ def step_commit(version, msg):
 def step_build():
     section(5, TOTAL, "Build Electron app")
     warn("This takes ~2 minutes — output streams below")
+    print()
+
+    # 0. Refresh bundled tools that rot upstream (yt-dlp) before packaging, so
+    #    the installer ships current versions. Non-fatal — see the function.
+    refresh_bundled_binaries()
     print()
 
     # 1. Rebuild the renderer FIRST (tsc --noEmit && vite build) so dist/ is

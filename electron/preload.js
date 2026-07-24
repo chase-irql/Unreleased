@@ -134,6 +134,20 @@ contextBridge.exposeInMainWorld('electron', {
     return () => ipcRenderer.removeListener('convert-progress', fn)
   },
 
+  // YouTube import (bundled yt-dlp + ffmpeg). Downloads a video's audio into the
+  // library. Progress arrives on 'youtube-import-progress' keyed by the id
+  // passed into youtubeImport. Resolves { track, outPath } | { error, needsUpdate? } | { warning }.
+  youtubeImport: (payload) => ipcRenderer.invoke('youtube-import', payload),
+  onYoutubeImportProgress: (cb) => {
+    const fn = (_, d) => cb(d)
+    ipcRenderer.on('youtube-import-progress', fn)
+    return () => ipcRenderer.removeListener('youtube-import-progress', fn)
+  },
+  // Checks whether the bundled yt-dlp/ffmpeg binaries are actually present
+  // (catches a packaging problem before the user ever hits "Import").
+  // Resolves { available: true } | { available: false, reason }.
+  youtubeImportStatus: () => ipcRenderer.invoke('youtube-import-status'),
+
   // Local playlists
   loadLocalPlaylists: ()          => ipcRenderer.invoke('load-local-playlists'),
   saveLocalPlaylists: (playlists) => ipcRenderer.invoke('save-local-playlists', playlists),

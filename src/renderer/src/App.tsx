@@ -30,9 +30,11 @@ import RadioFmPlayer from './components/RadioFmPlayer'
 import RadioVotePopup from './components/RadioVotePopup'
 import DiscordRpcSync from './components/DiscordRpcSync'
 import LastfmScrobbler from './components/LastfmScrobbler'
+import NewsNotifier from './components/NewsNotifier'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
+import YoutubeImportModal from './components/YoutubeImportModal'
 import InstallPrompt from './components/InstallPrompt'
 import CookieNotice from './components/CookieNotice'
 import { GlobalSongInfoHost } from './components/SongInfoModal'
@@ -257,12 +259,14 @@ export default function App(): JSX.Element {
       <RadioVotePopup />
       <DiscordRpcSync />
       <LastfmScrobbler />
+      <NewsNotifier />
       <BottomNav />
       {showSettings && <Suspense fallback={null}><Settings /></Suspense>}
       {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <ReportModal />
       <ConvertFormatModal />
+      <YoutubeImportModal />
       <InstallPrompt />
       <CookieNotice />
       <GlobalSongInfoHost />

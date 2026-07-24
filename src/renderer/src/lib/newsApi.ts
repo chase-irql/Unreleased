@@ -1,35 +1,130 @@
 // News feed data layer. The backend endpoints don't exist yet — this file
-// defines the shape the UI codes against and a single fetch function that's
+// defines the shape the UI codes against and the full set of read/write calls,
 // ready to flip on the moment `/news/` ships. Until then `NEWS_ENABLED` keeps
-// NewsView on its empty state instead of spamming 404s at a route that isn't
-// there.
+// reads on an empty state and makes every mutation throw a clear "not available
+// yet" error instead of firing at routes that aren't there.
 import { JWAPI_BASE } from './juicewrldApi'
 import { apiRequest } from './apiClient'
+import { getToken } from './userApi'
 
-// Flip to true once the API exposes GET /news/. Everything below already
-// speaks the intended contract, so no other change should be needed.
+// Flip to true once the API exposes /news/. Everything below already speaks the
+// intended contract, so no other change should be needed.
 export const NEWS_ENABLED = false
 
 const NEWS_BASE = `${JWAPI_BASE}/news`
 
+function assertEnabled(): void {
+  if (!NEWS_ENABLED) throw new Error('News is not available yet')
+}
+
+// Authed request for editor/admin mutations — mirrors userApi's private
+// `request` helper (Token scheme) so news writes carry the same credentials as
+// the rest of the app.
+function authed<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Token ${token}`
+  return apiRequest<T>(url, { ...options, headers: { ...headers, ...(options.headers as Record<string, string>) } })
+}
+
+// ─── Channels ─────────────────────────────────────────────────────────────────
 // The feed is split into channels — each is its own stream the user tabs
-// between. `id` is the stable value sent to the API as `?channel=`; 'all' is a
-// client-side pseudo-channel that omits the filter. Reorder/rename labels
-// freely, but keep the ids in sync with whatever the backend accepts.
+// between. `id` is the stable slug sent to the API as `?channel=`. Admins can
+// create/rename/delete them; NEWS_CHANNELS below is only the offline fallback
+// used before the channels endpoint responds. The client-side "All" pseudo-tab
+// (ALL_CHANNEL) is never part of this list — it just omits the filter.
+
 export interface NewsChannel {
   id: string
   label: string
+  // Optional one-liner shown under the channel in the manager.
+  description?: string | null
 }
 
+export const ALL_CHANNEL = 'all'
+export const DEFAULT_NEWS_CHANNEL = ALL_CHANNEL
+
+// Fallback channel set — matches what the backend should seed. Real channels
+// only; the view prepends the "All" tab itself.
 export const NEWS_CHANNELS: NewsChannel[] = [
-  { id: 'all', label: 'All' },
   { id: 'announcements', label: 'Announcements' },
   { id: 'releases', label: 'Releases' },
   { id: 'leaks', label: 'Leaks' },
   { id: 'community', label: 'Community' },
 ]
 
-export const DEFAULT_NEWS_CHANNEL = 'all'
+export interface ChannelInput {
+  label: string
+  description?: string | null
+}
+
+// The channel list. Falls back to NEWS_CHANNELS while the feature is off so the
+// tab bar always has something to render.
+export async function fetchChannels(): Promise<NewsChannel[]> {
+  if (!NEWS_ENABLED) return NEWS_CHANNELS
+  const res = await apiRequest<{ results: NewsChannel[] } | NewsChannel[]>(`${NEWS_BASE}/channels/`, {
+    cacheKey: 'news:channels',
+  })
+  return Array.isArray(res) ? res : res.results
+}
+
+// Admin only. The backend assigns the slug id from the label.
+export async function createChannel(input: ChannelInput): Promise<NewsChannel> {
+  assertEnabled()
+  return authed<NewsChannel>(`${NEWS_BASE}/channels/`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function updateChannel(id: string, input: Partial<ChannelInput>): Promise<NewsChannel> {
+  assertEnabled()
+  return authed<NewsChannel>(`${NEWS_BASE}/channels/${id}/`, { method: 'PATCH', body: JSON.stringify(input) })
+}
+
+export async function deleteChannel(id: string): Promise<void> {
+  assertEnabled()
+  return authed<void>(`${NEWS_BASE}/channels/${id}/`, { method: 'DELETE' })
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────────
+// Files attached to a post. On an existing item these come back hosted (`url`);
+// when composing, new files ride along in the create/update payload as base64
+// `data` and the backend persists them, returning the hosted form next read.
+
+export interface NewsAttachment {
+  id?: number
+  name: string
+  url: string
+  mime: string
+  size: number // bytes
+}
+
+// Client-side cap, checked before upload. Keep in sync with the backend's limit.
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024 // 25 MB
+
+export function isImageAttachment(a: { mime: string }): boolean {
+  return a.mime.startsWith('image/')
+}
+
+// Uploads one file and returns its hosted attachment record. Attachments go
+// through a dedicated multipart endpoint (not inline in the post JSON) so a
+// 25 MB file doesn't get base64-inflated into the request body. The post is
+// then created/edited referencing the returned `url`s. Editor+.
+export async function uploadAttachment(file: File): Promise<NewsAttachment> {
+  assertEnabled()
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`"${file.name}" is larger than ${Math.round(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB`)
+  }
+  const token = getToken()
+  const form = new FormData()
+  form.append('file', file)
+  // Note: no Content-Type header — the browser sets the multipart boundary.
+  return apiRequest<NewsAttachment>(`${NEWS_BASE}/uploads/`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Token ${token}` } : undefined,
+    body: form,
+  })
+}
+
+// ─── Posts ────────────────────────────────────────────────────────────────────
 
 export interface NewsItem {
   id: number
@@ -40,15 +135,37 @@ export interface NewsItem {
   body: string
   // Optional lead image.
   image_url: string | null
-  // Which channel this item belongs to (one of NEWS_CHANNELS ids, never 'all').
+  // Which channel this item belongs to (a channel id, never ALL_CHANNEL).
   channel: string
   // Freeform label, e.g. "Release", "Leak", "Announcement".
   category: string | null
   // Marks a hero/pinned story at the top of the feed.
   featured: boolean
   author: string | null
+  // Account id of the poster — used to gate edit/delete: editors may only
+  // modify their own posts, admins may modify any (see NewsView).
+  author_id: number | null
+  attachments: NewsAttachment[]
   published_at: string // ISO timestamp
 }
+
+export interface NewsItemInput {
+  title: string
+  summary: string
+  body: string
+  channel: string
+  category?: string | null
+  featured?: boolean
+  // Cover image: a base64 data URL for a newly-picked image, an existing hosted
+  // URL to keep, or null to remove. (Small + pre-compressed, so it rides inline
+  // — unlike attachments, which upload separately.)
+  image_url?: string | null
+  // The full desired attachment set as hosted references (upload files first via
+  // uploadAttachment, then pass what they return here).
+  attachments?: NewsAttachment[]
+}
+
+export type NewsSort = 'newest' | 'oldest'
 
 export interface NewsListResponse {
   results: NewsItem[]
@@ -57,8 +174,10 @@ export interface NewsListResponse {
 }
 
 export interface FetchNewsParams {
-  // A channel id, or 'all'/undefined for the unfiltered feed.
+  // A channel id, or ALL_CHANNEL/undefined for the unfiltered feed.
   channel?: string
+  // Feed order by publish date. Defaults to 'newest'.
+  sort?: NewsSort
   page?: number
   pageSize?: number
 }
@@ -70,7 +189,9 @@ export async function fetchNews(params: FetchNewsParams = {}): Promise<NewsListR
   if (!NEWS_ENABLED) return { results: [], count: 0, next: null }
 
   const qs = new URLSearchParams()
-  if (params.channel && params.channel !== 'all') qs.set('channel', params.channel)
+  if (params.channel && params.channel !== ALL_CHANNEL) qs.set('channel', params.channel)
+  // DRF-style ordering: '-published_at' newest first, 'published_at' oldest.
+  if (params.sort) qs.set('ordering', params.sort === 'oldest' ? 'published_at' : '-published_at')
   if (params.page) qs.set('page', String(params.page))
   if (params.pageSize) qs.set('page_size', String(params.pageSize))
   const query = qs.toString()
@@ -82,6 +203,24 @@ export async function fetchNews(params: FetchNewsParams = {}): Promise<NewsListR
 
 // Single article by id. Kept alongside the list for when a detail route lands.
 export async function fetchNewsItem(id: number): Promise<NewsItem> {
-  if (!NEWS_ENABLED) throw new Error('News is not available yet')
+  assertEnabled()
   return apiRequest<NewsItem>(`${NEWS_BASE}/${id}/`, { cacheKey: `news:item:${id}` })
+}
+
+// Editor+ — create a post. `author` is filled server-side from the token.
+export async function createNewsItem(input: NewsItemInput): Promise<NewsItem> {
+  assertEnabled()
+  return authed<NewsItem>(`${NEWS_BASE}/`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+// Editor+ — edit an existing post.
+export async function updateNewsItem(id: number, input: Partial<NewsItemInput>): Promise<NewsItem> {
+  assertEnabled()
+  return authed<NewsItem>(`${NEWS_BASE}/${id}/`, { method: 'PATCH', body: JSON.stringify(input) })
+}
+
+// Editor+ — delete a post.
+export async function deleteNewsItem(id: number): Promise<void> {
+  assertEnabled()
+  return authed<void>(`${NEWS_BASE}/${id}/`, { method: 'DELETE' })
 }

@@ -270,6 +270,10 @@ interface AppState {
   // (null = closed). See components/ConvertFormatModal.
   convertModal: ConvertTarget | null
 
+  // Whether the "Import from YouTube" dialog is open. See
+  // components/YoutubeImportModal.
+  youtubeImportModal: boolean
+
   // Playlist folders — a local-first grouping over both synced and local
   // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
   // usable logged out; synced-playlist membership syncs to the account once the
@@ -464,6 +468,9 @@ interface AppActions {
   /** Opens / closes the "Convert format" dialog for a local track. */
   openConvert: (target: ConvertTarget) => void
   closeConvert: () => void
+  /** Opens / closes the "Import from YouTube" dialog. */
+  openYoutubeImport: () => void
+  closeYoutubeImport: () => void
   /** Queues a general feedback report and tries to deliver it. `contact` is
    *  the optional reach-me field the endpoint accepts. Resolves once that
    *  delivery attempt settles: `true` if it actually reached the server this
@@ -1143,6 +1150,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   pendingReports: ls.get<PendingReport[]>('pendingReports') ?? [],
   reportModal: null,
   convertModal: null,
+  youtubeImportModal: false,
 
   openReport: (target) => set({ reportModal: target }),
   closeReport: () => set({ reportModal: null }),
@@ -1159,6 +1167,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ convertModal: { id: target.id, path: target.path, title: target.title } })
   },
   closeConvert: () => set({ convertModal: null }),
+  openYoutubeImport: () => set({ youtubeImportModal: true }),
+  closeYoutubeImport: () => set({ youtubeImportModal: false }),
 
   _enqueueReport: async (report: PendingReport) => {
     const next = [...get().pendingReports, report]

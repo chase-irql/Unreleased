@@ -25,6 +25,8 @@ export interface AccountUser {
   // lib/foldersApi). Optional so cached/older responses stay assignable.
   user_preferences?: SongPreference[]
   playlist_folders?: ServerPlaylistFolder[]
+  // Channel ids the user follows for news notifications (see lib/newsNotifications).
+  news_subscriptions?: string[]
 }
 
 export interface ApiSongLite {

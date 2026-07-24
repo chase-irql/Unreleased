@@ -2182,39 +2182,31 @@ export default function ApiTrackerView(): JSX.Element {
               <option value="recording_session">Sessions</option>
             </select>
 
-            {versionsEnabled && (
+            <div className="flex items-center bg-surface-overlay rounded-lg p-0.5 shrink-0 ml-auto">
               <button
-                onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
-                className={`flex items-center gap-1.5 px-2.5 py-2.5 md:py-2 rounded-lg text-xs transition-colors shrink-0 ${
-                  compactView
-                    ? 'bg-accent/15 text-accent border border-accent/30'
-                    : 'bg-surface-overlay text-text-muted hover:text-text-secondary border border-transparent'
-                }`}
-                title="Collapse songs into their version groups"
+                onClick={() => { setViewMode('list'); setCompactView(false) }}
+                className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'list' && !compactView ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                title="List view"
               >
-                <Layers size={13} />
-                <span className="hidden sm:inline">Compact</span>
+                <LayoutList size={16} />
               </button>
-            )}
-
-            {!compactView && (
-              <div className="flex items-center bg-surface-overlay rounded-lg p-0.5 shrink-0 ml-auto">
+              <button
+                onClick={() => { setViewMode('detail'); setCompactView(false) }}
+                className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'detail' && !compactView ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                title="Detailed view"
+              >
+                <Rows3 size={16} />
+              </button>
+              {versionsEnabled && (
                 <button
-                  onClick={() => setViewMode('list')}
-                  className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
-                  title="List view"
+                  onClick={() => { setCompactView(true); clearExpandedGroups() }}
+                  className={`p-2 md:p-1.5 rounded-md transition-colors ${compactView ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  title="Compact view — collapse songs into their version groups"
                 >
-                  <LayoutList size={16} />
+                  <Layers size={16} />
                 </button>
-                <button
-                  onClick={() => setViewMode('detail')}
-                  className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'detail' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
-                  title="Detailed view"
-                >
-                  <Rows3 size={16} />
-                </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Active filter chips — one per selected category/era, each

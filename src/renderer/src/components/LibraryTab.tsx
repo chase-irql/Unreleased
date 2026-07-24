@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Music, Play, Pause, Shuffle, Search, MoreHorizontal,
   ChevronLeft, ChevronRight, LayoutGrid, List, Sparkles, User,
-  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp,
+  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp, Youtube,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
@@ -420,7 +420,7 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
 
 // ─── empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
+function EmptyState({ onOpenSettings, onImportYoutube }: { onOpenSettings: () => void; onImportYoutube: () => void }): JSX.Element {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
       <div className="w-20 h-20 rounded-full bg-surface-overlay flex items-center justify-center">
@@ -428,11 +428,16 @@ function EmptyState({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Ele
       </div>
       <div>
         <h2 className="text-text-primary text-xl font-semibold mb-1">Your library is empty</h2>
-        <p className="text-text-muted text-sm max-w-xs">Add folders in Settings → Library Folders, then scan to import your music.</p>
+        <p className="text-text-muted text-sm max-w-xs">Add folders in Settings → Library Folders and scan, or import audio straight from a YouTube link.</p>
       </div>
-      <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
-        <FolderOpen size={15} /> Add Folders
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
+          <FolderOpen size={15} /> Add Folders
+        </button>
+        <button onClick={onImportYoutube} className="flex items-center gap-2 px-5 py-2.5 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-raised transition-colors">
+          <Youtube size={15} /> Import from YouTube
+        </button>
+      </div>
     </div>
   )
 }
@@ -497,7 +502,7 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike')
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openYoutubeImport } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openYoutubeImport')
 
   const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
@@ -620,6 +625,11 @@ export default function LibraryTab(): JSX.Element {
                   </button>
                 </>
               )}
+              <button onClick={() => openYoutubeImport()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors"
+                title="Download a video's audio into your library">
+                <Youtube size={12} /> YouTube
+              </button>
               <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors disabled:opacity-40"
                 title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}>
@@ -632,7 +642,7 @@ export default function LibraryTab(): JSX.Element {
 
         {/* Content */}
         {showEmpty ? (
-          <EmptyState onOpenSettings={() => setShowSettings(true)} />
+          <EmptyState onOpenSettings={() => setShowSettings(true)} onImportYoutube={() => openYoutubeImport()} />
         ) : libraryScanning ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <Loader2 size={32} className="animate-spin text-accent" />

@@ -1,12 +1,29 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ChevronLeft, Newspaper, RefreshCw, AlertCircle } from 'lucide-react'
+import {
+  ChevronLeft, Newspaper, RefreshCw, AlertCircle, Plus, Settings2,
+  Pencil, Trash2, Star, Paperclip, Download, Bell, BellOff, ArrowDownWideNarrow, ArrowUpWideNarrow,
+} from 'lucide-react'
 import { useStorePick } from '../store/useStore'
-import { fetchNews, NEWS_CHANNELS, DEFAULT_NEWS_CHANNEL, type NewsItem } from '../lib/newsApi'
+import {
+  fetchNews, fetchChannels, fetchNewsItem, deleteNewsItem, isImageAttachment,
+  ALL_CHANNEL, DEFAULT_NEWS_CHANNEL, NEWS_CHANNELS,
+  type NewsItem, type NewsChannel, type NewsAttachment, type NewsSort,
+} from '../lib/newsApi'
+import { isSubscribed, setSubscribed, ensureNotifyPermission } from '../lib/newsNotifications'
+import NewsComposeModal from './NewsComposeModal'
+import NewsChannelsModal from './NewsChannelsModal'
+import Markdown from './Markdown'
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return ''
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 // ─── Cards ────────────────────────────────────────────────────────────────────
@@ -19,49 +36,78 @@ function CategoryTag({ label }: { label: string }) {
   )
 }
 
-function FeaturedCard({ item, onOpen }: { item: NewsItem; onOpen: (item: NewsItem) => void }) {
+// Edit/delete cluster, shown on hover for editors. Rendered as a sibling of the
+// card's clickable button (never nested — a button can't contain buttons).
+function ManageActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
   return (
-    <button
-      onClick={() => onOpen(item)}
-      className="group w-full text-left rounded-2xl overflow-hidden border border-[var(--border)] bg-[var(--surface-raised)] hover:border-accent/40 transition-colors"
-    >
-      {item.image_url && (
-        <div className="aspect-[16/7] w-full overflow-hidden bg-[var(--surface-overlay)]">
-          <img src={item.image_url} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
-        </div>
-      )}
-      <div className="p-5">
-        <div className="flex items-center gap-2 mb-2">
-          {item.category && <CategoryTag label={item.category} />}
-          <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
-        </div>
-        <h2 className="text-text-primary text-lg font-bold leading-snug mb-1.5">{item.title}</h2>
-        <p className="text-sm text-text-secondary leading-relaxed line-clamp-3">{item.summary}</p>
-      </div>
-    </button>
+    <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <button onClick={onEdit} title="Edit" className="p-1.5 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-colors"><Pencil size={13} /></button>
+      <button onClick={onDelete} title="Delete" className="p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-600 transition-colors"><Trash2 size={13} /></button>
+    </div>
   )
 }
 
-function NewsCard({ item, onOpen }: { item: NewsItem; onOpen: (item: NewsItem) => void }) {
+interface CardProps {
+  item: NewsItem
+  onOpen: (item: NewsItem) => void
+  canManage: boolean
+  onEdit: (item: NewsItem) => void
+  onDelete: (item: NewsItem) => void
+}
+
+function FeaturedCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
   return (
-    <button
-      onClick={() => onOpen(item)}
-      className="group w-full text-left flex gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] hover:border-accent/40 transition-colors p-3"
-    >
-      {item.image_url && (
-        <div className="w-24 h-24 shrink-0 rounded-lg overflow-hidden bg-[var(--surface-overlay)]">
-          <img src={item.image_url} alt="" className="w-full h-full object-cover" />
+    <div className="relative group">
+      <button
+        onClick={() => onOpen(item)}
+        className="w-full text-left rounded-2xl overflow-hidden border border-[var(--border)] bg-[var(--surface-raised)] hover:border-accent/40 transition-colors block"
+      >
+        {item.image_url && (
+          <div className="aspect-[16/7] w-full overflow-hidden bg-[var(--surface-overlay)]">
+            <img src={item.image_url} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+          </div>
+        )}
+        <div className="p-5">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-accent"><Star size={11} className="fill-current" /> Featured</span>
+            {item.category && <CategoryTag label={item.category} />}
+            <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
+          </div>
+          <h2 className="text-text-primary text-lg font-bold leading-snug mb-1.5">{item.title}</h2>
+          <p className="text-sm text-text-secondary leading-relaxed line-clamp-3">{item.summary}</p>
         </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 mb-1">
-          {item.category && <CategoryTag label={item.category} />}
-          <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
+      </button>
+      {canManage && <ManageActions onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} />}
+    </div>
+  )
+}
+
+function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
+  return (
+    <div className="relative group">
+      <button
+        onClick={() => onOpen(item)}
+        className="w-full text-left flex gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] hover:border-accent/40 transition-colors p-3"
+      >
+        {item.image_url && (
+          <div className="w-24 h-24 shrink-0 rounded-lg overflow-hidden bg-[var(--surface-overlay)]">
+            <img src={item.image_url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1 pr-12">
+          <div className="flex items-center gap-2 mb-1">
+            {item.category && <CategoryTag label={item.category} />}
+            <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
+            {item.attachments.length > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-xs text-text-muted"><Paperclip size={11} />{item.attachments.length}</span>
+            )}
+          </div>
+          <h3 className="text-text-primary text-sm font-semibold leading-snug mb-1 line-clamp-2">{item.title}</h3>
+          <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{item.summary}</p>
         </div>
-        <h3 className="text-text-primary text-sm font-semibold leading-snug mb-1 line-clamp-2">{item.title}</h3>
-        <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{item.summary}</p>
-      </div>
-    </button>
+      </button>
+      {canManage && <ManageActions onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} />}
+    </div>
   )
 }
 
@@ -81,43 +127,108 @@ function SkeletonCard() {
   )
 }
 
-function EmptyState() {
+function EmptyState({ canManage, onCompose }: { canManage: boolean; onCompose: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-24 px-6">
       <div className="w-16 h-16 rounded-2xl bg-[var(--surface-raised)] border border-[var(--border)] flex items-center justify-center mb-4">
         <Newspaper size={28} className="text-text-muted" />
       </div>
-      <h2 className="text-text-primary font-semibold mb-1">No news yet</h2>
+      <h2 className="text-text-primary font-semibold mb-1">No news here yet</h2>
       <p className="text-sm text-text-muted max-w-sm">
         Announcements, releases and leaks will show up here. Check back soon.
       </p>
+      {canManage && (
+        <button
+          onClick={onCompose}
+          className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-accent text-white hover:opacity-90 transition-opacity"
+        >
+          <Plus size={15} /> Write the first post
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────────
+
+function AttachmentList({ attachments }: { attachments: NewsAttachment[] }) {
+  const images = attachments.filter(isImageAttachment)
+  const files = attachments.filter((a) => !isImageAttachment(a))
+  return (
+    <div className="mt-6 space-y-4">
+      {images.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {images.map((a, i) => (
+            <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block rounded-xl overflow-hidden border border-[var(--border)] bg-[var(--surface-overlay)] hover:border-accent/40 transition-colors">
+              <img src={a.url} alt={a.name} className="w-full aspect-square object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        <div className="space-y-1.5">
+          {files.map((a, i) => (
+            <a
+              key={i}
+              href={a.url}
+              download={a.name}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-3 py-2.5 hover:border-accent/40 transition-colors group"
+            >
+              <Paperclip size={15} className="text-text-muted shrink-0" />
+              <span className="text-sm text-text-primary truncate flex-1">{a.name}</span>
+              <span className="text-xs text-text-muted shrink-0">{humanSize(a.size)}</span>
+              <Download size={15} className="text-text-muted group-hover:text-accent transition-colors shrink-0" />
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Article detail ───────────────────────────────────────────────────────────
 
-function ArticleDetail({ item, onBack }: { item: NewsItem; onBack: () => void }) {
+function ArticleDetail({ item, channelLabel, onBack, canManage, onEdit, onDelete }: {
+  item: NewsItem
+  channelLabel: string | null
+  onBack: () => void
+  canManage: boolean
+  onEdit: (item: NewsItem) => void
+  onDelete: (item: NewsItem) => void
+}) {
   return (
     <div className="max-w-3xl mx-auto">
-      <button
-        onClick={onBack}
-        className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors mb-4"
-      >
-        <ChevronLeft size={16} /> Back to news
-      </button>
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors"
+        >
+          <ChevronLeft size={16} /> Back to news
+        </button>
+        {canManage && (
+          <div className="ml-auto flex items-center gap-1">
+            <button onClick={() => onEdit(item)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"><Pencil size={13} /> Edit</button>
+            <button onClick={() => onDelete(item)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary hover:text-red-400 hover:bg-surface-raised transition-colors"><Trash2 size={13} /> Delete</button>
+          </div>
+        )}
+      </div>
       {item.image_url && (
         <div className="aspect-[16/7] w-full overflow-hidden rounded-2xl bg-[var(--surface-overlay)] mb-5">
           <img src={item.image_url} alt="" className="w-full h-full object-cover" />
         </div>
       )}
-      <div className="flex items-center gap-2 mb-3">
-        {item.category && <CategoryTag label={item.category} />}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {item.featured && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-accent"><Star size={11} className="fill-current" /> Featured</span>}
+        {channelLabel && <CategoryTag label={channelLabel} />}
+        {item.category && <span className="text-xs text-text-muted">{item.category}</span>}
         <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
         {item.author && <span className="text-xs text-text-muted">· {item.author}</span>}
       </div>
       <h1 className="text-text-primary text-2xl font-bold leading-tight mb-4">{item.title}</h1>
-      <div className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">{item.body}</div>
+      <Markdown>{item.body}</Markdown>
+      {item.attachments.length > 0 && <AttachmentList attachments={item.attachments} />}
     </div>
   )
 }
@@ -125,32 +236,121 @@ function ArticleDetail({ item, onBack }: { item: NewsItem; onBack: () => void })
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewsView(): JSX.Element {
-  const { setActiveView } = useStorePick('setActiveView')
+  const { setActiveView, account } = useStorePick('setActiveView', 'account')
+  // Editors and admins can post; only admins manage channels.
+  const canPost = !!(account?.is_editor || account?.is_administrator)
+  const canManageChannels = !!account?.is_administrator
+  // Who can edit/delete a given post: admins can touch anything; editors only
+  // their own. Matches the backend's authorization, so the buttons don't offer
+  // an action the API would reject.
+  const canManageItem = (item: NewsItem): boolean =>
+    !!account && (account.is_administrator || (account.is_editor && item.author_id != null && item.author_id === account.id))
+
   const [channel, setChannel] = useState<string>(DEFAULT_NEWS_CHANNEL)
+  const [sort, setSort] = useState<NewsSort>('newest')
+  const [channels, setChannels] = useState<NewsChannel[]>(NEWS_CHANNELS)
   const [items, setItems] = useState<NewsItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<NewsItem | null>(null)
 
+  // Whether the user follows the active channel (drives the bell toggle). "All"
+  // isn't subscribable — you follow specific channels.
+  const [subscribed, setSubscribedState] = useState(false)
+
+  // Modals
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [editing, setEditing] = useState<NewsItem | null>(null)
+  const [channelsOpen, setChannelsOpen] = useState(false)
+
+  const loadChannels = useCallback(async () => {
+    try {
+      const list = await fetchChannels()
+      setChannels(list)
+    } catch {
+      // Keep whatever we have (the static fallback) — a channels fetch failure
+      // shouldn't blank out the tab bar.
+    }
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetchNews({ channel })
+      const res = await fetchNews({ channel, sort })
       setItems(res.results)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load news')
     } finally {
       setLoading(false)
     }
-  }, [channel])
+  }, [channel, sort])
+
+  useEffect(() => { loadChannels() }, [loadChannels])
 
   // Reload whenever the channel changes (and on mount). Close any open article
   // so we don't strand the reader on a story from the previous channel.
   useEffect(() => { setSelected(null); load() }, [load])
 
+  // Reflect the follow state of whatever channel is active.
+  useEffect(() => { setSubscribedState(channel !== ALL_CHANNEL && isSubscribed(channel)) }, [channel])
+
+  // Open a specific post when a notification is clicked (NewsNotifier routes
+  // here then dispatches the id). Also honor an id left in sessionStorage if the
+  // view mounts after the event fired.
+  useEffect(() => {
+    const openById = (id: number): void => { fetchNewsItem(id).then(setSelected).catch(() => undefined) }
+    const onOpen = (e: Event): void => {
+      const id = (e as CustomEvent<number>).detail
+      // Already-mounted path: consume the id so a later remount doesn't reopen it.
+      try { sessionStorage.removeItem('news:openPostId') } catch {}
+      if (typeof id === 'number') openById(id)
+    }
+    window.addEventListener('news:open', onOpen)
+    try {
+      const pending = sessionStorage.getItem('news:openPostId')
+      if (pending) { sessionStorage.removeItem('news:openPostId'); openById(Number(pending)) }
+    } catch {}
+    return () => window.removeEventListener('news:open', onOpen)
+  }, [])
+
+  const toggleSubscribe = async (): Promise<void> => {
+    if (channel === ALL_CHANNEL) return
+    const next = !subscribed
+    if (next) await ensureNotifyPermission() // ask on the first follow; harmless if already granted/denied
+    setSubscribed(channel, next)
+    setSubscribedState(next)
+  }
+
+  const channelLabel = (id: string): string | null => channels.find((c) => c.id === id)?.label ?? null
+
+  const openEdit = (item: NewsItem): void => { setEditing(item); setComposeOpen(true) }
+  const openNew = (): void => { setEditing(null); setComposeOpen(true) }
+
+  const handleDelete = async (item: NewsItem): Promise<void> => {
+    if (!window.confirm(`Delete “${item.title}”? This can't be undone.`)) return
+    try {
+      await deleteNewsItem(item.id)
+      setItems((prev) => prev.filter((i) => i.id !== item.id))
+      setSelected((s) => (s?.id === item.id ? null : s))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    }
+  }
+
+  const handleSaved = (saved: NewsItem): void => {
+    setComposeOpen(false)
+    setEditing(null)
+    // Merge the saved item in place (edit) or drop it on top (new). A full
+    // reload also picks up server-side fields (author, hosted attachment urls).
+    setSelected((s) => (s?.id === saved.id ? saved : s))
+    load()
+  }
+
   const featured = items.find((i) => i.featured) ?? null
   const rest = items.filter((i) => i !== featured)
+
+  const tabs: NewsChannel[] = [{ id: ALL_CHANNEL, label: 'All' }, ...channels]
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
@@ -165,18 +365,54 @@ export default function NewsView(): JSX.Element {
             <ChevronLeft size={18} />
           </button>
           <h1 className="text-text-primary text-xl font-bold">News</h1>
-          <button
-            onClick={load}
-            disabled={loading}
-            title="Refresh"
-            className="ml-auto p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50"
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            {channel !== ALL_CHANNEL && (
+              <button
+                onClick={toggleSubscribe}
+                title={subscribed ? `Following — notify me of new ${channelLabel(channel) ?? ''} posts` : 'Follow for notifications'}
+                className={`p-1.5 rounded-lg transition-colors ${subscribed ? 'text-accent hover:bg-surface-overlay' : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'}`}
+              >
+                {subscribed ? <Bell size={16} /> : <BellOff size={16} />}
+              </button>
+            )}
+            {canManageChannels && (
+              <button
+                onClick={() => setChannelsOpen(true)}
+                title="Manage channels"
+                className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+              >
+                <Settings2 size={16} />
+              </button>
+            )}
+            <button
+              onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+              title={sort === 'newest' ? 'Newest first — switch to oldest' : 'Oldest first — switch to newest'}
+              className="flex items-center gap-1 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            >
+              {sort === 'newest' ? <ArrowDownWideNarrow size={15} /> : <ArrowUpWideNarrow size={15} />}
+              <span className="text-xs hidden sm:inline">{sort === 'newest' ? 'Newest' : 'Oldest'}</span>
+            </button>
+            <button
+              onClick={load}
+              disabled={loading}
+              title="Refresh"
+              className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            </button>
+            {canPost && (
+              <button
+                onClick={openNew}
+                className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-accent text-white hover:opacity-90 transition-opacity"
+              >
+                <Plus size={15} /> New post
+              </button>
+            )}
+          </div>
         </div>
         {/* Channels */}
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
-          {NEWS_CHANNELS.map((ch) => (
+          {tabs.map((ch) => (
             <button
               key={ch.id}
               onClick={() => setChannel(ch.id)}
@@ -195,7 +431,14 @@ export default function NewsView(): JSX.Element {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {selected ? (
-          <ArticleDetail item={selected} onBack={() => setSelected(null)} />
+          <ArticleDetail
+            item={selected}
+            channelLabel={channelLabel(selected.channel)}
+            onBack={() => setSelected(null)}
+            canManage={canManageItem(selected)}
+            onEdit={openEdit}
+            onDelete={handleDelete}
+          />
         ) : (
           <div className="max-w-4xl mx-auto">
             {loading ? (
@@ -214,18 +457,37 @@ export default function NewsView(): JSX.Element {
                 </button>
               </div>
             ) : items.length === 0 ? (
-              <EmptyState />
+              <EmptyState canManage={canPost} onCompose={openNew} />
             ) : (
               <div className="space-y-4">
-                {featured && <FeaturedCard item={featured} onOpen={setSelected} />}
+                {featured && <FeaturedCard item={featured} onOpen={setSelected} canManage={canManageItem(featured)} onEdit={openEdit} onDelete={handleDelete} />}
                 <div className="space-y-3">
-                  {rest.map((item) => <NewsCard key={item.id} item={item} onOpen={setSelected} />)}
+                  {rest.map((item) => (
+                    <NewsCard key={item.id} item={item} onOpen={setSelected} canManage={canManageItem(item)} onEdit={openEdit} onDelete={handleDelete} />
+                  ))}
                 </div>
               </div>
             )}
           </div>
         )}
       </div>
+
+      {composeOpen && (
+        <NewsComposeModal
+          channels={channels}
+          initialChannel={channel === ALL_CHANNEL ? undefined : channel}
+          editing={editing}
+          onClose={() => { setComposeOpen(false); setEditing(null) }}
+          onSaved={handleSaved}
+        />
+      )}
+      {channelsOpen && (
+        <NewsChannelsModal
+          channels={channels}
+          onClose={() => setChannelsOpen(false)}
+          onChanged={loadChannels}
+        />
+      )}
     </div>
   )
 }
