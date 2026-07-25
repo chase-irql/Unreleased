@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { discordCoverUrl } from '../lib/juicewrldApi'
+import { discordCoverUrl, matchLocalSongCover, type LocalSongCover } from '../lib/juicewrldApi'
 import { eraFullName, loadEraFullNames } from '../lib/eras'
 
 // How far the live playback position is allowed to drift from what we last
@@ -44,11 +44,43 @@ export default function DiscordRpcSync(): JSX.Element | null {
     loadEraFullNames().then(() => { if (on) setErasReady(true) }).catch(() => {})
     return () => { on = false }
   }, [])
+  // Cover art for a locally-scanned file, resolved by matching it to the API's
+  // song list (see matchLocalSongCover). Tagged with the track it was resolved
+  // for, so a match arriving after the user has already skipped on can't be
+  // applied to the wrong song.
+  const [localCover, setLocalCover] = useState<{ trackId: string; cover: LocalSongCover | null } | null>(null)
   const lastSentKeyRef = useRef<string | null>(null)
   // What we last told Discord the position was, and when (wall-clock) — lets
   // the drift check below compute where Discord *thinks* playback is now and
   // compare it to where it actually is.
   const lastSentPosRef = useRef<{ currentTime: number; at: number } | null>(null)
+
+  // A locally-scanned file has no curated `imageUrl`, and its `path` is a
+  // filesystem path the API's cover-art endpoint can't resolve — so its cover
+  // has to be earned by matching the file to a song the API hosts.
+  const isLocalTrack = !!currentTrack?.id.startsWith('local-') && !currentTrack.imageUrl
+
+  useEffect(() => {
+    if (!isLocalTrack || !currentTrack) return
+    let cancelled = false
+    const trackId = currentTrack.id
+    matchLocalSongCover(currentTrack.title)
+      .then((cover) => { if (!cancelled) setLocalCover({ trackId, cover }) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isLocalTrack, currentTrack?.id, currentTrack?.title])
+
+  const matchedCover = currentTrack && localCover?.trackId === currentTrack.id ? localCover.cover : null
+  // Local tracks pass null for the path — see discordCoverUrl — and fall back
+  // to the matched song's cover, or to the static logo when nothing matched.
+  const trackCoverUrl = currentTrack
+    ? discordCoverUrl(currentTrack.imageUrl, isLocalTrack ? null : currentTrack.path) ?? matchedCover?.imageUrl ?? null
+    : null
+  // Full era name for API tracks ("WOD" → "WRLD On Drugs"), the bare
+  // abbreviation until /eras/ has loaded, the matched song's era for local
+  // files, then album for tracks with no era data at all.
+  const trackEraSrc = currentTrack?.era || matchedCover?.era || undefined
+  const trackEra = eraFullName(trackEraSrc) || trackEraSrc || currentTrack?.album || undefined
 
   useEffect(() => {
     if (!el?.discordRpcSetActivity) return
@@ -110,12 +142,10 @@ export default function DiscordRpcSync(): JSX.Element | null {
       return
     }
 
-    // Full era name for API tracks ("WOD" → "WRLD On Drugs"), the bare
-    // abbreviation until /eras/ has loaded, album for tracks without era
-    // data (local/file-browser). In the key so the full name isn't deduped
-    // away when it arrives after the first send.
-    const era = eraFullName(currentTrack.era) || currentTrack.era || currentTrack.album || undefined
-    const key = `track:${currentTrack.id}:playing:${era ?? ''}`
+    // The era and the local-file cover both resolve asynchronously (era names
+    // from /eras/, the cover from a title match), so both are in the key —
+    // otherwise the resend that carries them would be deduped away.
+    const key = `track:${currentTrack.id}:playing:${trackEra ?? ''}:${trackCoverUrl ?? ''}`
     if (key === lastSentKeyRef.current) return
     lastSentKeyRef.current = key
     const currentTime = getCurrentTime()
@@ -127,10 +157,10 @@ export default function DiscordRpcSync(): JSX.Element | null {
       currentTime,
       duration: currentTrack.duration,
       isRadio: false,
-      era,
-      coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
+      era: trackEra,
+      coverUrl: trackCoverUrl,
     })
-  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, currentTrack?.imageUrl, currentTrack?.path, currentTrack?.album, currentTrack?.era, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl, radioFmMatchedSong?.path, radioFmMatchedSong?.era, erasReady])
+  }, [el, currentTrack?.id, currentTrack?.title, currentTrack?.artist, currentTrack?.duration, trackCoverUrl, trackEra, isPlaying, radioFmActive, radioFmNowPlaying?.title, radioFmNowPlaying?.artist, radioFmNowPlaying?.album, radioFmMatchedSong?.imageUrl, radioFmMatchedSong?.path, radioFmMatchedSong?.era, erasReady])
 
   // Seek detection: periodically compare where Discord thinks playback is
   // (extrapolated from the last update) against the real live position, and
@@ -155,12 +185,12 @@ export default function DiscordRpcSync(): JSX.Element | null {
         currentTime: actual,
         duration: currentTrack.duration,
         isRadio: false,
-        era: eraFullName(currentTrack.era) || currentTrack.era || currentTrack.album || undefined,
-        coverUrl: discordCoverUrl(currentTrack.imageUrl, currentTrack.path) ?? null,
+        era: trackEra,
+        coverUrl: trackCoverUrl,
       })
     }, DRIFT_CHECK_MS)
     return () => clearInterval(id)
-  }, [el, isPlaying, radioFmActive, currentTrack])
+  }, [el, isPlaying, radioFmActive, currentTrack, trackCoverUrl, trackEra])
 
   return null
 }

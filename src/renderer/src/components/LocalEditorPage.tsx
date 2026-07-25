@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2, PictureInPicture2, Minimize2 } from 'lucide-react'
+import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2, PictureInPicture2, Minimize2, ImageIcon } from 'lucide-react'
 import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
 import { attachToMainWindow, broadcastLibraryTrackUpdate } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 import { Card, FieldGrid, FieldRow, TextareaRow } from './EditorPage'
+import CoverPickerModal from './CoverPickerModal'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Local-file metadata editor — the same full-page editor layout the API editor
@@ -72,6 +73,8 @@ export default function LocalEditorPage(): JSX.Element {
   const [lyricsTab, setLyricsTab] = useState<LyricsTab>('lyrics')
   const [original, setOriginal] = useState<MetaFields | null>(null)
   const [fields, setFields]     = useState<MetaFields | null>(null)
+  const [showCoverPicker, setShowCoverPicker] = useState(false)
+  const [artLoading, setArtLoading] = useState(false)
 
   // In the pop-out window there's no in-app page to return to — closing the
   // whole window is the equivalent of "back" (mirrors EditorPage's pop-out).
@@ -152,6 +155,26 @@ export default function LocalEditorPage(): JSX.Element {
     if (!el) return
     const dataUrl = await el.selectImageFile()
     if (dataUrl) set('albumArt', dataUrl)
+  }
+
+  // CoverPickerModal hands back an absolute API image URL; the main process
+  // downloads it and returns an embeddable JPEG data URL (dodging renderer CORS
+  // and capping the size). Fetching remotely can be slow/fail, so it drives a
+  // spinner over the art and surfaces any error rather than silently no-op'ing.
+  const useApiCover = async (url: string): Promise<void> => {
+    setShowCoverPicker(false)
+    if (!el?.fetchImageAsDataUrl) return
+    setArtLoading(true)
+    setError(null)
+    try {
+      const res = await el.fetchImageAsDataUrl(url)
+      if (res?.dataUrl) set('albumArt', res.dataUrl)
+      else setError(res?.error || 'Failed to load cover from API')
+    } catch (e: any) {
+      setError(e?.message ?? 'Failed to load cover from API')
+    } finally {
+      setArtLoading(false)
+    }
   }
 
   const handleSave = async (): Promise<void> => {
@@ -280,14 +303,20 @@ export default function LocalEditorPage(): JSX.Element {
                         className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.22] pointer-events-none select-none" />
                     )}
                     <div className="relative flex flex-col items-center gap-3 px-5 pt-6 pb-5">
-                      <button onClick={pickArt} title="Change album art"
+                      <button onClick={pickArt} title="Change album art" disabled={artLoading}
                         className="w-28 h-28 rounded-xl overflow-hidden shadow-xl ring-1 ring-white/10 relative group bg-surface-overlay flex items-center justify-center">
                         {fields.albumArt
                           ? <img src={fields.albumArt} alt="" className="w-full h-full object-cover" />
                           : <Music2 size={26} className="text-text-muted" />}
-                        <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <Upload size={18} className="text-white" />
-                        </span>
+                        {artLoading ? (
+                          <span className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                            <Loader2 size={18} className="text-white animate-spin" />
+                          </span>
+                        ) : (
+                          <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Upload size={18} className="text-white" />
+                          </span>
+                        )}
                       </button>
                       <div className="min-w-0 w-full text-center">
                         <p className="text-text-primary font-bold text-sm leading-snug truncate">
@@ -303,12 +332,18 @@ export default function LocalEditorPage(): JSX.Element {
                         </div>
                         <p className="text-text-muted opacity-25 text-[11px] truncate mt-1">{fileName}</p>
                       </div>
-                      {fields.albumArt && (
-                        <button onClick={() => set('albumArt', null)}
-                          className="inline-flex items-center gap-1 text-[11px] text-text-muted opacity-60 hover:opacity-100 hover:text-red-400 transition-colors">
-                          <Trash2 size={11} /> Remove art
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setShowCoverPicker(true)} disabled={artLoading}
+                          className="inline-flex items-center gap-1 text-[11px] text-text-muted opacity-60 hover:opacity-100 hover:text-accent transition-colors disabled:opacity-30 disabled:pointer-events-none">
+                          <ImageIcon size={11} /> From API
                         </button>
-                      )}
+                        {fields.albumArt && (
+                          <button onClick={() => set('albumArt', null)} disabled={artLoading}
+                            className="inline-flex items-center gap-1 text-[11px] text-text-muted opacity-60 hover:opacity-100 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none">
+                            <Trash2 size={11} /> Remove art
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -432,6 +467,14 @@ export default function LocalEditorPage(): JSX.Element {
           </div>
         )}
       </div>
+
+      {showCoverPicker && (
+        <CoverPickerModal
+          songTitle={fields.title || track.title}
+          onSelect={useApiCover}
+          onClose={() => setShowCoverPicker(false)}
+        />
+      )}
     </div>
   )
 }
