@@ -2121,7 +2121,6 @@ ipcMain.handle('youtube-import', async (event, { id, url, format, bitrate }) => 
     '--no-playlist',
     '--newline',
     '--no-color',
-    '--no-progress-template',
     '--ffmpeg-location', path.dirname(ffmpegPath),
     '-o', path.join(tmpDir, '%(title).150B.%(ext)s'),
   ]
@@ -2289,6 +2288,45 @@ ipcMain.handle('select-image-file', async () => {
     const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
     return `data:${mime};base64,${buf.toString('base64')}`
   } catch { return null }
+})
+
+// Fetches a remote image (e.g. an API cover URL the CoverPickerModal hands
+// back) and returns it as a resized JPEG data URL ready to embed as album art.
+// Done in the main process so it isn't subject to the renderer's CORS rules,
+// and normalised through coverToThumbDataUri so a huge source image doesn't
+// bloat the MP3 tag — the same 640px cap the editor's own art uses. Returns
+// { error } on failure so the renderer can surface it.
+ipcMain.handle('fetch-image-as-data-url', async (_, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return { error: 'Invalid image URL' }
+  try {
+    const buf = await new Promise((resolve, reject) => {
+      const MAX_BYTES = 20 * 1024 * 1024 // guard against a non-image response
+      function doGet(u, redirects) {
+        const opts = new URL(u)
+        https.get({ hostname: opts.hostname, path: opts.pathname + opts.search, headers: { 'User-Agent': 'Unreleased-App' } }, (res) => {
+          if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location) {
+            res.resume()
+            if (redirects <= 0) return reject(new Error('Too many redirects'))
+            return doGet(new URL(res.headers.location, u).toString(), redirects - 1)
+          }
+          if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)) }
+          const chunks = []
+          let received = 0
+          res.on('data', (c) => {
+            received += c.length
+            if (received > MAX_BYTES) { res.destroy(); return reject(new Error('Image too large')) }
+            chunks.push(c)
+          })
+          res.on('end', () => resolve(Buffer.concat(chunks)))
+          res.on('error', reject)
+        }).on('error', reject)
+      }
+      doGet(url, 5)
+    })
+    return { dataUrl: coverToThumbDataUri(buf, 'image/jpeg', 640) }
+  } catch (e) {
+    return { error: e.message || 'Failed to fetch image' }
+  }
 })
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -2479,20 +2517,25 @@ autoUpdater.on('update-downloaded', (info) => {
   })
 })
 
-// electron-updater caches the in-progress download in a "pending" dir keyed
-// by filename (path derives from package.json "name", not productName — see
-// appInfo.js's updaterCacheDirName). If a check/download races a release
-// that's still mid-upload, a truncated file lands here and every future check
-// re-validates its hash against the (by-then-correct) latest.yml and fails
+// electron-updater caches update artifacts under a dir keyed by package.json
+// "name", not productName (see appInfo.js's updaterCacheDirName): the in-flight
+// download in "pending", plus current.blockmap / installer.exe / package.7z at
+// the root for differential downloads. If a check/download races a release
+// that's still mid-upload, truncated files land here and every future check
+// re-validates their hashes against the (by-then-correct) latest.yml and fails
 // forever, since electron-updater never purges a bad cache on its own.
+//
+// We nuke the whole dir rather than just "pending" — a half-written blockmap or
+// package.7z wedges the differential path the same way. Everything in here is
+// re-fetchable, and this only runs after an error, so no live download is lost.
 function clearUpdaterCache() {
   const base = process.platform === 'win32' ? (process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'))
     : process.platform === 'darwin' ? path.join(require('os').homedir(), 'Library', 'Caches')
     : (process.env.XDG_CACHE_HOME || path.join(require('os').homedir(), '.cache'))
-  const pendingDir = path.join(base, 'unreleased-updater', 'pending')
+  const cacheDir = path.join(base, 'unreleased-updater')
   try {
-    fs.rmSync(pendingDir, { recursive: true, force: true })
-    log('Cleared stale updater cache:', pendingDir)
+    fs.rmSync(cacheDir, { recursive: true, force: true })
+    log('Cleared stale updater cache:', cacheDir)
   } catch (e) {
     log('Failed to clear updater cache:', e.message)
   }

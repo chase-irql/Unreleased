@@ -197,6 +197,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [updateState, setUpdateState] = useState<UpdateState>('idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updatePercent, setUpdatePercent] = useState(0)
+  // Sticky companion to updateState === 'error': that state self-clears back to
+  // 'idle' after a few seconds, which is fine for the red flash but useless as a
+  // gate for the recovery button. This stays set until a check actually succeeds,
+  // so someone whose updater is wedged keeps a visible way out.
+  const [updateFailed, setUpdateFailed] = useState(false)
   const accentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   // Custom skins — which one the editor modal is open on (null = closed), the
@@ -449,11 +454,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     if (!isElectron || !el) return
     const off = el.onUpdateStatus?.((d: { type: string; version?: string; percent?: number; message?: string }) => {
       if (d.type === 'checking') { setUpdateState('checking'); setUpdateVersion(null) }
-      else if (d.type === 'available') { setUpdateState('available'); setUpdateVersion(d.version ?? null) }
-      else if (d.type === 'not-available') { setUpdateState('latest'); setUpdateVersion(d.version ?? null); setTimeout(() => setUpdateState('idle'), 5000) }
+      else if (d.type === 'available') { setUpdateState('available'); setUpdateVersion(d.version ?? null); setUpdateFailed(false) }
+      else if (d.type === 'not-available') { setUpdateState('latest'); setUpdateVersion(d.version ?? null); setUpdateFailed(false); setTimeout(() => setUpdateState('idle'), 5000) }
       else if (d.type === 'downloading') { setUpdateState('downloading'); setUpdatePercent(d.percent ?? 0) }
-      else if (d.type === 'downloaded') { setUpdateState('downloaded'); setUpdateVersion(d.version ?? null) }
-      else if (d.type === 'error') { setUpdateState('error'); setTimeout(() => setUpdateState('idle'), 5000) }
+      else if (d.type === 'downloaded') { setUpdateState('downloaded'); setUpdateVersion(d.version ?? null); setUpdateFailed(false) }
+      else if (d.type === 'error') { setUpdateState('error'); setUpdateFailed(true); setTimeout(() => setUpdateState('idle'), 5000) }
     })
     return () => off?.()
   }, [isElectron, el])
@@ -531,7 +536,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     : updateState === 'downloading' ? `Downloading ${updatePercent}%`
     : updateState === 'downloaded' ? 'Ready to install'
     : updateState === 'latest' ? 'Up to date'
-    : updateState === 'error' ? 'Check failed'
+    : updateState === 'error' ? 'Check failed — use Reinstall latest release'
+    : updateFailed ? 'Check for updates (last check failed)'
     : 'Check for updates'
 
   return (
@@ -569,9 +575,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   try {
                     await el?.checkForUpdates()
                     setUpdateState((s: UpdateState) => s === 'checking' ? 'latest' : s)
+                    setUpdateFailed(false)
                     setTimeout(() => setUpdateState((s: UpdateState) => s === 'latest' ? 'idle' : s), 4000)
                   } catch {
                     setUpdateState('error')
+                    setUpdateFailed(true)
                     setTimeout(() => setUpdateState('idle'), 4000)
                   }
                 }}
@@ -585,11 +593,13 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 <RefreshCw size={14} className={updateState === 'checking' || updateState === 'downloading' ? 'animate-spin' : ''} />
               </button>
             )}
-            {isElectron && developerMode && updateState !== 'downloading' && updateState !== 'checking' && (
+            {/* Normally a developer-mode affordance, but it's also the only exit
+                from a wedged updater — so unhide it once a check has failed. */}
+            {isElectron && (developerMode || updateFailed) && updateState !== 'downloading' && updateState !== 'checking' && (
               <button
-                title="Force reinstall latest release"
+                title={updateFailed ? 'Update check failed — reinstall the latest release' : 'Force reinstall latest release'}
                 onClick={() => el?.forceUpdate?.()}
-                className="p-1 rounded transition-colors text-text-muted hover:text-text-primary"
+                className={`p-1 rounded transition-colors ${updateFailed ? 'text-red-400 hover:text-red-300' : 'text-text-muted hover:text-text-primary'}`}
               >
                 <DownloadCloud size={14} />
               </button>

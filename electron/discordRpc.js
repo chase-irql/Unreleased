@@ -148,9 +148,14 @@ function setNowPlaying(info) {
   // an external http(s) URL directly — Discord fetches it through its media
   // proxy and shows it as the activity image. Note largeImageUrl is NOT the
   // image source: the library maps it to `assets.large_url`, which is only
-  // the click-through link on the image. Only real http(s) URLs work here;
-  // local files' covers are base64 data URIs with no public address, so
-  // those keep the static logo.
+  // the click-through link on the image.
+  //
+  // Only real http(s) URLs work: the proxy fetch happens on Discord's servers
+  // (that's how every viewer of the status loads the image), so a local file's
+  // embedded art — a base64 data URI on this machine — can never be sent
+  // directly, and neither could a localhost URL. Local files instead get the
+  // cover of whichever API song they match, resolved renderer-side; when
+  // nothing matches, coverUrl is absent and the static logo stands.
   if (info.coverUrl && /^https?:\/\//.test(info.coverUrl)) {
     activity.largeImageKey = info.coverUrl
   }

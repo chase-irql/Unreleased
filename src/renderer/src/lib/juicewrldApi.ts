@@ -266,7 +266,13 @@ const DISCORD_RPC_URL_LIMIT = 256
 
 /** Cover art URL for Discord RPC: prefers the curated `image_url`, and falls
  *  back to the file's own cover art by path — but only when that URL fits
- *  under Discord's length limit. Returns undefined (static logo) otherwise. */
+ *  under Discord's length limit. Returns undefined (static logo) otherwise.
+ *
+ *  `path` must be a path into the API's file storage. Callers holding a
+ *  locally-scanned track must pass null for it: a filesystem path would build
+ *  a /files/cover-art/ URL the API can't resolve, and Discord shows an empty
+ *  image slot (not the fallback logo) when the URL it was handed 404s. Use
+ *  matchLocalSongCover below for those instead. */
 export function discordCoverUrl(
   imageUrl: string | null | undefined,
   path: string | null | undefined
@@ -276,6 +282,103 @@ export function discordCoverUrl(
   if (!path) return undefined
   const url = buildCoverArtUrl(path)
   return url.length <= DISCORD_RPC_URL_LIMIT ? url : undefined
+}
+
+// ─── Local file → API song cover match ────────────────────────────────────────
+//
+// Discord resolves an activity's image server-side, through its own media
+// proxy, so it can only ever display a publicly-reachable URL — a local file's
+// embedded art (a base64 data URI on this machine) can't be handed to it at
+// all. Since this library is Juice WRLD material, the way to give local files
+// real cover art is to recognise which song the file *is* and borrow that
+// song's hosted cover.
+
+/** Reduces a title to a comparable core so a local file's tag/filename lines
+ *  up with the API's song name: drops a file extension (titles that fell back
+ *  to the filename) and a leading track number, then flattens
+ *  punctuation/spacing to single spaces between lowercase alphanumerics. */
+function normalizeSongTitle(title: string): string {
+  return stripFileTitleCruft(title)
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/** As above, but also drops bracketed qualifiers ("(feat. X)", "[Prod. Y]",
+ *  "(v1)"). Local tags and the API disagree constantly about these, so a loose
+ *  comparison catches far more real matches — at the cost of collapsing a
+ *  song's versions together, which is why it's only the fallback. */
+function normalizeSongTitleLoose(title: string): string {
+  return normalizeSongTitle(stripFileTitleCruft(title).replace(/[[(][^)\]]*[)\]]/g, ' '))
+}
+
+/** Drops the two things a local title picks up from being a file — a trailing
+ *  extension (when the title fell back to the filename) and a leading track
+ *  number ("01. ", "03 - ") — without touching the title itself. Applied
+ *  before the API search too, so those artifacts don't end up in the query. */
+function stripFileTitleCruft(title: string): string {
+  return title
+    .replace(/\.[a-z0-9]{2,4}$/i, '')
+    .replace(/^\s*\d{1,3}\s*[-._)]\s+/, '')
+}
+
+// Matches are memoized by normalized title, misses included — a local track
+// that isn't in the API would otherwise re-search every time it plays, and the
+// answer doesn't change within a session.
+const localCoverMatches = new Map<string, LocalSongCover | null>()
+
+export interface LocalSongCover {
+  imageUrl: string
+  era: string | null
+}
+
+/** Finds the API song a locally-scanned file corresponds to and returns its
+ *  hosted cover (plus era, which Discord shows as the image tooltip), or null
+ *  when there's no confident match.
+ *
+ *  Deliberately strict: a wrong cover on someone's status is worse than the
+ *  fallback logo, so a candidate only counts when its name — or one of its
+ *  `track_titles` aliases — normalizes to exactly the same string as the local
+ *  title. The API's `search` is a loose substring match, so its top hit alone
+ *  is not evidence of anything. An exact match is preferred over a loose one
+ *  so a plain "Lucid Dreams" doesn't take the cover of the first alternate
+ *  version the search happens to return. Artist is intentionally not compared:
+ *  local tags are inconsistent ("Juice WRLD", "juicewrld", empty) while the
+ *  whole library is one artist, so it would only cost matches. */
+export async function matchLocalSongCover(title: string | null | undefined): Promise<LocalSongCover | null> {
+  const wanted = normalizeSongTitle(title ?? '')
+  if (!wanted) return null
+  const cached = localCoverMatches.get(wanted)
+  if (cached !== undefined) return cached
+
+  const search = cleanTitleForSearch(stripFileTitleCruft(title ?? ''))
+  if (!search) return null
+
+  let result: LocalSongCover | null = null
+  try {
+    const data = await apiFetch<JWApiPaginatedResponse>('/songs/', { search, page_size: 10 })
+    const results = data.results ?? []
+    const namesOf = (s: JWApiSong): string[] => [s.name, ...(s.track_titles ?? [])]
+    const wantedLoose = normalizeSongTitleLoose(title ?? '')
+    const song =
+      results.find((s) => namesOf(s).some((n) => normalizeSongTitle(n) === wanted)) ??
+      results.find((s) => namesOf(s).some((n) => normalizeSongTitleLoose(n) === wantedLoose))
+    if (song) {
+      // Same order of preference as discordCoverUrl: the curated image, then
+      // the song file's own embedded art via the API's cover-art endpoint.
+      const curated = buildImageUrl(song.image_url)
+      const byPath = song.path ? buildCoverArtUrl(song.path) : undefined
+      const url = curated ?? (byPath && byPath.length <= DISCORD_RPC_URL_LIMIT ? byPath : undefined)
+      if (url) result = { imageUrl: url, era: song.era?.name ?? null }
+    }
+  } catch {
+    // Offline or API down — no cover this time. Not cached, so a later play
+    // of the same track can still resolve it.
+    return null
+  }
+
+  localCoverMatches.set(wanted, result)
+  return result
 }
 
 /** Picks the best cover URL from a playlist summary or detail object.
