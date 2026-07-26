@@ -179,7 +179,7 @@ function TrackSkeleton(): JSX.Element {
   return (
     <div className="space-y-1 pt-1">
       {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="grid items-center gap-3 px-4 py-2" style={{ gridTemplateColumns: '16px 28px 40px 1fr 56px 36px' }}>
+        <div key={i} className="grid items-center gap-3 px-4 py-2" style={{ gridTemplateColumns: '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' }}>
           <span />
           <div className="w-4 h-3 rounded bg-surface-overlay animate-pulse" />
           <div className="w-10 h-10 rounded-md bg-surface-overlay animate-pulse" />
@@ -258,7 +258,7 @@ export default function PlaylistsView(): JSX.Element {
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uPlaylist', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uPlaylist', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -452,7 +452,11 @@ export default function PlaylistsView(): JSX.Element {
   // after this component does — see useVirtualWindowEl.
   const [listScrollEl, setListScrollEl] = useState<HTMLDivElement | null>(null)
   const [listContentEl, setListContentEl] = useState<HTMLDivElement | null>(null)
-  const TRACK_ROW_H = 56 // px-4 py-2 row wrapping 40px album art
+  // 56 = px-4 py-2 row wrapping 40px album art at normal scale. Multiplied by
+  // the app text-size setting so the virtualized rows (whose height and
+  // absolute offsets must be concrete px) grow with the rem-based covers/text
+  // inside them — otherwise larger scales clipped rows and shrank the covers.
+  const TRACK_ROW_H = Math.round(56 * appTextScale)
   const { start: rowStart, end: rowEnd, totalHeight: rowsTotalHeight } =
     useVirtualWindowEl(listScrollEl, listContentEl, displayTracks.length, TRACK_ROW_H)
 
@@ -1562,14 +1566,14 @@ export default function PlaylistsView(): JSX.Element {
           </div>
           <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
           <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '28px 40px 1fr 56px' }}>
+            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}>
               <span className="text-center">#</span><span /><span>Title</span><div className="flex justify-center"><Clock size={12} /></div>
             </div>
             {localTracks.map((lt, i) => {
               const qt = libTrackToTrack(lt)
               return (
                 <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: '28px 40px 1fr 56px' }}
+                  style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}
                   onDoubleClick={() => playTrack(qt, localQTracks)}
                 >
                   <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
@@ -1738,8 +1742,10 @@ export default function PlaylistsView(): JSX.Element {
 
   if (selectedId != null) {
     const durLabel = totalDurationLabel(tracks)
-    // Extra leading checkbox column while selecting.
-    const gridCols = selectMode ? '20px 16px 28px 40px 1fr 56px 36px' : '16px 28px 40px 1fr 56px 36px'
+    // Extra leading checkbox column while selecting. rem, not px, so the fixed
+    // columns (notably the album-art column) scale with the app text-size
+    // setting alongside the rem-sized covers and text — identical at scale 1.
+    const gridCols = selectMode ? '1.25rem 1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' : '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem'
 
     const playShuffle = () => {
       if (!tracks.length) return
@@ -2442,7 +2448,7 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         ) : (
           <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '28px 40px 1fr 56px' }}>
+            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}>
               <span>#</span>
               <span />
               <span>Title</span>
@@ -2452,7 +2458,7 @@ export default function PlaylistsView(): JSX.Element {
               const qt = libTrackToTrack(lt)
               return (
                 <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: '28px 40px 1fr 56px' }}
+                  style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}
                   onDoubleClick={() => playTrack(qt, localQTracks)}
                 >
                   <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>

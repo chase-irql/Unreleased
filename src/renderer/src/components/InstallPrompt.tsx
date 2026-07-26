@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Share, Plus, Download, Smartphone } from 'lucide-react'
+import { X, Share, Plus, Download, Smartphone, BatteryCharging } from 'lucide-react'
 import { IS_IOS, IS_MOBILE, IS_ELECTRON, isStandalonePWA } from '../lib/platform'
 
 // One-time nudge that tells mobile users the app can be installed to their home
@@ -155,6 +155,16 @@ export default function InstallPrompt(): JSX.Element | null {
               >
                 Not now
               </button>
+              {/* Android's Doze mode / OEM battery savers can kill background
+                  web audio no matter what the app does — the one thing that
+                  actually prevents it is a device-side setting only the user
+                  can change. Surfaced here since this dialog is Android-only. */}
+              <p className="flex items-start gap-2 text-[11px] text-text-muted bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg px-3 py-2">
+                <BatteryCharging size={14} className="shrink-0 mt-px text-text-secondary" />
+                <span>
+                  For playback to keep going with the screen off, turn off <span className="text-text-secondary font-medium">battery optimization</span> for this app in your phone&rsquo;s settings.
+                </span>
+              </p>
             </>
           )}
         </div>

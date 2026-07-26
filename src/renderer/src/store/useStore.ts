@@ -100,9 +100,12 @@ export type SettingsTab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 
 // rendering a view inline (see FloatApp). Each can be turned off individually:
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
 // miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
-export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer' | 'convert'
+export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer' | 'convert' | 'equalizer'
+// `equalizer` defaults OFF — unlike the others (which start life as pop-outs
+// and fall back to inline when disabled), the equalizer's normal home is the
+// in-app popover; turning it on makes the panel open as its own window.
 const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
-  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true, convert: true,
+  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true, convert: true, equalizer: false,
 }
 
 // ─── Non-queue state ──────────────────────────────────────────────────────────
@@ -270,9 +273,9 @@ interface AppState {
   // (null = closed). See components/ConvertFormatModal.
   convertModal: ConvertTarget | null
 
-  // Whether the "Import from YouTube" dialog is open. See
-  // components/YoutubeImportModal.
-  youtubeImportModal: boolean
+  // Whether the "Import from URL" dialog is open. See
+  // components/UrlImportModal.
+  urlImportModal: boolean
 
   // Playlist folders — a local-first grouping over both synced and local
   // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
@@ -468,9 +471,9 @@ interface AppActions {
   /** Opens / closes the "Convert format" dialog for a local track. */
   openConvert: (target: ConvertTarget) => void
   closeConvert: () => void
-  /** Opens / closes the "Import from YouTube" dialog. */
-  openYoutubeImport: () => void
-  closeYoutubeImport: () => void
+  /** Opens / closes the "Import from URL" dialog. */
+  openUrlImport: () => void
+  closeUrlImport: () => void
   /** Queues a general feedback report and tries to deliver it. `contact` is
    *  the optional reach-me field the endpoint accepts. Resolves once that
    *  delivery attempt settles: `true` if it actually reached the server this
@@ -902,12 +905,20 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set(dismissInApp ? { openFloatViews, showEqPanel: false } : { openFloatViews })
   },
   toggleEqPanel: () => {
-    const { openFloatViews, showEqPanel } = get()
+    const { openFloatViews, showEqPanel, popoutWindows } = get()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    // "Open equalizer as a pop-out by default" is on — the button opens/closes
+    // its own window instead of the in-app popover.
+    if (popoutWindows.equalizer && el?.toggleFloatWindow) {
+      el.toggleFloatWindow('equalizer')
+      if (showEqPanel) set({ showEqPanel: false })
+      return
+    }
+    // Popover mode, but a pop-out window is already open (opened manually via
+    // the panel's detach button) — focus it rather than duplicating the panel.
     if (openFloatViews.includes('equalizer')) {
-      // Already its own window — bring that forward rather than duplicating
-      // the panel in-app. (openFloatWindow focuses an existing pop-out.)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(window as any).electron?.openFloatWindow?.('equalizer')
+      el?.openFloatWindow?.('equalizer')
       if (showEqPanel) set({ showEqPanel: false })
       return
     }
@@ -1150,7 +1161,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   pendingReports: ls.get<PendingReport[]>('pendingReports') ?? [],
   reportModal: null,
   convertModal: null,
-  youtubeImportModal: false,
+  urlImportModal: false,
 
   openReport: (target) => set({ reportModal: target }),
   closeReport: () => set({ reportModal: null }),
@@ -1167,8 +1178,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ convertModal: { id: target.id, path: target.path, title: target.title } })
   },
   closeConvert: () => set({ convertModal: null }),
-  openYoutubeImport: () => set({ youtubeImportModal: true }),
-  closeYoutubeImport: () => set({ youtubeImportModal: false }),
+  openUrlImport: () => set({ urlImportModal: true }),
+  closeUrlImport: () => set({ urlImportModal: false }),
 
   _enqueueReport: async (report: PendingReport) => {
     const next = [...get().pendingReports, report]

@@ -1634,6 +1634,16 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       ))}
                     </div>
                   )}
+                  {/* Equalizer is the inverse of the group above — normally an
+                      in-app popover, so this opts INTO a pop-out. Shown
+                      independently of the master toggle for that reason. */}
+                  <div className="pl-[34px] mt-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-text-secondary text-sm truncate">Equalizer as pop-out</p>
+                      <p className="text-text-muted text-[11px] truncate">Open the equalizer in its own window instead of an in-app panel</p>
+                    </div>
+                    <Toggle on={popoutWindows.equalizer} onClick={() => setPopoutWindow('equalizer', !popoutWindows.equalizer)} />
+                  </div>
                 </div>
                 {popoutWindows.miniPlayer && (
                   <Row
