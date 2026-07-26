@@ -535,6 +535,12 @@ export default function Player(): JSX.Element {
   useEffect(() => {
     const check = (): void => {
       if (!isPlaying) return
+      // The audio graph can be suspended by the OS (screen off / Android doze)
+      // while the element still reports as playing — that silences output since
+      // audio routes through the graph, and the checks below wouldn't catch it.
+      // Nudge it back on every tick (complements the graph's own statechange
+      // auto-resume, which timer throttling in the background can starve).
+      resumeEffectsContext()
       const audio = getActive()
       if (!audio) return
       if (audio.ended) { onAudioEnded(audio); return }

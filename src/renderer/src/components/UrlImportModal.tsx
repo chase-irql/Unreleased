@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Youtube, Loader2, Check, AlertCircle, Folder, Wrench, Download } from 'lucide-react'
+import { X, Link2, Loader2, Check, AlertCircle, Folder, Wrench, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 
-// "Import from YouTube" dialog. Takes a video URL, hands it to the main process
-// (`youtube-import`, which drives the bundled yt-dlp + ffmpeg), and registers
-// the resulting audio file into the library. Downloads land in
-// Music/JuiceWRLD Library alongside other local imports.
+// "Import from URL" dialog. Takes any http(s) link and hands it to the main
+// process (`url-import`), which picks one of two modes: a direct audio file
+// link is downloaded as-is, anything else goes through the bundled yt-dlp
+// (YouTube, SoundCloud, Bandcamp, …). Either way the result is registered into
+// the library, landing in Music/JuiceWRLD Library with other local imports.
 
 type FormatId = 'mp3' | 'm4a' | 'opus' | 'ogg' | 'flac' | 'wav'
 
@@ -31,25 +32,26 @@ const BITRATES = ['320k', '256k', '192k', '128k']
 const fileName = (p: string): string => p.split(/[/\\]/).pop() || p
 
 const STAGE_LABEL: Record<string, string> = {
+  probe: 'Checking link…',
   download: 'Downloading…',
   extract: 'Extracting audio…',
   finalize: 'Tagging…',
   done: 'Done',
 }
 
-// Reason codes from the main process's youtube-import-status / needsUpdate
+// Reason codes from the main process's url-import-status / needsUpdate
 // checks, mapped to user-facing copy for the "feature unavailable" page.
 const UNAVAILABLE_COPY: Record<string, string> = {
-  'missing-ytdlp': 'The YouTube downloader component is missing from this install.',
+  'missing-ytdlp': 'The downloader component is missing from this install.',
   'missing-ffmpeg': 'The audio converter component is missing from this install.',
-  'needs-update': "YouTube changed something the bundled downloader doesn't support yet.",
+  'needs-update': "The site changed something the bundled downloader doesn't support yet.",
 }
 
 type AppUpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloaded' | 'error'
 
-export default function YoutubeImportModal(): JSX.Element | null {
-  const open = useStore((s) => s.youtubeImportModal)
-  const close = useStore((s) => s.closeYoutubeImport)
+export default function UrlImportModal(): JSX.Element | null {
+  const open = useStore((s) => s.urlImportModal)
+  const close = useStore((s) => s.closeUrlImport)
   const addLibraryTrack = useStore((s) => s.addLibraryTrack)
   const el = (window as any).electron
 
@@ -90,9 +92,9 @@ export default function YoutubeImportModal(): JSX.Element | null {
   // Preemptive check: are the bundled binaries even present? Catches a broken
   // package (missing asarUnpack entry, etc.) before the user ever hits Import.
   useEffect(() => {
-    if (!open || !el?.youtubeImportStatus) return
+    if (!open || !el?.urlImportStatus) return
     let cancelled = false
-    el.youtubeImportStatus().then((s: { available: boolean; reason?: string }) => {
+    el.urlImportStatus().then((s: { available: boolean; reason?: string }) => {
       if (!cancelled && s && s.available === false) setUnavailable(s.reason || 'missing-ytdlp')
     }).catch(() => {})
     return () => { cancelled = true }
@@ -128,10 +130,10 @@ export default function YoutubeImportModal(): JSX.Element | null {
     }
   }
 
-  // Progress events are keyed by the id we pass into youtubeImport.
+  // Progress events are keyed by the id we pass into urlImport.
   useEffect(() => {
-    if (!el?.onYoutubeImportProgress) return
-    const off = el.onYoutubeImportProgress((d: { id: string; percent: number; stage: string }) => {
+    if (!el?.onUrlImportProgress) return
+    const off = el.onUrlImportProgress((d: { id: string; percent: number; stage: string }) => {
       if (d.id !== importId.current) return
       setProgress(d.percent)
       if (d.stage) setStage(d.stage)
@@ -143,18 +145,18 @@ export default function YoutubeImportModal(): JSX.Element | null {
 
   if (!open) return null
 
-  const noElectron = !el?.youtubeImport
+  const noElectron = !el?.urlImport
 
   const run = async (): Promise<void> => {
     if (busy || noElectron || !url.trim()) return
-    const id = `yt:${Date.now()}`
+    const id = `url:${Date.now()}`
     importId.current = id
     setBusy(true)
     setError(null)
     setProgress(0)
     setStage('download')
     try {
-      const result = await el.youtubeImport({
+      const result = await el.urlImport({
         id,
         url: url.trim(),
         format,
@@ -197,7 +199,7 @@ export default function YoutubeImportModal(): JSX.Element | null {
       <div className="bg-surface flex flex-col border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0">
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
-            <Youtube size={15} className="text-accent" /> Import from YouTube
+            <Link2 size={15} className="text-accent" /> Import from URL
           </h2>
           <button
             onClick={dismiss}
@@ -212,7 +214,7 @@ export default function YoutubeImportModal(): JSX.Element | null {
           {unavailable ? (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-sm text-text-primary flex flex-col items-center gap-2 text-center">
               <Wrench size={22} className="text-amber-400" />
-              <p className="font-medium">YouTube import is temporarily unavailable</p>
+              <p className="font-medium">URL import is temporarily unavailable</p>
               <p className="text-text-muted text-xs max-w-[280px]">
                 {UNAVAILABLE_COPY[unavailable] || 'This feature needs attention before it can run.'}
               </p>
@@ -273,16 +275,19 @@ export default function YoutubeImportModal(): JSX.Element | null {
             <>
               {/* URL */}
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">Video URL</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">Link</p>
                 <input
                   ref={inputRef}
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') run() }}
                   disabled={busy}
-                  placeholder="https://www.youtube.com/watch?v=…"
+                  placeholder="Video, track, or direct .mp3 link"
                   className="w-full px-3 py-2 bg-surface-overlay border border-[var(--border)] rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors disabled:opacity-50"
                 />
+                <p className="text-[10px] text-text-muted opacity-70 mt-1.5">
+                  YouTube, SoundCloud, Bandcamp and ~1800 other sites — or a direct file link.
+                </p>
               </div>
 
               {/* Target format */}
@@ -308,6 +313,9 @@ export default function YoutubeImportModal(): JSX.Element | null {
                     )
                   })}
                 </div>
+                <p className="text-[10px] text-text-muted opacity-70 mt-1.5">
+                  Applies to site links. Direct file links are saved as-is, without re-encoding.
+                </p>
               </div>
 
               {/* Bitrate (lossy only) */}
@@ -343,7 +351,7 @@ export default function YoutubeImportModal(): JSX.Element | null {
               {noElectron && (
                 <div className="flex items-center gap-2 text-amber-400 text-xs">
                   <AlertCircle size={13} className="shrink-0" />
-                  <span>YouTube import is only available in the desktop app.</span>
+                  <span>URL import is only available in the desktop app.</span>
                 </div>
               )}
 
@@ -370,7 +378,7 @@ export default function YoutubeImportModal(): JSX.Element | null {
                 disabled={busy || noElectron || !url.trim()}
                 className="w-full py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {busy ? <Loader2 size={15} className="animate-spin" /> : <Youtube size={15} />}
+                {busy ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}
                 {busy ? 'Importing…' : 'Import'}
               </button>
               <p className="text-[10px] text-text-muted opacity-60 text-center">

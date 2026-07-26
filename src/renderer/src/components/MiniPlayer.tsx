@@ -79,7 +79,7 @@ function MiniQueueRow({ track, isActive, isPlaying, onPlay, onRemove }: {
       onClick={onPlay}
     >
       <div className="w-7 h-7 rounded shrink-0 overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={track} size={28} className="w-full h-full" />
+        <AlbumArtThumbnail track={track} size={28} fill className="w-full h-full" />
       </div>
       <div className="flex-1 min-w-0">
         <p className={`text-[11px] font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-text-primary'}`} title={track.title}>

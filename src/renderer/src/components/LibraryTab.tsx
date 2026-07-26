@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Music, Play, Pause, Shuffle, Search, MoreHorizontal,
   ChevronLeft, ChevronRight, LayoutGrid, List, Sparkles, User,
-  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp, Youtube,
+  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp, Link2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
@@ -86,10 +86,14 @@ function useTrackArt(track: LibraryTrack): string | null | undefined {
 /** Small square thumbnail. Exported — PlaylistsView reuses it. */
 export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?: number }): JSX.Element {
   const art = useTrackArt(track)
-  if (art) return <img src={art} alt="" className="object-cover" style={{ width: size, height: size }} />
+  // rem, not px, so the thumbnail scales with the app text-size setting (which
+  // drives the root font-size) rather than staying pinned while its rem-sized
+  // wrapper and neighbouring text grow around it. Identical at normal scale.
+  const rem = `${size / 16}rem`
+  if (art) return <img src={art} alt="" className="object-cover" style={{ width: rem, height: rem }} />
   return (
-    <div className="flex items-center justify-center bg-surface-overlay text-text-muted" style={{ width: size, height: size }}>
-      <Music size={size * 0.4} />
+    <div className="flex items-center justify-center bg-surface-overlay text-text-muted" style={{ width: rem, height: rem }}>
+      <Music size={`${(size * 0.4) / 16}rem`} />
     </div>
   )
 }
@@ -281,7 +285,12 @@ function SongList({ tracks, header, onContext }: {
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, SONG_ROW_H)
+  // Windowed row height must be concrete px, so scale it with the app text-size
+  // setting — the row's rem-based cover/text grow with it, and a fixed 56 would
+  // otherwise clip them (and shrink the cover) at larger scales.
+  const appTextScale = useStore(s => s.appTextScale)
+  const rowH = Math.round(SONG_ROW_H * appTextScale)
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, rowH)
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 view-enter">
       {header}
@@ -292,7 +301,7 @@ function SongList({ tracks, header, onContext }: {
           {tracks.slice(start, end).map((t, i) => {
             const index = start + i
             return (
-              <div key={t.id} style={{ position: 'absolute', top: index * SONG_ROW_H, left: 0, right: 0, height: SONG_ROW_H }}>
+              <div key={t.id} style={{ position: 'absolute', top: index * rowH, left: 0, right: 0, height: rowH }}>
                 <SongRow track={t} index={index} queue={tracks} onContext={onContext} />
               </div>
             )
@@ -420,7 +429,7 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
 
 // ─── empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onOpenSettings, onImportYoutube }: { onOpenSettings: () => void; onImportYoutube: () => void }): JSX.Element {
+function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => void; onImportUrl: () => void }): JSX.Element {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
       <div className="w-20 h-20 rounded-full bg-surface-overlay flex items-center justify-center">
@@ -434,8 +443,8 @@ function EmptyState({ onOpenSettings, onImportYoutube }: { onOpenSettings: () =>
         <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
           <FolderOpen size={15} /> Add Folders
         </button>
-        <button onClick={onImportYoutube} className="flex items-center gap-2 px-5 py-2.5 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-raised transition-colors">
-          <Youtube size={15} /> Import from YouTube
+        <button onClick={onImportUrl} className="flex items-center gap-2 px-5 py-2.5 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-raised transition-colors">
+          <Link2 size={15} /> Import from URL
         </button>
       </div>
     </div>
@@ -502,7 +511,7 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openYoutubeImport } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openYoutubeImport')
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openUrlImport } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openUrlImport')
 
   const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
@@ -625,10 +634,10 @@ export default function LibraryTab(): JSX.Element {
                   </button>
                 </>
               )}
-              <button onClick={() => openYoutubeImport()}
+              <button onClick={() => openUrlImport()}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors"
-                title="Download a video's audio into your library">
-                <Youtube size={12} /> YouTube
+                title="Download audio from a link into your library">
+                <Link2 size={12} /> Add from URL
               </button>
               <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors disabled:opacity-40"
@@ -642,7 +651,7 @@ export default function LibraryTab(): JSX.Element {
 
         {/* Content */}
         {showEmpty ? (
-          <EmptyState onOpenSettings={() => setShowSettings(true)} onImportYoutube={() => openYoutubeImport()} />
+          <EmptyState onOpenSettings={() => setShowSettings(true)} onImportUrl={() => openUrlImport()} />
         ) : libraryScanning ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">
             <Loader2 size={32} className="animate-spin text-accent" />

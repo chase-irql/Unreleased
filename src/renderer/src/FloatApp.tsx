@@ -163,7 +163,9 @@ export default function FloatApp({ view }: { view: string }): JSX.Element {
   }, [view])
 
   return (
-    <div className="h-dvh bg-surface overflow-hidden flex flex-col">
+    // The equalizer pop-out matches the in-app popover's surface (bg-surface-
+    // highest) so detaching it doesn't visibly change the panel's color.
+    <div className={`h-dvh overflow-hidden flex flex-col ${view === 'equalizer' ? 'bg-surface-highest' : 'bg-surface'}`}>
       {(view === 'editor' || view === 'local-editor' || view === 'equalizer') && <FloatTitleBar />}
       <Suspense fallback={null}>
         {view === 'settings' ? <Settings floating />

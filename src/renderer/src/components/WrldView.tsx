@@ -1709,7 +1709,7 @@ function WrldQueueRow({ track, isActive, isPlaying, showDrag, onPlay, onRemove }
         <div className="w-3.5 shrink-0" />
       )}
       <div className="w-9 h-9 rounded shrink-0 overflow-hidden bg-white/[0.06]">
-        <AlbumArtThumbnail track={track} size={36} className="w-full h-full" shimmer={false} />
+        <AlbumArtThumbnail track={track} size={36} fill className="w-full h-full" shimmer={false} />
       </div>
       <div className="flex-1 min-w-0">
         <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-white/85'}`} title={track.title}>{track.title}</p>

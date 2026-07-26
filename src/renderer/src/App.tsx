@@ -34,7 +34,7 @@ import NewsNotifier from './components/NewsNotifier'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
-import YoutubeImportModal from './components/YoutubeImportModal'
+import UrlImportModal from './components/UrlImportModal'
 import InstallPrompt from './components/InstallPrompt'
 import CookieNotice from './components/CookieNotice'
 import { GlobalSongInfoHost } from './components/SongInfoModal'
@@ -266,7 +266,7 @@ export default function App(): JSX.Element {
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <ReportModal />
       <ConvertFormatModal />
-      <YoutubeImportModal />
+      <UrlImportModal />
       <InstallPrompt />
       <CookieNotice />
       <GlobalSongInfoHost />

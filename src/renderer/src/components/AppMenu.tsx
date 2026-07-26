@@ -41,6 +41,11 @@ type Entry =
 
 interface MenuDef { id: string; label: string; entries: Entry[] }
 
+// Hover-intent delay before a hovered top-level menu swaps in its submenu, so
+// gliding the mouse across the list (Controls → Tools) doesn't flip through
+// every submenu on the way. Clicking a top-level item still opens it instantly.
+const SUBMENU_HOVER_DELAY_MS = 1000
+
 function openExternal(url: string): void {
   const a = document.createElement('a')
   a.href = url
@@ -120,23 +125,33 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
   const panelRef = useRef<HTMLDivElement>(null)
   const subRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  // Pending hover-intent switch (see SUBMENU_HOVER_DELAY_MS): the timer, plus
+  // which menu id it's waiting to open, so repeated mousemoves over the same
+  // row don't keep resetting it.
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMenuRef = useRef<string | null>(null)
+  const clearHover = (): void => {
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
+    pendingMenuRef.current = null
+  }
   const el = (window as any).electron
   const PANEL_W = 176 // w-44
 
   // Close on outside click / Escape, and reset the open submenu with it.
   useEffect(() => {
-    if (!open) return
+    if (!open) { clearHover(); return }
     const onDown = (e: MouseEvent): void => {
-      if (!rootRef.current?.contains(e.target as Node)) { setOpen(false); setActiveMenu(null) }
+      if (!rootRef.current?.contains(e.target as Node)) { setOpen(false); setActiveMenu(null); clearHover() }
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') { setOpen(false); setActiveMenu(null) }
+      if (e.key === 'Escape') { setOpen(false); setActiveMenu(null); clearHover() }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      clearHover()
     }
   }, [open])
 
@@ -445,13 +460,25 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
       </button>
 
       {open && (
+        <>
+        {/* Panel and submenu are SIBLINGS (not nested): the panel's pop
+            animation applies a transform, which would otherwise make it the
+            containing block for the fixed-positioned submenu and throw its
+            coords off — badly when the panel is flipped up in a bottom bar. */}
         <div
           ref={panelRef}
-          // Hovering a row opens its submenu and closes any other, the way a
-          // native menu bar behaves.
+          // Hover behavior: opening the FIRST submenu is instant; SWITCHING
+          // from an already-open one waits out the hover-intent delay so
+          // gliding across the list doesn't strobe through submenus. Clicking a
+          // row always opens instantly (handled per row).
           onMouseOver={(e) => {
             const hovered = menus.find((m) => rowRefs.current[m.id]?.contains(e.target as Node))
-            if (hovered) setActiveMenu(hovered.id)
+            if (!hovered || hovered.id === activeMenu) { clearHover(); return }
+            if (activeMenu === null) { clearHover(); setActiveMenu(hovered.id); return }
+            if (pendingMenuRef.current === hovered.id) return // already counting down for this one
+            clearHover()
+            pendingMenuRef.current = hovered.id
+            hoverTimerRef.current = setTimeout(() => { setActiveMenu(hovered.id); pendingMenuRef.current = null }, SUBMENU_HOVER_DELAY_MS)
           }}
           style={{ position: 'fixed', zIndex: 10000, top: panelPos.top, left: panelPos.left, transformOrigin: flipUp ? 'bottom left' : 'top left', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           className="w-44 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 animate-menu-pop"
@@ -460,7 +487,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
             <button
               key={m.id}
               ref={(node) => { rowRefs.current[m.id] = node }}
-              onClick={(e) => { e.stopPropagation(); setActiveMenu((cur) => (cur === m.id ? null : m.id)) }}
+              onClick={(e) => { e.stopPropagation(); clearHover(); setActiveMenu((cur) => (cur === m.id ? null : m.id)) }}
               className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors ${
                 activeMenu === m.id
                   ? 'bg-surface-raised text-text-primary'
@@ -471,13 +498,14 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
               <ChevronRight size={13} className="ml-auto text-text-muted shrink-0" />
             </button>
           ))}
+        </div>
 
-          {activeMenu && (
+        {activeMenu && (
             <div
               key={activeMenu}
               ref={subRef}
               onClick={(e) => e.stopPropagation()}
-              style={{ position: 'fixed', zIndex: 10001, top: subPos.top, left: subPos.left, maxHeight: window.innerHeight - 16 }}
+              style={{ position: 'fixed', zIndex: 10001, top: subPos.top, left: subPos.left, maxHeight: window.innerHeight - 16, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               className="w-60 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden animate-menu-pop"
             >
               {activeEntries.map((entry, i) =>
@@ -510,7 +538,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
               )}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   )

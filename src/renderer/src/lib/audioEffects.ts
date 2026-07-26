@@ -145,6 +145,17 @@ function ensureGraph(): AudioContext | null {
     return null
   }
 
+  // Auto-resume if the context ever suspends. We never suspend it ourselves
+  // (pausing pauses the <audio> element, not the graph), so a 'suspended' state
+  // always means the OS did it — Android in particular suspends the context
+  // when the screen turns off / the device dozes, which silences playback
+  // (audio is routed *through* this graph) while the element still reports as
+  // playing, so the Player's element watchdog can't see it. Nudging it back
+  // here is what keeps Android background audio alive with the screen off.
+  ctx.addEventListener('statechange', () => {
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
+  })
+
   chainInput = ctx.createGain()
 
   // Silence-detection tap: parallel branch, listens to the raw (pre-EQ) mix so

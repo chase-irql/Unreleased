@@ -2025,11 +2025,18 @@ ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate, s
 })
 
 
-// ── YouTube import (yt-dlp + bundled ffmpeg) ─────────────────────────────────
-// Downloads the audio of a video URL, extracts it to a chosen format, embeds
-// the thumbnail as cover art + basic tags, drops the file into the same
-// Music/JuiceWRLD Library folder as download-to-library, and registers it in
-// library-data.json so it shows up like any other local track.
+// ── URL import (direct audio files + yt-dlp for everything else) ─────────────
+// Takes any http(s) URL and gets audio from it into the library. Two modes,
+// picked automatically:
+//   • direct file  — the URL serves an audio file (by extension, or by
+//     Content-Type when the path has no useful extension). Downloaded byte-for
+//     -byte, no re-encode, keeping whatever format it already is.
+//   • site link    — anything else goes to yt-dlp, which covers YouTube plus
+//     ~1800 other sites; audio is extracted to the requested format with the
+//     thumbnail embedded as cover art.
+// Either way the file lands in the same Music/JuiceWRLD Library folder as
+// download-to-library and is registered in library-data.json, so it shows up
+// like any other local track.
 
 // yt-dlp ships as a native binary inside youtube-dl-exec/bin; same asar caveat
 // as ffmpeg-static (see resolveFfmpegPath) — remap onto the unpacked copy for
@@ -2062,19 +2069,122 @@ function uniqueLibraryPath(dir, base, ext) {
   return candidate
 }
 
-// Lets the renderer show a dedicated "feature unavailable" page instead of a
-// bare error the moment the dialog opens, rather than only after a failed
-// download attempt. Only checks that the bundled binaries exist — freshness
-// (whether yt-dlp's extractors still work) can't be known without a real
-// request, so that's surfaced reactively via `needsUpdate` below.
-ipcMain.handle('youtube-import-status', () => {
+// Extensions that mean "this URL IS the audio file" — fetch it directly rather
+// than paying yt-dlp's page-scrape cost for a plain file link.
+const DIRECT_AUDIO_EXTS = ['mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'aif', 'alac']
+
+// Content-Type → extension, for direct links whose path carries no usable
+// extension (CDN/query-string downloads). Only audio/* types belong here — a
+// text/html response means it's a page, which is yt-dlp's job.
+const AUDIO_MIME_EXT = {
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3',
+  'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/flac': 'flac', 'audio/x-flac': 'flac',
+  'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav',
+  'audio/ogg': 'ogg', 'application/ogg': 'ogg',
+  'audio/opus': 'opus',
+}
+
+function directExtFromUrl(u) {
+  try {
+    const ext = (new URL(u).pathname.split('.').pop() || '').toLowerCase()
+    return DIRECT_AUDIO_EXTS.includes(ext) ? ext : null
+  } catch { return null }
+}
+
+// HEAD the URL to see whether it serves audio. Resolves an extension when it
+// does, else null (→ hand the URL to yt-dlp). Never rejects: any failure here
+// just means "not provably a direct file", and the yt-dlp path is the correct
+// fallback anyway.
+function probeAudioUrl(u, depth = 0) {
+  return new Promise((resolve) => {
+    if (depth > 4) return resolve(null)
+    let parsed
+    try { parsed = new URL(u) } catch { return resolve(null) }
+    const mod = parsed.protocol === 'http:' ? require('http') : require('https')
+    const req = mod.request({
+      method: 'HEAD',
+      hostname: parsed.hostname,
+      port: parsed.port || undefined,
+      path: parsed.pathname + parsed.search,
+      headers: { 'User-Agent': 'Unreleased-App' },
+    }, (res) => {
+      res.resume()
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        return resolve(probeAudioUrl(new URL(res.headers.location, u).href, depth + 1))
+      }
+      if (res.statusCode !== 200) return resolve(null)
+      const type = String(res.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
+      resolve(AUDIO_MIME_EXT[type] || null)
+    })
+    req.on('error', () => resolve(null))
+    req.setTimeout(8000, () => { req.destroy(); resolve(null) })
+    req.end()
+  })
+}
+
+// Like downloadFile above, but for arbitrary user-supplied URLs: handles http
+// as well as https, preserves a non-default port, and follows the full set of
+// redirect codes. Kept separate so the updater/offline paths keep using the
+// helper they were written against.
+function downloadAnyUrl(url, dest, onProgress, depth = 0) {
+  const tmp = dest + '.part'
+  return new Promise((resolve, reject) => {
+    if (depth > 5) return reject(new Error('Too many redirects'))
+    let parsed
+    try { parsed = new URL(url) } catch { return reject(new Error('Invalid URL')) }
+    const mod = parsed.protocol === 'http:' ? require('http') : require('https')
+    mod.get({
+      hostname: parsed.hostname,
+      port: parsed.port || undefined,
+      path: parsed.pathname + parsed.search,
+      headers: { 'User-Agent': 'Unreleased-App' },
+    }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume()
+        return resolve(downloadAnyUrl(new URL(res.headers.location, url).href, dest, onProgress, depth + 1))
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)) }
+      const total = parseInt(res.headers['content-length'] || '0', 10)
+      let received = 0
+      const out = fs.createWriteStream(tmp)
+      const fail = (err) => {
+        out.destroy()
+        try { fs.unlinkSync(tmp) } catch {}
+        reject(err)
+      }
+      res.on('data', (chunk) => {
+        received += chunk.length
+        if (onProgress) onProgress(total > 0 ? Math.round(received / total * 100) : 0, received, total)
+      })
+      res.pipe(out)
+      out.on('finish', () => {
+        if (total > 0 && received !== total) return fail(new Error(`Truncated download: got ${received} of ${total} bytes`))
+        try { fs.renameSync(tmp, dest) } catch (e) { return fail(e) }
+        resolve()
+      })
+      out.on('error', fail)
+      res.on('error', fail)
+    }).on('error', reject)
+  })
+}
+
+// Lets the renderer show a dedicated "feature unavailable" page the moment the
+// dialog opens, instead of a bare error after a failed attempt. Direct file
+// downloads don't actually need either binary, but a missing one means the
+// install is broken — worth saying up front rather than letting site links
+// fail mysteriously. Freshness (whether yt-dlp's extractors still work) can't
+// be known without a real request, so that's surfaced reactively via
+// `needsUpdate` below.
+ipcMain.handle('url-import-status', () => {
   if (!resolveYtDlpPath()) return { available: false, reason: 'missing-ytdlp' }
   if (!resolveFfmpegPath()) return { available: false, reason: 'missing-ffmpeg' }
   return { available: true }
 })
 
 // yt-dlp prints this family of phrases when a failure is likely caused by a
-// YouTube-side change its extractor doesn't understand yet — as opposed to a
+// site-side change its extractor doesn't understand yet — as opposed to a
 // bad URL, a private/deleted video, or a network hiccup. When it matches, the
 // renderer shows a distinct "needs an update" page (with a shortcut to check
 // for app updates, since that's what refreshes the bundled binary — see
@@ -2084,15 +2194,12 @@ function looksOutdated(stderr) {
   return /yt-dlp(?:\.exe)? -U\b|update-to\b|on the latest version|yt-dlp is outdated|please update yt-dlp/i.test(stderr)
 }
 
-ipcMain.handle('youtube-import', async (event, { id, url, format, bitrate }) => {
+ipcMain.handle('url-import', async (event, { id, url, format, bitrate }) => {
   const spec = YT_AUDIO_FORMATS[format] || YT_AUDIO_FORMATS.mp3
-  if (!url || !/^https?:\/\//i.test(String(url).trim())) {
-    return { error: 'Enter a valid video URL (http/https).' }
+  const target = String(url || '').trim()
+  if (!/^https?:\/\//i.test(target)) {
+    return { error: 'Enter a valid URL starting with http:// or https://' }
   }
-  const ytDlpPath = resolveYtDlpPath()
-  if (!ytDlpPath) return { error: 'yt-dlp is unavailable — the bundled downloader could not be found.' }
-  const ffmpegPath = resolveFfmpegPath()
-  if (!ffmpegPath) return { error: 'ffmpeg is unavailable — the bundled converter could not be found.' }
 
   let mm
   try { mm = require('music-metadata') } catch { return { error: 'music-metadata not installed' } }
@@ -2103,101 +2210,137 @@ ipcMain.handle('youtube-import', async (event, { id, url, format, bitrate }) => 
   const libraryFolder = path.join(musicDir, 'JuiceWRLD Library')
   try { fs.mkdirSync(libraryFolder, { recursive: true }) } catch {}
 
-  // Download into a throwaway dir so exactly one produced file is easy to find,
-  // regardless of how yt-dlp renders the title into the filename.
-  const os = require('os')
-  let tmpDir
-  try { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytimport-')) } catch (e) {
-    return { error: 'Could not create a temp folder: ' + e.message }
-  }
-
-  const args = [
-    String(url).trim(),
-    '-f', 'bestaudio/best',
-    '-x',
-    '--audio-format', spec.fmt,
-    '--embed-thumbnail',
-    '--embed-metadata',
-    '--no-playlist',
-    '--newline',
-    '--no-color',
-    '--ffmpeg-location', path.dirname(ffmpegPath),
-    '-o', path.join(tmpDir, '%(title).150B.%(ext)s'),
-  ]
-  // Target bitrate only meaningfully applies to lossy encoders.
-  if (spec.lossy && bitrate) args.push('--audio-quality', String(bitrate).replace('k', 'K'))
-
-  const { spawn } = require('child_process')
   const emit = (percent, stage) => {
-    if (!event.sender.isDestroyed()) event.sender.send('youtube-import-progress', { id, percent, stage })
+    if (!event.sender.isDestroyed()) event.sender.send('url-import-progress', { id, percent, stage })
   }
 
-  try {
-    await new Promise((resolve, reject) => {
-      const yt = spawn(ytDlpPath, args, { windowsHide: true })
-      let stderr = ''
-      yt.on('error', reject)
-      const onData = (buf) => {
-        const text = buf.toString()
-        // Download lines: "[download]  42.7% of 3.20MiB at ...". Map the raw
-        // download progress into 0–90%, leaving headroom for post-processing.
-        const m = [...text.matchAll(/\[download\]\s+([\d.]+)%/g)]
-        if (m.length) {
-          const pct = parseFloat(m[m.length - 1][1])
-          if (!Number.isNaN(pct)) emit(Math.max(1, Math.min(90, Math.round(pct * 0.9))), 'download')
-        }
-        if (/\[ExtractAudio\]/.test(text)) emit(93, 'extract')
-        if (/\[EmbedThumbnail\]|\[Metadata\]/.test(text)) emit(96, 'finalize')
-      }
-      yt.stdout.on('data', onData)
-      yt.stderr.on('data', (d) => {
-        stderr += d.toString()
-        if (stderr.length > 8000) stderr = stderr.slice(-8000)
-        onData(d)
+  // Direct file link, or a page for yt-dlp to extract from? Extension first
+  // (free); only pay for a HEAD request when the path doesn't say.
+  let directExt = directExtFromUrl(target)
+  if (!directExt) {
+    emit(1, 'probe')
+    directExt = await probeAudioUrl(target)
+  }
+
+  let savePath, finalExt, base
+
+  if (directExt) {
+    // ── Direct file: fetch the bytes as-is, no re-encode ──────────────────
+    finalExt = directExt
+    let rawName = 'audio'
+    try {
+      rawName = decodeURIComponent(path.basename(new URL(target).pathname)) || 'audio'
+    } catch {}
+    base = path.basename(rawName, path.extname(rawName)).replace(/[/\\:*?"<>|]/g, '_').trim() || 'audio'
+    savePath = uniqueLibraryPath(libraryFolder, base, finalExt)
+
+    try {
+      await downloadAnyUrl(target, savePath, (percent) => {
+        emit(Math.max(1, Math.min(99, percent)), 'download')
       })
-      yt.on('close', (code) => {
-        if (code === 0) return resolve()
-        const tail = stderr.split('\n').map(l => l.trim())
-          .filter(l => l && !l.startsWith('[download]')).slice(-3).join(' ')
-        const err = new Error(tail || `yt-dlp exited with code ${code}`)
-        if (looksOutdated(stderr)) err.needsUpdate = true
-        reject(err)
-      })
-    })
-  } catch (e) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
-    if (e.needsUpdate) {
-      return {
-        error: 'YouTube import needs an updated downloader — the next app update will include it.',
-        needsUpdate: true,
-      }
+    } catch (e) {
+      return { error: 'Download failed: ' + e.message }
     }
-    return { error: 'Download failed: ' + e.message }
-  }
+  } else {
+    // ── Site link: hand off to yt-dlp ─────────────────────────────────────
+    const ytDlpPath = resolveYtDlpPath()
+    if (!ytDlpPath) return { error: 'yt-dlp is unavailable — the bundled downloader could not be found.' }
+    const ffmpegPath = resolveFfmpegPath()
+    if (!ffmpegPath) return { error: 'ffmpeg is unavailable — the bundled converter could not be found.' }
 
-  // Locate the produced audio file (prefer the target extension; fall back to
-  // whatever single file landed in the temp dir).
-  let produced
-  try {
-    const files = fs.readdirSync(tmpDir).filter(f => !f.endsWith('.part'))
-    produced = files.find(f => f.toLowerCase().endsWith('.' + spec.ext)) || files[0]
-  } catch {}
-  if (!produced) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
-    return { error: 'Download finished but no audio file was produced.' }
-  }
-  const producedPath = path.join(tmpDir, produced)
-  const finalExt = (path.extname(produced).slice(1) || spec.ext).toLowerCase()
-  const base = path.basename(produced, path.extname(produced)).replace(/[/\\:*?"<>|]/g, '_').trim() || 'youtube-audio'
-  const savePath = uniqueLibraryPath(libraryFolder, base, finalExt)
+    // Download into a throwaway dir so exactly one produced file is easy to
+    // find, regardless of how yt-dlp renders the title into the filename.
+    const os = require('os')
+    let tmpDir
+    try { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'urlimport-')) } catch (e) {
+      return { error: 'Could not create a temp folder: ' + e.message }
+    }
 
-  // Move out of the temp dir; rename can fail across volumes, so copy+unlink.
-  try { fs.renameSync(producedPath, savePath) }
-  catch { try { fs.copyFileSync(producedPath, savePath); fs.unlinkSync(producedPath) } catch (e) {
+    const args = [
+      target,
+      '-f', 'bestaudio/best',
+      '-x',
+      '--audio-format', spec.fmt,
+      '--embed-thumbnail',
+      '--embed-metadata',
+      '--no-playlist',
+      '--newline',
+      '--no-color',
+      '--ffmpeg-location', path.dirname(ffmpegPath),
+      '-o', path.join(tmpDir, '%(title).150B.%(ext)s'),
+    ]
+    // Target bitrate only meaningfully applies to lossy encoders.
+    if (spec.lossy && bitrate) args.push('--audio-quality', String(bitrate).replace('k', 'K'))
+
+    const { spawn } = require('child_process')
+
+    try {
+      await new Promise((resolve, reject) => {
+        const yt = spawn(ytDlpPath, args, { windowsHide: true })
+        let stderr = ''
+        yt.on('error', reject)
+        const onData = (buf) => {
+          const text = buf.toString()
+          // Download lines: "[download]  42.7% of 3.20MiB at ...". Map the raw
+          // download progress into 0–90%, leaving headroom for post-processing.
+          const m = [...text.matchAll(/\[download\]\s+([\d.]+)%/g)]
+          if (m.length) {
+            const pct = parseFloat(m[m.length - 1][1])
+            if (!Number.isNaN(pct)) emit(Math.max(1, Math.min(90, Math.round(pct * 0.9))), 'download')
+          }
+          if (/\[ExtractAudio\]/.test(text)) emit(93, 'extract')
+          if (/\[EmbedThumbnail\]|\[Metadata\]/.test(text)) emit(96, 'finalize')
+        }
+        yt.stdout.on('data', onData)
+        yt.stderr.on('data', (d) => {
+          stderr += d.toString()
+          if (stderr.length > 8000) stderr = stderr.slice(-8000)
+          onData(d)
+        })
+        yt.on('close', (code) => {
+          if (code === 0) return resolve()
+          const tail = stderr.split('\n').map(l => l.trim())
+            .filter(l => l && !l.startsWith('[download]')).slice(-3).join(' ')
+          const err = new Error(tail || `yt-dlp exited with code ${code}`)
+          if (looksOutdated(stderr)) err.needsUpdate = true
+          reject(err)
+        })
+      })
+    } catch (e) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+      if (e.needsUpdate) {
+        return {
+          error: 'This link needs an updated downloader — the next app update will include it.',
+          needsUpdate: true,
+        }
+      }
+      return { error: 'Download failed: ' + e.message }
+    }
+
+    // Locate the produced audio file (prefer the target extension; fall back
+    // to whatever single file landed in the temp dir).
+    let produced
+    try {
+      const files = fs.readdirSync(tmpDir).filter(f => !f.endsWith('.part'))
+      produced = files.find(f => f.toLowerCase().endsWith('.' + spec.ext)) || files[0]
+    } catch {}
+    if (!produced) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+      return { error: 'Download finished but no audio file was produced.' }
+    }
+    const producedPath = path.join(tmpDir, produced)
+    finalExt = (path.extname(produced).slice(1) || spec.ext).toLowerCase()
+    base = path.basename(produced, path.extname(produced)).replace(/[/\\:*?"<>|]/g, '_').trim() || 'audio'
+    savePath = uniqueLibraryPath(libraryFolder, base, finalExt)
+
+    // Move out of the temp dir; rename can fail across volumes, so copy+unlink.
+    try { fs.renameSync(producedPath, savePath) }
+    catch { try { fs.copyFileSync(producedPath, savePath); fs.unlinkSync(producedPath) } catch (e) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+      return { error: 'Could not save the file into the library: ' + e.message }
+    } }
     try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
-    return { error: 'Could not save the file into the library: ' + e.message }
-  } }
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
+  }
 
   // Build a library entry (mirrors scan-library / convert-audio shape).
   let trackMeta
