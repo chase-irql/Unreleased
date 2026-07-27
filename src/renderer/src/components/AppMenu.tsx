@@ -25,6 +25,14 @@ import { placeFlyout } from '../lib/menuFlyout'
 type Entry =
   | { kind: 'sep' }
   | {
+      /** A nested flyout — its own list of entries, opened to the side. Only
+       *  one level deep (nested entries are items/seps, not further submenus). */
+      kind: 'submenu'
+      label: string
+      entries: Entry[]
+      disabled?: boolean
+    }
+  | {
       kind: 'item'
       label: string
       onClick: () => void
@@ -44,7 +52,7 @@ interface MenuDef { id: string; label: string; entries: Entry[] }
 // Hover-intent delay before a hovered top-level menu swaps in its submenu, so
 // gliding the mouse across the list (Controls → Tools) doesn't flip through
 // every submenu on the way. Clicking a top-level item still opens it instantly.
-const SUBMENU_HOVER_DELAY_MS = 1000
+const SUBMENU_HOVER_DELAY_MS = 500
 
 function openExternal(url: string): void {
   const a = document.createElement('a')
@@ -107,6 +115,10 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
 
   const [open, setOpen] = useState(false)
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
+  // The open nested submenu (a `kind: 'submenu'` row inside the level-1 flyout),
+  // keyed by its label, plus its own flyout position.
+  const [activeSub, setActiveSub] = useState<string | null>(null)
+  const [subSubPos, setSubSubPos] = useState({ top: 0, left: 0 })
   const [subPos, setSubPos] = useState({ top: 0, left: 0 })
   const [panelPos, setPanelPos] = useState({ top: 28, left: 4 })
   // Whether the panel opened above the trigger instead of below (bottom bar) —
@@ -134,6 +146,15 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null }
     pendingMenuRef.current = null
   }
+  // Same hover-intent machinery, one level deeper — for opening nested submenus.
+  const subSubRef = useRef<HTMLDivElement>(null)
+  const subRowRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const subHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingSubRef = useRef<string | null>(null)
+  const clearSubHover = (): void => {
+    if (subHoverTimerRef.current) { clearTimeout(subHoverTimerRef.current); subHoverTimerRef.current = null }
+    pendingSubRef.current = null
+  }
   const el = (window as any).electron
   const PANEL_W = 176 // w-44
 
@@ -152,6 +173,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
       clearHover()
+      clearSubHover()
     }
   }, [open])
 
@@ -311,9 +333,10 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
         { kind: 'item', label: isPlaying ? 'Pause' : 'Play', hotkey: 'play-pause', onClick: hk('play-pause'), disabled: !currentTrack },
         { kind: 'item', label: 'Next track', hotkey: 'next', onClick: hk('next'), disabled: !currentTrack },
         { kind: 'item', label: 'Previous track', hotkey: 'previous', onClick: hk('previous'), disabled: !currentTrack },
-        { kind: 'sep' },
-        { kind: 'item', label: 'Skip forward', hotkey: 'seek-forward', onClick: hk('seek-forward'), disabled: !currentTrack },
-        { kind: 'item', label: 'Skip backward', hotkey: 'seek-backward', onClick: hk('seek-backward'), disabled: !currentTrack },
+        { kind: 'submenu', label: 'Seek', entries: [
+          { kind: 'item', label: 'Skip forward', hotkey: 'seek-forward', onClick: hk('seek-forward'), disabled: !currentTrack },
+          { kind: 'item', label: 'Skip backward', hotkey: 'seek-backward', onClick: hk('seek-backward'), disabled: !currentTrack },
+        ] },
         { kind: 'sep' },
         { kind: 'item', label: 'Shuffle', hotkey: 'shuffle', onClick: hk('shuffle'), checked: shuffle },
         {
@@ -322,25 +345,29 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
           hotkey: 'loop', onClick: hk('loop'), checked: repeat !== 'none',
         },
         { kind: 'sep' },
-        { kind: 'item', label: 'Volume up', hotkey: 'volume-up', onClick: hk('volume-up') },
-        { kind: 'item', label: 'Volume down', hotkey: 'volume-down', onClick: hk('volume-down') },
-        { kind: 'item', label: 'Mute', hotkey: 'mute', onClick: hk('mute') },
-        { kind: 'sep' },
-        { kind: 'item', label: 'Increase speed', hotkey: 'speed-up', onClick: hk('speed-up') },
-        { kind: 'item', label: 'Decrease speed', hotkey: 'speed-down', onClick: hk('speed-down') },
-        { kind: 'item', label: `Reset speed (${playbackSpeed.toFixed(2)}x)`, onClick: run(() => setPlaybackSpeed(1)), disabled: playbackSpeed === 1 },
-        { kind: 'sep' },
-        { kind: 'item', label: 'Crossfade', hotkey: 'crossfade', onClick: hk('crossfade'), checked: crossfadeEnabled },
-        { kind: 'item', label: `Crossfade ${crossfadeDuration}s`, onClick: run(() => setCrossfade(true, crossfadeDuration >= 12 ? 1 : crossfadeDuration + 1)), disabled: !crossfadeEnabled },
-        { kind: 'item', label: 'Smooth pause fade', hotkey: 'smooth-playback', onClick: hk('smooth-playback'), checked: pauseFadeEnabled },
-        { kind: 'item', label: 'Prefer OG version', hotkey: 'prefer-og', onClick: hk('prefer-og'), checked: preferOgVersion },
-        { kind: 'sep' },
+        { kind: 'submenu', label: 'Volume & speed', entries: [
+          { kind: 'item', label: 'Volume up', hotkey: 'volume-up', onClick: hk('volume-up') },
+          { kind: 'item', label: 'Volume down', hotkey: 'volume-down', onClick: hk('volume-down') },
+          { kind: 'item', label: 'Mute', hotkey: 'mute', onClick: hk('mute') },
+          { kind: 'sep' },
+          { kind: 'item', label: 'Increase speed', hotkey: 'speed-up', onClick: hk('speed-up') },
+          { kind: 'item', label: 'Decrease speed', hotkey: 'speed-down', onClick: hk('speed-down') },
+          { kind: 'item', label: `Reset speed (${playbackSpeed.toFixed(2)}x)`, onClick: run(() => setPlaybackSpeed(1)), disabled: playbackSpeed === 1 },
+        ] },
+        { kind: 'submenu', label: 'Crossfade & playback', entries: [
+          { kind: 'item', label: 'Crossfade', hotkey: 'crossfade', onClick: hk('crossfade'), checked: crossfadeEnabled },
+          { kind: 'item', label: 'Crossfade duration', combo: `${crossfadeDuration}s`, onClick: run(() => setCrossfade(true, crossfadeDuration >= 12 ? 1 : crossfadeDuration + 1)), disabled: !crossfadeEnabled },
+          { kind: 'item', label: 'Smooth pause fade', hotkey: 'smooth-playback', onClick: hk('smooth-playback'), checked: pauseFadeEnabled },
+          { kind: 'item', label: 'Prefer OG version', hotkey: 'prefer-og', onClick: hk('prefer-og'), checked: preferOgVersion },
+        ] },
         // Web Audio effect chain — same switches as the EQ panel.
-        { kind: 'item', label: 'Equalizer', onClick: run(() => setEqEnabled(!eqEnabled)), checked: eqEnabled },
-        { kind: 'item', label: 'Mono output', onClick: run(() => setEqMono(!eqMono)), checked: eqMono },
-        { kind: 'item', label: 'Skip silence', onClick: run(() => setSkipSilence(!skipSilence)), checked: skipSilence },
-        { kind: 'item', label: 'Reverb', onClick: run(() => setReverbEnabled(!reverbEnabled)), checked: reverbEnabled },
-        { kind: 'item', label: 'Pitch shift', onClick: run(() => setPitchShift(!pitchShift)), checked: pitchShift },
+        { kind: 'submenu', label: 'Audio effects', entries: [
+          { kind: 'item', label: 'Equalizer', onClick: run(() => setEqEnabled(!eqEnabled)), checked: eqEnabled },
+          { kind: 'item', label: 'Mono output', onClick: run(() => setEqMono(!eqMono)), checked: eqMono },
+          { kind: 'item', label: 'Skip silence', onClick: run(() => setSkipSilence(!skipSilence)), checked: skipSilence },
+          { kind: 'item', label: 'Reverb', onClick: run(() => setReverbEnabled(!reverbEnabled)), checked: reverbEnabled },
+          { kind: 'item', label: 'Pitch shift', onClick: run(() => setPitchShift(!pitchShift)), checked: pitchShift },
+        ] },
         { kind: 'sep' },
         { kind: 'item', label: 'Sleep timer', hotkey: 'sleep-timer', onClick: hk('sleep-timer'), checked: !!sleepTimerEnd },
       ],
@@ -416,9 +443,54 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     setSubPos((prev) => (prev.top === top && prev.left === left ? prev : { top, left }))
   }, [activeMenu])
 
+  // Switching (or closing) the level-1 menu drops any open nested submenu.
+  useEffect(() => { setActiveSub(null); clearSubHover() }, [activeMenu])
+
+  // Place the nested flyout beside the level-1 submenu, level with its row.
+  useLayoutEffect(() => {
+    if (!activeSub) return
+    const row = subRowRefs.current[activeSub]
+    if (!row || !subRef.current || !subSubRef.current) return
+    const { top, left } = placeFlyout(row, subRef.current, subSubRef.current)
+    setSubSubPos((prev) => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [activeSub])
+
   if (!el) return null
 
   const activeEntries = menus.find((m) => m.id === activeMenu)?.entries ?? []
+  const activeSubEntries =
+    (activeEntries.find((e) => e.kind === 'submenu' && e.label === activeSub) as
+      | Extract<Entry, { kind: 'submenu' }>
+      | undefined)?.entries ?? []
+
+  // Shared row renderer for leaf items — used by both the level-1 flyout and
+  // nested submenus. `onHover` lets the level-1 list close an open nested
+  // submenu when the pointer moves onto a plain item; nested rows pass none.
+  const renderItem = (entry: Extract<Entry, { kind: 'item' }>, onHover?: () => void): ReactNode => (
+    <button
+      key={entry.label}
+      onMouseEnter={onHover}
+      onClick={(e) => { e.stopPropagation(); if (!entry.disabled) entry.onClick() }}
+      disabled={entry.disabled}
+      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors text-text-secondary hover:text-text-primary hover:bg-surface-raised disabled:opacity-40 disabled:pointer-events-none"
+    >
+      <span className="w-3.5 shrink-0 flex items-center justify-center">
+        {entry.checked && <Check size={12} className="text-accent" />}
+      </span>
+      <span className="flex-1 truncate">{entry.label}</span>
+      <span className="ml-auto flex items-center gap-1 shrink-0">
+        {entry.trailing}
+        {comboTokens(entry.combo ?? (entry.hotkey ? effectiveBinding(entry.hotkey, hotkeyBindings) : '')).map((t, ti) => (
+          <kbd
+            key={ti}
+            className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-muted text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums"
+          >
+            {t}
+          </kbd>
+        ))}
+      </span>
+    </button>
+  )
 
   // 'bar' and 'titlebar' share the compact-pill look.
   const isPill = variant === 'bar' || variant === 'titlebar'
@@ -508,33 +580,55 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
               style={{ position: 'fixed', zIndex: 10001, top: subPos.top, left: subPos.left, maxHeight: window.innerHeight - 16, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               className="w-60 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden animate-menu-pop"
             >
-              {activeEntries.map((entry, i) =>
-                entry.kind === 'sep' ? (
-                  <div key={`sep-${i}`} className="my-1 border-t border-[var(--border)]" />
-                ) : (
-                  <button
-                    key={entry.label}
-                    onClick={(e) => { e.stopPropagation(); if (!entry.disabled) entry.onClick() }}
-                    disabled={entry.disabled}
-                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors text-text-secondary hover:text-text-primary hover:bg-surface-raised disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <span className="w-3.5 shrink-0 flex items-center justify-center">
-                      {entry.checked && <Check size={12} className="text-accent" />}
-                    </span>
-                    <span className="flex-1 truncate">{entry.label}</span>
-                    <span className="ml-auto flex items-center gap-1 shrink-0">
-                      {entry.trailing}
-                      {comboTokens(entry.combo ?? (entry.hotkey ? effectiveBinding(entry.hotkey, hotkeyBindings) : '')).map((t, ti) => (
-                        <kbd
-                          key={ti}
-                          className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-muted text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums"
-                        >
-                          {t}
-                        </kbd>
-                      ))}
-                    </span>
-                  </button>
-                ),
+              {activeEntries.map((entry, i) => {
+                if (entry.kind === 'sep') return <div key={`sep-${i}`} className="my-1 border-t border-[var(--border)]" />
+                if (entry.kind === 'submenu') {
+                  const isOpenSub = activeSub === entry.label
+                  return (
+                    <button
+                      key={entry.label}
+                      ref={(node) => { subRowRefs.current[entry.label] = node }}
+                      onMouseEnter={() => {
+                        if (activeSub === entry.label) { clearSubHover(); return }
+                        clearSubHover()
+                        // First open is instant; switching between siblings waits
+                        // out the hover-intent delay (matches the top level).
+                        if (activeSub === null) { setActiveSub(entry.label); return }
+                        pendingSubRef.current = entry.label
+                        subHoverTimerRef.current = setTimeout(() => { setActiveSub(entry.label); pendingSubRef.current = null }, SUBMENU_HOVER_DELAY_MS)
+                      }}
+                      onClick={(e) => { e.stopPropagation(); clearSubHover(); setActiveSub((cur) => (cur === entry.label ? null : entry.label)) }}
+                      disabled={entry.disabled}
+                      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors disabled:opacity-40 disabled:pointer-events-none ${
+                        isOpenSub ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+                      }`}
+                    >
+                      <span className="w-3.5 shrink-0" />
+                      <span className="flex-1 truncate">{entry.label}</span>
+                      <ChevronRight size={13} className="ml-auto text-text-muted shrink-0" />
+                    </button>
+                  )
+                }
+                // Plain item — hovering it dismisses any open nested submenu.
+                return renderItem(entry, () => { clearSubHover(); if (activeSub !== null) setActiveSub(null) })
+              })}
+            </div>
+          )}
+
+        {activeMenu && activeSub && activeSubEntries.length > 0 && (
+            <div
+              key={`${activeMenu}:${activeSub}`}
+              ref={subSubRef}
+              onClick={(e) => e.stopPropagation()}
+              style={{ position: 'fixed', zIndex: 10002, top: subSubPos.top, left: subSubPos.left, maxHeight: window.innerHeight - 16, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              className="w-60 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden animate-menu-pop"
+            >
+              {activeSubEntries.map((entry, i) =>
+                entry.kind === 'sep'
+                  ? <div key={`sep-${i}`} className="my-1 border-t border-[var(--border)]" />
+                  : entry.kind === 'item'
+                    ? renderItem(entry)
+                    : null,
               )}
             </div>
           )}
