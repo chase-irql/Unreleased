@@ -11,13 +11,21 @@ interface Props {
   // thumbnail in their own sized box (mini player, queue, WRLD tab). Those
   // wrappers are rem-based already, so filling them scales just the same.
   fill?: boolean
+  // Load immediately instead of lazily. Set by callers whose list is already
+  // virtualized (only ~visible rows ever mount), where lazy loading is not just
+  // redundant but harmful: it defers each cover's load until it intersects the
+  // viewport, so even a fully-cached cover paints blank-then-pops as you scroll.
+  // Loading eagerly lets the off-screen overscan rows decode from cache before
+  // they scroll into view. Leave off for non-virtualized lists (e.g. Liked
+  // Songs), where lazy still avoids fetching hundreds of covers at once.
+  eager?: boolean
 }
 
 // Web-only version — API tracks always have imageUrl, no IPC needed.
 // `size` is a px design value, but the box is rendered in rem so covers scale
 // with the app text-size setting (which drives the root font-size) instead of
 // staying pinned while the surrounding rem-based text grows/shrinks around them.
-export function AlbumArtThumbnail({ track, size = 40, className = '', fill = false }: Props): JSX.Element {
+export function AlbumArtThumbnail({ track, size = 40, className = '', fill = false, eager = false }: Props): JSX.Element {
   const rem = `${size / 16}rem`
   // Inline width/height would outrank a `w-full`/`h-full` className, so in fill
   // mode we drop the inline size and let the class size the box to its parent.
@@ -29,7 +37,8 @@ export function AlbumArtThumbnail({ track, size = 40, className = '', fill = fal
         alt={track.title}
         style={sizeStyle}
         className={`object-cover shrink-0 ${className}`}
-        loading="lazy"
+        loading={eager ? 'eager' : 'lazy'}
+        decoding="async"
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
       />
     )

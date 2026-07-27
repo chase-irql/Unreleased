@@ -108,7 +108,9 @@ def run(cmd, check=True):
     detail(f"> {cmd}")
     r = subprocess.run(cmd, shell=True, cwd=ROOT)
     if check and r.returncode != 0:
-        die(f"Command failed (exit {r.returncode}):\n  {cmd}")
+        # Raised (not die()'d) so main() can roll back whatever earlier steps
+        # already did before reporting the failure and exiting.
+        raise RuntimeError(f"Command failed (exit {r.returncode}):\n  {cmd}")
     return r
 
 def capture(cmd):
@@ -381,8 +383,10 @@ def prompt_release_notes():
 
 # ── Steps (run only after every prompt above has been answered) ──────────────
 
-def step_apply_version(new_ver):
-    set_version(new_ver)
+def step_apply_version(new_ver, state):
+    if new_ver != state["original_version"]:
+        set_version(new_ver)
+        state["version_changed"] = True
 
 
 def refresh_bundled_binaries():
@@ -414,16 +418,21 @@ def refresh_bundled_binaries():
         ok(f"yt-dlp already current ({after or before})")
 
 
-def step_commit(version, msg):
+def step_commit(version, msg, state):
     section(4, TOTAL, f"Commit → {APP_BRANCH}")
 
     if git_branch() != APP_BRANCH:
         info(f"Switching to {APP_BRANCH}")
         run(f"git checkout {APP_BRANCH}")
 
+    # Recorded even when there's nothing to commit — a no-op reset to this
+    # sha is still correct, it just reverts nothing.
+    state["pre_commit_sha"] = capture("git rev-parse HEAD")
+
     if msg is not None:
         run("git add -A")
         run(f'git commit -m "{msg}"')
+        state["committed"] = True
         ok(f"Committed: {msg}")
     else:
         ok("Nothing to commit — tree is clean")
@@ -446,7 +455,7 @@ def step_build():
     renderer = subprocess.run("npm run build", shell=True, cwd=ROOT)
     print()
     if renderer.returncode != 0:
-        die("Renderer build failed (tsc / vite). See output above.")
+        raise RuntimeError("Renderer build failed (tsc / vite). See output above.")
     ok("Renderer compiled → dist/")
     print()
 
@@ -470,7 +479,7 @@ def step_build():
     )
     print()
     if result.returncode != 0:
-        die("Build failed. See output above.")
+        raise RuntimeError("Build failed. See output above.")
     ok("Build complete")
 
     # 3. Refresh the bundled web-installer stub for the NEXT release. The app
@@ -490,13 +499,14 @@ def step_build():
         warn(f"Not found (skipping bundled-stub refresh): {stub.name}")
 
 
-def step_push_app():
+def step_push_app(state):
     section(6, TOTAL, f"Push → origin/{APP_BRANCH}")
     run(f"git push origin {APP_BRANCH}")
+    state["pushed_app"] = True
     ok(f"Pushed to origin/{APP_BRANCH}")
 
 
-def step_sync_web(version, is_beta=False):
+def step_sync_web(version, is_beta, state):
     if is_beta:
         # The web branch is the live site (Vercel) — beta builds are
         # desktop-only and must never deploy there.
@@ -509,6 +519,7 @@ def step_sync_web(version, is_beta=False):
     original = git_branch()
     try:
         run(f"git checkout {WEB_BRANCH}")
+        state["pre_web_sha"] = capture("git rev-parse HEAD")
 
         # Pull only the web-safe directories from app branch.
         #   `git checkout app -- src/` copies files that EXIST in app but does
@@ -536,6 +547,7 @@ def step_sync_web(version, is_beta=False):
         run("git add -A")
         run(f'git commit -m "v{version}"')
         run(f"git push origin {WEB_BRANCH} --force")
+        state["web_pushed"] = True
         ok(f"Web branch synced and pushed")
 
     finally:
@@ -551,7 +563,7 @@ def step_publish_beta(version, notes):
 
     exe = ROOT / "release" / f"Unreleased-Setup-{version}.exe"
     if not exe.exists():
-        die(f"No {exe.name} in release/\nDid the build succeed?")
+        raise RuntimeError(f"No {exe.name} in release/\nDid the build succeed?")
 
     info("Computing checksum…")
     sha512 = sha512_base64(exe)
@@ -585,17 +597,19 @@ def step_publish_beta(version, notes):
         )
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
-        die(f"Beta publish failed: HTTP {e.code}\n{body[:300]}")
+        raise RuntimeError(f"Beta publish failed: HTTP {e.code}\n{body[:300]}")
 
     ok("Beta build published — private, not a public GitHub release")
     print()
     print(_c(f"  🧪  Beta {tag} is live for code holders only.", GRN, BOLD))
 
 
-def step_release(version, token, notes):
+def step_release(version, token, notes, state):
     section(8, TOTAL, "GitHub release")
     tag         = f"v{version}"
     release_dir = ROOT / "release" / "nsis-web"
+    state["tag"] = tag
+    state["token"] = token
 
     # Collect assets to upload. The nsis-web target produces a small
     # version-free stub installer (stable name so the GitHub
@@ -624,11 +638,12 @@ def step_release(version, token, notes):
             warn(f"Not found (skipping): {p.name}")
 
     if not any(p.name.endswith(".nsis.7z") for p in to_upload):
-        die(f"No unreleased-{version}-*.nsis.7z package in {release_dir}/\n"
+        raise RuntimeError(
+            f"No unreleased-{version}-*.nsis.7z package in {release_dir}/\n"
             "The web installer is useless without it. Did the build succeed?")
 
     if not to_upload:
-        die(f"No release assets found in {release_dir}/\nDid the build succeed?")
+        raise RuntimeError(f"No release assets found in {release_dir}/\nDid the build succeed?")
 
     if not notes:
         # Auto-generate from commits since last tag
@@ -646,6 +661,8 @@ def step_release(version, token, notes):
             {"tag_name": tag, "name": tag, "body": notes,
              "target_commitish": APP_BRANCH,
              "draft": False, "prerelease": False})
+        state["release_id"] = release["id"]
+        state["release_created_new"] = True
         ok(f"Release created  (id={release['id']})")
     except urllib.error.HTTPError as e:
         if e.code == 422:
@@ -654,6 +671,8 @@ def step_release(version, token, notes):
             api("PATCH",
                 f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release['id']}", token,
                 {"prerelease": False, "body": notes})
+            state["release_id"] = release["id"]
+            state["release_created_new"] = False
             ok(f"Release already exists — updated  (id={release['id']})")
         else:
             raise
@@ -680,28 +699,75 @@ def step_release(version, token, notes):
     print(_c(f"  🚀  {url}", GRN, BOLD))
 
 
+# ── Rollback ──────────────────────────────────────────────────────────────────
+# Undoes whatever earlier steps already did when a later step fails. Scoped to
+# what's safely automatable: the local version bump/commit, and a GitHub
+# release created by *this* run. It never force-pushes app or web — web is the
+# live production branch (Vercel), and rewriting shared history unattended on
+# failure is a bigger risk than the failure itself. Those cases just print the
+# manual undo command instead.
+
+def rollback(state):
+    if not state:
+        return
+    print()
+    warn("Rolling back what's safely revertible (local commit/version + GitHub release)…")
+
+    if state.get("release_id") and state.get("release_created_new") and state.get("token"):
+        try:
+            api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{state['release_id']}", state["token"])
+            ok(f"Deleted GitHub release {state.get('tag')}")
+        except Exception as e:
+            warn(f"Could not delete GitHub release: {e}")
+        try:
+            api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/git/refs/tags/{state['tag']}", state["token"])
+            ok(f"Deleted tag {state['tag']}")
+        except Exception:
+            pass  # tag may not exist yet, or was already cleaned up with the release
+
+    if state.get("web_pushed"):
+        warn(f"Web branch already pushed to origin/{WEB_BRANCH} — the live site. Not auto-reverting.")
+        detail(f"To undo manually: git checkout {WEB_BRANCH} && "
+               f"git reset --hard {state.get('pre_web_sha')} && git push --force origin {WEB_BRANCH}")
+
+    if state.get("pushed_app"):
+        warn(f"App branch already pushed to origin/{APP_BRANCH}. Not auto-reverting shared history.")
+        detail(f"To undo manually: git reset --hard {state.get('pre_commit_sha')} && "
+               f"git push --force origin {APP_BRANCH}")
+    elif state.get("committed") and state.get("pre_commit_sha"):
+        run(f"git reset --hard {state['pre_commit_sha']}", check=False)
+        ok(f"Reverted local commit (and version bump) on {APP_BRANCH}")
+    elif state.get("version_changed") and state.get("original_version"):
+        set_version(state["original_version"])
+        ok(f"Reverted package.json version to {state['original_version']}")
+
+    print()
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
     banner()
+    state = {}
     try:
         token = get_token()
+        state["original_version"] = load_version()
 
         # ── Every user prompt happens first — once these are answered, the
         #    rest of the release runs unattended (build, push, sync, commit).
         version = prompt_version()
-        step_apply_version(version)
+        step_apply_version(version, state)
         commit_msg = prompt_commit_message(version)
         release_notes, is_beta = prompt_release_notes()
 
-        step_commit(version, commit_msg)
+        step_commit(version, commit_msg, state)
         step_build()
-        step_push_app()
-        step_sync_web(version, is_beta)
+        step_push_app(state)
+        step_sync_web(version, is_beta, state)
         if is_beta:
             step_publish_beta(version, release_notes)
         else:
-            step_release(version, token, release_notes)
+            step_release(version, token, release_notes, state)
 
         print()
         print(_c("  " + "═" * 46, GRN, BOLD))
@@ -712,9 +778,11 @@ def main():
     except KeyboardInterrupt:
         print()
         warn("Interrupted.")
+        rollback(state)
     except SystemExit:
         raise
     except Exception as exc:
+        rollback(state)
         die(str(exc))
     finally:
         # Always land back on the desktop branch

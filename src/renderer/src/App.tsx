@@ -34,6 +34,7 @@ import NewsNotifier from './components/NewsNotifier'
 import UserAuthModal from './components/UserAuthModal'
 import ReportModal from './components/ReportModal'
 import ConvertFormatModal from './components/ConvertFormatModal'
+import BulkEditModal from './components/BulkEditModal'
 import UrlImportModal from './components/UrlImportModal'
 import InstallPrompt from './components/InstallPrompt'
 import CookieNotice from './components/CookieNotice'
@@ -266,6 +267,7 @@ export default function App(): JSX.Element {
       {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
       <ReportModal />
       <ConvertFormatModal />
+      <BulkEditModal />
       <UrlImportModal />
       <InstallPrompt />
       <CookieNotice />

@@ -195,11 +195,13 @@ class ReleaseWorker(QThread):
         self.r = r
         self.root = root
         self.opts = opts
+        self.state = {}
 
     def run(self):
         try:
             self._run()
         except Exception as exc:
+            self._rollback()
             self.failed.emit(str(exc))
 
     # Streamed subprocess — release.py's own run() inherits stdout straight to
@@ -220,10 +222,12 @@ class ReleaseWorker(QThread):
     def _run(self):
         r, root, opts = self.r, self.root, self.opts
         version, is_beta = opts["version"], opts["is_beta"]
+        self.state["original_version"] = r.load_version()
 
         self.step.emit(1, self.TOTAL, "Applying version")
-        if version != r.load_version():
+        if version != self.state["original_version"]:
             r.set_version(version)
+            self.state["version_changed"] = True
             self.log.emit(f"package.json version → {version}", "ok")
         else:
             self.log.emit("Version unchanged", "info")
@@ -233,12 +237,14 @@ class ReleaseWorker(QThread):
             self.log.emit(f"Switching to {r.APP_BRANCH}", "info")
             if self.cmd(f"git checkout {r.APP_BRANCH}") != 0:
                 raise RuntimeError("git checkout failed")
+        self.state["pre_commit_sha"] = r.capture("git rev-parse HEAD")
         if opts["commit_msg"]:
             if self.cmd("git add -A") != 0:
                 raise RuntimeError("git add failed")
             msg = opts["commit_msg"].replace('"', '\\"')
             if self.cmd(f'git commit -m "{msg}"') != 0:
                 raise RuntimeError("git commit failed")
+            self.state["committed"] = True
             self.log.emit(f"Committed: {opts['commit_msg']}", "ok")
         else:
             self.log.emit("Nothing to commit -- tree is clean", "ok")
@@ -276,6 +282,7 @@ class ReleaseWorker(QThread):
         self.step.emit(4, self.TOTAL, f"Push -> origin/{r.APP_BRANCH}")
         if self.cmd(f"git push origin {r.APP_BRANCH}") != 0:
             raise RuntimeError("git push failed")
+        self.state["pushed_app"] = True
         self.log.emit(f"Pushed to origin/{r.APP_BRANCH}", "ok")
 
         if is_beta:
@@ -316,12 +323,52 @@ class ReleaseWorker(QThread):
         else:
             self.log.emit(f"yt-dlp already current ({after or before})", "ok")
 
+    def _rollback(self):
+        """Mirror release.py's rollback(): undo whatever earlier steps already
+        did, scoped to what's safely automatable -- the local version bump/
+        commit, and a GitHub release created by *this* run. Never force-pushes
+        app or web (web is the live production branch); those cases just log
+        the manual undo command instead."""
+        r, root, state = self.r, self.root, self.state
+        if not state:
+            return
+        self.log.emit("Rolling back what's safely revertible (local commit/version + GitHub release)...", "warn")
+
+        if state.get("release_id") and state.get("release_created_new") and state.get("token"):
+            try:
+                r.api("DELETE", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/releases/{state['release_id']}", state["token"])
+                self.log.emit(f"Deleted GitHub release {state.get('tag')}", "ok")
+            except Exception as e:
+                self.log.emit(f"Could not delete GitHub release: {e}", "warn")
+            try:
+                r.api("DELETE", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/git/refs/tags/{state['tag']}", state["token"])
+                self.log.emit(f"Deleted tag {state['tag']}", "ok")
+            except Exception:
+                pass
+
+        if state.get("web_pushed"):
+            self.log.emit(f"Web branch already pushed to origin/{r.WEB_BRANCH} -- the live site. Not auto-reverting.", "warn")
+            self.log.emit(f"To undo manually: git checkout {r.WEB_BRANCH} && git reset --hard "
+                           f"{state.get('pre_web_sha')} && git push --force origin {r.WEB_BRANCH}", "dim")
+
+        if state.get("pushed_app"):
+            self.log.emit(f"App branch already pushed to origin/{r.APP_BRANCH}. Not auto-reverting shared history.", "warn")
+            self.log.emit(f"To undo manually: git reset --hard {state.get('pre_commit_sha')} && "
+                           f"git push --force origin {r.APP_BRANCH}", "dim")
+        elif state.get("committed") and state.get("pre_commit_sha"):
+            self.cmd(f"git reset --hard {state['pre_commit_sha']}")
+            self.log.emit(f"Reverted local commit (and version bump) on {r.APP_BRANCH}", "ok")
+        elif state.get("version_changed") and state.get("original_version"):
+            r.set_version(state["original_version"])
+            self.log.emit(f"Reverted package.json version to {state['original_version']}", "ok")
+
     def _sync_web(self, version):
         r, root = self.r, self.root
         original = r.git_branch()
         try:
             if self.cmd(f"git checkout {r.WEB_BRANCH}") != 0:
                 raise RuntimeError("git checkout web failed")
+            self.state["pre_web_sha"] = r.capture("git rev-parse HEAD")
 
             deleted = r.capture(
                 f"git diff --diff-filter=D --name-only {r.WEB_BRANCH} {r.APP_BRANCH} -- src/"
@@ -344,6 +391,7 @@ class ReleaseWorker(QThread):
                 raise RuntimeError("git commit (web) failed")
             if self.cmd(f"git push origin {r.WEB_BRANCH} --force") != 0:
                 raise RuntimeError("git push (web) failed")
+            self.state["web_pushed"] = True
             self.log.emit("Web branch synced and pushed", "ok")
         finally:
             if r.git_branch() != original:
@@ -352,6 +400,8 @@ class ReleaseWorker(QThread):
     def _publish_release(self, version, token, notes):
         r, root = self.r, self.root
         tag = f"v{version}"
+        self.state["tag"] = tag
+        self.state["token"] = token
         release_dir = root / "release" / "nsis-web"
 
         to_upload = []
@@ -384,12 +434,16 @@ class ReleaseWorker(QThread):
             release = r.api("POST", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/releases", token,
                              {"tag_name": tag, "name": tag, "body": notes,
                               "target_commitish": r.APP_BRANCH, "draft": False, "prerelease": False})
+            self.state["release_id"] = release["id"]
+            self.state["release_created_new"] = True
             self.log.emit(f"Release created (id={release['id']})", "ok")
         except urllib.error.HTTPError as e:
             if e.code == 422:
                 release = r.api("GET", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/releases/tags/{tag}", token)
                 r.api("PATCH", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/releases/{release['id']}", token,
                       {"prerelease": False, "body": notes})
+                self.state["release_id"] = release["id"]
+                self.state["release_created_new"] = False
                 self.log.emit(f"Release already exists -- updated (id={release['id']})", "ok")
             else:
                 raise

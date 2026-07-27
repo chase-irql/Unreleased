@@ -1764,7 +1764,7 @@ ipcMain.handle('write-track-metadata', async (_, filePath, metadata) => {
         synchronisedText: synced,
       }] : []
     }
-    if (metadata.albumArtBase64 !== undefined && metadata.albumArtBase64) {
+    if (metadata.albumArtBase64) {
       // albumArtBase64 is a data URL: "data:<mime>;base64,<data>"
       const match = metadata.albumArtBase64.match(/^data:([^;]+);base64,(.+)$/)
       if (match) {
@@ -1776,8 +1776,37 @@ ipcMain.handle('write-track-metadata', async (_, filePath, metadata) => {
         }
       }
     }
+    // Present-but-empty means "this file should end up with no cover", which
+    // is distinct from the key being absent ("leave the cover alone").
+    const clearImage = metadata.albumArtBase64 !== undefined && !metadata.albumArtBase64
+
     const result = NodeID3.update(tags, filePath)
+    // writeSync returns true on success and the fs Error on failure (false only
+    // comes from older paths) — treat anything that isn't success as an error,
+    // otherwise a failed write is reported back as a save.
     if (result === false) return { error: 'Failed to write tags' }
+    if (result instanceof Error) return { error: result.message }
+
+    if (clearImage) {
+      // update() merges onto the file's existing raw frame map and can only
+      // add or overwrite frames — there's no way to express "drop this one".
+      // So do the removal as its own pass: re-read the frames the update just
+      // produced, delete the picture frame, and write the rest back. (This is
+      // the same read/modify/write update() itself performs, so it's no more
+      // lossy than an ordinary save.)
+      const current = NodeID3.read(filePath)
+      const raw = (current && current.raw) || {}
+      // APIC is the v2.3/v2.4 identifier, PIC the v2.2 one. Skip the rewrite
+      // entirely when there's no cover to remove, so saving an artless file
+      // doesn't rewrite its whole tag every time.
+      if (raw.APIC !== undefined || raw.PIC !== undefined) {
+        delete raw.APIC
+        delete raw.PIC
+        const cleared = NodeID3.write(raw, filePath)
+        if (cleared === false) return { error: 'Failed to remove album art' }
+        if (cleared instanceof Error) return { error: cleared.message }
+      }
+    }
     return { success: true }
   } catch(e) { return { error: e.message } }
 })

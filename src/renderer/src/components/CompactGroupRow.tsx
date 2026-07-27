@@ -48,7 +48,7 @@ export const CompactGroupRow = memo(function CompactGroupRow({
       className="w-full flex items-center gap-3 px-3 py-2.5 md:py-2 hover:bg-surface-overlay rounded-lg transition-colors text-left"
     >
       <div className="shrink-0 w-10 h-10 md:w-9 md:h-9 rounded overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={coverTrack} size={36} shimmer={false} />
+        <AlbumArtThumbnail track={coverTrack} size={36} shimmer={false} eager />
       </div>
       <span className="flex-1 min-w-0 text-text-primary text-sm font-medium truncate" title={title}>{title}</span>
       {categoryLabel && (

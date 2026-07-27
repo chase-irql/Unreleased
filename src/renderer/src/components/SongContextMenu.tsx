@@ -42,7 +42,7 @@ interface Props {
   onPlayNext?: () => void
   onAddToQueue?: () => void
   onShowInFiles?: () => void
-  /** Tracker only — enters multi-select mode with this song selected. */
+  /** Tracker / Library — enters multi-select mode with this song selected. */
   onSelect?: () => void
   /** Player only — metadata edit for a local (non-API) file. */
   onEditLocalMetadata?: () => void

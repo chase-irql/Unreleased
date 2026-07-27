@@ -4,7 +4,7 @@ import {
   LayoutList, Rows3, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
   CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
-  AlertTriangle,
+  AlertTriangle, Pencil,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -389,6 +389,8 @@ function BulkContextMenu({
   onLogin,
   canLinkVersions,
   onLinkVersions,
+  canBulkEdit,
+  onBulkEdit,
   canAddToPlaylist,
   canAddToQueue,
   contained,
@@ -405,6 +407,9 @@ function BulkContextMenu({
   onLogin: () => void
   canLinkVersions: boolean
   onLinkVersions: () => void
+  /** Editors/admins only — opens the bulk editor for the whole selection. */
+  canBulkEdit: boolean
+  onBulkEdit: () => void
   /** False when any selected song is a session/unsurfaced (playlists don't
    *  support those) — hides "Add to playlist" entirely rather than silently
    *  adding only the eligible ones. */
@@ -499,6 +504,9 @@ function BulkContextMenu({
           {canLinkVersions && (
             <MenuItem icon={<Link2 size={14} />} label="Link versions" onClick={onLinkVersions} />
           )}
+          {canBulkEdit && (
+            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={onBulkEdit} />
+          )}
           <div className="my-1 border-t border-[var(--border)]" />
           <MenuItem icon={<PackageOpen size={14} />} label="Download ZIP" onClick={onDownloadZip} />
         </>
@@ -586,7 +594,7 @@ const SongRow = memo(function SongRow({
 
       {/* Cover art */}
       <div className="relative shrink-0 w-10 h-10 md:w-9 md:h-9 rounded overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={track} size={36} shimmer={false} />
+        <AlbumArtThumbnail track={track} size={36} shimmer={false} eager />
         {canPlay && !selectMode && (
           <button
             className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
@@ -753,7 +761,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
 
       {/* Cover art */}
       <div className="relative shrink-0 w-12 h-12 md:w-14 md:h-14 rounded overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={track} size={56} shimmer={false} />
+        <AlbumArtThumbnail track={track} size={56} shimmer={false} eager />
         {canPlay && !selectMode && (
           <button
             className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
@@ -1095,7 +1103,7 @@ const LyricResultRow = memo(function LyricResultRow({
 
       {/* Cover art */}
       <div className="relative shrink-0 w-11 h-11 rounded overflow-hidden bg-surface-overlay">
-        <AlbumArtThumbnail track={track} size={44} shimmer={false} />
+        <AlbumArtThumbnail track={track} size={44} shimmer={false} eager />
         {canPlay && !selectMode && (
           <button
             className="absolute inset-0 items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex"
@@ -1236,6 +1244,7 @@ export default function ApiTrackerView(): JSX.Element {
     apiTrackerEra, setApiTrackerEra,
     setActiveView, setApiFilesPath, setPendingEditorSongId,
     playlists, refreshPlaylists, setShowUserAuth, likedTrackIds, toggleLike,
+    openBulkEditor,
   } = useStore(useShallow(s => ({
     playTrack: s.playTrack, startRadio: s.startRadio, addToQueue: s.addToQueue,
     account: s.account, shuffle: s.shuffle,
@@ -1245,6 +1254,7 @@ export default function ApiTrackerView(): JSX.Element {
     setPendingEditorSongId: s.setPendingEditorSongId,
     playlists: s.playlists, refreshPlaylists: s.refreshPlaylists, setShowUserAuth: s.setShowUserAuth,
     likedTrackIds: s.likedTrackIds, toggleLike: s.toggleLike,
+    openBulkEditor: s.openBulkEditor,
   })))
 
   const canEdit = !!(account?.is_editor || account?.is_administrator)
@@ -2863,6 +2873,16 @@ export default function ApiTrackerView(): JSX.Element {
               </>
             )}
           </div>
+          {canEdit && (
+            <button
+              onClick={() => openBulkEditor(selectedSongs)}
+              disabled={selected.size === 0}
+              title="Edit fields across every selected song"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              <Pencil size={13} /> Edit
+            </button>
+          )}
           {versionsEnabled && canEdit && (
             <button
               onClick={bulkLinkVersions}
@@ -2961,6 +2981,8 @@ export default function ApiTrackerView(): JSX.Element {
           onLogin={() => { setShowUserAuth(true); setBulkContextMenu(null) }}
           canLinkVersions={versionsEnabled && canEdit && selected.size >= 2}
           onLinkVersions={() => { bulkLinkVersions(); setBulkContextMenu(null) }}
+          canBulkEdit={canEdit && selected.size > 0}
+          onBulkEdit={() => { openBulkEditor(selectedSongs); setBulkContextMenu(null) }}
           canAddToPlaylist={canBulkAddToPlaylist}
           canAddToQueue={canBulkAddToQueue}
           contained={bulkContained}

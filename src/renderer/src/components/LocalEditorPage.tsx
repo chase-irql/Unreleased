@@ -179,6 +179,13 @@ export default function LocalEditorPage(): JSX.Element {
 
   const handleSave = async (): Promise<void> => {
     if (!el || changedCount === 0) return
+    // What's on screen is a 512px preview of the embedded cover, not the cover
+    // itself (see read-track-metadata's coverToThumbDataUri). Writing it back
+    // unconditionally would re-encode the file's full-resolution art down to
+    // that preview — and again, a little smaller, on every later save. So the
+    // art only travels when the user actually changed it; leaving
+    // albumArtBase64 out entirely tells the handler to keep the existing frame.
+    const artChanged = fields.albumArt !== original.albumArt
     const common = {
       title: fields.title, artist: fields.artist, album: fields.album,
       albumArtist: fields.albumArtist,
@@ -186,15 +193,17 @@ export default function LocalEditorPage(): JSX.Element {
       trackNumber: fields.trackNumber ? parseInt(fields.trackNumber) : null,
       discNumber: fields.discNumber ? parseInt(fields.discNumber) : null,
       composer: fields.composer, genre: fields.genre,
-      albumArt: fields.albumArt,
+      // Same reasoning for the in-memory mirror: updateLibraryTrack treats any
+      // albumArt key as an art change and re-keys libraryArt, the queue and the
+      // current track off it, so don't hand it one when nothing changed.
+      ...(artChanged ? { albumArt: fields.albumArt, hasAlbumArt: !!fields.albumArt } : {}),
     }
 
     // Tag writing is only implemented for MP3 — for other formats keep the edit
     // in the in-memory index so the UI reflects it, but warn it wasn't persisted.
     if (track.ext !== 'mp3') {
-      const updates = { ...common, hasAlbumArt: !!fields.albumArt }
-      updateLibraryTrack(track.id, updates)
-      broadcastLibraryTrackUpdate(track.id, updates)
+      updateLibraryTrack(track.id, common)
+      broadcastLibraryTrackUpdate(track.id, common)
       setError('Metadata writing is only supported for MP3 files. The change is shown here but was not written to disk.')
       return
     }
