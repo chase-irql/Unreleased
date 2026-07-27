@@ -39,7 +39,10 @@ const CAT_BADGE: Record<string, string> = {
   recording_session: 'bg-zinc-500/20 text-zinc-400',
 }
 
-function cleanDate(raw: string | null | undefined): string {
+// Exported for BulkEditModal, which has to derive the same baselines this page
+// does so a bulk change doesn't submit a no-op patch for a song that already
+// carries the value (dates come back from the API with a weekday prefix).
+export function cleanDate(raw: string | null | undefined): string {
   if (!raw) return ''
   return raw.replace(/^[A-Za-z][a-z]+\s+(?=[A-Z]|\d)/g, '').trim().replace(/\.$/, '').trim()
 }

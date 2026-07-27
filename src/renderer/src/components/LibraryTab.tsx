@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react'
 import {
   Music, Play, Pause, Shuffle, Search, MoreHorizontal,
   ChevronLeft, ChevronRight, LayoutGrid, List, Sparkles, User,
   FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp, Link2,
+  CheckSquare2, Square, Pencil, ListPlus,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
@@ -31,6 +32,31 @@ const CARD_TEXT_H = 60      // fixed text block beneath square art, px
 
 const byTrackNo = (a: LibraryTrack, b: LibraryTrack) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
 const shuffled = fisherYates
+
+// ─── multi-select ─────────────────────────────────────────────────────────────
+// Song rows appear three levels down in some views (song list, album detail,
+// artist detail), so selection travels by context rather than through every
+// intermediate component's props. Rows report the list they belong to on each
+// interaction, which is what makes shift-click ranges and "Select all" work in
+// whichever view is on screen.
+
+interface LibrarySelection {
+  selectMode: boolean
+  selected: Map<string, LibraryTrack>
+  /** `extend` = shift-click: takes everything between the anchor and here. */
+  toggle: (track: LibraryTrack, list: LibraryTrack[], extend: boolean) => void
+  /** Lets the action bar's "Select all" act on whatever view is showing. */
+  registerVisible: (tracks: LibraryTrack[]) => void
+}
+
+const SelectionCtx = createContext<LibrarySelection | null>(null)
+
+/** Publishes the list a view is rendering, so "Select all" hits exactly what
+ *  the user can see rather than the whole library. */
+function useVisibleTracks(tracks: LibraryTrack[]): void {
+  const sel = useContext(SelectionCtx)
+  useEffect(() => { sel?.registerVisible(tracks) }, [tracks, sel])
+}
 
 // ─── album / artist models ───────────────────────────────────────────────────
 
@@ -113,23 +139,35 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
 }): JSX.Element {
   const { playTrack, currentTrack, isPlaying, setIsPlaying } = useStorePick('playTrack', 'currentTrack', 'isPlaying', 'setIsPlaying')
   const [hover, setHover] = useState(false)
+  const sel = useContext(SelectionCtx)
 
   const isCurrent = currentTrack?.id === track.id
+  const selectMode = !!sel?.selectMode
+  const isSelected = !!sel?.selected.has(track.id)
 
   const play = () => {
     if (isCurrent) { setIsPlaying(!isPlaying); return }
     playTrack(toQueueTrack(track), queue.map(toQueueTrack))
   }
 
+  // Ctrl/Cmd-click starts a selection from anywhere; once in select mode a
+  // plain click toggles and shift-click takes the range — the same convention
+  // the Tracker's multi-select uses.
+  const handleClick = (e: React.MouseEvent): void => {
+    if (selectMode) { sel?.toggle(track, queue, e.shiftKey); return }
+    if (e.ctrlKey || e.metaKey) sel?.toggle(track, queue, false)
+  }
+
   return (
     <div className="px-1.5">
       <div
         className={`group flex items-center gap-3 pl-3 pr-2 py-2 rounded-lg transition-colors cursor-pointer ${
-          isCurrent ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+          isSelected ? 'bg-accent/10' : isCurrent ? 'bg-surface-raised' : 'hover:bg-surface-raised'
         } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        onDoubleClick={play}
+        onClick={handleClick}
+        onDoubleClick={() => { if (!selectMode) play() }}
         onContextMenu={e => { e.preventDefault(); onContext(track, queue, e.clientX, e.clientY) }}
         draggable={draggable}
         onDragStart={onDragStart}
@@ -138,8 +176,12 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
       >
         {draggable && <GripVertical size={14} className="text-text-muted opacity-0 group-hover:opacity-100 shrink-0 -ml-1" />}
         <div className="w-5 shrink-0 flex items-center justify-center">
-          {hover || isCurrent
-            ? <button onClick={play}>
+          {selectMode
+            ? (isSelected
+                ? <CheckSquare2 size={14} className="text-accent" />
+                : <Square size={14} className="text-text-muted" />)
+            : hover || isCurrent
+            ? <button onClick={e => { e.stopPropagation(); play() }}>
                 {isCurrent && isPlaying
                   ? <Pause size={13} fill="currentColor" className="text-accent" />
                   : <Play size={13} fill="currentColor" className={isCurrent ? 'text-accent' : 'text-text-primary'} />}
@@ -291,6 +333,7 @@ function SongList({ tracks, header, onContext }: {
   const appTextScale = useStore(s => s.appTextScale)
   const rowH = Math.round(SONG_ROW_H * appTextScale)
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, rowH)
+  useVisibleTracks(tracks)
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 view-enter">
       {header}
@@ -368,6 +411,7 @@ function AlbumDetail({ album, onBack, onContext }: {
   const { playCollection } = useStorePick('playCollection')
   const art = useTrackArt(album.coverTrack)
   const tracks = useMemo(() => [...album.tracks].sort(byTrackNo), [album])
+  useVisibleTracks(tracks)
   const total = tracks.reduce((s, t) => s + t.duration, 0)
   const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
   return (
@@ -398,6 +442,7 @@ function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
   const { playCollection } = useStorePick('playCollection')
   const art = useTrackArt(artist.coverTrack)
   const allTracks = useMemo(() => [...artist.tracks].sort((a, b) => a.title.localeCompare(b.title)), [artist])
+  useVisibleTracks(allTracks)
   const total = artist.tracks.reduce((s, t) => s + t.duration, 0)
   const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
   return (
@@ -511,7 +556,7 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openUrlImport } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openUrlImport')
+  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openUrlImport, openBulkTrackEditor } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openUrlImport', 'openBulkTrackEditor')
 
   const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
@@ -521,6 +566,61 @@ export default function LibraryTab(): JSX.Element {
   const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
   const [sortField, setSortField] = useState<'title' | 'album' | 'duration' | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  // ── multi-select (drives the bulk tag editor) ──
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Map<string, LibraryTrack>>(new Map())
+  // Anchor for shift-click ranges, and the list currently on screen (set by
+  // whichever view is rendering song rows — see useVisibleTracks).
+  const anchorRef = useRef<string | null>(null)
+  const visibleRef = useRef<LibraryTrack[]>([])
+
+  const selection = useMemo<LibrarySelection>(() => ({
+    selectMode,
+    selected,
+    registerVisible: (tracks) => { visibleRef.current = tracks },
+    toggle: (track, list, extend) => {
+      setSelectMode(true)
+      setSelected(prev => {
+        const next = new Map(prev)
+        const anchor = anchorRef.current
+        if (extend && anchor) {
+          const from = list.findIndex(t => t.id === anchor)
+          const to = list.findIndex(t => t.id === track.id)
+          if (from >= 0 && to >= 0) {
+            const [a, b] = from < to ? [from, to] : [to, from]
+            for (let i = a; i <= b; i++) next.set(list[i].id, list[i])
+            return next
+          }
+        }
+        if (next.has(track.id)) next.delete(track.id)
+        else next.set(track.id, track)
+        return next
+      })
+      if (!extend) anchorRef.current = track.id
+    },
+  }), [selectMode, selected])
+
+  const exitSelectMode = (): void => {
+    setSelectMode(false)
+    setSelected(new Map())
+    anchorRef.current = null
+  }
+
+  // Deselecting the last track drops out of select mode on its own, so there's
+  // no separate "Cancel" needed. Escape works too.
+  useEffect(() => {
+    if (selectMode && selected.size === 0) setSelectMode(false)
+  }, [selectMode, selected])
+
+  useEffect(() => {
+    if (!selectMode) return
+    const onKeyDown = (e: KeyboardEvent): void => { if (e.key === 'Escape') exitSelectMode() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectMode])
+
+  const selectedTracks = useMemo(() => [...selected.values()], [selected])
 
   const openCtx = (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => setCtx({ track, queue, x, y })
 
@@ -606,6 +706,7 @@ export default function LibraryTab(): JSX.Element {
     : LIB_SECTIONS.find(s => s.key === nav.key)?.label ?? 'Library'
 
   return (
+    <SelectionCtx.Provider value={selection}>
     <div className="flex-1 flex overflow-hidden bg-surface">
       <BrowseRail nav={nav} onNav={navTo} songCount={libraryTracks.length} />
 
@@ -692,6 +793,42 @@ export default function LibraryTab(): JSX.Element {
             return <AlbumCard key={a.key} album={a} onOpen={() => setDrill({ kind: 'album', album: a })} onPlay={() => playAlbum(a)} />
           }} />
         )}
+
+        {/* Bulk selection action bar */}
+        {selectMode && (
+          <div className="shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2">
+            <span className="text-sm text-text-primary font-medium flex-1">
+              {selected.size} selected
+            </span>
+            <button
+              onClick={() => setSelected(new Map(visibleRef.current.map(t => [t.id, t])))}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Select all
+            </button>
+            <button
+              onClick={exitSelectMode}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => { selectedTracks.forEach(t => addToQueue(toQueueTrack(t))) }}
+              disabled={selected.size === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              <ListPlus size={13} /> Add to queue
+            </button>
+            <button
+              onClick={() => openBulkTrackEditor(selectedTracks)}
+              disabled={selected.size === 0}
+              title="Edit tags across every selected file"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+            >
+              <Pencil size={13} /> Edit tags
+            </button>
+          </div>
+        )}
       </div>
 
       {ctx && (
@@ -703,11 +840,13 @@ export default function LibraryTab(): JSX.Element {
           onPlay={() => playTrack(toQueueTrack(ctx.track), ctx.queue.map(toQueueTrack))}
           onPlayNext={() => playNext(toQueueTrack(ctx.track))}
           onAddToQueue={() => addToQueue(toQueueTrack(ctx.track))}
+          onSelect={() => selection.toggle(ctx.track, ctx.queue, false)}
           onEditLocalMetadata={() => openLocalEditor(ctx.track)}
           liked={likedTrackIds.includes(ctx.track.id)}
           onToggleLike={() => toggleLike(ctx.track.id)}
         />
       )}
     </div>
+    </SelectionCtx.Provider>
   )
 }

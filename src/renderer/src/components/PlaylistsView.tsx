@@ -2149,7 +2149,7 @@ export default function PlaylistsView(): JSX.Element {
                                 className="group flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-surface-raised transition-colors cursor-default"
                                 onDoubleClick={() => playTrack(track, group.members.map(m => m.item))}
                               >
-                                <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} />
+                                <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} eager />
                                 <div className="min-w-0 flex-1">
                                   <p className="text-text-primary text-sm font-medium truncate" title={track.title}>
                                     {track.title}
@@ -2218,7 +2218,7 @@ export default function PlaylistsView(): JSX.Element {
                   <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
                     <Play size={14} fill="currentColor" />
                   </button>
-                  <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} />
+                  <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} eager />
                   <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
                     <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
                     <p className="text-text-muted text-xs truncate flex items-center gap-1">

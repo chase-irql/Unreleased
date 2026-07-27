@@ -1,0 +1,826 @@
+import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  Loader2, Check, AlertCircle, X, Pencil, ChevronDown, ChevronRight, Eraser, ArrowRight,
+  Image as ImageIcon, Upload,
+} from 'lucide-react'
+import { useStore } from '../store/useStore'
+import { useShallow } from 'zustand/react/shallow'
+import { apiFetch, CATEGORY_LABELS } from '../lib/juicewrldApi'
+import type { JWApiSong, JWApiEra } from '../lib/juicewrldApi'
+import type { LibraryTrack } from '../types'
+import * as userApi from '../lib/userApi'
+import { broadcastLibraryTrackUpdate } from '../lib/windowSync'
+import { cleanDate } from './EditorPage'
+
+// Bulk editor — one dialog, two sources:
+//
+//   • API songs, from the Tracker's multi-select "Edit". The API has no bulk
+//     endpoint, so this files one ordinary update proposal per song, exactly
+//     like EditorPage does for a single song; review, admin auto-approve and
+//     My Proposals all behave the same.
+//   • Local library files, from the Library's multi-select "Edit tags". These
+//     write ID3 frames straight to disk through the same writeTrackMetadata
+//     channel LocalEditorPage uses, then mirror the change into the in-memory
+//     library index (and any other open window).
+//
+// Both share the whole interaction model — tick a field, pick how the value
+// combines with what's there, preview, submit — so the machinery below is
+// generic over the item type and each source only supplies a BulkSpec.
+//
+// Only fields that make sense across many items appear. Per-item identity
+// (song title, track number, file path, lyrics, versions) is deliberately
+// absent, since setting those in bulk would only ever be a mistake.
+
+/* ── Field model ───────────────────────────────────────────────────────────── */
+
+type FieldKind = 'text' | 'textarea' | 'list' | 'select' | 'image'
+
+/** How a field's input is combined with each item's existing value. Which of
+ *  these a field offers depends on its kind (see DEFAULT_MODES). */
+type Mode =
+  | 'set'      // overwrite
+  | 'fill'     // write only where the item currently has nothing
+  | 'add'      // list fields — append entries that aren't already there
+  | 'remove'   // list fields — drop the named entries
+  | 'append'   // free text — add on a new line after what's there
+  | 'clear'    // empty the field
+
+interface BulkField<T> {
+  /** Key handed back to the spec's commit(). */
+  key: string
+  label: string
+  kind: FieldKind
+  /** Which section of the dialog this field sits in. */
+  group: string
+  placeholder?: string
+  mono?: boolean
+  /** This item's current value, as an editor-shaped string — the comparison
+   *  basis for skipping items that already match. */
+  read: (item: T) => string
+  /** True when `read` can't actually see the stored value (ID3 frames the
+   *  library index doesn't keep). Such a field only offers Replace/Clear, is
+   *  always written rather than diffed, and says so in the UI. */
+  writeOnly?: boolean
+  /** 'select' only. Four or fewer renders as pills, more as a dropdown. */
+  options?: { value: string; label: string }[]
+  /** Narrows the modes this field offers beyond its kind's default. */
+  modes?: Mode[]
+}
+
+/** Everything one source has to supply for the dialog to drive it. */
+interface BulkSpec<T> {
+  items: T[]
+  groups: string[]
+  fields: BulkField<T>[]
+  keyOf: (item: T) => string
+  titleOf: (item: T) => string
+  /** Reason this item can't be written at all, or null. Excluded from the
+   *  batch and surfaced as a count rather than failing mid-run. */
+  skip?: (item: T) => string | null
+  /** Applies one item's changes. Patch values are final strings; '' means the
+   *  field should end up empty. Throwing marks that item failed. */
+  commit: (item: T, patch: Record<string, string>, note: string) => Promise<void>
+  /** Copy for the submit button and the success state. */
+  actionLabel: (n: number) => string
+  doneLabel: (n: number) => string
+  /** What one item is called, for the header and counters. */
+  noun: [singular: string, plural: string]
+  subtitle: string
+  /** Shows a free-text note box above the submit button, passed to commit().
+   *  Omitted when the source has nowhere to put it. */
+  notePlaceholder?: string
+  /** Blocks the whole dialog (not an editor, not on desktop). */
+  unavailable?: string
+}
+
+const DEFAULT_MODES: Record<FieldKind, Mode[]> = {
+  select:   ['set', 'clear'],
+  list:     ['set', 'add', 'remove', 'fill', 'clear'],
+  textarea: ['set', 'append', 'fill', 'clear'],
+  text:     ['set', 'fill', 'clear'],
+  image:    ['set'],
+}
+
+const MODE_LABELS: Record<Mode, string> = {
+  set: 'Replace', fill: 'Fill blanks', add: 'Add', remove: 'Remove', append: 'Append', clear: 'Clear',
+}
+
+const MODE_HINTS: Record<Mode, string> = {
+  set:    'Overwrites this field everywhere.',
+  fill:   'Only writes where this field is currently empty.',
+  add:    'Adds these entries, keeping what is already there (no duplicates).',
+  remove: 'Removes these entries, leaving the rest intact.',
+  append: 'Adds this on a new line after whatever is already there.',
+  clear:  'Empties this field everywhere.',
+}
+
+function modesFor<T>(f: BulkField<T>): Mode[] {
+  if (f.modes) return f.modes
+  // A field we can't read back can't be diffed, appended to, or filtered —
+  // only overwritten or emptied.
+  if (f.writeOnly) return ['set', 'clear']
+  return DEFAULT_MODES[f.kind]
+}
+
+/* ── Value combination ─────────────────────────────────────────────────────── */
+
+// Credits are free text holding comma-separated names ("Nick Mira, Taz
+// Taylor") — the same convention the Tracker's producers tab splits on.
+const splitList = (v: string): string[] => v.split(',').map(s => s.trim()).filter(Boolean)
+const joinList = (parts: string[]): string => parts.join(', ')
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
+
+/** The value this field should end up with on an item, or undefined when the
+ *  item is outside the mode's reach (fill on something that already has a
+ *  value, remove of a name it never carried). */
+function combine(mode: Mode, input: string, current: string): string | undefined {
+  switch (mode) {
+    case 'clear':
+      return ''
+    case 'set':
+      return input
+    case 'fill':
+      return current.trim() ? undefined : input
+    case 'append':
+      return current.trim() ? `${current}\n${input}` : input
+    case 'add': {
+      const cur = splitList(current)
+      const additions = splitList(input).filter(p => !cur.some(c => sameName(c, p)))
+      return additions.length ? joinList([...cur, ...additions]) : undefined
+    }
+    case 'remove': {
+      const cur = splitList(current)
+      const drop = splitList(input)
+      const kept = cur.filter(c => !drop.some(p => sameName(p, c)))
+      return kept.length === cur.length ? undefined : joinList(kept)
+    }
+  }
+}
+
+/** True once this field has enough to act on. 'clear' needs no input; every
+ *  other mode does — so an emptied box never silently wipes a field. */
+function isActionable(mode: Mode, input: string): boolean {
+  return mode === 'clear' || input.trim() !== ''
+}
+
+/** Runs `task` over `items` a few at a time — one request (or one tag write)
+ *  per item would otherwise fire the whole selection at once. */
+async function pooled<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      await task(items[i])
+    }
+  })
+  await Promise.all(workers)
+}
+
+interface Target<T> {
+  item: T
+  patch: Record<string, string>
+  /** Per-field before/after, for the preview list. */
+  changes: { label: string; from: string; to: string }[]
+}
+
+/* ── API songs ─────────────────────────────────────────────────────────────── */
+
+const API_GROUPS = ['Details', 'Credits', 'Dates']
+
+function apiFields(eras: JWApiEra[]): BulkField<JWApiSong>[] {
+  return [
+    { key: 'category', label: 'Category', kind: 'select', group: 'Details', modes: ['set'], read: s => s.category || '',
+      options: Object.keys(CATEGORY_LABELS).map(v => ({ value: v, label: CATEGORY_LABELS[v] })) },
+    { key: 'era_id', label: 'Era', kind: 'select', group: 'Details', read: s => (s.era?.id ? String(s.era.id) : ''),
+      options: eras.map(e => ({ value: String(e.id), label: e.name })) },
+    { key: 'album', label: 'Album', kind: 'text', group: 'Details', read: s => s.album ?? s.era?.name ?? '' },
+    { key: 'image_url', label: 'Cover URL', kind: 'text', group: 'Details', placeholder: 'https://…', mono: true, read: s => s.image_url || '' },
+    { key: 'leak_type', label: 'Leak type', kind: 'text', group: 'Details', placeholder: 'HQ, LQ, snippet…', read: s => s.leak_type || '' },
+    { key: 'instrumentals', label: 'Instrumentals', kind: 'text', group: 'Details', placeholder: 'Instrumental versions available', read: s => s.instrumentals || '' },
+    { key: 'additional_information', label: 'Add. info', kind: 'textarea', group: 'Details', read: s => s.additional_information || '' },
+    { key: 'notes', label: 'Notes', kind: 'textarea', group: 'Details', read: s => s.notes || '' },
+
+    { key: 'credited_artists', label: 'Artists', kind: 'list', group: 'Credits', placeholder: 'Juice WRLD, Lil Uzi Vert', read: s => s.credited_artists || '' },
+    { key: 'producers', label: 'Producers', kind: 'list', group: 'Credits', placeholder: 'Nick Mira, Taz Taylor', read: s => s.producers || '' },
+    { key: 'engineers', label: 'Engineers', kind: 'list', group: 'Credits', read: s => s.engineers || '' },
+    { key: 'recording_locations', label: 'Location', kind: 'text', group: 'Credits', placeholder: 'Studio / city', read: s => s.recording_locations || '' },
+
+    { key: 'record_dates', label: 'Recorded', kind: 'text', group: 'Dates', placeholder: 'YYYY-MM-DD', mono: true, read: s => s.record_dates || '' },
+    { key: 'release_date', label: 'Released', kind: 'text', group: 'Dates', placeholder: 'YYYY-MM-DD', mono: true, read: s => cleanDate(s.release_date) },
+    { key: 'preview_date', label: 'Preview', kind: 'text', group: 'Dates', placeholder: 'YYYY-MM-DD', mono: true, read: s => cleanDate(s.preview_date) },
+    { key: 'date_leaked', label: 'Date leaked', kind: 'text', group: 'Dates', placeholder: 'YYYY-MM-DD', mono: true, read: s => cleanDate(s.date_leaked) },
+  ]
+}
+
+/* ── Local files ───────────────────────────────────────────────────────────── */
+
+const LOCAL_GROUPS = ['Tags', 'Extra tags']
+
+// Fields the library index carries in memory, so a write can be mirrored back
+// into it without re-scanning the file.
+const LOCAL_INDEX_KEYS = new Set(['artist', 'album', 'albumArtist', 'composer', 'genre'])
+
+const LOCAL_FIELDS: BulkField<LibraryTrack>[] = [
+  { key: 'artist', label: 'Artist', kind: 'list', group: 'Tags', read: t => t.artist || '' },
+  { key: 'albumArtist', label: 'Album artist', kind: 'text', group: 'Tags', read: t => t.albumArtist || '' },
+  { key: 'album', label: 'Album', kind: 'text', group: 'Tags', read: t => t.album || '' },
+  { key: 'genre', label: 'Genre', kind: 'list', group: 'Tags', read: t => t.genre || '' },
+  { key: 'year', label: 'Year', kind: 'text', group: 'Tags', placeholder: '2019', mono: true, read: t => (t.year ? String(t.year) : '') },
+  { key: 'composer', label: 'Composer', kind: 'list', group: 'Tags', read: t => t.composer || '' },
+  { key: 'albumArt', label: 'Album art', kind: 'image', group: 'Tags', writeOnly: true, modes: ['set', 'clear'], read: () => '' },
+
+  // Frames the library index doesn't keep — writable, but not readable without
+  // re-parsing every file, which a bulk selection can't afford.
+  { key: 'comment', label: 'Comment', kind: 'textarea', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'publisher', label: 'Publisher', kind: 'text', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'copyright', label: 'Copyright', kind: 'text', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'conductor', label: 'Conductor', kind: 'text', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'grouping', label: 'Grouping', kind: 'text', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'mood', label: 'Mood', kind: 'text', group: 'Extra tags', writeOnly: true, read: () => '' },
+  { key: 'bpm', label: 'BPM', kind: 'text', group: 'Extra tags', placeholder: '120', mono: true, writeOnly: true, read: () => '' },
+  { key: 'initialKey', label: 'Key', kind: 'text', group: 'Extra tags', placeholder: 'A Minor', writeOnly: true, read: () => '' },
+]
+
+/* ── Component ─────────────────────────────────────────────────────────────── */
+
+export default function BulkEditModal(): JSX.Element | null {
+  const { target, close, account, updateLibraryTrack } = useStore(
+    useShallow(s => ({
+      target: s.bulkEdit, close: s.closeBulkEditor, account: s.account,
+      updateLibraryTrack: s.updateLibraryTrack,
+    }))
+  )
+
+  const [eras, setEras] = useState<JWApiEra[]>([])
+  const isApi = target?.kind === 'api'
+
+  useEffect(() => {
+    if (!isApi || eras.length) return
+    apiFetch<JWApiEra[] | { results: JWApiEra[] }>('/eras/')
+      .then(d => setEras(Array.isArray(d) ? d : (d as { results: JWApiEra[] }).results ?? []))
+      .catch(() => undefined)
+  }, [isApi, eras.length])
+
+  const apiSpec = useMemo<BulkSpec<JWApiSong> | null>(() => {
+    if (target?.kind !== 'api') return null
+    const canEdit = !!(account?.is_editor || account?.is_administrator)
+    return {
+      items: target.songs,
+      groups: API_GROUPS,
+      fields: apiFields(eras),
+      keyOf: s => String(s.id),
+      titleOf: s => s.track_titles?.[0] || s.name,
+      noun: ['song', 'songs'],
+      subtitle: 'Files one edit proposal per song.',
+      notePlaceholder: 'Editor notes (shared by every proposal)…',
+      unavailable: canEdit ? undefined : 'Only editors can propose changes.',
+      actionLabel: n => `Submit ${n} proposal${n === 1 ? '' : 's'}`,
+      doneLabel: n => `${n} proposal${n === 1 ? '' : 's'} submitted`,
+      commit: async (song, patch, note) => {
+        const proposed: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(patch)) {
+          proposed[key] = key === 'era_id' ? (value ? Number(value) : null) : (value === '' ? null : value)
+        }
+        await userApi.createProposal({
+          song: song.id,
+          change_type: 'update',
+          title: song.track_titles?.[0] || song.name,
+          proposed_data: proposed,
+          editor_notes: note,
+        })
+      },
+    }
+  }, [target, account, eras])
+
+  const localSpec = useMemo<BulkSpec<LibraryTrack> | null>(() => {
+    if (target?.kind !== 'local') return null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    return {
+      items: target.tracks,
+      groups: LOCAL_GROUPS,
+      fields: LOCAL_FIELDS,
+      keyOf: t => t.id,
+      titleOf: t => t.title || t.filePath.split(/[/\\]/).pop() || t.id,
+      noun: ['file', 'files'],
+      subtitle: 'Writes ID3 tags straight to the files.',
+      unavailable: el?.writeTrackMetadata ? undefined : 'Tag writing is only available in the desktop app.',
+      // Tag writing is MP3-only in the main process (see write-track-metadata);
+      // leaving other formats out up front beats failing half way through.
+      skip: t => (t.ext === 'mp3' ? null : `${t.ext.toUpperCase()} tags can't be written`),
+      actionLabel: n => `Write tags to ${n} file${n === 1 ? '' : 's'}`,
+      doneLabel: n => `${n} file${n === 1 ? '' : 's'} updated`,
+      commit: async (track, patch) => {
+        const meta: Record<string, unknown> = {}
+        const updates: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(patch)) {
+          if (key === 'albumArt') {
+            // '' is Clear — the handler reads present-but-empty as "remove the
+            // cover", and libraryArt wants null (read, artless) not ''.
+            meta.albumArtBase64 = value
+            updates.albumArt = value || null
+            updates.hasAlbumArt = !!value
+            continue
+          }
+          if (key === 'year') {
+            const n = value ? Number.parseInt(value, 10) : null
+            meta.year = Number.isFinite(n) ? n : null
+            updates.year = meta.year
+            continue
+          }
+          meta[key] = value
+          if (LOCAL_INDEX_KEYS.has(key)) updates[key] = value
+        }
+        const res = await el.writeTrackMetadata(track.filePath, meta)
+        if (res?.error) throw new Error(res.error)
+        updateLibraryTrack(track.id, updates)
+        broadcastLibraryTrackUpdate(track.id, updates)
+      },
+    }
+  }, [target, updateLibraryTrack])
+
+  if (!target) return null
+  // One editor instance per source, keyed so switching sources resets its
+  // form rather than carrying ticked fields across.
+  if (apiSpec) return <BulkEditor key="api" spec={apiSpec} onClose={close} />
+  if (localSpec) return <BulkEditor key="local" spec={localSpec} onClose={close} />
+  return null
+}
+
+/* ── Generic editor ────────────────────────────────────────────────────────── */
+
+function BulkEditor<T>({ spec, onClose }: { spec: BulkSpec<T>; onClose: () => void }): JSX.Element {
+  const { items, fields } = spec
+  const noun = (n: number): string => (n === 1 ? spec.noun[0] : spec.noun[1])
+
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [modes, setModes] = useState<Record<string, Mode>>({})
+  const [note, setNote] = useState('')
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle')
+  const [progress, setProgress] = useState(0)
+  const [failed, setFailed] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  /** Set after a partial failure — the items still to be written, so "Retry"
+   *  doesn't redo the ones that already went through. */
+  const [retryTargets, setRetryTargets] = useState<Target<T>[] | null>(null)
+  const [succeeded, setSucceeded] = useState(0)
+
+  // Touching the form after a run invalidates that run's outcome — the patches
+  // it was built from no longer describe what's on screen.
+  useEffect(() => {
+    setStatus(s => (s === 'submitting' ? s : 'idle'))
+    setRetryTargets(null); setError(null); setSucceeded(0); setConfirmClose(false)
+  }, [enabled, values, modes])
+
+  /** Items this source can't write at all, split out so they're reported as a
+   *  count instead of failing mid-run. */
+  const [writable, unwritable] = useMemo(() => {
+    if (!spec.skip) return [items, [] as T[]]
+    const ok: T[] = [], no: T[] = []
+    for (const item of items) (spec.skip(item) ? no : ok).push(item)
+    return [ok, no]
+  }, [items, spec])
+
+  /** Per field: the value shared by every writable item, or null when they
+   *  differ — drives both the "N values" hint and the prefill. */
+  const commonValues = useMemo(() => {
+    const out: Record<string, string | null> = {}
+    for (const f of fields) {
+      if (f.writeOnly || !writable.length) { out[f.key] = null; continue }
+      const first = f.read(writable[0])
+      out[f.key] = writable.every(i => f.read(i) === first) ? first : null
+    }
+    return out
+  }, [fields, writable])
+
+  const activeFields = useMemo(
+    () => fields.filter(f => enabled[f.key] && isActionable(modes[f.key] ?? 'set', values[f.key] ?? '')),
+    [fields, enabled, modes, values]
+  )
+
+  const display = (f: BulkField<T>, value: string): string => {
+    if (f.kind === 'image') return value ? 'new cover' : '—'
+    if (!value) return '—'
+    if (f.options) return f.options.find(o => o.value === value)?.label ?? value
+    return value
+  }
+
+  /** One patch per item, with fields it already matches (or that the mode
+   *  doesn't reach) left out, and items with nothing to change dropped. */
+  const targets = useMemo<Target<T>[]>(() => {
+    return writable
+      .map(item => {
+        const patch: Record<string, string> = {}
+        const changes: Target<T>['changes'] = []
+        for (const f of activeFields) {
+          const mode = modes[f.key] ?? 'set'
+          const current = f.read(item)
+          const next = combine(mode, values[f.key] ?? '', current)
+          if (next === undefined) continue
+          // A write-only field can't be diffed — it's always written.
+          if (!f.writeOnly && next === current) continue
+          patch[f.key] = next
+          changes.push({
+            label: f.label,
+            from: f.writeOnly ? '?' : display(f, current),
+            to: display(f, next),
+          })
+        }
+        return { item, patch, changes }
+      })
+      .filter(t => t.changes.length > 0)
+    // `display` only shapes the preview strings, not what's written.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writable, activeFields, modes, values])
+
+  const dirty = fields.some(f => enabled[f.key])
+  const unchanged = writable.length - targets.length
+  // A retry after a partial failure must only re-send what failed.
+  const batch = retryTargets ?? targets
+
+  function attemptClose(): void {
+    if (status === 'submitting') return
+    if (dirty && status !== 'done' && !confirmClose) { setConfirmClose(true); return }
+    onClose()
+  }
+
+  async function submit(): Promise<void> {
+    if (spec.unavailable || batch.length === 0 || status === 'submitting' || status === 'done') return
+    setStatus('submitting')
+    setError(null); setProgress(0); setFailed(0)
+    const failures: Target<T>[] = []
+    let lastError = ''
+    await pooled(batch, 4, async (target) => {
+      try {
+        await spec.commit(target.item, target.patch, note)
+      } catch (e) {
+        failures.push(target)
+        lastError = e instanceof Error ? e.message : 'Failed'
+        setFailed(failures.length)
+      } finally {
+        setProgress(p => p + 1)
+      }
+    })
+    setSucceeded(n => n + batch.length - failures.length)
+    if (failures.length) {
+      setRetryTargets(failures)
+      setError(lastError)
+      setStatus('error')
+    } else {
+      setRetryTargets(null)
+      setStatus('done')
+    }
+  }
+
+  // Ctrl/Cmd+Enter submits, Escape closes (guarded once fields are ticked).
+  // Deliberately re-bound every render: both handlers read form state that
+  // changes as the user types, and a stale closure would act on the wrong batch.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (status === 'submitting') return
+      if (e.key === 'Escape') { attemptClose(); return }
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  })
+
+  const toggleField = (f: BulkField<T>): void => {
+    const on = !enabled[f.key]
+    // Prefill with the shared value the first time a field is ticked, so the
+    // input starts from what the items already have rather than from nothing.
+    if (on && values[f.key] === undefined) {
+      setValues(v => ({ ...v, [f.key]: commonValues[f.key] ?? '' }))
+    }
+    setEnabled(prev => ({ ...prev, [f.key]: on }))
+  }
+
+  const setValue = (key: string, v: string): void => setValues(prev => ({ ...prev, [key]: v }))
+  const setMode = (key: string, m: Mode): void => setModes(prev => ({ ...prev, [key]: m }))
+
+  const pickImage = async (key: string): Promise<void> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (window as any).electron
+    if (!el?.selectImageFile) return
+    const dataUrl = await el.selectImageFile()
+    if (dataUrl) setValue(key, dataUrl)
+  }
+
+  const summaryFor = (f: BulkField<T>): string => {
+    if (f.writeOnly) return 'not read from files'
+    const common = commonValues[f.key]
+    if (common === null) return `${new Set(writable.map(i => f.read(i))).size} values`
+    if (!common) return 'empty on all'
+    return display(f, common)
+  }
+
+  const inputClass = (mono?: boolean): string =>
+    `w-full bg-surface-overlay/70 border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/40 placeholder:text-text-muted placeholder:opacity-30 transition-colors ${mono ? 'font-mono' : ''}`
+
+  const renderField = (f: BulkField<T>): JSX.Element => {
+    const on = !!enabled[f.key]
+    const value = values[f.key] ?? ''
+    const mode = modes[f.key] ?? 'set'
+    const availableModes = modesFor(f)
+    const needsInput = mode !== 'clear' && !value.trim()
+    // How many items this one field would actually move — the per-field
+    // equivalent of the footer's total, so a mode that reaches nothing
+    // (e.g. "Fill blanks" when none are blank) is obvious before submitting.
+    const reach = on && !needsInput
+      ? f.writeOnly
+        ? writable.length
+        : writable.filter(i => {
+            const next = combine(mode, value, f.read(i))
+            return next !== undefined && next !== f.read(i)
+          }).length
+      : 0
+
+    return (
+      <div
+        key={f.key}
+        className={`rounded-xl border px-3.5 py-2.5 transition-colors ${
+          on ? 'border-accent/40 bg-accent/[0.04]' : 'border-[var(--border)] bg-surface-raised/40'
+        }`}
+      >
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={on}
+            onChange={() => toggleField(f)}
+            className="accent-[var(--accent)] w-3.5 h-3.5 shrink-0"
+          />
+          <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{f.label}</span>
+          <span className="ml-auto text-[11px] text-text-muted opacity-60 truncate max-w-[45%]" title={summaryFor(f)}>
+            {summaryFor(f)}
+          </span>
+        </label>
+
+        {on && (
+          <div className="mt-2.5 space-y-2">
+            {availableModes.length > 1 && (
+              <div className="flex flex-wrap gap-1">
+                {availableModes.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setMode(f.key, m)}
+                    title={MODE_HINTS[m]}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
+                      mode === m
+                        ? m === 'clear' || m === 'remove'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-accent/20 text-accent'
+                        : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'
+                    }`}
+                  >
+                    {MODE_LABELS[m]}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mode === 'clear' ? (
+              <p className="flex items-center gap-1.5 text-[11px] text-red-400">
+                <Eraser size={11} className="shrink-0" /> {MODE_HINTS.clear}
+              </p>
+            ) : f.kind === 'image' ? (
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 rounded-lg overflow-hidden bg-surface-overlay border border-[var(--border)] flex items-center justify-center shrink-0">
+                  {value
+                    ? <img src={value} alt="" className="w-full h-full object-cover" />
+                    : <ImageIcon size={18} className="text-text-muted opacity-60" />}
+                </div>
+                <button
+                  onClick={() => pickImage(f.key)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-overlay border border-[var(--border)] text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
+                >
+                  <Upload size={12} /> {value ? 'Choose another…' : 'Choose image…'}
+                </button>
+              </div>
+            ) : f.kind === 'select' && f.options ? (
+              f.options.length <= 4 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {f.options.map(o => (
+                    <button
+                      key={o.value}
+                      onClick={() => setValue(f.key, o.value)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all ${
+                        value === o.value
+                          ? 'bg-accent text-white'
+                          : 'bg-surface-overlay text-text-muted hover:text-text-primary border border-[var(--border)]'
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <select
+                  value={value}
+                  onChange={e => setValue(f.key, e.target.value)}
+                  className={`${inputClass()} appearance-none cursor-pointer`}
+                >
+                  <option value="" style={{ color: '#111', backgroundColor: '#fff' }}>Pick one…</option>
+                  {f.options.map(o => (
+                    <option key={o.value} value={o.value} style={{ color: '#111', backgroundColor: '#fff' }}>{o.label}</option>
+                  ))}
+                </select>
+              )
+            ) : f.kind === 'textarea' ? (
+              <textarea
+                rows={3}
+                value={value}
+                onChange={e => setValue(f.key, e.target.value)}
+                placeholder={f.placeholder}
+                className={`${inputClass(f.mono)} resize-none leading-relaxed`}
+              />
+            ) : (
+              <input
+                value={value}
+                onChange={e => setValue(f.key, e.target.value)}
+                placeholder={f.placeholder ?? (f.kind === 'list' ? 'Comma-separated' : undefined)}
+                className={inputClass(f.mono)}
+              />
+            )}
+
+            <p className={`text-[11px] ${needsInput ? 'text-amber-500' : reach === 0 ? 'text-text-muted opacity-60' : 'text-text-muted opacity-75'}`}>
+              {needsInput
+                ? f.kind === 'image'
+                  ? 'Choose an image to embed in every selected file.'
+                  : availableModes.includes('clear')
+                    ? 'Enter a value — or switch to "Clear" to empty this field.'
+                    : 'Enter a value.'
+                : reach === 0
+                  ? 'Nothing would change.'
+                  : `${reach} of ${writable.length} would change.`}
+            </p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[170] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
+      onClick={(e) => { if (e.currentTarget === e.target) attemptClose() }}
+    >
+      <div className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-2xl max-h-[92svh] flex flex-col">
+
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--border)] shrink-0">
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
+              <Pencil size={15} className="text-accent" /> Edit {items.length} {noun(items.length)}
+            </h2>
+            <p className="text-text-muted text-xs mt-0.5">{spec.subtitle}</p>
+          </div>
+          <button
+            onClick={attemptClose}
+            disabled={status === 'submitting'}
+            className="text-text-muted hover:text-text-primary disabled:opacity-40 transition-colors shrink-0"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {spec.unavailable ? (
+          <div className="px-5 py-8 text-center">
+            <p className="text-text-muted text-sm">{spec.unavailable}</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 min-h-0">
+              {unwritable.length > 0 && (
+                <div className="flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/25 px-3.5 py-2.5 text-[11px] text-amber-500">
+                  <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                  <span>
+                    {unwritable.length} of {items.length} will be skipped —{' '}
+                    {[...new Set(unwritable.map(i => spec.skip?.(i)).filter(Boolean))].join('; ')}.
+                  </span>
+                </div>
+              )}
+              {spec.groups.map(group => {
+                const groupFields = fields.filter(f => f.group === group)
+                if (!groupFields.length) return null
+                const writeOnlyGroup = groupFields.every(f => f.writeOnly)
+                return (
+                  <div key={group}>
+                    <h3 className="text-[11px] font-bold uppercase tracking-widest text-text-muted opacity-70 mb-2">
+                      {group}
+                      {writeOnlyGroup && (
+                        <span className="ml-2 font-medium normal-case tracking-normal opacity-70">
+                          written, never read — these overwrite whatever is in the file
+                        </span>
+                      )}
+                    </h3>
+                    <div className="space-y-2">{groupFields.map(renderField)}</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="shrink-0 border-t border-[var(--border)]">
+              {/* Preview — everything that would actually change, with the
+                  before/after per field, so a 40-item batch isn't run on faith. */}
+              {targets.length > 0 && (
+                <div className="border-b border-[var(--border)]">
+                  <button
+                    onClick={() => setShowPreview(v => !v)}
+                    className="w-full flex items-center gap-1.5 px-5 py-2.5 text-[11px] font-semibold text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    {showPreview ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    Preview {targets.length} change{targets.length === 1 ? '' : 's'}
+                  </button>
+                  {showPreview && (
+                    <div className="max-h-52 overflow-y-auto px-5 pb-3 space-y-2">
+                      {targets.map(t => (
+                        <div key={spec.keyOf(t.item)} className="rounded-lg bg-surface-raised/50 border border-[var(--border)] px-3 py-2">
+                          <p className="text-xs text-text-primary font-medium truncate">{spec.titleOf(t.item)}</p>
+                          <div className="mt-1 space-y-0.5">
+                            {t.changes.map(c => (
+                              <div key={c.label} className="flex items-center gap-1.5 text-[11px] min-w-0">
+                                <span className="text-text-muted opacity-60 shrink-0 w-20 truncate">{c.label}</span>
+                                <span className="text-text-muted opacity-50 truncate max-w-[35%] line-through">{c.from}</span>
+                                <ArrowRight size={9} className="text-text-muted opacity-40 shrink-0" />
+                                <span className="text-accent truncate flex-1">{c.to}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="px-5 py-4 space-y-2.5">
+                {spec.notePlaceholder && (
+                  <input
+                    value={note}
+                    onChange={e => setNote(e.target.value)}
+                    placeholder={spec.notePlaceholder}
+                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-text-primary placeholder:text-text-muted placeholder:opacity-30 focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                )}
+
+                {error && (
+                  <div className="flex items-center gap-2 text-red-400 text-xs">
+                    <AlertCircle size={12} className="shrink-0" />
+                    {failed} failed — {error}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between px-0.5 text-[11px]">
+                  <span className="text-text-muted opacity-65">
+                    {activeFields.length === 0
+                      ? 'No fields set'
+                      : `${activeFields.length} field${activeFields.length === 1 ? '' : 's'} → ${targets.length} ${noun(targets.length)}`}
+                  </span>
+                  {unchanged > 0 && activeFields.length > 0 && (
+                    // Either already carrying the value, or outside the mode's
+                    // reach (a "Fill blanks" that isn't blank, a "Remove" of
+                    // something that was never there).
+                    <span className="text-text-muted opacity-45">{unchanged} unaffected</span>
+                  )}
+                </div>
+
+                <button
+                  onClick={submit}
+                  disabled={batch.length === 0 || status === 'submitting' || status === 'done'}
+                  title={batch.length > 0 && status === 'idle' ? 'Ctrl+Enter' : undefined}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    status === 'done'  ? 'bg-emerald-500/20 text-emerald-400' :
+                    status === 'error' ? 'bg-red-500/20 text-red-400' :
+                    batch.length === 0 ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
+                    'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
+                  }`}
+                >
+                  {status === 'submitting' && <><Loader2 size={12} className="animate-spin" /> Working {progress}/{batch.length}…</>}
+                  {status === 'done' && <><Check size={12} /> {spec.doneLabel(succeeded)}</>}
+                  {status === 'error' && <><AlertCircle size={12} /> Retry {batch.length} failed</>}
+                  {status === 'idle' && (batch.length === 0 ? 'Nothing to change' : spec.actionLabel(batch.length))}
+                </button>
+
+                {(status === 'done' || confirmClose) && (
+                  <button
+                    onClick={onClose}
+                    className={`w-full py-2 text-xs font-semibold transition-colors ${
+                      confirmClose && status !== 'done' ? 'text-red-400 hover:text-red-300' : 'text-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    {confirmClose && status !== 'done' ? 'Discard changes and close?' : 'Close'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  )
+}

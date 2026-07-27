@@ -311,6 +311,15 @@ interface AppState {
   pendingEditProposal: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null
   // Local-file metadata editor — the track being edited on the 'local-editor' view
   pendingLocalEditTrack: LibraryTrack | null
+  // What the bulk editor dialog has open (null = closed) — either a Tracker
+  // multi-selection of API songs (submits edit proposals) or a Library
+  // multi-selection of local files (writes ID3 tags). Holds the full objects
+  // the caller already had rather than ids, so the dialog can show "same
+  // across all"/"mixed" per field without re-fetching. See BulkEditModal.
+  bulkEdit:
+    | { kind: 'api'; songs: JWApiSong[] }
+    | { kind: 'local'; tracks: LibraryTrack[] }
+    | null
 
 
   // Library (Electron only)
@@ -538,6 +547,13 @@ interface AppActions {
   // "Edit metadata" on a local track from anywhere — desktop opens the
   // pop-out local editor window, web navigates to the in-app view.
   openLocalEditor: (track: LibraryTrack) => void
+  // "Edit" on a multi-song selection — opens the bulk editor dialog, which
+  // submits one update proposal per song.
+  openBulkEditor: (songs: JWApiSong[]) => void
+  // "Edit tags" on a multi-file selection in the Library — same dialog, but
+  // writing ID3 tags to each file instead.
+  openBulkTrackEditor: (tracks: LibraryTrack[]) => void
+  closeBulkEditor: () => void
 
 
   setLibraryTracks: (tracks: LibraryTrack[]) => void
@@ -1543,6 +1559,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   pendingEditorSongId: null,
   pendingEditProposal: null,
   pendingLocalEditTrack: null,
+  bulkEdit: null,
+  openBulkEditor: (songs) => set({ bulkEdit: songs.length ? { kind: 'api', songs } : null }),
+  openBulkTrackEditor: (tracks) => set({ bulkEdit: tracks.length ? { kind: 'local', tracks } : null }),
+  closeBulkEditor: () => set({ bulkEdit: null }),
   setPendingEditorSongId: (pendingEditorSongId) => set({ pendingEditorSongId }),
   openSongEditor: (songId) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
