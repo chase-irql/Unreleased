@@ -14,6 +14,7 @@ import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
 import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getToken } from '../lib/userApi'
+import { APP_VERSION } from '../lib/appVersion'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
 } from '../lib/lastfm'
@@ -1722,7 +1723,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
               <div>
                 <h3 className="text-text-primary text-lg font-bold mb-3">About</h3>
                 <p className="text-text-muted text-xs mb-3">
-                  unreleased v{__APP_VERSION__} &mdash; powered by{' '}
+                  unreleased v{APP_VERSION} &mdash; powered by{' '}
                   <a href="https://juicewrldapi.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
                     juicewrldapi.com
                   </a>

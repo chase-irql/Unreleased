@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState, CSSProperties } from 'react'
 import { useStore, useStorePick } from './store/useStore'
 import { useThemeEffects } from './lib/themeEffects'
 import { apiFetch, JWApiSong } from './lib/juicewrldApi'
+import ErrorBoundary from './components/ErrorBoundary'
 
 const Settings = lazy(() => import('./components/Settings'))
 const EditorPage = lazy(() => import('./components/EditorPage'))
@@ -167,20 +168,25 @@ export default function FloatApp({ view }: { view: string }): JSX.Element {
     // highest) so detaching it doesn't visibly change the panel's color.
     <div className={`h-dvh overflow-hidden flex flex-col ${view === 'equalizer' ? 'bg-surface-highest' : 'bg-surface'}`}>
       {(view === 'editor' || view === 'local-editor' || view === 'equalizer') && <FloatTitleBar />}
-      <Suspense fallback={null}>
-        {view === 'settings' ? <Settings floating />
-          : view === 'song-info' ? <FloatSongInfo />
-          : view === 'editor' ? <FloatEditor />
-          : view === 'local-editor' ? <FloatLocalEditor />
-          : view === 'mini-player' ? <MiniPlayer />
-          : view === 'convert' ? <FloatConvert />
-          : view === 'equalizer' ? (
-            <div className="flex-1 min-h-0 overflow-y-auto flex justify-center">
-              <EqualizerPanel floating />
-            </div>
-          )
-          : null}
-      </Suspense>
+      {/* A pop-out's view is the whole window's content, so an uncaught render
+          error left nothing but a blank window with no way back — the boundary
+          keeps the error (and its stack) visible and reloadable in place. */}
+      <ErrorBoundary>
+        <Suspense fallback={null}>
+          {view === 'settings' ? <Settings floating />
+            : view === 'song-info' ? <FloatSongInfo />
+            : view === 'editor' ? <FloatEditor />
+            : view === 'local-editor' ? <FloatLocalEditor />
+            : view === 'mini-player' ? <MiniPlayer />
+            : view === 'convert' ? <FloatConvert />
+            : view === 'equalizer' ? (
+              <div className="flex-1 min-h-0 overflow-y-auto flex justify-center">
+                <EqualizerPanel floating />
+              </div>
+            )
+            : null}
+        </Suspense>
+      </ErrorBoundary>
       {/* Report dialog opened from a pop-out (Settings feedback, or a song
           info report) — reportModal is per-window state, so the pop-out mounts
           its own instance rather than routing to the main window. */}

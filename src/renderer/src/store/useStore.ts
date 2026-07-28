@@ -1,6 +1,7 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
+import { APP_VERSION } from '../lib/appVersion'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
@@ -35,10 +36,6 @@ import { getLastfmSession } from '../lib/lastfm'
 // downloaded track would look "unreferenced" the next time any playlist
 // resyncs and get deleted out from under the user.
 const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
-
-// Build-time app version (vite `define`), captured as report context. Guarded
-// so the store still loads in any context where the define isn't injected.
-const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
 
 // True when this renderer is a pop-out window (FloatApp, ?float=<view>).
 // Pop-outs share localStorage with the main window, so only the main window

@@ -92,8 +92,8 @@ function WindowControls(): JSX.Element {
 }
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, showDiagnostics, activeView, sidebarPosition, appMenuPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'showDiagnostics', 'activeView', 'sidebarPosition', 'appMenuPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
+  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, appMenuPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'appMenuPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
   useThemeEffects()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
@@ -255,24 +255,44 @@ export default function App(): JSX.Element {
           </div>
         </main>
       </div>
-      <Player />
-      <RadioFmPlayer />
-      <RadioVotePopup />
-      <DiscordRpcSync />
-      <LastfmScrobbler />
-      <NewsNotifier />
-      <BottomNav />
-      {showSettings && <Suspense fallback={null}><Settings /></Suspense>}
-      {showDiagnostics && <Suspense fallback={null}><DiagnosticsModal /></Suspense>}
-      {showUserAuth && <UserAuthModal onClose={() => setShowUserAuth(false)} />}
-      <ReportModal />
-      <ConvertFormatModal />
-      <BulkEditModal />
-      <UrlImportModal />
-      <InstallPrompt />
-      <CookieNotice />
-      <GlobalSongInfoHost />
-      <DownloadManager />
+      {/* Everything below is a loose sibling of the main content rather than a
+          child of the pane boundary above, so an uncaught render error here
+          used to unmount the entire app (a blank window). Each gets its own
+          boundary: the chrome keeps a compact inline notice, the invisible
+          background workers fail silently, and the modals/overlays show a
+          centered, dismissible card. */}
+      <ErrorBoundary fallback={<div className="h-20 shrink-0 border-t border-[var(--border)] flex items-center justify-center text-text-muted text-xs">Player crashed — reload the app to restore playback controls.</div>}>
+        <Player />
+      </ErrorBoundary>
+      <ErrorBoundary fallback={null}><RadioFmPlayer /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><RadioVotePopup /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><DiscordRpcSync /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><LastfmScrobbler /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><NewsNotifier /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><BottomNav /></ErrorBoundary>
+      {showSettings && (
+        <ErrorBoundary variant="overlay" onDismiss={() => setShowSettings(false)}>
+          <Suspense fallback={null}><Settings /></Suspense>
+        </ErrorBoundary>
+      )}
+      {showDiagnostics && (
+        <ErrorBoundary variant="overlay" onDismiss={() => setShowDiagnostics(false)}>
+          <Suspense fallback={null}><DiagnosticsModal /></Suspense>
+        </ErrorBoundary>
+      )}
+      {showUserAuth && (
+        <ErrorBoundary variant="overlay" onDismiss={() => setShowUserAuth(false)}>
+          <UserAuthModal onClose={() => setShowUserAuth(false)} />
+        </ErrorBoundary>
+      )}
+      <ErrorBoundary variant="overlay"><ReportModal /></ErrorBoundary>
+      <ErrorBoundary variant="overlay"><ConvertFormatModal /></ErrorBoundary>
+      <ErrorBoundary variant="overlay"><BulkEditModal /></ErrorBoundary>
+      <ErrorBoundary variant="overlay"><UrlImportModal /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><InstallPrompt /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><CookieNotice /></ErrorBoundary>
+      <ErrorBoundary variant="overlay"><GlobalSongInfoHost /></ErrorBoundary>
+      <ErrorBoundary fallback={null}><DownloadManager /></ErrorBoundary>
       {/* Rendered last on purpose: Chromium builds the frameless window's
           draggable region in DOM order (drag rects unite, no-drag rects
           subtract, later entries win). The buttons' no-drag carve-out must
