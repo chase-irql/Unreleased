@@ -396,6 +396,18 @@ class ReleaseWorker(QThread):
             self.log.emit(f"To undo manually: git reset --hard {state.get('pre_commit_sha')} && "
                            f"git push --force origin {r.APP_BRANCH}", "dim")
         elif state.get("committed") and state.get("pre_commit_sha"):
+            # `reset --hard` throws away the commit we just made *and* anything
+            # uncommitted alongside it. Park a branch on it first so recovering
+            # is `git cherry-pick <branch>` rather than a reflog dig -- this
+            # rollback has eaten real work more than once.
+            doomed = r.capture("git rev-parse --short HEAD")
+            backup = (f"backup/{state.get('tag') or 'release'}"
+                      f"-{time.strftime('%Y%m%d-%H%M%S')}")
+            if r.capture(f"git branch {backup} 2>&1") == "":
+                self.log.emit(f"Saved the discarded commit ({doomed}) on branch {backup}", "ok")
+                self.log.emit(f"Recover with: git cherry-pick {backup}", "dim")
+            else:
+                self.log.emit(f"Could not create backup branch -- recover {doomed} via `git reflog`", "warn")
             self.cmd(f"git reset --hard {state['pre_commit_sha']}")
             self.log.emit(f"Reverted local commit (and version bump) on {r.APP_BRANCH}", "ok")
         elif state.get("version_changed") and state.get("original_version"):

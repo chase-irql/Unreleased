@@ -787,6 +787,17 @@ def rollback(state):
         detail(f"To undo manually: git reset --hard {state.get('pre_commit_sha')} && "
                f"git push --force origin {APP_BRANCH}")
     elif state.get("committed") and state.get("pre_commit_sha"):
+        # `reset --hard` throws away the commit we just made *and* anything
+        # uncommitted alongside it. Park a branch on it first so recovering is
+        # `git cherry-pick <branch>` rather than digging through the reflog —
+        # this rollback has eaten real work more than once.
+        doomed = capture("git rev-parse --short HEAD")
+        backup = f"backup/{state.get('tag') or 'release'}-{time.strftime('%Y%m%d-%H%M%S')}"
+        if capture(f"git branch {backup} 2>&1") == "":
+            ok(f"Saved the discarded commit ({doomed}) on branch {_c(backup, WHT, BOLD)}")
+            detail(f"Recover with: git cherry-pick {backup}")
+        else:
+            warn(f"Could not create backup branch — recover {doomed} via `git reflog`")
         run(f"git reset --hard {state['pre_commit_sha']}", check=False)
         ok(f"Reverted local commit (and version bump) on {APP_BRANCH}")
     elif state.get("version_changed") and state.get("original_version"):
