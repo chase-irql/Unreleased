@@ -118,6 +118,9 @@ export default function WrldView(): JSX.Element {
   const [fullscreen, setFullscreen] = useState(false)
   const fullscreenRef = useRef(false)
   fullscreenRef.current = fullscreen
+  // The portal root, so the Escape handler below can tell "the fullscreen view
+  // is the top layer" from "a modal/popover is stacked on top of it".
+  const fsOverlayRef = useRef<HTMLDivElement>(null)
   const isElectronApp = navigator.userAgent.includes('Electron')
   const elFullscreen = (window as any).electron
 
@@ -150,7 +153,16 @@ export default function WrldView(): JSX.Element {
   // so handle it ourselves there.
   useEffect(() => {
     if (!fullscreen || !isElectronApp) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') exitFullscreen() }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      // Don't yank the whole view out from under an overlay that's stacked on
+      // top of it — Escape belongs to whatever is frontmost. Every overlay in
+      // the app lays down a full-screen backdrop, so "is something else on
+      // top" is just "what's painted at the centre of the screen".
+      const top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+      if (top && fsOverlayRef.current && !fsOverlayRef.current.contains(top)) return
+      exitFullscreen()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [fullscreen, isElectronApp])
@@ -1345,11 +1357,16 @@ export default function WrldView(): JSX.Element {
   )
 
   if (fullscreen) {
-    // Portaled above everything except the OS window-control buttons
-    // (z-[10000]), so it covers the sidebar/nav instead of being squeezed
-    // into the normal content column.
+    // Portaled to <body> so it covers the sidebar/nav instead of being
+    // squeezed into the normal content column. z-30 is deliberately LOW: the
+    // portal only has to out-stack the app chrome (nothing there goes above
+    // z-20), and every overlay in the app — the EQ popover, Settings,
+    // pickers, context menus, modals — sits at z-40 or higher. Parking this
+    // at z-[150] like it used to meant all of those opened *behind* the
+    // fullscreen view and looked broken. The view's own internal z-indexes
+    // are unaffected: the positioned portal root is their stacking context.
     return createPortal(
-      <div className="fixed inset-0 z-[150] bg-black">{inner}</div>,
+      <div ref={fsOverlayRef} className="fixed inset-0 z-30 bg-black">{inner}</div>,
       document.body,
     )
   }
