@@ -4,6 +4,7 @@ import { useStore, useStorePick } from '../store/useStore'
 import { cacheStats } from '../lib/apiCache'
 import type { Track } from '../types'
 import { formatBytes } from '../lib/format'
+import { APP_VERSION } from '../lib/appVersion'
 
 function localStorageBytes(): number {
   let bytes = 0
@@ -126,7 +127,7 @@ export default function DiagnosticsModal(): JSX.Element {
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <Section title="App">
-            <R label="Version" value={`v${__APP_VERSION__}`} />
+            <R label="Version" value={`v${APP_VERSION}`} />
             <R label="Runtime" value={isElectron ? 'Electron' : 'Web'} />
             <R label="Platform" value={el?.platform || navigator.platform || 'unknown'} />
             <R label="Theme" value={`${theme} · ${accentColor}`} />

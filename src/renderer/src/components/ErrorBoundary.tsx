@@ -1,7 +1,20 @@
 import { Component, ReactNode } from 'react'
 import { AlertTriangle, Copy, Check } from 'lucide-react'
 
-interface Props { children: ReactNode; fallback?: ReactNode }
+interface Props {
+  children: ReactNode
+  fallback?: ReactNode
+  // 'inline' (default) — the error card fills its slot in the layout, for
+  // boundaries around a content pane.
+  // 'overlay' — for boundaries around modals and pop-out panels, which render
+  // as loose siblings at the root rather than inside a sized container. The
+  // card is centered over a backdrop instead of stretching the root flex
+  // column, and gets a Close button so a crashed modal can still be dismissed
+  // (`onDismiss` should flip whatever store flag mounts it — without that the
+  // card would sit over the app with no way out).
+  variant?: 'inline' | 'overlay'
+  onDismiss?: () => void
+}
 interface State { error: Error | null; copied: boolean }
 
 export default class ErrorBoundary extends Component<Props, State> {
@@ -25,11 +38,17 @@ export default class ErrorBoundary extends Component<Props, State> {
     }).catch(() => {/* ignore */})
   }
 
+  private dismiss = (): void => {
+    this.setState({ error: null })
+    this.props.onDismiss?.()
+  }
+
   render(): ReactNode {
     if (this.state.error) {
-      return (
-        this.props.fallback ?? (
-          <div className="flex flex-col items-center justify-center gap-3 p-8 text-center h-full flex-1">
+      if (this.props.fallback !== undefined) return this.props.fallback
+      const overlay = this.props.variant === 'overlay'
+      const card = (
+          <div className={`flex flex-col items-center justify-center gap-3 p-8 text-center ${overlay ? 'w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl' : 'h-full flex-1'}`}>
             <AlertTriangle className="text-text-muted w-8 h-8" />
             <p className="text-text-primary text-sm font-semibold">Something went wrong</p>
             <p className="text-red-400 text-xs font-mono max-w-md break-all">
@@ -47,14 +66,26 @@ export default class ErrorBoundary extends Component<Props, State> {
                 {this.state.copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
               </button>
             </div>
-            <button
-              className="text-xs text-accent hover:text-accent-hover underline mt-1"
-              onClick={() => this.setState({ error: null })}
-            >
-              Try again
-            </button>
+            <div className="flex items-center gap-4 mt-1">
+              <button
+                className="text-xs text-accent hover:text-accent-hover underline"
+                onClick={() => this.setState({ error: null })}
+              >
+                Try again
+              </button>
+              {overlay && this.props.onDismiss && (
+                <button className="text-xs text-text-muted hover:text-text-primary underline" onClick={this.dismiss}>
+                  Close
+                </button>
+              )}
+            </div>
           </div>
-        )
+      )
+      if (!overlay) return card
+      return (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
+          {card}
+        </div>
       )
     }
     return this.props.children

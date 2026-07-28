@@ -4,6 +4,7 @@ import { useStorePick } from '../store/useStore'
 import { effectiveBinding, comboTokens, runHotkeyAction } from '../lib/hotkeys'
 import { trackIdToSongId } from '../lib/userApi'
 import { placeFlyout } from '../lib/menuFlyout'
+import { APP_VERSION } from '../lib/appVersion'
 
 // MusicBee-style application menu: a button that drops down the top-level menus
 // (File, Edit, View…), each opening its own submenu flyout. Desktop only — the
@@ -410,7 +411,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
         { kind: 'item', label: 'Discord', onClick: run(() => openExternal('https://discord.gg/jwa')) },
         { kind: 'item', label: 'Juice WRLD API', onClick: run(() => openExternal('https://juicewrldapi.com')) },
         { kind: 'sep' },
-        { kind: 'item', label: `Version ${__APP_VERSION__}`, onClick: run(() => openSettings('about')) },
+        { kind: 'item', label: `Version ${APP_VERSION}`, onClick: run(() => openSettings('about')) },
       ],
     },
   ]

@@ -4,7 +4,7 @@ import {
   LayoutList, Rows3, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
   CheckSquare2, Square, Link2, Layers, LayoutGrid, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
-  AlertTriangle, Pencil, Clock, Timer, User, MapPin, Folder, SlidersHorizontal, Download,
+  AlertTriangle, Pencil, Clock, Timer, User, MapPin, Folder, SlidersHorizontal, Download, Type,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -283,7 +283,7 @@ function SidebarCheckRow({ label, count, checked, onClick }: {
         : <Square size={13} className="text-text-muted opacity-50 shrink-0" />}
       <span className="flex-1 truncate">{label}</span>
       {count !== undefined && (
-        <span className="text-text-muted text-[10px] tabular-nums ml-1">{count.toLocaleString()}</span>
+        <span className="text-text-muted text-[0.625rem] tabular-nums ml-1">{count.toLocaleString()}</span>
       )}
     </button>
   )
@@ -310,7 +310,7 @@ function CategorySidebar({
 
   return (
     <div className="w-44 shrink-0 border-r border-[var(--border)] overflow-y-auto flex flex-col py-2">
-      <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted px-3 pt-1 pb-2">Category</p>
+      <p className="text-[0.5625rem] font-bold uppercase tracking-widest text-text-muted px-3 pt-1 pb-2">Category</p>
       <SidebarCheckRow
         label="All"
         count={stats?.total_songs}
@@ -329,7 +329,7 @@ function CategorySidebar({
 
       {eras.length > 0 && (
         <>
-          <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted px-3 pt-4 pb-2">Era</p>
+          <p className="text-[0.5625rem] font-bold uppercase tracking-widest text-text-muted px-3 pt-4 pb-2">Era</p>
           <SidebarCheckRow label="All eras" checked={selectedEras.size === 0} onClick={onClearEras} />
           {eras.map((era) => (
             <SidebarCheckRow
@@ -709,7 +709,9 @@ function DetailField({ label, value, className }: {
   const v = value?.trim() || ''
   return (
     <div className={`min-w-0 ${className ?? ''}`}>
-      <p className="text-[9px] uppercase tracking-wider text-text-muted/70 leading-tight truncate">{label}</p>
+      {/* rem-valued rather than `text-[9px]` so the label tracks app text size
+          like the value below it does — see useScaledRowH. */}
+      <p className="text-[0.5625rem] uppercase tracking-wider text-text-muted/70 leading-tight truncate">{label}</p>
       <p className={`text-xs truncate ${v ? 'text-text-secondary' : 'text-text-muted/50'}`} title={v || undefined}>
         {v || '—'}
       </p>
@@ -783,7 +785,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
           {song.era?.name && (
             <button
               onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
-              className="hidden md:block text-text-muted text-[9px] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate max-w-[140px] shrink-0 hover:text-accent hover:border-accent/40 transition-colors"
+              className="hidden md:block text-text-muted text-[0.5625rem] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate max-w-[140px] shrink-0 hover:text-accent hover:border-accent/40 transition-colors"
               title={`Filter by era: ${song.era.name}`}
             >
               {song.era.name}
@@ -791,7 +793,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
           )}
           <button
             onClick={(e) => { e.stopPropagation(); if (!selectMode) onCategoryClick(song.category as Category) }}
-            className={`hidden md:block text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+            className={`hidden md:block text-[0.5625rem] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
             title="Filter by category"
           >
             {CATEGORY_LABELS[song.category] ?? song.category}
@@ -841,9 +843,11 @@ const DetailedSongRow = memo(function DetailedSongRow({
           <DetailField label="Leak Type" value={song.leak_type} />
           <DetailField label="Date Leaked" value={song.date_leaked} className="hidden md:block" />
           <DetailField label="Bitrate" value={song.bitrate} />
-          <DetailField label="Original Key" value={song.original_key} />
           <DetailField label="Release Date" value={song.release_date} className="hidden md:block" />
           <DetailField label="File Names" value={song.file_names} className="hidden md:block" />
+          {/* Title fields grouped together — `original_key` is the source-JSON
+              key (a name), not a musical key. */}
+          <DetailField label="Original Name" value={song.original_key} />
           <DetailField label="Session Titles" value={song.session_titles} className="hidden md:block" />
           <DetailField label="Alt Titles" value={altTitles.join(' · ')} className="hidden md:block" />
         </div>
@@ -865,6 +869,19 @@ function useIsDesktop(): boolean {
     return () => mq.removeEventListener('change', onChange)
   }, [])
   return isDesktop
+}
+
+// Rows are absolutely positioned at a fixed pixel stride so the virtual window
+// can place them without measuring the DOM — but their contents are rem-sized,
+// so Settings → App text size grows the text inside a box that would otherwise
+// stay put. The row clips its overflow and the page scroller only knows about
+// the (unchanged) total height, so the spilled text isn't merely ugly, it's
+// unreachable. Scaling the stride by the same factor keeps the box and its
+// contents in step.
+function useScaledRowH(desktopH: number, mobileH: number): number {
+  const isDesktop = useIsDesktop()
+  const appTextScale = useStore((s) => s.appTextScale)
+  return Math.round((isDesktop ? desktopH : mobileH) * appTextScale)
 }
 
 // ─── Compact-view group list (virtualized) ────────────────────────────────────
@@ -903,8 +920,7 @@ function CompactGroupList({
   // Row stride mirrors CompactGroupRow/SongRow's natural height plus the 2px
   // gap the old space-y-0.5 flow layout provided — absolutely positioned rows
   // have to encode that spacing themselves.
-  const isDesktop = useIsDesktop()
-  const rowH = isDesktop ? 52 : 60
+  const rowH = useScaledRowH(52, 60)
   const stride = rowH + 2
 
   const rows = useMemo(() => {
@@ -997,8 +1013,7 @@ function VirtualSongList({
   selectMode, selected, onToggleSelect,
 }: VirtualSongsProps): JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
-  const isDesktop = useIsDesktop()
-  const rowH = isDesktop ? 52 : 60
+  const rowH = useScaledRowH(52, 60)
   const stride = rowH + 2 // + the old space-y-0.5 gap
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, songs.length, stride)
   return (
@@ -1035,8 +1050,7 @@ function VirtualSongDetailList({
   selectMode, selected, onToggleSelect,
 }: VirtualSongsProps): JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
-  const isDesktop = useIsDesktop()
-  const rowH = isDesktop ? DETAIL_ROW_H_DESKTOP : DETAIL_ROW_H_MOBILE
+  const rowH = useScaledRowH(DETAIL_ROW_H_DESKTOP, DETAIL_ROW_H_MOBILE)
   const stride = rowH + DETAIL_ROW_GAP
   const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, songs.length, stride)
   return (
@@ -1091,8 +1105,20 @@ const CARD_SECTIONS: CardSection[] = [
     fields: (s) => [
       ['Locations', s.recording_locations],
       ['Record Dates', s.record_dates],
-      ['Original Key', s.original_key],
       ['Bitrate', s.bitrate],
+    ],
+  },
+  // `original_key` is the song's key in the API's source JSON (the docs call it
+  // "Original JSON Key"), not a musical key — findSessionZips searches on it as
+  // a stand-in for the name. It reads as a title, so it belongs with the other
+  // title fields rather than next to Bitrate under Recording Details, where the
+  // label invited exactly the wrong reading.
+  {
+    key: 'titles', label: 'Titles', icon: <Type size={13} />,
+    fields: (s) => [
+      ['Original Name', s.original_key],
+      ['Session Titles', s.session_titles],
+      ['Alt Titles', (s.track_titles ?? []).join(' · ')],
     ],
   },
   {
@@ -1111,8 +1137,6 @@ const CARD_SECTIONS: CardSection[] = [
     fields: (s) => [
       ['Additional Information', s.additional_information],
       ['Notes', s.notes],
-      ['Session Titles', s.session_titles],
-      ['Alt Titles', (s.track_titles ?? []).join(' · ')],
     ],
   },
   {
@@ -1126,10 +1150,10 @@ const CARD_SECTIONS: CardSection[] = [
   },
 ]
 
-// One primary metadata line (icon + text), fixed height.
-function CardMetaLine({ icon, children }: { icon: JSX.Element; children: React.ReactNode }): JSX.Element {
+// One primary metadata line (icon + text), fixed height (scaled by app text size).
+function CardMetaLine({ icon, height, children }: { icon: JSX.Element; height: number; children: React.ReactNode }): JSX.Element {
   return (
-    <div className="flex items-center gap-2 text-text-secondary text-[11px]" style={{ height: GRID_META_ROW_H }}>
+    <div className="flex items-center gap-2 text-text-secondary text-[0.6875rem]" style={{ height }}>
       <span className="shrink-0 text-text-muted">{icon}</span>
       <span className="truncate min-w-0">{children}</span>
     </div>
@@ -1137,12 +1161,14 @@ function CardMetaLine({ icon, children }: { icon: JSX.Element; children: React.R
 }
 
 const SongCard = memo(function SongCard({
-  song, coverH, onPlay, onQueue, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  song, coverH, m, onPlay, onQueue, onCategoryClick, onEraClick, onInfo, onContextMenu,
   selectMode, selected, onToggleSelect, expandedSections, onToggleSection,
 }: {
   song: JWApiSong
   /** Cover height in px (3:2 of the card width). */
   coverH: number
+  /** Box heights for the card's fixed sections, scaled by app text size. */
+  m: GridMetrics
   onPlay: (song: JWApiSong) => void
   onQueue: (track: Track) => void
   onCategoryClick: (cat: Category) => void
@@ -1205,13 +1231,13 @@ const SongCard = memo(function SongCard({
 
         {/* Category badge — the site pins it to the cover's top-right corner */}
         {selectMode ? (
-          <span className={`absolute top-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
+          <span className={`absolute top-2 right-2 text-[0.625rem] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
             {CATEGORY_LABELS[song.category] ?? song.category}
           </span>
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onCategoryClick(song.category as Category) }}
-            className={`absolute top-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm transition-opacity hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+            className={`absolute top-2 right-2 text-[0.625rem] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm transition-opacity hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
             title="Filter by category"
           >
             {CATEGORY_LABELS[song.category] ?? song.category}
@@ -1220,17 +1246,17 @@ const SongCard = memo(function SongCard({
       </div>
 
       {/* Body */}
-      <div className="flex flex-col px-3 py-3 min-w-0" style={{ height: GRID_BODY_H }}>
+      <div className="flex flex-col px-3 py-3 min-w-0" style={{ height: m.bodyH }}>
         <p
           className="text-text-primary text-sm font-semibold leading-tight overflow-hidden shrink-0"
-          style={{ height: GRID_TITLE_H, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}
+          style={{ height: m.titleH, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}
           title={title}
         >
           {title}
         </p>
 
         <div className="mt-1.5 shrink-0">
-          <CardMetaLine icon={<Clock size={13} />}>
+          <CardMetaLine icon={<Clock size={m.iconSize} />} height={m.metaRowH}>
             {song.era?.name ? (
               <button
                 onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
@@ -1241,14 +1267,14 @@ const SongCard = memo(function SongCard({
               </button>
             ) : <span className="text-text-muted">Era: —</span>}
           </CardMetaLine>
-          <CardMetaLine icon={<User size={13} />}>{song.credited_artists || 'Juice WRLD'}</CardMetaLine>
-          <CardMetaLine icon={<Music2 size={13} />}>
+          <CardMetaLine icon={<User size={m.iconSize} />} height={m.metaRowH}>{song.credited_artists || 'Juice WRLD'}</CardMetaLine>
+          <CardMetaLine icon={<Music2 size={m.iconSize} />} height={m.metaRowH}>
             {song.producers ? `Produced by: ${song.producers}` : <span className="text-text-muted">Produced by: —</span>}
           </CardMetaLine>
-          <CardMetaLine icon={<Timer size={13} />}>
+          <CardMetaLine icon={<Timer size={m.iconSize} />} height={m.metaRowH}>
             <span className="tabular-nums">{formatDuration(parseDuration(song.length), '--:--')}</span>
           </CardMetaLine>
-          <CardMetaLine icon={<Info size={13} />}>
+          <CardMetaLine icon={<Info size={m.iconSize} />} height={m.metaRowH}>
             {song.leak_type || <span className="text-text-muted">—</span>}
             {statusDate && <span className="text-accent"> ({statusDate})</span>}
           </CardMetaLine>
@@ -1262,16 +1288,16 @@ const SongCard = memo(function SongCard({
               <div key={section.key}>
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleSection(song.id, section.key) }}
-                  className={`w-full flex items-center gap-2 px-2 rounded-md border text-text-secondary text-[11px] transition-colors outline-none focus-visible:border-accent ${
+                  className={`w-full flex items-center gap-2 px-2 rounded-md border text-text-secondary text-[0.6875rem] transition-colors outline-none focus-visible:border-accent ${
                     open
                       ? 'bg-surface-raised border-accent/40 text-text-primary'
                       : 'bg-surface-overlay border-[var(--border)] hover:bg-surface-raised'
                   }`}
-                  style={{ height: GRID_SECTION_H }}
+                  style={{ height: m.sectionH }}
                 >
                   <span className="shrink-0 text-text-muted">{section.icon}</span>
                   <span className="truncate min-w-0 text-left flex-1">{section.label}</span>
-                  <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+                  <ChevronDown size={m.iconSize} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
                 </button>
                 {open && (
                   // Fixed-height scroller: keeps the card's height a pure
@@ -1279,13 +1305,13 @@ const SongCard = memo(function SongCard({
                   // the grid position rows without measuring.
                   <div
                     className="mt-1 px-2 py-1.5 rounded-md bg-surface-overlay border border-[var(--border)] overflow-y-auto"
-                    style={{ height: GRID_SECTION_BODY_H }}
+                    style={{ height: m.sectionBodyH }}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {section.fields(song).map(([label, value]) => (
                       <div key={label} className="mb-1 last:mb-0">
-                        <p className="text-[9px] uppercase tracking-wider text-text-muted/70 leading-tight">{label}</p>
-                        <p className={`text-[11px] break-words ${value?.trim() ? 'text-text-secondary' : 'text-text-muted/50'}`}>
+                        <p className="text-[0.5625rem] uppercase tracking-wider text-text-muted/70 leading-tight">{label}</p>
+                        <p className={`text-[0.6875rem] break-words ${value?.trim() ? 'text-text-secondary' : 'text-text-muted/50'}`}>
                           {value?.trim() || '—'}
                         </p>
                       </div>
@@ -1298,7 +1324,7 @@ const SongCard = memo(function SongCard({
         </div>
 
         {/* Footer: add to queue · play · download */}
-        <div className="mt-auto pt-2 flex items-center gap-1.5 shrink-0" style={{ height: GRID_FOOTER_H + 8 }}>
+        <div className="mt-auto pt-2 flex items-center gap-1.5 shrink-0" style={{ height: m.footerBoxH }}>
           <button
             onClick={(e) => { e.stopPropagation(); onQueue(track) }}
             disabled={!canPlay}
@@ -1351,20 +1377,53 @@ const SongCard = memo(function SongCard({
 const GRID_MIN_CARD_W = 260
 const GRID_GAP = 12
 const GRID_COVER_RATIO = 1.5      // cover is 3:2 of the card width
-const GRID_TITLE_H = 38           // two lines at leading-tight
-const GRID_META_ROW_H = 20
-const GRID_SECTION_H = 28
-const GRID_SECTION_BODY_H = 88    // fixed-height scroller per expanded section
-const GRID_SECTION_GAP = 4
-const GRID_FOOTER_H = 34
-// px-3 py-3 body + title + (mt-1.5 + 5 meta lines) + (mt-2 + 6 headers + gaps) + footer
-const GRID_BODY_H =
-  24 + GRID_TITLE_H
-  + 6 + GRID_META_ROW_H * 5
-  + 8 + GRID_SECTION_H * CARD_SECTIONS.length + GRID_SECTION_GAP * (CARD_SECTIONS.length - 1)
-  + 8 + GRID_FOOTER_H
-// An expanded section adds its scroller plus the mt-1 above it.
-const GRID_SECTION_OPEN_H = GRID_SECTION_BODY_H + 4
+
+// Every box on a card is an explicit pixel height (see above), which is what
+// makes row offsets computable — but it also means the card can't respond to
+// Settings → App text size on its own. That setting scales the root font-size,
+// so rem-based type grows while these constants don't, and the taller text just
+// gets clipped by a box that stayed the same size. So the metrics are derived
+// from the scale instead of being fixed: the card's own padding/gaps are rem
+// (Tailwind spacing) and already scale, and multiplying the heights through
+// keeps them in step. Card text uses rem-valued arbitrary sizes for the same
+// reason — `text-[11px]` would ignore the setting entirely.
+interface GridMetrics {
+  titleH: number
+  metaRowH: number
+  sectionH: number
+  sectionBodyH: number
+  sectionGap: number
+  footerH: number
+  /** Footer row including its pt-2, which is what the card actually reserves. */
+  footerBoxH: number
+  bodyH: number
+  sectionOpenH: number
+  /** Icon px size for the glyphs sitting inline with card text. */
+  iconSize: number
+}
+
+function gridMetrics(scale: number): GridMetrics {
+  const px = (base: number): number => Math.round(base * scale)
+  const titleH = px(38)             // two lines at leading-tight
+  const metaRowH = px(20)
+  const sectionH = px(28)
+  const sectionBodyH = px(88)       // fixed-height scroller per expanded section
+  const sectionGap = px(4)
+  const footerH = px(34)
+  return {
+    titleH, metaRowH, sectionH, sectionBodyH, sectionGap, footerH,
+    footerBoxH: footerH + px(8),
+    // px-3 py-3 body + title + (mt-1.5 + 5 meta lines) + (mt-2 + headers + gaps) + footer
+    bodyH:
+      px(24) + titleH
+      + px(6) + metaRowH * 5
+      + px(8) + sectionH * CARD_SECTIONS.length + sectionGap * (CARD_SECTIONS.length - 1)
+      + px(8) + footerH,
+    // An expanded section adds its scroller plus the mt-1 above it.
+    sectionOpenH: sectionBodyH + px(4),
+    iconSize: px(13),
+  }
+}
 
 function useElementWidth(ref: React.RefObject<HTMLElement>): number {
   const [width, setWidth] = useState(0)
@@ -1387,10 +1446,15 @@ function VirtualSongGrid({
   const contentRef = useRef<HTMLDivElement>(null)
   const width = useElementWidth(contentRef)
 
+  // Card box heights follow Settings → App text size (see gridMetrics). Memoized
+  // so the SongCard memo isn't defeated by a fresh object every render.
+  const appTextScale = useStore((s) => s.appTextScale)
+  const m = useMemo(() => gridMetrics(appTextScale), [appTextScale])
+
   const cols = Math.max(1, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_W + GRID_GAP)))
   const cellW = width > 0 ? Math.floor((width - GRID_GAP * (cols - 1)) / cols) : 0
   const coverH = Math.round(cellW / GRID_COVER_RATIO)
-  const baseCardH = coverH + GRID_BODY_H
+  const baseCardH = coverH + m.bodyH
   const rowCount = Math.ceil(songs.length / cols)
 
   // songId → open section keys. Held here (not in the card) because the card
@@ -1422,11 +1486,11 @@ function VirtualSongGrid({
           if (n > extra) extra = n
         }
       }
-      y += baseCardH + extra * GRID_SECTION_OPEN_H + GRID_GAP
+      y += baseCardH + extra * m.sectionOpenH + GRID_GAP
     }
     out[rowCount] = y
     return { offsets: out, totalHeight: Math.max(0, y - GRID_GAP) }
-  }, [rowCount, cols, songs, openSections, baseCardH])
+  }, [rowCount, cols, songs, openSections, baseCardH, m])
 
   // Windowing against the shared scroller. Uniform-stride binary search isn't
   // needed — offsets is already materialized, so the visible range is a scan
@@ -1468,12 +1532,13 @@ function VirtualSongGrid({
                 top: offsets[r],
                 left: c * (cellW + GRID_GAP),
                 width: cellW,
-                height: baseCardH + (open?.size ?? 0) * GRID_SECTION_OPEN_H,
+                height: baseCardH + (open?.size ?? 0) * m.sectionOpenH,
               }}
             >
               <SongCard
                 song={song}
                 coverH={coverH}
+                m={m}
                 onPlay={onPlay}
                 onQueue={onQueue}
                 onCategoryClick={onCategoryClick}
@@ -1556,7 +1621,7 @@ const LyricResultRow = memo(function LyricResultRow({
           {song.era?.name && (
             <button
               onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
-              className="text-text-muted text-[9px] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate hover:text-accent hover:border-accent/40 transition-colors"
+              className="text-text-muted text-[0.5625rem] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate hover:text-accent hover:border-accent/40 transition-colors"
               title={`Filter by era: ${song.era.name}`}
             >
               {song.era.name}
@@ -1564,7 +1629,7 @@ const LyricResultRow = memo(function LyricResultRow({
           )}
           <button
             onClick={(e) => { e.stopPropagation(); if (!selectMode) onCategoryClick(song.category as Category) }}
-            className={`text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+            className={`text-[0.5625rem] uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 transition-colors hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
           >
             {CATEGORY_LABELS[song.category] ?? song.category}
           </button>
@@ -2538,7 +2603,7 @@ export default function ApiTrackerView(): JSX.Element {
         <div className="flex items-center gap-0.5 mb-2.5 w-fit bg-surface-overlay rounded-md p-0.5">
           <button
             onClick={() => setTrackerTab('songs')}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[0.6875rem] font-medium transition-colors ${
               trackerTab === 'songs'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-muted hover:text-text-secondary'
@@ -2548,7 +2613,7 @@ export default function ApiTrackerView(): JSX.Element {
           </button>
           <button
             onClick={() => setTrackerTab('lyrics')}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[0.6875rem] font-medium transition-colors ${
               trackerTab === 'lyrics'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-muted hover:text-text-secondary'
@@ -2558,7 +2623,7 @@ export default function ApiTrackerView(): JSX.Element {
           </button>
           <button
             onClick={() => setTrackerTab('calendar')}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[0.6875rem] font-medium transition-colors ${
               trackerTab === 'calendar'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-muted hover:text-text-secondary'
@@ -2568,7 +2633,7 @@ export default function ApiTrackerView(): JSX.Element {
           </button>
           <button
             onClick={() => setTrackerTab('producers')}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[0.6875rem] font-medium transition-colors ${
               trackerTab === 'producers'
                 ? 'bg-surface-raised text-text-primary'
                 : 'text-text-muted hover:text-text-secondary'
@@ -2804,7 +2869,7 @@ export default function ApiTrackerView(): JSX.Element {
 
                 <div className="grid grid-cols-7 gap-1 mb-1">
                   {WEEKDAY_LABELS.map((label) => (
-                    <div key={label} className="text-center text-text-muted text-[10px] font-medium uppercase tracking-wide py-1">
+                    <div key={label} className="text-center text-text-muted text-[0.625rem] font-medium uppercase tracking-wide py-1">
                       {label}
                     </div>
                   ))}
@@ -2840,7 +2905,7 @@ export default function ApiTrackerView(): JSX.Element {
                           >
                             <span className="text-xs leading-none">{date.getDate()}</span>
                             {daySongs && (
-                              <span className={`text-[9px] leading-none tabular-nums ${isSelected ? 'text-white/80' : 'opacity-70'}`}>
+                              <span className={`text-[0.5625rem] leading-none tabular-nums ${isSelected ? 'text-white/80' : 'opacity-70'}`}>
                                 {daySongs.length}
                               </span>
                             )}
@@ -2863,7 +2928,7 @@ export default function ApiTrackerView(): JSX.Element {
                     {eras.map((era) => (
                       <div key={era.id} className="flex items-center gap-1">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${(eraColorMap.get(era.name) ?? DEFAULT_ERA_COLOR).dot}`} />
-                        <span className="text-text-muted text-[10px] truncate">{era.name}</span>
+                        <span className="text-text-muted text-[0.625rem] truncate">{era.name}</span>
                       </div>
                     ))}
                   </div>
@@ -2871,7 +2936,7 @@ export default function ApiTrackerView(): JSX.Element {
 
                 {calendarByStudio.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-[var(--border)]">
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Studios</p>
+                    <p className="text-[0.5625rem] font-bold uppercase tracking-widest text-text-muted mb-1.5">Studios</p>
                     <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
                       {calendarByStudio.map(([studio, songs]) => (
                         <button
@@ -2885,7 +2950,7 @@ export default function ApiTrackerView(): JSX.Element {
                           }`}
                         >
                           <span className="truncate">{studio}</span>
-                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                          <span className="text-text-muted text-[0.625rem] tabular-nums shrink-0">{songs.length}</span>
                         </button>
                       ))}
                     </div>
@@ -2896,7 +2961,7 @@ export default function ApiTrackerView(): JSX.Element {
               <div className="flex-1 min-w-0 w-full">
                 {selectedStudio ? (
                   <>
-                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedStudio}>
+                    <p className="text-text-muted text-[0.6875rem] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedStudio}>
                       Recorded at {selectedStudio}
                       {' '}· {(calendarByStudio.find(([s]) => s === selectedStudio)?.[1] ?? []).length}{' '}
                       {(calendarByStudio.find(([s]) => s === selectedStudio)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
@@ -2922,7 +2987,7 @@ export default function ApiTrackerView(): JSX.Element {
                   <p className="text-text-muted text-xs py-4">Select a highlighted day, or a studio, to see songs recorded there.</p>
                 ) : (
                   <>
-                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2">
+                    <p className="text-text-muted text-[0.6875rem] font-semibold uppercase tracking-wide mb-2">
                       Recorded {new Date(selectedDateKey + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
                       {' '}· {(calendarByDate.get(selectedDateKey) ?? []).length} {(calendarByDate.get(selectedDateKey) ?? []).length === 1 ? 'song' : 'songs'}
                     </p>
@@ -2969,7 +3034,7 @@ export default function ApiTrackerView(): JSX.Element {
               <div className="w-full md:w-80 shrink-0 flex flex-col gap-4">
                 {producersByName.length > 0 && (
                   <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Producers</p>
+                    <p className="text-[0.5625rem] font-bold uppercase tracking-widest text-text-muted mb-1.5">Producers</p>
                     <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
                       {producersByName.map(([producer, songs]) => (
                         <button
@@ -2983,7 +3048,7 @@ export default function ApiTrackerView(): JSX.Element {
                           }`}
                         >
                           <span className="truncate">{producer}</span>
-                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                          <span className="text-text-muted text-[0.625rem] tabular-nums shrink-0">{songs.length}</span>
                         </button>
                       ))}
                     </div>
@@ -2992,7 +3057,7 @@ export default function ApiTrackerView(): JSX.Element {
 
                 {engineersByName.length > 0 && (
                   <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-1.5">Engineers</p>
+                    <p className="text-[0.5625rem] font-bold uppercase tracking-widest text-text-muted mb-1.5">Engineers</p>
                     <div className="flex flex-col max-h-64 overflow-y-auto -mx-1">
                       {engineersByName.map(([engineer, songs]) => (
                         <button
@@ -3006,7 +3071,7 @@ export default function ApiTrackerView(): JSX.Element {
                           }`}
                         >
                           <span className="truncate">{engineer}</span>
-                          <span className="text-text-muted text-[10px] tabular-nums shrink-0">{songs.length}</span>
+                          <span className="text-text-muted text-[0.625rem] tabular-nums shrink-0">{songs.length}</span>
                         </button>
                       ))}
                     </div>
@@ -3017,7 +3082,7 @@ export default function ApiTrackerView(): JSX.Element {
               <div className="flex-1 min-w-0 w-full">
                 {selectedProducer ? (
                   <>
-                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedProducer}>
+                    <p className="text-text-muted text-[0.6875rem] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedProducer}>
                       Produced by {selectedProducer}
                       {' '}· {(producersByName.find(([p]) => p === selectedProducer)?.[1] ?? []).length}{' '}
                       {(producersByName.find(([p]) => p === selectedProducer)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
@@ -3041,7 +3106,7 @@ export default function ApiTrackerView(): JSX.Element {
                   </>
                 ) : selectedEngineer ? (
                   <>
-                    <p className="text-text-muted text-[11px] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedEngineer}>
+                    <p className="text-text-muted text-[0.6875rem] font-semibold uppercase tracking-wide mb-2 truncate" title={selectedEngineer}>
                       Engineered by {selectedEngineer}
                       {' '}· {(engineersByName.find(([e]) => e === selectedEngineer)?.[1] ?? []).length}{' '}
                       {(engineersByName.find(([e]) => e === selectedEngineer)?.[1] ?? []).length === 1 ? 'song' : 'songs'}
@@ -3289,7 +3354,7 @@ export default function ApiTrackerView(): JSX.Element {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowBulkPlaylists(false)} />
                 <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
-                  <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                  <div className="px-3 py-2 border-b border-[var(--border)] text-[0.6875rem] uppercase tracking-wider text-text-muted font-semibold">
                     Add to playlist
                   </div>
                   {!account ? (
