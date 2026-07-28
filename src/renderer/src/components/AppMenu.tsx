@@ -52,7 +52,7 @@ interface MenuDef { id: string; label: string; entries: Entry[] }
 // Hover-intent delay before a hovered top-level menu swaps in its submenu, so
 // gliding the mouse across the list (Controls → Tools) doesn't flip through
 // every submenu on the way. Clicking a top-level item still opens it instantly.
-const SUBMENU_HOVER_DELAY_MS = 500
+const SUBMENU_HOVER_DELAY_MS = 250
 
 function openExternal(url: string): void {
   const a = document.createElement('a')
