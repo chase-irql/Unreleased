@@ -4,21 +4,26 @@ Unreleased Music Player — Interactive Release Script
 
 Just run it — no arguments needed.
 
-All prompts are asked up front, then everything else runs unattended:
-  1. Pick a version (bump patch / minor / major, or keep / custom)
-  2. Enter a commit message (only if the tree is dirty)
-  3. Enter release notes (blank = auto-generate from commits)
+Prompts are asked up front, then everything else runs unattended:
+  1. Fast-forward app onto origin/app. The previous release's web push
+     fires the sync-web-to-app workflow, which advances origin/app behind
+     our back — so without this every release after a successful one is
+     rejected at step 7, after the build, and rolled back. Runs before the
+     version bump, while the tree is still clean.
+  2. Pick a version (bump patch / minor / major, or keep / custom)
+  3. Enter a commit message (only if the tree is dirty)
+  4. Enter release notes (blank = auto-generate from commits)
      and choose stable or beta. Betas are NEVER uploaded to GitHub —
      they're privately published to juicewrldapi.com's gated backend,
      only reachable with a beta access code (see build/fetch-releases.ps1
      for the endpoint contract). Stable releases are unaffected.
   ── nothing left to answer past this point ──
-  4. Commit all changes to the desktop branch (app)
-  5. Build the renderer + Electron installers (offline + web)
-  6. Push the desktop branch to GitHub
-  7. Sync the web branch (copies src/ + package.json from app, skips
+  5. Commit all changes to the desktop branch (app)
+  6. Build the renderer + Electron installers (offline + web)
+  7. Push the desktop branch to GitHub
+  8. Sync the web branch (copies src/ + package.json from app, skips
      electron/) — skipped for beta releases, betas are desktop-only
-  8. Stable: create the GitHub release and upload all assets.
+  9. Stable: create the GitHub release and upload all assets.
      Beta: publish privately to the gated backend instead (needs
      BETA_ADMIN_TOKEN in .env.local).
 """
@@ -322,10 +327,57 @@ def sha512_base64(path):
 
 # ── Prompts (collected up front, before any build/deploy/commit) ──────────────
 
-TOTAL = 8
+TOTAL = 9
+
+
+def step_sync_remote(state):
+    """Fast-forward the local app branch onto origin before anything is built,
+    committed or pushed.
+
+    Without this, every release that follows a successful one fails. The tail of
+    a release pushes the web branch, which fires .github/workflows/
+    sync-web-to-app.yml; that merges web back into app and pushes, so origin/app
+    advances behind our back. The next run then commits onto a stale app, builds
+    for two minutes, and only discovers the problem at `git push` — where the
+    rejection triggers rollback()'s `git reset --hard`, throwing the just-made
+    commit away (recoverable only via reflog).
+
+    Runs before the version bump so the tree is still clean: a fast-forward that
+    has to overwrite a locally-modified package.json would abort. Deliberately
+    --ff-only — a genuine divergence means someone else pushed real work, and
+    silently merging it into a release build is not this script's call to make.
+    """
+    section(1, TOTAL, f"Sync with origin/{APP_BRANCH}")
+
+    if git_branch() != APP_BRANCH:
+        info(f"Switching to {APP_BRANCH}")
+        run(f"git checkout {APP_BRANCH}")
+
+    run("git fetch origin")
+
+    behind = capture(f"git rev-list --count {APP_BRANCH}..origin/{APP_BRANCH}")
+    ahead = capture(f"git rev-list --count origin/{APP_BRANCH}..{APP_BRANCH}")
+    behind, ahead = int(behind or 0), int(ahead or 0)
+
+    if behind and ahead:
+        die(f"{APP_BRANCH} has diverged from origin/{APP_BRANCH} "
+            f"({ahead} local, {behind} remote).\n"
+            f"     Reconcile by hand, then re-run:\n"
+            f"       git log --oneline origin/{APP_BRANCH}..{APP_BRANCH}\n"
+            f"       git rebase origin/{APP_BRANCH}   (or merge)")
+
+    if behind:
+        info(f"{behind} new commit(s) on origin/{APP_BRANCH} — fast-forwarding")
+        run(f"git merge --ff-only origin/{APP_BRANCH}")
+        ok(f"Fast-forwarded to {capture('git rev-parse --short HEAD')}")
+    elif ahead:
+        ok(f"Up to date ({ahead} unpushed local commit(s))")
+    else:
+        ok(f"Up to date with origin/{APP_BRANCH}")
+
 
 def prompt_version():
-    section(1, TOTAL, "Version")
+    section(2, TOTAL, "Version")
     cur = load_version()
     info(f"Current version: {_c(cur, WHT, BOLD)}")
     print()
@@ -359,7 +411,7 @@ def prompt_version():
 
 
 def prompt_commit_message(version):
-    section(2, TOTAL, f"Commit message")
+    section(3, TOTAL, f"Commit message")
 
     if is_dirty():
         info("Uncommitted changes:")
@@ -372,7 +424,7 @@ def prompt_commit_message(version):
 
 
 def prompt_release_notes():
-    section(3, TOTAL, "Release notes")
+    section(4, TOTAL, "Release notes")
     notes = ask("Release notes  (blank = auto-generate from commits)", default="")
     # Beta builds are NEVER uploaded to GitHub — they're published privately
     # to the gated backend (see step_publish_beta), reachable only with a
@@ -419,7 +471,7 @@ def refresh_bundled_binaries():
 
 
 def step_commit(version, msg, state):
-    section(4, TOTAL, f"Commit → {APP_BRANCH}")
+    section(5, TOTAL, f"Commit → {APP_BRANCH}")
 
     if git_branch() != APP_BRANCH:
         info(f"Switching to {APP_BRANCH}")
@@ -439,7 +491,7 @@ def step_commit(version, msg, state):
 
 
 def step_build():
-    section(5, TOTAL, "Build Electron app")
+    section(6, TOTAL, "Build Electron app")
     warn("This takes ~2 minutes — output streams below")
     print()
 
@@ -500,7 +552,7 @@ def step_build():
 
 
 def step_push_app(state):
-    section(6, TOTAL, f"Push → origin/{APP_BRANCH}")
+    section(7, TOTAL, f"Push → origin/{APP_BRANCH}")
     run(f"git push origin {APP_BRANCH}")
     state["pushed_app"] = True
     ok(f"Pushed to origin/{APP_BRANCH}")
@@ -510,11 +562,11 @@ def step_sync_web(version, is_beta, state):
     if is_beta:
         # The web branch is the live site (Vercel) — beta builds are
         # desktop-only and must never deploy there.
-        section(7, TOTAL, f"Sync → {WEB_BRANCH}  (skipped)")
+        section(8, TOTAL, f"Sync → {WEB_BRANCH}  (skipped)")
         info("Beta release — desktop-only, web branch left untouched.")
         return
 
-    section(7, TOTAL, f"Sync → {WEB_BRANCH}  (electron/ excluded)")
+    section(8, TOTAL, f"Sync → {WEB_BRANCH}  (electron/ excluded)")
 
     original = git_branch()
     try:
@@ -557,7 +609,7 @@ def step_sync_web(version, is_beta, state):
 
 
 def step_publish_beta(version, notes):
-    section(8, TOTAL, "Beta publish  (gated backend, not GitHub)")
+    section(9, TOTAL, "Beta publish  (gated backend, not GitHub)")
     tag = f"v{version}"
     token = get_beta_admin_token()
 
@@ -605,7 +657,7 @@ def step_publish_beta(version, notes):
 
 
 def step_release(version, token, notes, state):
-    section(8, TOTAL, "GitHub release")
+    section(9, TOTAL, "GitHub release")
     tag         = f"v{version}"
     release_dir = ROOT / "release" / "nsis-web"
     state["tag"] = tag
@@ -751,6 +803,12 @@ def main():
     state = {}
     try:
         token = get_token()
+
+        # Before anything else, and before the version bump makes the tree
+        # dirty — a stale app branch is what sinks the push seven steps later.
+        step_sync_remote(state)
+
+        # Read after the fast-forward: origin may have carried a newer version.
         state["original_version"] = load_version()
 
         # ── Every user prompt happens first — once these are answered, the

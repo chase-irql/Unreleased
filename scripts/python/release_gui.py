@@ -188,7 +188,7 @@ class ReleaseWorker(QThread):
     done     = Signal(str, str)          # version, closing note/url
     failed   = Signal(str)
 
-    TOTAL = 6
+    TOTAL = 7
 
     def __init__(self, r, root: Path, opts: dict):
         super().__init__()
@@ -222,9 +222,43 @@ class ReleaseWorker(QThread):
     def _run(self):
         r, root, opts = self.r, self.root, self.opts
         version, is_beta = opts["version"], opts["is_beta"]
+
+        # Mirrors release.py's step_sync_remote — see its docstring. The tail of
+        # a release pushes web, which fires the sync-web-to-app workflow and
+        # advances origin/app; without fast-forwarding first, the next release
+        # commits onto a stale app and dies at the push, after the whole build.
+        self.step.emit(1, self.TOTAL, f"Sync with origin/{r.APP_BRANCH}")
+        if r.git_branch() != r.APP_BRANCH:
+            self.log.emit(f"Switching to {r.APP_BRANCH}", "info")
+            if self.cmd(f"git checkout {r.APP_BRANCH}") != 0:
+                raise RuntimeError("git checkout failed")
+        if self.cmd("git fetch origin") != 0:
+            raise RuntimeError("git fetch failed")
+        behind = int(r.capture(
+            f"git rev-list --count {r.APP_BRANCH}..origin/{r.APP_BRANCH}") or 0)
+        ahead = int(r.capture(
+            f"git rev-list --count origin/{r.APP_BRANCH}..{r.APP_BRANCH}") or 0)
+        if behind and ahead:
+            # Real divergence: someone pushed work that isn't ours. Merging that
+            # into a release build unattended isn't this script's call.
+            raise RuntimeError(
+                f"{r.APP_BRANCH} has diverged from origin/{r.APP_BRANCH} "
+                f"({ahead} local, {behind} remote).\n"
+                f"Reconcile by hand (rebase or merge), then re-run.")
+        if behind:
+            self.log.emit(
+                f"{behind} new commit(s) on origin/{r.APP_BRANCH} -- fast-forwarding", "info")
+            if self.cmd(f"git merge --ff-only origin/{r.APP_BRANCH}") != 0:
+                raise RuntimeError("Fast-forward failed")
+            self.log.emit("Fast-forwarded to "
+                          + r.capture("git rev-parse --short HEAD"), "ok")
+        else:
+            self.log.emit(f"Up to date with origin/{r.APP_BRANCH}", "ok")
+
+        # Read after the fast-forward — origin may have carried a newer version.
         self.state["original_version"] = r.load_version()
 
-        self.step.emit(1, self.TOTAL, "Applying version")
+        self.step.emit(2, self.TOTAL, "Applying version")
         if version != self.state["original_version"]:
             r.set_version(version)
             self.state["version_changed"] = True
@@ -232,24 +266,30 @@ class ReleaseWorker(QThread):
         else:
             self.log.emit("Version unchanged", "info")
 
-        self.step.emit(2, self.TOTAL, f"Commit -> {r.APP_BRANCH}")
+        self.step.emit(3, self.TOTAL, f"Commit -> {r.APP_BRANCH}")
         if r.git_branch() != r.APP_BRANCH:
             self.log.emit(f"Switching to {r.APP_BRANCH}", "info")
             if self.cmd(f"git checkout {r.APP_BRANCH}") != 0:
                 raise RuntimeError("git checkout failed")
         self.state["pre_commit_sha"] = r.capture("git rev-parse HEAD")
-        if opts["commit_msg"]:
+        # Gate on the tree, not on whether a message was typed. Leaving the
+        # message blank used to skip the commit outright — but the version bump
+        # above has already dirtied package.json, so the release would build,
+        # push and publish a version that was never committed, leaving the bump
+        # stranded as an uncommitted edit. Fall back to "vX.Y.Z" like the CLI.
+        commit_msg = opts["commit_msg"] or (f"v{version}" if r.is_dirty() else "")
+        if commit_msg:
             if self.cmd("git add -A") != 0:
                 raise RuntimeError("git add failed")
-            msg = opts["commit_msg"].replace('"', '\\"')
+            msg = commit_msg.replace('"', '\\"')
             if self.cmd(f'git commit -m "{msg}"') != 0:
                 raise RuntimeError("git commit failed")
             self.state["committed"] = True
-            self.log.emit(f"Committed: {opts['commit_msg']}", "ok")
+            self.log.emit(f"Committed: {commit_msg}", "ok")
         else:
             self.log.emit("Nothing to commit -- tree is clean", "ok")
 
-        self.step.emit(3, self.TOTAL, "Build Electron app")
+        self.step.emit(4, self.TOTAL, "Build Electron app")
         self._refresh_bundled_binaries()
         self.log.emit("Compiling renderer (npm run build)...", "info")
         if self.cmd("npm run build") != 0:
@@ -279,24 +319,24 @@ class ReleaseWorker(QThread):
         else:
             self.log.emit(f"Not found (skipping bundled-stub refresh): {stub.name}", "warn")
 
-        self.step.emit(4, self.TOTAL, f"Push -> origin/{r.APP_BRANCH}")
+        self.step.emit(5, self.TOTAL, f"Push -> origin/{r.APP_BRANCH}")
         if self.cmd(f"git push origin {r.APP_BRANCH}") != 0:
             raise RuntimeError("git push failed")
         self.state["pushed_app"] = True
         self.log.emit(f"Pushed to origin/{r.APP_BRANCH}", "ok")
 
         if is_beta:
-            self.step.emit(5, self.TOTAL, f"Sync -> {r.WEB_BRANCH} (skipped)")
+            self.step.emit(6, self.TOTAL, f"Sync -> {r.WEB_BRANCH} (skipped)")
             self.log.emit("Beta release -- desktop-only, web branch left untouched.", "info")
         else:
-            self.step.emit(5, self.TOTAL, f"Sync -> {r.WEB_BRANCH}")
+            self.step.emit(6, self.TOTAL, f"Sync -> {r.WEB_BRANCH}")
             self._sync_web(version)
 
         if is_beta:
-            self.step.emit(6, self.TOTAL, "Beta publish (gated backend)")
+            self.step.emit(7, self.TOTAL, "Beta publish (gated backend)")
             note = self._publish_beta(version, opts["notes"], opts["beta_token"])
         else:
-            self.step.emit(6, self.TOTAL, "GitHub release")
+            self.step.emit(7, self.TOTAL, "GitHub release")
             note = self._publish_release(version, opts["gh_token"], opts["notes"])
 
         self.done.emit(version, note)
