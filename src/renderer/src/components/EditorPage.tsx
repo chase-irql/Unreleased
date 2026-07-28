@@ -159,6 +159,104 @@ export function TextareaRow({ label, value, original, onChange, rows = 3, placeh
   )
 }
 
+/* ── Basic view fields ─────────────────────────────────────────────────────── */
+/* The "basic" editor view is a flat, top-to-bottom form: every field visible at
+   once, no left rail, no cards, no collapsible sections or tabs. Hoisted to
+   module scope so React keeps the inputs mounted across re-renders. */
+const basicControlClass =
+  'w-full bg-transparent border-0 p-0 text-[13px] leading-snug text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-40'
+
+const basicShellClass = (changed: boolean): string =>
+  `block rounded-md border px-2.5 py-1.5 transition-colors focus-within:border-accent/50 ${
+    changed ? 'border-accent/40 bg-accent/[0.06]' : 'border-[var(--border)] bg-surface-overlay/60'
+  }`
+
+const basicLabelClass =
+  'block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight'
+
+function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false }: {
+  label: string; value: string; original?: string
+  onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
+}): JSX.Element {
+  const changed = original != null && value !== original && !(value === '' && original === '')
+  return (
+    <label className={basicShellClass(changed)}>
+      <span className={basicLabelClass}>{label}</span>
+      {rows > 1
+        ? <textarea
+            rows={rows} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+            className={`${basicControlClass} resize-y ${mono ? 'font-mono text-xs' : ''}`} />
+        : <input
+            value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+            className={`${basicControlClass} ${mono ? 'font-mono text-xs' : ''}`} />
+      }
+    </label>
+  )
+}
+
+/* A themed replacement for <select>: the native popup is drawn by the OS in its
+   own light-mode chrome, which looks nothing like the rest of the editor. */
+function BasicSelect({ label, value, original, onChange, options, placeholder }: {
+  label: string; value: string; original: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]; placeholder?: string
+}): JSX.Element {
+  const changed = value !== original
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+
+  return (
+    // z-20 while open keeps the popup above the rows that follow it, which are
+    // themselves positioned and would otherwise paint on top.
+    <div ref={ref} className={`${basicShellClass(changed)} relative cursor-pointer ${open ? 'z-20' : ''}`}
+      onClick={() => setOpen(v => !v)}>
+      <span className={basicLabelClass}>{label}</span>
+      <div className="flex items-center gap-1 pr-0.5">
+        <span className={`flex-1 min-w-0 truncate text-[13px] leading-snug ${selected ? 'text-text-primary' : 'text-text-muted opacity-40'}`}>
+          {selected?.label || placeholder || '—'}
+        </span>
+        <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </div>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-surface-raised shadow-2xl py-1">
+          {[{ value: '', label: placeholder || '—' }, ...options].map(o => {
+            const active = o.value === value
+            return (
+              <button
+                key={o.value || '__none'}
+                onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false) }}
+                className={`w-full flex items-center gap-1.5 text-left px-2.5 py-1.5 text-xs transition-colors ${
+                  active ? 'text-accent font-semibold bg-accent/10' : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary'
+                }`}
+              >
+                <span className="flex-1 min-w-0 truncate">{o.label}</span>
+                {active && <Check size={12} className="shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Genius lyrics helpers ─────────────────────────────────────────────────── */
 const isGeniusUrl = (s: string): boolean =>
   /^https?:\/\/(www\.)?genius\.com\/.+/i.test(s.trim())
@@ -274,6 +372,10 @@ export default function EditorPage(): JSX.Element {
   const [deleteState,  setDeleteState]  = useState<'idle' | 'confirm' | 'submitting' | 'submitted' | 'error'>('idle')
   const [deleteError,  setDeleteError]  = useState<string | null>(null)
   const [showMore,     setShowMore]     = useState(false)
+  // 'full' = the card/left-rail layout, 'basic' = one flat stacked form with
+  // every field on screen. Remembered across sessions (and shared with the
+  // pop-out editor window, which reads the same key).
+  const [basicView,    setBasicView]    = useState(() => localStorage.getItem('editor:view') === 'basic')
   const [editingPropId, setEditingPropId] = useState<number | null>(null)
   // True while editing a 'create' proposal (new song) — has no backing song object yet
   const [isNewSongDraft, setIsNewSongDraft] = useState(false)
@@ -755,6 +857,23 @@ export default function EditorPage(): JSX.Element {
           </button>
         )}
         <span className="flex-1" />
+        {/* Layout switch — full cards vs. the flat basic form */}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-overlay border border-[var(--border)]">
+          {([['full', 'Full'], ['basic', 'Basic']] as const).map(([mode, label]) => {
+            const active = (mode === 'basic') === basicView
+            return (
+              <button
+                key={mode}
+                onClick={() => { setBasicView(mode === 'basic'); localStorage.setItem('editor:view', mode) }}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                  active ? 'bg-surface-raised text-text-primary' : 'text-text-muted opacity-65 hover:opacity-100'
+                }`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
         <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isAdmin ? 'bg-accent/20 text-accent' : 'bg-emerald-500/20 text-emerald-400'}`}>
           {isAdmin ? 'admin' : 'editor'}
         </span>
@@ -798,7 +917,7 @@ export default function EditorPage(): JSX.Element {
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-6xl px-6 py-6">
+          <div className={`mx-auto w-full ${basicView ? 'max-w-4xl px-5 py-4' : 'max-w-6xl px-6 py-6'}`}>
 
             {/* ── Editing proposal banner ── */}
             {editingPropId != null && (
@@ -812,6 +931,162 @@ export default function EditorPage(): JSX.Element {
               </div>
             )}
 
+            {basicView ? (
+              /* ── Basic view: one flat form, every field in order ── */
+              <div className="flex flex-col gap-1.5">
+                <BasicRow label="Name" value={name} original={String(base.name || '')} onChange={setName} />
+                {/* Short fields pair up so the form doesn't run twice as long as it needs to */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicSelect
+                    label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
+                    onChange={setEraId}
+                    options={eras.map(e => ({ value: String(e.id), label: e.name }))}
+                    placeholder={song?.era?.name || '—'}
+                  />
+                  <BasicSelect
+                    label="Category" value={cat} original={String(base.category || '')}
+                    onChange={setCat} options={CATEGORIES}
+                  />
+                </div>
+                <BasicRow label="Album" value={album} original={String(base.album || '')} onChange={setAlbum} />
+                <BasicRow
+                  label="Alternate titles (one per line)" value={altNames}
+                  original={Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : ''}
+                  onChange={setAltNames} rows={3}
+                />
+                <BasicRow label="Credited artists" value={artists} original={String(base.credited_artists || '')} onChange={setArtists} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
+                  <BasicRow label="Engineers" value={eng} original={String(base.engineers || '')} onChange={setEng} />
+                </div>
+                <BasicRow label="Recording locations" value={loc} original={String(base.recording_locations || '')} onChange={setLoc} rows={2} />
+                <BasicRow label="Record dates" value={recDate} original={String(base.record_dates || '')} onChange={setRecDate} rows={2} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Length" value={songLength} original={String(base.length || '')} onChange={setSongLength} mono />
+                  <BasicRow label="Bitrate" value={bitrate} original={String(base.bitrate || '')} onChange={setBitrate} mono />
+                </div>
+                <BasicRow label="Additional information" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="File names" value={fileNames} original={String(base.file_names || '')} onChange={setFileNames} rows={2} />
+                  <BasicRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')} onChange={setInstrumentals} rows={2} />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Preview date" value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} mono />
+                  <BasicRow label="Release date" value={relDate} original={String(base.release_date || '')} onChange={setRelDate} mono />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Instrumental names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} rows={2} />
+                  <BasicRow label="Notes" value={notes} original={String(base.notes || '')} onChange={setNotes} rows={2} />
+                </div>
+                {/* One lyrics box, toggled between plain and synced — showing both
+                    at once was most of the form's remaining height. */}
+                {(() => {
+                  const showSynced = lyricsTab === 'synced'
+                  const value      = showSynced ? synced : lyrics
+                  const originalLy = String((showSynced ? base.synced_lyrics : base.lyrics) || '')
+                  const changed    = value !== originalLy && !(value === '' && originalLy === '')
+                  return (
+                    <div className={basicShellClass(changed)}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={basicLabelClass}>Lyrics</span>
+                        <span className="flex-1" />
+                        {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
+                          const active = lyricsTab === tab
+                          const dirty  = tab === 'lyrics'
+                            ? lyrics !== String(base.lyrics || '')
+                            : synced !== String(base.synced_lyrics || '')
+                          return (
+                            <button key={tab} onClick={() => setLyricsTab(tab)}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                                active ? 'bg-surface-raised text-text-primary' : 'text-text-muted opacity-60 hover:opacity-100'
+                              }`}>
+                              {tab === 'lyrics' ? 'Plain' : 'Synced'}
+                              {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <textarea
+                        rows={12}
+                        value={value}
+                        onChange={e => (showSynced ? setSynced : setLyrics)(e.target.value)}
+                        placeholder={showSynced ? '[00:00.00] Line one\n[00:05.20] Line two\n…' : 'Full lyrics…'}
+                        className={`${basicControlClass} resize-y mt-1 ${showSynced ? 'font-mono text-xs' : ''}`}
+                      />
+                    </div>
+                  )
+                })()}
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Date leaked" value={dateLeaked} original={String(base.date_leaked || '')} onChange={setDateLeaked} mono />
+                  <BasicRow label="Leak type" value={leak} original={String(base.leak_type || '')} onChange={setLeak} />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <BasicRow label="Image URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} mono />
+                  <BasicRow label="File path" value={filePath} original={String(base.path || '')} onChange={setFilePath} mono />
+                </div>
+                <BasicRow label="Notes for the reviewer (optional)" value={edNotes} onChange={setEdNotes} />
+
+                {submitError && (
+                  <div className="flex items-center gap-2 text-red-400 text-xs mt-1">
+                    <AlertCircle size={12} className="shrink-0" /> {submitError}
+                  </div>
+                )}
+                {deleteError && (
+                  <div className="flex items-center gap-2 text-red-400 text-xs mt-1">
+                    <AlertCircle size={12} className="shrink-0" /> {deleteError}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2.5 mt-2">
+                  <button
+                    onClick={submit}
+                    disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
+                    className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5 ${
+                      submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+                      submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
+                      changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
+                      'bg-surface-overlay border border-[var(--border)] text-text-primary hover:border-accent/40'
+                    }`}>
+                    {submitState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+                    {submitState === 'submitted'  && <Check size={12} />}
+                    {submitState === 'error'      && <AlertCircle size={12} />}
+                    {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit update proposal')}
+                    {submitState === 'submitting' && 'Submitting…'}
+                    {submitState === 'submitted'  && 'Submitted!'}
+                    {submitState === 'error'      && 'Try again'}
+                  </button>
+                  <span className="text-[11px] text-text-muted opacity-65 tabular-nums">
+                    {changedCount} field{changedCount !== 1 ? 's' : ''} changed
+                  </span>
+                  <span className="flex-1" />
+                  {song && !isNewSongDraft && editingPropId == null && (
+                    <button
+                      onClick={submitDeletion}
+                      onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
+                      disabled={deleteState === 'submitting' || deleteState === 'submitted'}
+                      title="Propose that this song entry be deleted. Admins review before it's removed."
+                      className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold transition-colors flex items-center gap-1.5 ${
+                        deleteState === 'submitted' ? 'text-emerald-400' :
+                        deleteState === 'error'     ? 'text-red-400' :
+                        deleteState === 'confirm'   ? 'bg-red-500 text-white' :
+                        'text-red-400/70 hover:text-red-400'
+                      }`}>
+                      {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+                      {deleteState === 'idle'       && 'Delete song'}
+                      {deleteState === 'confirm'    && 'Click again to confirm'}
+                      {deleteState === 'submitting' && 'Submitting…'}
+                      {deleteState === 'submitted'  && 'Submitted!'}
+                      {deleteState === 'error'      && 'Try again'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
+                    className="px-2.5 py-1.5 text-[11px] font-bold text-text-muted opacity-65 hover:opacity-100 transition-opacity">
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start">
 
               {/* ── Left rail: preview + actions ── */}
@@ -1118,6 +1393,7 @@ export default function EditorPage(): JSX.Element {
                 </Card>
               </div>
             </div>
+            )}
           </div>
         )}
 

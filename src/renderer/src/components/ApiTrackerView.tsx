@@ -3,8 +3,8 @@ import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, Rows3, Info, ListPlus, PanelLeft,
   ChevronUp, ChevronDown, MoreHorizontal, Plus, ListMusic, PackageOpen,
-  CheckSquare2, Square, Link2, Layers, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
-  AlertTriangle, Pencil,
+  CheckSquare2, Square, Link2, Layers, LayoutGrid, Mic2, CalendarDays, ChevronLeft, ChevronRight, Users,
+  AlertTriangle, Pencil, Clock, Timer, User, MapPin, Folder, SlidersHorizontal, Download,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -13,7 +13,7 @@ import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
 import { CompactGroupRow, useExpandedGroups } from './CompactGroupRow'
 import {
-  apiFetch, apiPeek, songToTrack, parseDuration, CATEGORY_LABELS, JWAPI_BASE,
+  apiFetch, apiPeek, songToTrack, parseDuration, buildStreamUrl, CATEGORY_LABELS, JWAPI_BASE,
   JWApiSong, JWApiPaginatedResponse, JWApiStats, JWApiEra,
 } from '../lib/juicewrldApi'
 import { fisherYates } from '../store/queueSlice'
@@ -28,7 +28,7 @@ import { runLog } from '../lib/runLog'
 import { formatDuration } from '../lib/format'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
-type ViewMode = 'list' | 'detail'
+type ViewMode = 'list' | 'detail' | 'grid'
 type TrackerTab = 'songs' | 'lyrics' | 'calendar' | 'producers'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -1060,6 +1060,440 @@ function VirtualSongDetailList({
   )
 }
 
+// ─── Song card (grid mode) ────────────────────────────────────────────────────
+// Mirrors juicewrldapi.com's own grid card: a wide cover with the category
+// badge pinned to it, then the title, a fixed stack of primary metadata lines,
+// the collapsible detail sections (Engineers / Recording Details / File Names /
+// Instrumentals / Additional Info / Important Dates), and a queue · play ·
+// download footer.
+//
+// Every fixed part of the card is given an explicit height below so the grid
+// can compute row offsets without measuring the DOM — see GRID_* constants and
+// VirtualSongGrid. That's also why the primary metadata lines and the section
+// headers always render (empty values fall back to "—") instead of being
+// dropped when a song lacks them.
+
+interface CardSection {
+  key: string
+  label: string
+  icon: JSX.Element
+  /** Label/value pairs shown when the section is expanded. */
+  fields: (song: JWApiSong) => [string, string | null | undefined][]
+}
+
+const CARD_SECTIONS: CardSection[] = [
+  {
+    key: 'engineers', label: 'Engineers', icon: <Users size={13} />,
+    fields: (s) => [['Engineers', s.engineers]],
+  },
+  {
+    key: 'recording', label: 'Recording Details', icon: <MapPin size={13} />,
+    fields: (s) => [
+      ['Locations', s.recording_locations],
+      ['Record Dates', s.record_dates],
+      ['Original Key', s.original_key],
+      ['Bitrate', s.bitrate],
+    ],
+  },
+  {
+    key: 'files', label: 'File Names', icon: <Folder size={13} />,
+    fields: (s) => [['File Names', s.file_names]],
+  },
+  {
+    key: 'instrumentals', label: 'Instrumentals', icon: <SlidersHorizontal size={13} />,
+    fields: (s) => [
+      ['Instrumentals', s.instrumentals],
+      ['Instrumental Names', s.instrumental_names],
+    ],
+  },
+  {
+    key: 'additional', label: 'Additional Info', icon: <Info size={13} />,
+    fields: (s) => [
+      ['Additional Information', s.additional_information],
+      ['Notes', s.notes],
+      ['Session Titles', s.session_titles],
+      ['Alt Titles', (s.track_titles ?? []).join(' · ')],
+    ],
+  },
+  {
+    key: 'dates', label: 'Important Dates', icon: <CalendarDays size={13} />,
+    fields: (s) => [
+      ['Date Leaked', s.date_leaked],
+      ['Preview Date', s.preview_date],
+      ['Release Date', s.release_date],
+      ['Dates', s.dates],
+    ],
+  },
+]
+
+// One primary metadata line (icon + text), fixed height.
+function CardMetaLine({ icon, children }: { icon: JSX.Element; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="flex items-center gap-2 text-text-secondary text-[11px]" style={{ height: GRID_META_ROW_H }}>
+      <span className="shrink-0 text-text-muted">{icon}</span>
+      <span className="truncate min-w-0">{children}</span>
+    </div>
+  )
+}
+
+const SongCard = memo(function SongCard({
+  song, coverH, onPlay, onQueue, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect, expandedSections, onToggleSection,
+}: {
+  song: JWApiSong
+  /** Cover height in px (3:2 of the card width). */
+  coverH: number
+  onPlay: (song: JWApiSong) => void
+  onQueue: (track: Track) => void
+  onCategoryClick: (cat: Category) => void
+  onEraClick: (era: string) => void
+  onInfo: (song: JWApiSong) => void
+  onContextMenu: (song: JWApiSong, e: React.MouseEvent) => void
+  selectMode: boolean
+  selected: boolean
+  onToggleSelect: (song: JWApiSong) => void
+  /** Section keys currently open on this card. Owned by the grid, since row
+   *  heights depend on how many sections are expanded. */
+  expandedSections: ReadonlySet<string>
+  onToggleSection: (songId: number, sectionKey: string) => void
+}): JSX.Element {
+  const pref = useStore((s) => s.songPrefs[song.id])
+  const track = songToTrack(song)
+  const title = pref?.name || song.name
+  const canPlay = !!song.path
+
+  // The site's status line: leak type, then the release/leak date after it.
+  const statusDate = song.release_date
+    ? `Released ${song.release_date}`
+    : song.date_leaked ? `Leaked ${song.date_leaked}` : ''
+
+  return (
+    // Hover highlights the border only. Tinting the card body would land on the
+    // same color as the section header boxes below, which reads as those boxes
+    // disappearing under the cursor.
+    <div
+      className={`group flex flex-col h-full overflow-hidden rounded-xl border bg-surface transition-colors ${selected ? 'border-accent bg-accent/10' : 'border-[var(--border)] hover:border-accent/40'}`}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onDoubleClick={() => { if (!selectMode) onInfo(song) }}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
+    >
+      {/* Cover */}
+      <div className="relative shrink-0 w-full bg-surface-overlay" style={{ height: coverH }}>
+        {/* fill mode: the art covers the 3:2 box rather than taking a square
+            px size, so covers crop the way the site's grid does. */}
+        <AlbumArtThumbnail track={track} fill className="w-full h-full" shimmer={false} eager />
+
+        {selectMode ? (
+          <div className="absolute top-2 left-2">
+            {selected
+              ? <CheckSquare2 size={18} className="text-accent drop-shadow" />
+              : <Square size={18} className="text-white/80 drop-shadow" />}
+          </div>
+        ) : (
+          canPlay && (
+            <button
+              className="absolute inset-0 hidden md:flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={(e) => { e.stopPropagation(); onPlay(song) }}
+              title="Play"
+            >
+              <span className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center">
+                <Play size={18} fill="black" className="text-black ml-0.5" />
+              </span>
+            </button>
+          )
+        )}
+
+        {/* Category badge — the site pins it to the cover's top-right corner */}
+        {selectMode ? (
+          <span className={`absolute top-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}>
+            {CATEGORY_LABELS[song.category] ?? song.category}
+          </span>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); onCategoryClick(song.category as Category) }}
+            className={`absolute top-2 right-2 text-[10px] font-medium px-2 py-0.5 rounded-full border backdrop-blur-sm transition-opacity hover:opacity-80 ${CATEGORY_COLORS[song.category] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
+            title="Filter by category"
+          >
+            {CATEGORY_LABELS[song.category] ?? song.category}
+          </button>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-col px-3 py-3 min-w-0" style={{ height: GRID_BODY_H }}>
+        <p
+          className="text-text-primary text-sm font-semibold leading-tight overflow-hidden shrink-0"
+          style={{ height: GRID_TITLE_H, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}
+          title={title}
+        >
+          {title}
+        </p>
+
+        <div className="mt-1.5 shrink-0">
+          <CardMetaLine icon={<Clock size={13} />}>
+            {song.era?.name ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
+                className="hover:text-accent transition-colors"
+                title={`Filter by era: ${song.era.name}`}
+              >
+                Era: {song.era.name}
+              </button>
+            ) : <span className="text-text-muted">Era: —</span>}
+          </CardMetaLine>
+          <CardMetaLine icon={<User size={13} />}>{song.credited_artists || 'Juice WRLD'}</CardMetaLine>
+          <CardMetaLine icon={<Music2 size={13} />}>
+            {song.producers ? `Produced by: ${song.producers}` : <span className="text-text-muted">Produced by: —</span>}
+          </CardMetaLine>
+          <CardMetaLine icon={<Timer size={13} />}>
+            <span className="tabular-nums">{formatDuration(parseDuration(song.length), '--:--')}</span>
+          </CardMetaLine>
+          <CardMetaLine icon={<Info size={13} />}>
+            {song.leak_type || <span className="text-text-muted">—</span>}
+            {statusDate && <span className="text-accent"> ({statusDate})</span>}
+          </CardMetaLine>
+        </div>
+
+        {/* Collapsible detail sections */}
+        <div className="mt-2 flex flex-col gap-1 shrink-0">
+          {CARD_SECTIONS.map((section) => {
+            const open = expandedSections.has(section.key)
+            return (
+              <div key={section.key}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleSection(song.id, section.key) }}
+                  className={`w-full flex items-center gap-2 px-2 rounded-md border text-text-secondary text-[11px] transition-colors outline-none focus-visible:border-accent ${
+                    open
+                      ? 'bg-surface-raised border-accent/40 text-text-primary'
+                      : 'bg-surface-overlay border-[var(--border)] hover:bg-surface-raised'
+                  }`}
+                  style={{ height: GRID_SECTION_H }}
+                >
+                  <span className="shrink-0 text-text-muted">{section.icon}</span>
+                  <span className="truncate min-w-0 text-left flex-1">{section.label}</span>
+                  <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+                </button>
+                {open && (
+                  // Fixed-height scroller: keeps the card's height a pure
+                  // function of how many sections are open, which is what lets
+                  // the grid position rows without measuring.
+                  <div
+                    className="mt-1 px-2 py-1.5 rounded-md bg-surface-overlay border border-[var(--border)] overflow-y-auto"
+                    style={{ height: GRID_SECTION_BODY_H }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {section.fields(song).map(([label, value]) => (
+                      <div key={label} className="mb-1 last:mb-0">
+                        <p className="text-[9px] uppercase tracking-wider text-text-muted/70 leading-tight">{label}</p>
+                        <p className={`text-[11px] break-words ${value?.trim() ? 'text-text-secondary' : 'text-text-muted/50'}`}>
+                          {value?.trim() || '—'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer: add to queue · play · download */}
+        <div className="mt-auto pt-2 flex items-center gap-1.5 shrink-0" style={{ height: GRID_FOOTER_H + 8 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onQueue(track) }}
+            disabled={!canPlay}
+            className="shrink-0 h-full px-3 rounded-lg bg-surface-overlay hover:bg-surface-raised text-text-secondary disabled:opacity-40 transition-colors"
+            title="Add to queue"
+          >
+            <ListPlus size={15} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onPlay(song) }}
+            disabled={!canPlay}
+            className="flex-1 min-w-0 h-full flex items-center justify-center gap-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised text-text-primary text-xs font-medium disabled:opacity-40 transition-colors"
+            title={canPlay ? 'Play' : 'No file available'}
+          >
+            <Play size={14} fill="currentColor" /> PLAY
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const a = document.createElement('a')
+              a.href = buildStreamUrl(song.path)
+              a.download = `${title}.mp3`
+              a.target = '_blank'
+              a.rel = 'noopener noreferrer'
+              document.body.appendChild(a); a.click(); document.body.removeChild(a)
+            }}
+            disabled={!canPlay}
+            className="shrink-0 h-full px-3 rounded-lg bg-surface-overlay hover:bg-surface-raised text-text-secondary disabled:opacity-40 transition-colors"
+            title="Download"
+          >
+            <Download size={15} />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// ─── Song grid (virtualized) ──────────────────────────────────────────────────
+// Cards are laid out on a row grid using the same windowing as the list views —
+// a grid of 2500 of these cards is exactly the mount cost virtualization exists
+// to avoid. Column count comes from the measured container width rather than
+// Tailwind breakpoints, because the row offsets have to be computable in JS.
+//
+// Card height is deterministic: a fixed body (title clamped to two lines, five
+// always-rendered metadata lines, six section headers, footer) plus a fixed
+// block per *expanded* section. So a row's height only depends on the largest
+// number of sections open on any card in it — no DOM measurement, and rows
+// below an expanded card shift by a known amount.
+const GRID_MIN_CARD_W = 260
+const GRID_GAP = 12
+const GRID_COVER_RATIO = 1.5      // cover is 3:2 of the card width
+const GRID_TITLE_H = 38           // two lines at leading-tight
+const GRID_META_ROW_H = 20
+const GRID_SECTION_H = 28
+const GRID_SECTION_BODY_H = 88    // fixed-height scroller per expanded section
+const GRID_SECTION_GAP = 4
+const GRID_FOOTER_H = 34
+// px-3 py-3 body + title + (mt-1.5 + 5 meta lines) + (mt-2 + 6 headers + gaps) + footer
+const GRID_BODY_H =
+  24 + GRID_TITLE_H
+  + 6 + GRID_META_ROW_H * 5
+  + 8 + GRID_SECTION_H * CARD_SECTIONS.length + GRID_SECTION_GAP * (CARD_SECTIONS.length - 1)
+  + 8 + GRID_FOOTER_H
+// An expanded section adds its scroller plus the mt-1 above it.
+const GRID_SECTION_OPEN_H = GRID_SECTION_BODY_H + 4
+
+function useElementWidth(ref: React.RefObject<HTMLElement>): number {
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => setWidth(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref])
+  return width
+}
+
+function VirtualSongGrid({
+  scrollRef, songs, onPlay, onQueue, onCategoryClick, onEraClick, onInfo, onContextMenu,
+  selectMode, selected, onToggleSelect,
+}: VirtualSongsProps & { onQueue: (track: Track) => void }): JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const width = useElementWidth(contentRef)
+
+  const cols = Math.max(1, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_W + GRID_GAP)))
+  const cellW = width > 0 ? Math.floor((width - GRID_GAP * (cols - 1)) / cols) : 0
+  const coverH = Math.round(cellW / GRID_COVER_RATIO)
+  const baseCardH = coverH + GRID_BODY_H
+  const rowCount = Math.ceil(songs.length / cols)
+
+  // songId → open section keys. Held here (not in the card) because the card
+  // unmounts when it scrolls out of the window, and because row offsets below
+  // depend on how many sections each row has open.
+  const [openSections, setOpenSections] = useState<Map<number, Set<string>>>(new Map())
+  const toggleSection = useCallback((songId: number, key: string): void => {
+    setOpenSections((prev) => {
+      const next = new Map(prev)
+      const cur = new Set(next.get(songId) ?? [])
+      if (cur.has(key)) cur.delete(key); else cur.add(key)
+      if (cur.size === 0) next.delete(songId); else next.set(songId, cur)
+      return next
+    })
+  }, [])
+
+  // Row offsets. Rows are uniform unless a card in them has sections open, so
+  // this is a cheap prefix sum that only differs from `i * stride` for the
+  // handful of rows the user has expanded something in.
+  const { offsets, totalHeight } = useMemo(() => {
+    const out = new Array<number>(rowCount + 1)
+    let y = 0
+    for (let r = 0; r < rowCount; r++) {
+      out[r] = y
+      let extra = 0
+      if (openSections.size > 0) {
+        for (const song of songs.slice(r * cols, r * cols + cols)) {
+          const n = openSections.get(song.id)?.size ?? 0
+          if (n > extra) extra = n
+        }
+      }
+      y += baseCardH + extra * GRID_SECTION_OPEN_H + GRID_GAP
+    }
+    out[rowCount] = y
+    return { offsets: out, totalHeight: Math.max(0, y - GRID_GAP) }
+  }, [rowCount, cols, songs, openSections, baseCardH])
+
+  // Windowing against the shared scroller. Uniform-stride binary search isn't
+  // needed — offsets is already materialized, so the visible range is a scan
+  // over it (cheap: it's one entry per row, and it's already in memory).
+  const [scrollTop, setScrollTop] = useState(0)
+  const [clientH, setClientH] = useState(0)
+  const [offsetTop, setOffsetTop] = useState(0)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = (): void => setScrollTop(el.scrollTop)
+    const measure = (): void => {
+      setClientH(el.clientHeight)
+      setScrollTop(el.scrollTop)
+      setOffsetTop(contentRef.current ? contentRef.current.offsetTop : 0)
+    }
+    measure()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    if (contentRef.current) ro.observe(contentRef.current)
+    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect() }
+  }, [scrollRef])
+
+  const viewTop = Math.max(0, scrollTop - offsetTop) - clientH   // one viewport of overscan
+  const viewBottom = Math.max(0, scrollTop - offsetTop) + clientH * 2
+
+  return (
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {width > 0 && Array.from({ length: rowCount }, (_, r) => r)
+        .filter((r) => offsets[r + 1] >= viewTop && offsets[r] <= viewBottom)
+        .map((r) => songs.slice(r * cols, r * cols + cols).map((song, c) => {
+          const open = openSections.get(song.id)
+          return (
+            <div
+              key={song.id}
+              style={{
+                position: 'absolute',
+                top: offsets[r],
+                left: c * (cellW + GRID_GAP),
+                width: cellW,
+                height: baseCardH + (open?.size ?? 0) * GRID_SECTION_OPEN_H,
+              }}
+            >
+              <SongCard
+                song={song}
+                coverH={coverH}
+                onPlay={onPlay}
+                onQueue={onQueue}
+                onCategoryClick={onCategoryClick}
+                onEraClick={onEraClick}
+                onInfo={onInfo}
+                onContextMenu={onContextMenu}
+                selectMode={selectMode}
+                selected={selected.has(song.id)}
+                onToggleSelect={onToggleSelect}
+                expandedSections={open ?? EMPTY_SECTIONS}
+                onToggleSection={toggleSection}
+              />
+            </div>
+          )
+        }))}
+    </div>
+  )
+}
+const EMPTY_SECTIONS: ReadonlySet<string> = new Set()
+
 // ─── Lyric search result row ──────────────────────────────────────────────────
 // Deliberately its own row type rather than reusing SongRow — the whole point
 // of lyric search is surfacing *why* a song matched, so this trades the flat
@@ -1425,9 +1859,8 @@ export default function ApiTrackerView(): JSX.Element {
   const sentinelVisibleRef = useRef(false)
 
   const [viewMode, setViewModeState] = useState<ViewMode>(() => {
-    // 'grid' was a removed third view mode — treat any stale stored value as 'list'.
     const stored = localStorage.getItem(LS_TRACKER_VIEW)
-    return stored === 'detail' ? 'detail' : 'list'
+    return stored === 'detail' || stored === 'grid' ? stored : 'list'
   })
   const [showSidebar, setShowSidebarState] = useState<boolean>(
     () => localStorage.getItem(LS_TRACKER_SIDEBAR) !== 'false'
@@ -2207,6 +2640,13 @@ export default function ApiTrackerView(): JSX.Element {
               >
                 <Rows3 size={16} />
               </button>
+              <button
+                onClick={() => { setViewMode('grid'); setCompactView(false) }}
+                className={`p-2 md:p-1.5 rounded-md transition-colors ${viewMode === 'grid' && !compactView ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                title="Grid view"
+              >
+                <LayoutGrid size={16} />
+              </button>
               {versionsEnabled && (
                 <button
                   onClick={() => { setCompactView(true); clearExpandedGroups() }}
@@ -2749,6 +3189,20 @@ export default function ApiTrackerView(): JSX.Element {
                 scrollRef={listScrollRef}
                 songs={sortedSongs}
                 onPlay={handlePlay}
+                onCategoryClick={handleCategoryClick}
+                onEraClick={handleEraClick}
+                onInfo={handleInfo}
+                onContextMenu={handleContextMenu}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
+            ) : viewMode === 'grid' ? (
+              <VirtualSongGrid
+                scrollRef={listScrollRef}
+                songs={sortedSongs}
+                onPlay={handlePlay}
+                onQueue={handleQueue}
                 onCategoryClick={handleCategoryClick}
                 onEraClick={handleEraClick}
                 onInfo={handleInfo}
