@@ -1,6 +1,82 @@
-import { useState } from 'react'
-import { ChevronDown, ChevronRight, ChevronLeft, ExternalLink } from 'lucide-react'
+import {
+  useState, useMemo, useRef, useEffect, useCallback, useReducer, useContext,
+  createContext, Children, isValidElement, cloneElement,
+} from 'react'
+import { ChevronDown, ChevronRight, ChevronLeft, ExternalLink, Search, X } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
+
+// ─── Cross-tab search ─────────────────────────────────────────────────────────
+// Every tab stays mounted (this page is static markup — no fetching, no data
+// deps), so each Section can hand its own rendered text to the page on mount
+// and search can cover the whole document instead of only the open tab.
+// Non-matching sections hide, matching ones force open, and tabs with no hits
+// drop out of the tab bar.
+
+interface DocsSearchValue {
+  /** Trimmed + lowercased. Empty string means "not searching". */
+  query: string
+  /** Which tab the consuming Section lives in. */
+  tab: string
+  register: (id: string, tab: string, title: string, text: string) => void
+}
+
+const DocsSearchContext = createContext<DocsSearchValue>({ query: '', tab: '', register: () => {} })
+
+// ─── Match highlighting ───────────────────────────────────────────────────────
+// `query` is already lowercased; matching is case-insensitive but the original
+// casing is what gets rendered. <mark> doesn't affect textContent, so the
+// search index Section builds from its own DOM stays unpolluted by highlights.
+
+function highlightText(text: string, query: string): React.ReactNode {
+  if (!query) return text
+  const lower = text.toLowerCase()
+  let idx = lower.indexOf(query)
+  if (idx === -1) return text
+
+  const out: React.ReactNode[] = []
+  let pos = 0
+  let n = 0
+  while (idx !== -1) {
+    if (idx > pos) out.push(text.slice(pos, idx))
+    out.push(
+      <mark key={n++} className="bg-accent/25 text-accent rounded-[3px] px-0.5">
+        {text.slice(idx, idx + query.length)}
+      </mark>
+    )
+    pos = idx + query.length
+    idx = lower.indexOf(query, pos)
+  }
+  if (pos < text.length) out.push(text.slice(pos))
+  return out
+}
+
+// Walks arbitrary JSX and highlights every raw string it contains, cloning
+// elements on the way down. Elements that hold their text in props rather than
+// children (Table, Endpoint) have no children to walk, so they're returned
+// untouched and highlight themselves from context instead — which is also what
+// keeps this from double-marking their content.
+function highlightChildren(children: React.ReactNode, query: string): React.ReactNode {
+  if (!query) return children
+  return Children.map(children, (child) => {
+    if (typeof child === 'string') return highlightText(child, query)
+    if (!isValidElement(child)) return child
+    const kids = (child.props as { children?: React.ReactNode }).children
+    if (kids == null) return child
+    return cloneElement(child, undefined, highlightChildren(kids, query))
+  })
+}
+
+/** Highlights a plain string against the active query. */
+function useHighlight(): (text: string) => React.ReactNode {
+  const { query } = useContext(DocsSearchContext)
+  return useCallback((text: string) => highlightText(text, query), [query])
+}
+
+/** Highlights arbitrary JSX (e.g. a Table cell that isn't a plain string). */
+function useHighlightNodes(): (node: React.ReactNode) => React.ReactNode {
+  const { query } = useContext(DocsSearchContext)
+  return useCallback((node: React.ReactNode) => highlightChildren(node, query), [query])
+}
 
 // ─── Small reusable primitives ────────────────────────────────────────────────
 
@@ -36,13 +112,15 @@ function Pre({ children }: { children: string }) {
 }
 
 function Table({ headers, rows }: { headers: string[]; rows: (string | JSX.Element)[][] }) {
+  const hl = useHighlight()
+  const hlNodes = useHighlightNodes()
   return (
     <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-[var(--surface-raised)] border-b border-[var(--border)]">
             {headers.map(h => (
-              <th key={h} className="text-left px-4 py-2.5 text-text-muted text-xs font-semibold uppercase tracking-wide">{h}</th>
+              <th key={h} className="text-left px-4 py-2.5 text-text-muted text-xs font-semibold uppercase tracking-wide">{hl(h)}</th>
             ))}
           </tr>
         </thead>
@@ -50,7 +128,9 @@ function Table({ headers, rows }: { headers: string[]; rows: (string | JSX.Eleme
           {rows.map((row, i) => (
             <tr key={i} className={`border-b border-[var(--border)] last:border-0 ${i % 2 === 0 ? '' : 'bg-[var(--surface-raised)]/40'}`}>
               {row.map((cell, j) => (
-                <td key={j} className="px-4 py-2.5 text-text-secondary align-top">{cell}</td>
+                <td key={j} className="px-4 py-2.5 text-text-secondary align-top">
+                  {typeof cell === 'string' ? hl(cell) : hlNodes(cell)}
+                </td>
               ))}
             </tr>
           ))}
@@ -62,27 +142,47 @@ function Table({ headers, rows }: { headers: string[]; rows: (string | JSX.Eleme
 
 function Section({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
+  const { query, tab, register } = useContext(DocsSearchContext)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [text, setText] = useState('')
+
+  // The body is always in the DOM (hidden via `hidden` rather than unmounted)
+  // so collapsed sections are still indexed and still findable by search.
+  useEffect(() => {
+    const t = (bodyRef.current?.textContent ?? '').toLowerCase()
+    setText(t)
+    register(`${tab}:${title}`, tab, title, t)
+  }, [tab, title, register])
+
+  const hit = !query || title.toLowerCase().includes(query) || text.includes(query)
+  // While searching, expand matches so the hit is visible without a click —
+  // but don't clobber the user's own toggle state for when the search clears.
+  const expanded = query ? true : open
+
   return (
-    <div className="border border-[var(--border)] rounded-2xl overflow-hidden">
+    <div className="border border-[var(--border)] rounded-2xl overflow-hidden" hidden={!hit}>
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-5 py-4 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] transition-colors text-left"
       >
-        <span className="text-text-primary font-semibold text-sm">{title}</span>
-        {open ? <ChevronDown size={16} className="text-text-muted" /> : <ChevronRight size={16} className="text-text-muted" />}
+        <span className="text-text-primary font-semibold text-sm">{highlightText(title, query)}</span>
+        {expanded ? <ChevronDown size={16} className="text-text-muted" /> : <ChevronRight size={16} className="text-text-muted" />}
       </button>
-      {open && <div className="p-5 space-y-4 bg-[var(--surface)]">{children}</div>}
+      <div ref={bodyRef} hidden={!expanded} className="p-5 space-y-4 bg-[var(--surface)]">
+        {highlightChildren(children, query)}
+      </div>
     </div>
   )
 }
 
 function Endpoint({ method, path, description }: { method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; path: string; description: string }) {
+  const hl = useHighlight()
   return (
     <div className="flex items-start gap-3 py-2">
       <Badge color={method.toLowerCase() as 'get' | 'post' | 'delete' | 'patch'}>{method}</Badge>
       <div className="min-w-0">
-        <code className="text-[12px] font-mono text-text-primary">{path}</code>
-        <p className="text-xs text-text-muted mt-0.5">{description}</p>
+        <code className="text-[12px] font-mono text-text-primary">{hl(path)}</code>
+        <p className="text-xs text-text-muted mt-0.5">{hl(description)}</p>
       </div>
     </div>
   )
@@ -1321,9 +1421,77 @@ const TABS = [
 
 type TabId = typeof TABS[number]['id']
 
+const TAB_CONTENT: Record<TabId, () => JSX.Element> = {
+  overview:  OverviewTab,
+  songs:     SongsTab,
+  versions:  VersionsTab,
+  files:     FilesTab,
+  playlists: PlaylistsTab,
+  radio:     RadioTab,
+  auth:      AuthTab,
+  patterns:  FetchPatternTab,
+}
+
+// One tab's worth of content. Kept mounted even when hidden so its Sections
+// stay registered with the search index — `hidden` (not unmounting) is what
+// makes cross-tab search possible without duplicating the content as data.
+function TabPanel({ tab, query, register, visible, showLabel }: {
+  tab: typeof TABS[number]
+  query: string
+  register: DocsSearchValue['register']
+  visible: boolean
+  showLabel: boolean
+}): JSX.Element {
+  const ctx = useMemo(() => ({ query, tab: tab.id, register }), [query, tab.id, register])
+  const Content = TAB_CONTENT[tab.id]
+  return (
+    <div hidden={!visible}>
+      <DocsSearchContext.Provider value={ctx}>
+        {showLabel && (
+          <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3 mt-2">{tab.label}</p>
+        )}
+        <Content />
+      </DocsSearchContext.Provider>
+    </div>
+  )
+}
+
 export default function DocsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const [rawQuery, setRawQuery] = useState('')
   const { setActiveView } = useStorePick('setActiveView')
+
+  // Sections self-report their text on mount. The registry is a ref (identity
+  // must stay stable so `register` doesn't retrigger every Section's effect);
+  // the counter bumps state so match counts recompute once entries land.
+  const registry = useRef(new Map<string, { tab: string; title: string; text: string }>())
+  const [indexVersion, bumpIndex] = useReducer((n: number) => n + 1, 0)
+  const register = useCallback((id: string, tab: string, title: string, text: string) => {
+    const prev = registry.current.get(id)
+    if (prev && prev.text === text && prev.title === title) return
+    registry.current.set(id, { tab, title, text })
+    bumpIndex()
+  }, [])
+
+  const query = rawQuery.trim().toLowerCase()
+
+  const hitsByTab = useMemo(() => {
+    const counts = new Map<string, number>()
+    if (!query) return counts
+    for (const e of registry.current.values()) {
+      if (e.title.toLowerCase().includes(query) || e.text.includes(query)) {
+        counts.set(e.tab, (counts.get(e.tab) ?? 0) + 1)
+      }
+    }
+    return counts
+    // indexVersion is the signal that registry.current changed — it has no
+    // other use here, hence the explicit reference.
+  }, [query, indexVersion])
+
+  const totalHits = useMemo(
+    () => [...hitsByTab.values()].reduce((a, b) => a + b, 0),
+    [hitsByTab]
+  )
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
@@ -1348,35 +1516,78 @@ export default function DocsPage(): JSX.Element {
             Open live docs <ExternalLink size={11} />
           </a>
         </div>
+        {/* Search */}
+        <div className="relative mb-3">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          <input
+            value={rawQuery}
+            onChange={(e) => setRawQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setRawQuery('') }}
+            placeholder="Search all docs — endpoints, fields, params…"
+            className="w-full bg-[var(--surface-raised)] border border-[var(--border)] rounded-xl pl-9 pr-16 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+          />
+          {rawQuery && (
+            <>
+              <span className="absolute right-9 top-1/2 -translate-y-1/2 text-[10px] text-text-muted tabular-nums">
+                {totalHits}
+              </span>
+              <button
+                onClick={() => setRawQuery('')}
+                title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+              >
+                <X size={13} />
+              </button>
+            </>
+          )}
+        </div>
         {/* Tabs */}
         <div className="flex gap-1 overflow-x-auto pb-0 scrollbar-none">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-shrink-0 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                activeTab === tab.id
-                  ? 'text-accent border-accent'
-                  : 'text-text-muted border-transparent hover:text-text-primary'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {TABS.map(tab => {
+            const hits = hitsByTab.get(tab.id) ?? 0
+            const dimmed = !!query && hits === 0
+            return (
+              <button
+                key={tab.id}
+                // Clicking a tab while searching is a "take me there" action —
+                // clear the query so the tab shows in full.
+                onClick={() => { setActiveTab(tab.id); setRawQuery('') }}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  !query && activeTab === tab.id
+                    ? 'text-accent border-accent'
+                    : `border-transparent hover:text-text-primary ${dimmed ? 'text-text-muted/40' : 'text-text-muted'}`
+                }`}
+              >
+                {tab.label}
+                {!!query && hits > 0 && (
+                  <span className="text-[10px] tabular-nums bg-accent/15 text-accent rounded px-1 py-0.5">{hits}</span>
+                )}
+              </button>
+            )
+          })}
         </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          {activeTab === 'overview'  && <OverviewTab />}
-          {activeTab === 'songs'     && <SongsTab />}
-          {activeTab === 'versions'  && <VersionsTab />}
-          {activeTab === 'files'     && <FilesTab />}
-          {activeTab === 'playlists' && <PlaylistsTab />}
-          {activeTab === 'radio'     && <RadioTab />}
-          {activeTab === 'auth'      && <AuthTab />}
-          {activeTab === 'patterns'  && <FetchPatternTab />}
+        <div className="max-w-4xl mx-auto space-y-6">
+          {query && totalHits === 0 && (
+            <div className="text-center py-16">
+              <Search size={28} className="mx-auto text-text-muted mb-3 opacity-40" />
+              <p className="text-sm text-text-secondary">No matches for &ldquo;{rawQuery.trim()}&rdquo;</p>
+              <p className="text-xs text-text-muted mt-1">Try an endpoint path, a field name, or a parameter.</p>
+            </div>
+          )}
+          {TABS.map(tab => (
+            <TabPanel
+              key={tab.id}
+              tab={tab}
+              query={query}
+              register={register}
+              visible={query ? (hitsByTab.get(tab.id) ?? 0) > 0 : activeTab === tab.id}
+              showLabel={!!query}
+            />
+          ))}
         </div>
       </div>
     </div>
