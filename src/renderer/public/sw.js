@@ -8,7 +8,7 @@
 // fallback. Content-hashed build assets (/assets/*) are immutable — new deploys
 // get new filenames — so those alone are cache-first for speed.
 
-const VERSION = 'v1'
+const VERSION = 'v2'
 const SHELL_CACHE = `shell-${VERSION}`
 const ASSET_CACHE = `assets-${VERSION}`
 
@@ -43,6 +43,13 @@ self.addEventListener('fetch', (event) => {
   // straight to the network — the app has its own localStorage cache for API
   // responses, and we never want to serve stale songs/metadata.
   if (url.origin !== self.location.origin) return
+
+  // Never touch the OAuth flow. The Discord login redirects back to
+  // /auth/discord/callback?code=…&state=… and the app reads those params on
+  // boot (see App.tsx). A service worker sitting in the middle of an auth
+  // redirect is a classic footgun — let the browser handle it end-to-end so
+  // installed (standalone PWA) sign-in behaves exactly like a normal tab.
+  if (url.pathname.startsWith('/auth/')) return
 
   // Page loads: network-first so a fresh deploy is always picked up; fall back
   // to the cached shell only when the network is unavailable.

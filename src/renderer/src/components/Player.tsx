@@ -1394,11 +1394,48 @@ export default function Player(): JSX.Element {
             <div className="h-full bg-red-400 absolute left-0 top-0 transition-none" style={{ width: `${fmProgress * 100}%` }} />
           </div>
         ) : (
-        <div className="h-[2px] bg-surface-overlay relative">
-          <div
-            className="h-full bg-accent absolute left-0 top-0 transition-none"
-            style={{ width: `${(seekDrag !== null ? seekDrag : progress) * 100}%` }}
-          />
+        // Seekable. The visible line is 2px but the hit area is padded taller
+        // (py-2 -my-2) so it's grabbable on touch, and touch-none stops the
+        // browser from treating a horizontal drag as a scroll. Commits on
+        // release via seekToPercent(last) rather than the seekDrag state, so a
+        // stale closure in the document listeners can't seek to the wrong spot.
+        <div
+          className="relative py-2 -my-2 cursor-pointer touch-none"
+          onMouseDown={e => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            const pctAt = (x: number): number => Math.max(0, Math.min(1, (x - rect.left) / rect.width))
+            let last = pctAt(e.clientX)
+            setSeekDrag(last)
+            const onMove = (ev: MouseEvent): void => { last = pctAt(ev.clientX); setSeekDrag(last) }
+            const onUp = (): void => {
+              document.removeEventListener('mousemove', onMove)
+              document.removeEventListener('mouseup', onUp)
+              seekToPercent(last); setSeekDrag(null)
+            }
+            document.addEventListener('mousemove', onMove)
+            document.addEventListener('mouseup', onUp)
+          }}
+          onTouchStart={e => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            const pctAt = (x: number): number => Math.max(0, Math.min(1, (x - rect.left) / rect.width))
+            let last = pctAt(e.touches[0].clientX)
+            setSeekDrag(last)
+            const onMove = (ev: TouchEvent): void => { last = pctAt(ev.touches[0].clientX); setSeekDrag(last) }
+            const onEnd = (): void => {
+              document.removeEventListener('touchmove', onMove)
+              document.removeEventListener('touchend', onEnd)
+              seekToPercent(last); setSeekDrag(null)
+            }
+            document.addEventListener('touchmove', onMove, { passive: true })
+            document.addEventListener('touchend', onEnd)
+          }}
+        >
+          <div className="h-[2px] bg-surface-overlay relative">
+            <div
+              className="h-full bg-accent absolute left-0 top-0 transition-none"
+              style={{ width: `${(seekDrag !== null ? seekDrag : progress) * 100}%` }}
+            />
+          </div>
         </div>
         )}
         {/* Track row */}

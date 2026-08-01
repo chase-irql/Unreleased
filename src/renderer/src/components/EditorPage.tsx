@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback, memo, type ReactNode } from '
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown, ChevronLeft,
   ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, PictureInPicture2, Minimize2,
+  FolderOpen,
 } from 'lucide-react'
+import FilePickerModal from './FilePickerModal'
 import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
 import { attachToMainWindow } from '../lib/windowSync'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
@@ -102,20 +104,34 @@ const fieldInputClass = (changed: boolean, mono: boolean): string =>
   }`
 
 /* ── Field ─────────────────────────────────────────────────────────────────── */
-export function FieldRow({ label, value, original, onChange, placeholder, mono = false, span }: {
+export function FieldRow({ label, value, original, onChange, placeholder, mono = false, span, onBrowse }: {
   label: string; value: string; original: string
   onChange: (v: string) => void; placeholder?: string; mono?: boolean; span?: 2 | 3
+  /** Shows a folder button inside the field that opens a file picker. */
+  onBrowse?: () => void
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
   return (
     <label className={`flex flex-col min-w-0 ${span === 2 ? 'sm:col-span-2' : span === 3 ? 'sm:col-span-3' : ''}`}>
       <FieldLabel label={label} changed={changed} />
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder ?? (original || '—')}
-        className={fieldInputClass(changed, mono)}
-      />
+      <div className="relative">
+        <input
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder ?? (original || '—')}
+          className={`${fieldInputClass(changed, mono)} ${onBrowse ? 'pr-9' : ''}`}
+        />
+        {onBrowse && (
+          <button
+            type="button"
+            onClick={e => { e.preventDefault(); onBrowse() }}
+            title="Browse API files"
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          >
+            <FolderOpen size={14} />
+          </button>
+        )}
+      </div>
     </label>
   )
 }
@@ -174,9 +190,11 @@ const basicShellClass = (changed: boolean): string =>
 const basicLabelClass =
   'block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight'
 
-function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false }: {
+function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false, onBrowse }: {
   label: string; value: string; original?: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
+  /** Shows a folder button inside the field that opens a file picker. */
+  onBrowse?: () => void
 }): JSX.Element {
   const changed = original != null && value !== original && !(value === '' && original === '')
   return (
@@ -186,9 +204,21 @@ function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mon
         ? <textarea
             rows={rows} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
             className={`${basicControlClass} resize-y ${mono ? 'font-mono text-xs' : ''}`} />
-        : <input
-            value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-            className={`${basicControlClass} ${mono ? 'font-mono text-xs' : ''}`} />
+        : <div className="flex items-center gap-1">
+            <input
+              value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+              className={`${basicControlClass} ${mono ? 'font-mono text-xs' : ''}`} />
+            {onBrowse && (
+              <button
+                type="button"
+                onClick={e => { e.preventDefault(); onBrowse() }}
+                title="Browse API files"
+                className="shrink-0 -my-0.5 p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+              >
+                <FolderOpen size={13} />
+              </button>
+            )}
+          </div>
       }
     </label>
   )
@@ -452,6 +482,8 @@ export default function EditorPage(): JSX.Element {
   // every field on screen. Remembered across sessions (and shared with the
   // pop-out editor window, which reads the same key).
   const [basicView,    setBasicView]    = useState(() => localStorage.getItem('editor:view') === 'basic')
+  // File picker for the audio path field (File URL / File path).
+  const [pickingFile, setPickingFile] = useState(false)
   // Synced lyrics as a timestamp+text table (default) or the raw LRC text.
   const [syncedTable,  setSyncedTable]  = useState(() => localStorage.getItem('editor:syncedFormat') !== 'raw')
   const [editingPropId, setEditingPropId] = useState<number | null>(null)
@@ -1113,7 +1145,7 @@ export default function EditorPage(): JSX.Element {
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   <BasicRow label="Image URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} mono />
-                  <BasicRow label="File path" value={filePath} original={String(base.path || '')} onChange={setFilePath} mono />
+                  <BasicRow label="File path" value={filePath} original={String(base.path || '')} onChange={setFilePath} mono onBrowse={() => setPickingFile(true)} />
                 </div>
                 <BasicRow label="Notes for the reviewer (optional)" value={edNotes} onChange={setEdNotes} />
 
@@ -1319,7 +1351,7 @@ export default function EditorPage(): JSX.Element {
                     <FieldRow label="Artists"  value={artists}  original={String(base.credited_artists || '')} onChange={setArtists} />
                     <FieldRow label="Album"    value={album}    original={String(base.album || '')}   onChange={setAlbum} />
                     <FieldRow label="Cover URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} placeholder="https://…" mono />
-                    <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" mono span={2} />
+                    <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" mono span={2} onBrowse={() => setPickingFile(true)} />
                     <FieldRow label="Length"    value={songLength} original={String(base.length || '')}  onChange={setSongLength} placeholder="3:59" mono />
                     <FieldRow label="Bitrate"   value={bitrate}  original={String(base.bitrate || '')}   onChange={setBitrate} placeholder="320 kbps" mono />
                     <TextareaRow
@@ -1500,6 +1532,16 @@ export default function EditorPage(): JSX.Element {
         )}
 
       </div>
+
+      {pickingFile && (
+        <FilePickerModal
+          kind="audio"
+          songTitle={name || song?.name}
+          altTitles={altNames.split('\n').map(s => s.trim()).filter(Boolean)}
+          onSelect={p => { setFilePath(p); setPickingFile(false) }}
+          onClose={() => setPickingFile(false)}
+        />
+      )}
     </div>
   )
 }

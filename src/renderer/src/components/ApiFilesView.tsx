@@ -4,9 +4,11 @@ import {
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
-  Filter, MoreHorizontal,
+  Filter, MoreHorizontal, Clipboard, Plus, ListMusic,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
+import * as userApi from '../lib/userApi'
+import { placeFlyout } from '../lib/menuFlyout'
 import {
   apiFetch,
   apiPeek,
@@ -151,7 +153,7 @@ function urlToPath(pathname: string): string {
 }
 
 export default function ApiFilesView(): JSX.Element {
-  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike')
+  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike, playlists, refreshPlaylists, setShowUserAuth } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike', 'playlists', 'refreshPlaylists', 'setShowUserAuth')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
   // Set lookup for the per-row liked check — .includes on the array made the
   // listing O(rows × likes).
@@ -167,6 +169,14 @@ export default function ApiFilesView(): JSX.Element {
   const [lightboxItems, setLightboxItems] = useState<LightboxItem[]>([])
   const [lightboxIndex, setLightboxIndex] = useState(-1)
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const [copiedKind, setCopiedKind] = useState<'link' | 'path'>('link')
+  // "Add to playlist" flyout, opened from the context menu.
+  const [playlistsOpen, setPlaylistsOpen] = useState(false)
+  const [playlistBusyId, setPlaylistBusyId] = useState<number | null>(null)
+  const [playlistDoneId, setPlaylistDoneId] = useState<number | null>(null)
+  const playlistItemRef = useRef<HTMLButtonElement>(null)
+  const playlistFlyoutRef = useRef<HTMLDivElement>(null)
+  const [playlistFlyoutPos, setPlaylistFlyoutPos] = useState({ top: 0, left: 0 })
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ entry: JWApiFileEntry; x: number; y: number } | null>(null)
   // Whether a right-clicked audio file actually has a matching song in the
@@ -189,6 +199,23 @@ export default function ApiFilesView(): JSX.Element {
     const left = Math.max(8, Math.min(ctxMenu.x, window.innerWidth - rect.width - 8))
     setCtxMenuPos({ top, left })
   }, [ctxMenu])
+
+  // Closing/reopening the menu resets the playlist flyout so it never
+  // re-opens against a different entry than the one it was populated for.
+  useEffect(() => {
+    setPlaylistsOpen(false)
+    setPlaylistDoneId(null)
+  }, [ctxMenu])
+
+  // Flyout sits beside the menu, flipping left when it'd run off the edge —
+  // same placement helper the song context menu's submenus use.
+  useLayoutEffect(() => {
+    if (!playlistsOpen) return
+    const item = playlistItemRef.current, menu = ctxMenuRef.current, sub = playlistFlyoutRef.current
+    if (!item || !menu || !sub) return
+    const { top, left } = placeFlyout(item, menu, sub)
+    setPlaylistFlyoutPos(prev => (prev.top === top && prev.left === left ? prev : { top, left }))
+  }, [playlistsOpen, ctxMenuPos, playlists.length])
 
   // Search — recursive across the whole file tree via /files/browse/'s
   // `search` param (same endpoint findSessionZips uses), not scoped to the
@@ -435,14 +462,36 @@ export default function ApiFilesView(): JSX.Element {
     resolveTrackerMatch(entry)
   }
 
+  const copyToClipboard = (entry: JWApiFileEntry, text: string, what: 'link' | 'path'): void => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedPath(entry.path)
+      setCopiedKind(what)
+      setTimeout(() => setCopiedPath(null), 1800)
+    })
+  }
+
   const copyLink = (entry: JWApiFileEntry): void => {
     const url = entry.type === 'file'
       ? buildStreamUrl(entry.path)
       : window.location.origin + pathToUrl(entry.path)
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedPath(entry.path)
-      setTimeout(() => setCopiedPath(null), 1800)
-    })
+    copyToClipboard(entry, url, 'link')
+  }
+
+  // The API-relative path ("Compilation/Folder/song.mp3") — what every
+  // /files/* endpoint takes as its `path` param, unlike Copy link's full URL.
+  const copyPath = (entry: JWApiFileEntry): void => copyToClipboard(entry, entry.path, 'path')
+
+  // ── Add to playlist ────────────────────────────────────────────────────────
+  // Server playlists are keyed by numeric Tracker song id, so this only works
+  // for audio files that resolved to a Tracker match (same lookup that gates
+  // "Find in Tracker") — the item stays hidden otherwise.
+  const addToPlaylist = async (playlistId: number, songId: number): Promise<void> => {
+    setPlaylistBusyId(playlistId)
+    try {
+      await userApi.addToPlaylist(playlistId, songId)
+      setPlaylistDoneId(playlistId)
+      await refreshPlaylists()
+    } catch {} finally { setPlaylistBusyId(null) }
   }
 
   const handlePlay = async (entry: JWApiFileEntry): Promise<void> => {
@@ -1164,6 +1213,12 @@ export default function ApiFilesView(): JSX.Element {
         )}
       </div>
 
+      {copiedPath && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-surface border border-[var(--border)] rounded-lg shadow-2xl px-3.5 py-2.5 text-xs text-text-primary">
+          <Check size={13} className="text-accent" /> {copiedKind === 'path' ? 'Path copied' : 'Link copied'}
+        </div>
+      )}
+
       {/* Folder-download progress toast — the selection bar above already
           shows zip status while selectMode is active, so this only covers
           the single-folder "Download folder" context-menu action. */}
@@ -1197,6 +1252,50 @@ export default function ApiFilesView(): JSX.Element {
             style={{ left: ctxMenuPos.left, top: ctxMenuPos.top }}
             onClick={e => e.stopPropagation()}
           >
+            {/* Playlist flyout — a child of the menu so the click-away overlay
+                still counts clicks in it as "inside", but positioned beside it. */}
+            {playlistsOpen && (
+              <div
+                ref={playlistFlyoutRef}
+                onClick={e => e.stopPropagation()}
+                style={{ position: 'fixed', zIndex: 60, top: playlistFlyoutPos.top, left: playlistFlyoutPos.left }}
+                className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+              >
+                {!account ? (
+                  <div className="px-3 py-2">
+                    <p className="text-xs text-text-muted mb-2">Log in to save to playlists.</p>
+                    <button
+                      onClick={() => { setShowUserAuth(true); setCtxMenu(null) }}
+                      className="w-full py-1.5 rounded-lg bg-accent/15 text-accent text-xs font-semibold"
+                    >Log in</button>
+                  </div>
+                ) : playlists.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-text-muted">No playlists yet.</p>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto">
+                    {playlists.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          const songId = trackerMatches.get(ctxMenu.entry.path)
+                          if (songId != null) addToPlaylist(p.id, songId)
+                        }}
+                        disabled={playlistBusyId === p.id}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                      >
+                        <ListMusic size={13} className="shrink-0 text-text-muted" />
+                        <span className="flex-1 truncate text-xs">{p.name}</span>
+                        {playlistBusyId === p.id
+                          ? <Loader2 size={12} className="animate-spin shrink-0" />
+                          : playlistDoneId === p.id
+                            ? <Check size={12} className="text-accent shrink-0" />
+                            : null}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {getMediaType(ctxMenu.entry.name) === 'audio' && (
               <>
                 <button onClick={() => { handlePlay(ctxMenu.entry); setCtxMenu(null) }}
@@ -1207,6 +1306,15 @@ export default function ApiFilesView(): JSX.Element {
                   className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <ListPlus size={14} className="text-text-muted" /> Add to queue
                 </button>
+                {trackerMatches.get(ctxMenu.entry.path) != null && (
+                  <button
+                    ref={playlistItemRef}
+                    onClick={() => setPlaylistsOpen(o => !o)}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                    <Plus size={14} className="text-text-muted" /> Add to playlist
+                    <ChevronRight size={13} className="ml-auto text-text-muted" />
+                  </button>
+                )}
                 <button onClick={() => { toggleLike(apiFileTrackId(ctxMenu.entry.path)); setCtxMenu(null) }}
                   className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <Heart size={14} fill={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'currentColor' : 'none'}
@@ -1242,6 +1350,10 @@ export default function ApiFilesView(): JSX.Element {
             <button onClick={() => { copyLink(ctxMenu.entry); setCtxMenu(null) }}
               className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <Link size={14} className="text-text-muted" /> Copy link
+            </button>
+            <button onClick={() => { copyPath(ctxMenu.entry); setCtxMenu(null) }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              <Clipboard size={14} className="text-text-muted" /> Copy path
             </button>
             {ctxMenu.entry.type === 'directory' ? (
               <button onClick={() => { downloadFolder(ctxMenu.entry); setCtxMenu(null) }}

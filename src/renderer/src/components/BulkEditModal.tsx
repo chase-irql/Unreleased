@@ -11,6 +11,9 @@ import type { JWApiSong, JWApiEra } from '../lib/juicewrldApi'
 import type { LibraryTrack } from '../types'
 import * as userApi from '../lib/userApi'
 import { broadcastLibraryTrackUpdate } from '../lib/windowSync'
+import { getVersionMetaForSongs, getOwnVersionMeta, setGroupVersionTitle, setSongVersion } from '../lib/versionsApi'
+import type { SongVersionMeta } from '../lib/versionsApi'
+import { invalidateCompactGroupsCache } from '../lib/compactGroups'
 import { cleanDate } from './EditorPage'
 
 // Bulk editor — one dialog, two sources:
@@ -66,6 +69,12 @@ interface BulkField<T> {
   options?: { value: string; label: string }[]
   /** Narrows the modes this field offers beyond its kind's default. */
   modes?: Mode[]
+  /** Caveat shown once the field is ticked — for consequences that only
+   *  matter when you're actually about to use it. */
+  note?: string
+  /** This field's current values are still loading; it reads as empty until
+   *  they arrive, so it can't be ticked yet. */
+  pending?: boolean
 }
 
 /** Everything one source has to supply for the dialog to drive it. */
@@ -187,9 +196,13 @@ interface Target<T> {
 
 /* ── API songs ─────────────────────────────────────────────────────────────── */
 
-const API_GROUPS = ['Details', 'Credits', 'Dates']
+const API_GROUPS = ['Details', 'Versions', 'Credits', 'Dates']
 
-function apiFields(eras: JWApiEra[]): BulkField<JWApiSong>[] {
+function apiFields(
+  eras: JWApiEra[],
+  versionMeta: Map<number, SongVersionMeta> | null,
+  versionNote: string,
+): BulkField<JWApiSong>[] {
   return [
     { key: 'category', label: 'Category', kind: 'select', group: 'Details', modes: ['set'], read: s => s.category || '',
       options: Object.keys(CATEGORY_LABELS).map(v => ({ value: v, label: CATEGORY_LABELS[v] })) },
@@ -201,6 +214,17 @@ function apiFields(eras: JWApiEra[]): BulkField<JWApiSong>[] {
     { key: 'instrumentals', label: 'Instrumentals', kind: 'text', group: 'Details', placeholder: 'Instrumental versions available', read: s => s.instrumentals || '' },
     { key: 'additional_information', label: 'Add. info', kind: 'textarea', group: 'Details', read: s => s.additional_information || '' },
     { key: 'notes', label: 'Notes', kind: 'textarea', group: 'Details', read: s => s.notes || '' },
+
+    // The shared title of the version group a song belongs to. Unlike every
+    // other field here it does NOT go through the proposal system — it writes
+    // straight to the /versions/ table, the same way the single-song editor's
+    // Versions card does. The per-song "version" label (v1 / TV Mix) is
+    // deliberately absent: stamping one label across a selection would just
+    // claim every song is the same version.
+    { key: 'versionTitle', label: 'Version title', kind: 'text', group: 'Versions',
+      modes: ['set', 'fill', 'clear'], placeholder: "e.g. She's The One",
+      pending: !versionMeta, note: versionNote,
+      read: s => versionMeta?.get(s.id)?.versionTitle ?? '' },
 
     { key: 'credited_artists', label: 'Artists', kind: 'list', group: 'Credits', placeholder: 'Juice WRLD, Lil Uzi Vert', read: s => s.credited_artists || '' },
     { key: 'producers', label: 'Producers', kind: 'list', group: 'Credits', placeholder: 'Nick Mira, Taz Taylor', read: s => s.producers || '' },
@@ -254,6 +278,11 @@ export default function BulkEditModal(): JSX.Element | null {
   )
 
   const [eras, setEras] = useState<JWApiEra[]>([])
+  // Which version group each selected song sits in, and that group's shared
+  // title. One cached bulk fetch for the whole selection rather than a lookup
+  // per song. Null until it lands, which keeps the field disabled instead of
+  // letting it read as "empty on all".
+  const [versionMeta, setVersionMeta] = useState<Map<number, SongVersionMeta> | null>(null)
   const isApi = target?.kind === 'api'
 
   useEffect(() => {
@@ -263,13 +292,52 @@ export default function BulkEditModal(): JSX.Element | null {
       .catch(() => undefined)
   }, [isApi, eras.length])
 
+  useEffect(() => {
+    if (target?.kind !== 'api') { setVersionMeta(null); return }
+    let cancelled = false
+    getVersionMetaForSongs(target.songs.map(s => s.id))
+      .then(m => { if (!cancelled) setVersionMeta(m) })
+      .catch(() => { if (!cancelled) setVersionMeta(new Map()) })
+    return () => { cancelled = true }
+  }, [target])
+
   const apiSpec = useMemo<BulkSpec<JWApiSong> | null>(() => {
     if (target?.kind !== 'api') return null
     const canEdit = !!(account?.is_editor || account?.is_administrator)
+
+    // A title belongs to a group, not a song, so setGroupVersionTitle rewrites
+    // every member — including songs the user didn't select. Ungrouped songs
+    // count as a group of one (setSongVersion creates a standalone group for
+    // them, matching what the single-song editor does).
+    const groupIds = new Set<string>()
+    for (const s of target.songs) {
+      const g = versionMeta?.get(s.id)?.groupId
+      groupIds.add(g != null ? `g${g}` : `solo${s.id}`)
+    }
+    const versionNote = groupIds.size > 1
+      ? `These ${target.songs.length} songs span ${groupIds.size} version groups — each gets the title separately, which leaves ${groupIds.size} differently-grouped songs claiming the same title. Link them first if they're meant to be one group. Writing also affects linked songs outside the selection.`
+      : 'Applies to the whole version group, including any linked songs that are not selected.'
+
+    // One write per group, not per song: a selection sharing a group would
+    // otherwise PATCH the same rows once per member. Keyed by group *and*
+    // title so editing the value and resubmitting isn't skipped as done, and
+    // a failure is dropped from the memo so a retry really retries.
+    const titleWrites = new Map<string, Promise<void>>()
+    const writeGroupTitle = (groupId: number, title: string): Promise<void> => {
+      const key = `${groupId}|${title}`
+      let inflight = titleWrites.get(key)
+      if (!inflight) {
+        inflight = setGroupVersionTitle(groupId, title || null).then(() => invalidateCompactGroupsCache())
+        inflight.catch(() => titleWrites.delete(key))
+        titleWrites.set(key, inflight)
+      }
+      return inflight
+    }
+
     return {
       items: target.songs,
       groups: API_GROUPS,
-      fields: apiFields(eras),
+      fields: apiFields(eras, versionMeta, versionNote),
       keyOf: s => String(s.id),
       titleOf: s => s.track_titles?.[0] || s.name,
       noun: ['song', 'songs'],
@@ -279,8 +347,24 @@ export default function BulkEditModal(): JSX.Element | null {
       actionLabel: n => `Submit ${n} proposal${n === 1 ? '' : 's'}`,
       doneLabel: n => `${n} proposal${n === 1 ? '' : 's'} submitted`,
       commit: async (song, patch, note) => {
+        // Version titles are written straight to the /versions/ table rather
+        // than proposed for review (same as the single-song editor), so they
+        // never belong in proposed_data.
+        const { versionTitle, ...rest } = patch
+        if (versionTitle !== undefined) {
+          // Only trust the prefetch for a song it actually knows about. It
+          // swallows its own errors into an empty map, and acting on that
+          // would have setSongVersion create a second row for a song that is
+          // already grouped (the table has no unique constraint on
+          // song_id) — so confirm "ungrouped" against the server first.
+          const existing = versionMeta?.get(song.id) ?? await getOwnVersionMeta(song.id)
+          const groupId = existing ? existing.groupId : await setSongVersion(song.id, null, null)
+          await writeGroupTitle(groupId, versionTitle)
+        }
+        if (Object.keys(rest).length === 0) return
+
         const proposed: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(patch)) {
+        for (const [key, value] of Object.entries(rest)) {
           proposed[key] = key === 'era_id' ? (value ? Number(value) : null) : (value === '' ? null : value)
         }
         await userApi.createProposal({
@@ -292,7 +376,7 @@ export default function BulkEditModal(): JSX.Element | null {
         })
       },
     }
-  }, [target, account, eras])
+  }, [target, account, eras, versionMeta])
 
   const localSpec = useMemo<BulkSpec<LibraryTrack> | null>(() => {
     if (target?.kind !== 'local') return null
@@ -547,16 +631,19 @@ function BulkEditor<T>({ spec, onClose }: { spec: BulkSpec<T>; onClose: () => vo
           on ? 'border-accent/40 bg-accent/[0.04]' : 'border-[var(--border)] bg-surface-raised/40'
         }`}
       >
-        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+        <label className={`flex items-center gap-2.5 select-none ${f.pending ? 'cursor-default opacity-60' : 'cursor-pointer'}`}>
           <input
             type="checkbox"
             checked={on}
+            disabled={f.pending}
             onChange={() => toggleField(f)}
             className="accent-[var(--accent)] w-3.5 h-3.5 shrink-0"
           />
           <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{f.label}</span>
-          <span className="ml-auto text-[11px] text-text-muted opacity-60 truncate max-w-[45%]" title={summaryFor(f)}>
-            {summaryFor(f)}
+          <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted opacity-60 truncate max-w-[45%]" title={f.pending ? undefined : summaryFor(f)}>
+            {f.pending
+              ? <><Loader2 size={10} className="animate-spin shrink-0" /> loading…</>
+              : summaryFor(f)}
           </span>
         </label>
 
@@ -658,6 +745,12 @@ function BulkEditor<T>({ spec, onClose }: { spec: BulkSpec<T>; onClose: () => vo
                   ? 'Nothing would change.'
                   : `${reach} of ${writable.length} would change.`}
             </p>
+
+            {f.note && (
+              <p className="flex items-start gap-1.5 text-[11px] text-amber-500">
+                <AlertCircle size={11} className="shrink-0 mt-0.5" /> {f.note}
+              </p>
+            )}
           </div>
         )}
       </div>

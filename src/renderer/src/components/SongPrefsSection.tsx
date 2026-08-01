@@ -8,7 +8,7 @@ import {
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
 import { getOwnVersionMeta, SongVersionMeta } from '../lib/versionsApi'
-import CoverPickerModal from './CoverPickerModal'
+import FilePickerModal from './FilePickerModal'
 
 // The "Personalize" editor shown inside SongInfoModal — the one place a user
 // sets the per-song overrides in lib/songPrefs (custom name, custom cover,
@@ -154,7 +154,7 @@ export default function SongPrefsSection({
   }, [ownImageRaw, versions, apiTitle])
 
   // ── Searched covers ───────────────────────────────────────────────────────
-  // Same title(+alt names) search CoverPickerModal seeds itself with, but run
+  // Same title(+alt names) search FilePickerModal seeds itself with, but run
   // inline the first time the cover panel opens — surfaces likely covers
   // right here instead of making the user open the full browser to see them.
   // null = not fetched yet (per song), so switching songs re-triggers it.
@@ -380,7 +380,7 @@ export default function SongPrefsSection({
       )}
 
       {browseOpen && (
-        <CoverPickerModal
+        <FilePickerModal
           songTitle={apiTitle}
           altTitles={altTitles}
           onClose={() => setBrowseOpen(false)}

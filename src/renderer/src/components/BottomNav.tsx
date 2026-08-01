@@ -4,22 +4,27 @@ import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, account } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account')
+  const { activeView, setActiveView, toggleSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility')
   const isAdmin = !!account?.is_administrator
   // Editor-only accounts don't get the Admin page — their review tools
   // (Proposals/Reports) live in their own profile page instead.
   const isEditor = !!account?.is_editor
+
+  // Album (albums-admin) and the Editor/Admin profile tab are editor/admin-only
+  // extras. They're hideable from Settings → Appearance → Menu items — the
+  // toggle is stored in the shared navVisibility map under the view id, so
+  // `?? true` keeps them on until the user turns them off. (These are the only
+  // mobile tabs wired to that toggle; the rest are the fixed core set.)
+  const navShown = (view: ViewType): boolean => navVisibility[view] ?? true
+  const showAlbums = (isAdmin || isEditor) && navShown('albums-admin')
+  const showEditorTab = (isAdmin || isEditor) && navShown('editor-profile')
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
     { icon: <img src={logo} alt="WRLD" className="w-8 h-8 object-contain" />, label: 'WRLD', view: 'wrld' },
     { icon: <SearchCode size={24} />, label: 'Tracker', view: 'api-tracker' },
     { icon: <ListMusic size={24} />, label: 'Playlists', view: 'playlists' },
     { icon: <Music4 size={24} />, label: 'Heardle', view: 'heardle' },
-    // The wrlddata.json album editor — an internal tool, not a listener
-    // feature. Desktop only reaches it via the editor profile's "Edit
-    // albums" button, so mirror that gating here instead of showing an
-    // admin surface to every mobile user.
-    ...(isAdmin || isEditor
+    ...(showAlbums
       ? [{ icon: <Disc size={24} />, label: 'Albums', view: 'albums-admin' as ViewType }]
       : []),
   ]
@@ -55,8 +60,8 @@ export default function BottomNav(): JSX.Element {
       })}
       {/* Admin review tools live inside the editor profile page (Admin tab)
           now — one profile entry for both roles instead of a separate Admin
-          view in the nav. */}
-      {(isAdmin || isEditor) && (
+          view in the nav. Hideable via Settings (see showEditorTab). */}
+      {showEditorTab && (
         <button
           onClick={() => setActiveView('editor-profile')}
           className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'editor-profile' ? 'text-accent' : 'text-text-muted'}`}

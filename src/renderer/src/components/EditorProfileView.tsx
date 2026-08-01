@@ -1,12 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import ReportsTab from './ReportsTab'
+import FilePickerModal from './FilePickerModal'
 import AdminPage from './AdminPage'
 
 const CATEGORIES = [
@@ -25,14 +26,24 @@ const CAT_PILL: Record<string, string> = {
 // Defined outside AddSongModal so its reference is stable across re-renders.
 // If defined inside, React sees a new component type every render and unmounts/remounts
 // the input DOM nodes, destroying focus.
-function Field({ label, value, onChange, placeholder, mono = false }: {
+function Field({ label, value, onChange, placeholder, mono = false, onBrowse }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; mono?: boolean
+  /** Shows a folder button next to the field that opens a file picker. */
+  onBrowse?: () => void
 }): JSX.Element {
   return (
     <div className="grid grid-cols-[80px_1fr] gap-x-3 items-baseline px-4 py-[7px] border-l-2 transition-all border-transparent hover:bg-white/[0.04]">
       <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 select-none truncate pt-px">{label}</span>
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder || '—'}
-        className={`flex-1 bg-transparent text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-25 min-w-0 border-b border-[var(--border)] pb-px focus:border-accent transition-colors ${mono ? 'font-mono' : ''}`} />
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder || '—'}
+          className={`flex-1 bg-transparent text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-25 min-w-0 border-b border-[var(--border)] pb-px focus:border-accent transition-colors ${mono ? 'font-mono' : ''}`} />
+        {onBrowse && (
+          <button onClick={onBrowse} title="Browse API files"
+            className="shrink-0 p-1 rounded text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors">
+            <FolderOpen size={13} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -61,6 +72,8 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   const [notes,    setNotes]    = useState('')
   const [edNotes, setEdNotes] = useState('')
   const [showMore, setShowMore] = useState(false)
+  // File picker for the audio path field
+  const [pickingFile, setPickingFile] = useState(false)
   const [eras, setEras] = useState<JWApiEra[]>([])
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted' | 'error'>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -184,7 +197,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
               <Field label="Producers" value={prod}     onChange={setProd}     placeholder="Producer names" />
               <Field label="Engineer"  value={engineer} onChange={setEngineer} placeholder="Engineer name" />
               <Field label="Location"  value={location} onChange={setLocation} placeholder="Recording location" />
-              <Field label="File URL"  value={filePath} onChange={setFilePath} placeholder="Path/URL to the audio file" mono />
+              <Field label="File URL"  value={filePath} onChange={setFilePath} placeholder="Path/URL to the audio file" mono onBrowse={() => setPickingFile(true)} />
               <Field label="Leak type" value={leakType} onChange={setLeakType} placeholder="e.g. Stem, Master, Video…" />
               <Field label="Recorded"  value={recDate}  onChange={setRecDate}  placeholder="YYYY-MM-DD" mono />
               <Field label="Released"  value={relDate}  onChange={setRelDate}  placeholder="YYYY-MM-DD" mono />
@@ -241,6 +254,16 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
           </button>
         </div>
       </div>
+
+      {pickingFile && (
+        <FilePickerModal
+          kind="audio"
+          songTitle={name}
+          altTitles={altNames.split('\n').map(s => s.trim()).filter(Boolean)}
+          onSelect={p => { setFilePath(p); setPickingFile(false) }}
+          onClose={() => setPickingFile(false)}
+        />
+      )}
     </div>
   )
 }

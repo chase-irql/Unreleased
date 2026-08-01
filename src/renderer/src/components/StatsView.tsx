@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Play, Loader2, MoreHorizontal, Music2, Clock, ListMusic, Disc3 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
-import { apiFetch, apiPeek, songToTrack, JWApiSong } from '../lib/juicewrldApi'
+import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import {
-  playedPrefs, joinPlayedSongs, buildListeningStats, formatListeningTime, mapPool,
+  playedPrefs, joinPlayedSongs, buildListeningStats, formatListeningTime,
   type RankedEntry,
 } from '../lib/listeningStats'
+import { resolveStatsSongs, statsSongToTrack, type StatsSong, type ResolveProgress } from '../lib/statsCatalog'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
@@ -16,15 +17,9 @@ import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 // every number here is all-time by construction (see lib/listeningStats).
 //
 // Song metadata isn't stored alongside the counts — a pref row is just
-// {song id, playcount} — so the page has to resolve each played id to a
-// JWApiSong. There's no bulk-by-id endpoint, and the whole-catalog call
-// (/songs/?all=true) is ~7.4MB and deliberately uncacheable (see apiCache's
-// MAX_ENTRY_CHARS), so this fetches per id instead: cheap, individually
-// cached, and bounded by how many songs the user has actually played.
-
-// Concurrent /songs/{id}/ requests. Enough to load a few hundred songs
-// quickly without burying the API (or the audio stream) under a burst.
-const FETCH_CONCURRENCY = 6
+// {song id, playcount} — so ids have to be resolved to songs before anything
+// can be ranked. lib/statsCatalog owns that and picks the cheap route (a few
+// per-id fetches, or one cached catalogue crawl); this file just renders.
 
 // Rows shown before "Show all" — a heavy listener can have hundreds.
 const TOP_SONGS_COLLAPSED = 25
@@ -82,9 +77,9 @@ export default function StatsView(): JSX.Element {
     'songPrefs', 'account', 'playTrack', 'playCollection', 'playNext', 'setActiveView', 'setPendingEditorSongId')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
-  const [songs, setSongs] = useState<Map<number, JWApiSong>>(new Map())
+  const [songs, setSongs] = useState<Map<number, StatsSong>>(new Map())
   const [loading, setLoading] = useState(true)
-  const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 })
+  const [progress, setProgress] = useState<ResolveProgress | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<SongContextMenuState | null>(null)
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
@@ -101,39 +96,21 @@ export default function StatsView(): JSX.Element {
     if (ids.length === 0) { setSongs(new Map()); setLoading(false); return }
 
     let cancelled = false
-    // Stale-while-revalidate: anything already in the offline cache (from the
-    // tracker, the queue, a song-info modal…) renders immediately, and only
-    // the genuinely-unknown ids cost a request. Song metadata is stable, so
-    // not refreshing the cached ones is a fair trade for the request count.
-    const seeded = new Map<number, JWApiSong>()
-    const missing: number[] = []
-    for (const id of ids) {
-      const cached = apiPeek<JWApiSong>(`/songs/${id}/`)
-      if (cached) seeded.set(id, cached)
-      else missing.push(id)
-    }
-    setSongs(seeded)
-    setProgress({ done: 0, total: missing.length })
     setLoading(true)
+    setProgress(null)
 
-    if (missing.length === 0) { setLoading(false); return }
-
-    let done = 0
-    mapPool(
-      missing,
-      FETCH_CONCURRENCY,
-      (id) => apiFetch<JWApiSong>(`/songs/${id}/`),
-      () => { if (!cancelled) setProgress({ done: ++done, total: missing.length }) },
-    ).then((results) => {
+    resolveStatsSongs(
+      ids,
+      (p) => { if (!cancelled) setProgress(p) },
+      () => cancelled,
+    ).then((resolved) => {
       if (cancelled) return
-      // One map update at the end rather than per response — a few hundred
-      // incremental setStates would re-rank and re-render the whole page.
-      setSongs((prev) => {
-        const next = new Map(prev)
-        for (const song of results) if (song) next.set(song.id, song)
-        return next
-      })
+      // One state update at the end rather than per response — incremental
+      // ones would re-rank and re-render the whole page hundreds of times.
+      setSongs(resolved)
       setLoading(false)
+    }).catch(() => {
+      if (!cancelled) setLoading(false)
     })
 
     return () => { cancelled = true }
@@ -143,7 +120,7 @@ export default function StatsView(): JSX.Element {
 
   // Tracks are rebuilt from the API songs so personal name/cover overrides and
   // the correct stream URL come along (songToTrack applies both).
-  const topTracks = useMemo(() => stats.played.map((p) => songToTrack(p.song)), [stats.played])
+  const topTracks = useMemo(() => stats.played.map((p) => statsSongToTrack(p.song)), [stats.played])
 
   const visible = expanded ? stats.played : stats.played.slice(0, TOP_SONGS_COLLAPSED)
   const topPlays = stats.played[0]?.playcount ?? 0
@@ -199,9 +176,13 @@ export default function StatsView(): JSX.Element {
           {loading && (
             <div className="flex items-center gap-2 text-text-muted text-xs mb-4">
               <Loader2 size={13} className="animate-spin" />
-              {progress.total > 0
-                ? <span>Loading song details… {progress.done}/{progress.total}</span>
-                : <span>Loading…</span>}
+              {progress?.phase === 'songs' ? (
+                <span>Loading song details… {progress.done}/{progress.total}</span>
+              ) : progress?.phase === 'catalog' && progress.total > 0 ? (
+                <span>Loading song catalogue… {progress.done}/{progress.total}</span>
+              ) : (
+                <span>Loading…</span>
+              )}
             </div>
           )}
 
@@ -315,9 +296,6 @@ export default function StatsView(): JSX.Element {
           onInfo={() => ctxMenu.songId != null && openSongInfo(ctxMenu.songId)}
           onPlay={() => playTrack(ctxMenu.track, topTracks)}
           onPlayNext={() => playNext(ctxMenu.track)}
-          // Already loaded here, so the menu's song-object-only actions
-          // (recording-session ZIP download) light up without a refetch.
-          song={ctxMenu.songId != null ? songs.get(ctxMenu.songId) : undefined}
         />
       )}
       <SongInfoModal
