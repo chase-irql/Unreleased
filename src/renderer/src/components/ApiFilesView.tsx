@@ -517,14 +517,18 @@ export default function ApiFilesView(): JSX.Element {
     if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
   }
 
-  const downloadZip = async (): Promise<void> => {
-    if (selectedPaths.size === 0) return
+  // Backend zips a folder path recursively with its subfolder structure
+  // intact (see /files/zip-selection/'s `{ "paths": ["Compilation/Folder"] }`
+  // shape in the docs), so a single directory path is enough — no need to
+  // walk and flatten the tree client-side.
+  const startZip = async (paths: string[], filename: string): Promise<void> => {
+    if (paths.length === 0) return
     setZipStatus('starting')
     try {
       const res = await fetch(`${JWAPI_BASE}/start-zip-job/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: [...selectedPaths] }),
+        body: JSON.stringify({ paths }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const { job_id } = await res.json() as { job_id: string }
@@ -534,7 +538,7 @@ export default function ApiFilesView(): JSX.Element {
         if (st.status === 'completed' && st.download_url) {
           const a = document.createElement('a')
           a.href = st.download_url
-          a.download = 'selection.zip'
+          a.download = filename
           a.target = '_blank'
           document.body.appendChild(a)
           a.click()
@@ -553,6 +557,10 @@ export default function ApiFilesView(): JSX.Element {
       setTimeout(() => setZipStatus('idle'), 3000)
     }
   }
+
+  const downloadZip = (): Promise<void> => startZip([...selectedPaths], 'selection.zip')
+
+  const downloadFolder = (entry: JWApiFileEntry): Promise<void> => startZip([entry.path], `${entry.name}.zip`)
 
   // ── Sorted entries ─────────────────────────────────────────────────────────
 
@@ -1156,6 +1164,21 @@ export default function ApiFilesView(): JSX.Element {
         )}
       </div>
 
+      {/* Folder-download progress toast — the selection bar above already
+          shows zip status while selectMode is active, so this only covers
+          the single-folder "Download folder" context-menu action. */}
+      {!selectMode && zipStatus !== 'idle' && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 bg-surface border border-[var(--border)] rounded-lg shadow-2xl px-3.5 py-2.5 text-xs text-text-primary">
+          {zipStatus === 'starting' || zipStatus === 'zipping' ? (
+            <><Loader2 size={13} className="animate-spin text-accent" /> {zipStatus === 'starting' ? 'Starting ZIP…' : 'Zipping folder…'}</>
+          ) : zipStatus === 'done' ? (
+            <><Check size={13} className="text-accent" /> Downloaded</>
+          ) : (
+            <><X size={13} className="text-red-400" /> ZIP failed</>
+          )}
+        </div>
+      )}
+
       {lightboxIndex >= 0 && lightboxItems.length > 0 && (
         <MediaLightbox
           items={lightboxItems}
@@ -1220,7 +1243,13 @@ export default function ApiFilesView(): JSX.Element {
               className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <Link size={14} className="text-text-muted" /> Copy link
             </button>
-            {ctxMenu.entry.type !== 'directory' && (
+            {ctxMenu.entry.type === 'directory' ? (
+              <button onClick={() => { downloadFolder(ctxMenu.entry); setCtxMenu(null) }}
+                disabled={zipStatus === 'starting' || zipStatus === 'zipping'}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50">
+                <PackageOpen size={14} className="text-text-muted" /> Download folder (ZIP)
+              </button>
+            ) : (
               <button onClick={() => { handleDownload(ctxMenu.entry); setCtxMenu(null) }}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                 <Download size={14} className="text-text-muted" /> Download
