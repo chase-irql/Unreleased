@@ -4,7 +4,18 @@ import { useStorePick } from '../store/useStore'
 import { effectiveBinding, comboTokens, runHotkeyAction } from '../lib/hotkeys'
 import { trackIdToSongId } from '../lib/userApi'
 import { placeFlyout } from '../lib/menuFlyout'
+import { orderedNavItems } from '../lib/navItems'
+import type { ViewType } from '../types'
 import { APP_VERSION } from '../lib/appVersion'
+
+// View tabs that have a dedicated navigation hotkey — the rest navigate via
+// setActiveView. Keyed by the nav item's `view` id.
+const VIEW_HOTKEYS: Partial<Record<ViewType, string>> = {
+  'api-tracker': 'view-tracker',
+  playlists: 'view-playlists',
+  library: 'view-library',
+  wrld: 'view-wrld',
+}
 
 // MusicBee-style application menu: a button that drops down the top-level menus
 // (File, Edit, View…), each opening its own submenu flyout. Desktop only — the
@@ -91,7 +102,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     developerMode, setDeveloperMode,
     addLibraryFolder, libraryScanning, libraryAutoRefresh, setLibraryAutoRefresh,
     syncOfflinePlaylists, openReport,
-    hotkeyBindings,
+    hotkeyBindings, navOrder,
   } = useStorePick(
     'account', 'logoutAccount', 'setShowUserAuth',
     'openSettings', 'openConvert',
@@ -111,7 +122,7 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     'developerMode', 'setDeveloperMode',
     'addLibraryFolder', 'libraryScanning', 'libraryAutoRefresh', 'setLibraryAutoRefresh',
     'syncOfflinePlaylists', 'openReport',
-    'hotkeyBindings',
+    'hotkeyBindings', 'navOrder',
   )
 
   const [open, setOpen] = useState(false)
@@ -307,12 +318,16 @@ export default function AppMenu({ variant = 'bar', collapsed = false }: { varian
     {
       id: 'view', label: 'View',
       entries: [
-        { kind: 'item', label: 'Tracker', hotkey: 'view-tracker', onClick: hk('view-tracker') },
-        { kind: 'item', label: 'Files', onClick: run(() => setActiveView('api-files')) },
-        { kind: 'item', label: 'Library', hotkey: 'view-library', onClick: hk('view-library') },
-        { kind: 'item', label: 'Playlists', hotkey: 'view-playlists', onClick: hk('view-playlists') },
-        { kind: 'item', label: 'Liked songs', onClick: run(() => setActiveView('liked')) },
-        { kind: 'item', label: 'WRLD', hotkey: 'view-wrld', onClick: hk('view-wrld') },
+        // Every nav destination — including tabs the user has hidden from the
+        // side menu — generated from the shared registry, in their arranged
+        // order, so a new tab shows here automatically. (electronOnly items are
+        // fine: AppMenu only renders on the desktop build.)
+        ...orderedNavItems(navOrder).map((it): Entry => {
+          const hotkey = VIEW_HOTKEYS[it.view]
+          return hotkey
+            ? { kind: 'item', label: it.label, hotkey, onClick: hk(hotkey) }
+            : { kind: 'item', label: it.label, onClick: run(() => setActiveView(it.view)) }
+        }),
         { kind: 'sep' },
         { kind: 'item', label: 'Queue panel', hotkey: 'toggle-queue', onClick: hk('toggle-queue'), checked: showQueue },
         { kind: 'item', label: 'Now playing', onClick: run(() => setShowNowPlaying(!showNowPlaying)), checked: showNowPlaying },

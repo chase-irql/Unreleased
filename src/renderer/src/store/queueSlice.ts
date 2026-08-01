@@ -18,6 +18,7 @@ import type { JWApiPaginatedResponse, JWApiSong } from '../lib/juicewrldApi'
 import { getOwnVersionMeta, getVersionGroup } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { peekSongPref, hasAnyDefaultVersion } from '../lib/songPrefs'
+import { ls } from '../lib/persist'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -238,8 +239,13 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   isPlaying: false,
   progress: 0,
   currentTime: 0,
-  shuffle: false,
-  repeat: 'none',
+  // Playback *modes* persist across restarts (the queue itself doesn't — it's
+  // rebuilt from whatever the user plays next). radioMode deliberately stays
+  // off on load even when shuffle was on: radio is started by toggling shuffle
+  // from a tracker context, so it's a property of the live session, and
+  // restoring it would resume fetching random songs nobody asked for.
+  shuffle: ls.get<boolean>('shuffle') ?? false,
+  repeat: ls.get<'none' | 'all' | 'one'>('repeat') ?? 'none',
   queueFilter: null,
   queueLoadingMore: false,
   queueSource: null,
@@ -429,6 +435,9 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   toggleShuffle: () => {
     const { shuffle, queue, queueIndex, queueFilter, radioMode, currentTrack, queueSource } = get()
     const newShuffle = !shuffle
+    // Written once up front so every branch below (including the radio-mode
+    // early return) leaves storage agreeing with the resulting state.
+    ls.set('shuffle', newShuffle)
 
     if (!newShuffle) {
       // Turning OFF: exit radio mode if active, resume linear playback
@@ -458,11 +467,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   },
 
   // ── toggleRepeat ───────────────────────────────────────────────────────────
-  toggleRepeat: () =>
-    set((s: QueueSlice) => {
-      const order: Array<'none' | 'all' | 'one'> = ['none', 'all', 'one']
-      return { repeat: order[(order.indexOf(s.repeat) + 1) % 3] }
-    }),
+  toggleRepeat: () => {
+    const order: Array<'none' | 'all' | 'one'> = ['none', 'all', 'one']
+    const next = order[(order.indexOf(get().repeat) + 1) % 3]
+    ls.set('repeat', next)
+    set({ repeat: next })
+  },
 
   // ── Queue editing ──────────────────────────────────────────────────────────
   addToQueue: (track) => set((s: QueueSlice) => ({ queue: [...s.queue, track] })),
