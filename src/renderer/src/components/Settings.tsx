@@ -493,7 +493,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const joinBeta = async () => {
     if (!el?.betaJoin || !betaCode.trim()) return
     const ok = await el.betaJoin(betaCode)
-    if (ok) { setBetaEnabled(true); setBetaCode(''); setBetaMsg(null) }
+    if (ok === 'unavailable') setBetaMsg("Beta signup is unavailable right now — the server didn't respond properly")
+    else if (ok) { setBetaEnabled(true); setBetaCode(''); setBetaMsg(null) }
     else setBetaMsg('Invalid code — double-check it and try again')
   }
 

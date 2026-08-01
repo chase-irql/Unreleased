@@ -179,7 +179,9 @@ function readBetaCode() {
 // Switches the updater between the normal stable (GitHub) feed and the
 // gated beta feed. electron-updater allows re-pointing the feed at runtime,
 // so join/leave take effect immediately, no restart needed.
+let activeBetaCode = null
 function applyUpdateFeed(code) {
+  activeBetaCode = code || null
   if (code) {
     autoUpdater.setFeedURL({ provider: 'generic', url: `${BETA_API_BASE}/update-feed`, channel: 'latest' })
     autoUpdater.requestHeaders = { 'X-Beta-Code': code }
@@ -190,6 +192,24 @@ function applyUpdateFeed(code) {
     autoUpdater.allowPrerelease = false
   }
 }
+
+// The beta feed is served by juicewrldapi.com, whose SPA answers unknown paths
+// with index.html at HTTP 200 rather than a 404. So when the /beta endpoints go
+// away, `latest.yml` comes back as a page of HTML, js-yaml throws on it, and the
+// updater fails — with no status code anywhere to reveal that the endpoint is
+// simply gone. Because the marker lives in userData, that state survives
+// uninstall, reinstall, and the force-update path, which is how a user ends up
+// permanently stuck on "check failed" while force-install keeps working.
+//
+// Any failure that means "this feed isn't speaking the update protocol" is
+// therefore treated as "beta is unavailable", not as a fatal update error: we
+// re-point at the stable GitHub feed and finish the check there. The marker is
+// deliberately left on disk, so beta resumes by itself if the backend returns —
+// the cost is one wasted request per launch, which beats bricking the updater.
+function isBetaFeedUnavailable(msg) {
+  return /Cannot parse update info|YAMLException|HTTP 4\d\d|ENOTFOUND|ECONNREFUSED|certificate/i.test(msg)
+}
+let betaFallbackDone = false
 
 const initialBetaCode = readBetaCode()
 applyUpdateFeed(initialBetaCode)
@@ -1019,6 +1039,12 @@ function checkBetaCode(code) {
       res.on('data', (c) => { data += c })
       res.on('end', () => {
         if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`))
+        // The site's SPA serves index.html at 200 for paths it doesn't route,
+        // so a missing endpoint arrives looking like success. Without this the
+        // JSON.parse below fails and every code reads as "invalid", hiding the
+        // fact that the backend is simply gone.
+        const type = String(res.headers['content-type'] || '')
+        if (!type.includes('json')) return reject(new Error(`beta endpoint returned ${type || 'unknown content-type'}, not JSON`))
         try { resolve(!!JSON.parse(data).valid) } catch (e) { reject(e) }
       })
     }).on('error', reject)
@@ -1033,8 +1059,11 @@ ipcMain.handle('beta-join', async (_, code) => {
   try {
     if (!(await checkBetaCode(trimmed))) return false
   } catch (err) {
+    // Distinct from a rejected code: the backend is unreachable or not
+    // answering the documented contract. Saying "invalid code" here sends
+    // people hunting for a typo in a code that's perfectly fine.
     log('beta-join: code check failed:', err.message)
-    return false
+    return 'unavailable'
   }
   try {
     fs.writeFileSync(betaMarkerPath, trimmed)
@@ -2713,8 +2742,32 @@ function clearUpdaterCache() {
   }
 }
 
+// Only integrity failures mean the cache is the problem. Purging on *every*
+// error threw away a perfectly good staged update whenever an unrelated check
+// failed — e.g. a feed that answered with HTML, which has nothing to do with
+// what's on disk but still wiped the pending installer and left
+// autoInstallOnAppQuit with nothing to install.
+function isCorruptCacheError(msg) {
+  return /sha512|checksum|mismatch|corrupt|Unexpected end|unexpected end of/i.test(msg)
+}
+
 autoUpdater.on('error', (err) => {
-  log('Auto-updater error:', err.message)
-  clearUpdaterCache()
-  broadcastToWindows('update-status', { type: 'error', message: err.message })
+  const msg = err.message || String(err)
+  log('Auto-updater error:', msg)
+  if (isCorruptCacheError(msg)) clearUpdaterCache()
+
+  // Beta feed isn't answering with a usable latest.yml → retry on stable rather
+  // than surfacing a dead end the user can't clear from inside the app.
+  if (activeBetaCode && !betaFallbackDone && isBetaFeedUnavailable(msg)) {
+    betaFallbackDone = true
+    log('Beta update feed unusable — falling back to the stable GitHub feed for this session')
+    applyUpdateFeed(null)
+    broadcastToWindows('update-status', { type: 'checking' })
+    // activeBetaCode is null now, so a failure here takes the normal path below
+    // instead of looping back into the fallback.
+    autoUpdater.checkForUpdates().catch(e => log('Stable-feed retry failed:', e.message))
+    return
+  }
+
+  broadcastToWindows('update-status', { type: 'error', message: msg })
 })

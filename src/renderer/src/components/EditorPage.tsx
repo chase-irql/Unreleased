@@ -257,6 +257,82 @@ function BasicSelect({ label, value, original, onChange, options, placeholder }:
   )
 }
 
+/* ── Synced lyrics table ───────────────────────────────────────────────────── */
+/* Raw LRC ("[1:05.96] Animal, animal") is hard to read and easy to corrupt, so
+   the editor can show it as one row per line: timestamp field + text field.
+   The bracket contents are kept verbatim rather than normalised, so a partly
+   typed timestamp survives a re-render and metadata tags ([ar: …]) round-trip
+   untouched. */
+type SyncedLine = { time: string; text: string }
+
+function parseSynced(v: string): SyncedLine[] {
+  if (!v) return []
+  return v.split('\n').map(line => {
+    const m = /^\s*\[([^\]]*)\]\s?(.*)$/.exec(line)
+    return m ? { time: m[1], text: m[2] } : { time: '', text: line }
+  })
+}
+
+function serializeSynced(rows: SyncedLine[]): string {
+  return rows.map(r => (r.time.trim() ? `[${r.time.trim()}] ${r.text}`.trimEnd() : r.text)).join('\n')
+}
+
+function SyncedLyricsTable({ value, onChange }: {
+  value: string; onChange: (v: string) => void
+}): JSX.Element {
+  const rows = parseSynced(value)
+  const commit = (next: SyncedLine[]): void => onChange(serializeSynced(next))
+  const update = (i: number, patch: Partial<SyncedLine>): void =>
+    commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
+  const insertAfter = (i: number): void =>
+    commit([...rows.slice(0, i + 1), { time: '', text: '' }, ...rows.slice(i + 1)])
+
+  return (
+    <div className="mt-1.5">
+      <div className="max-h-[340px] overflow-y-auto pr-0.5 space-y-1">
+        {rows.map((r, i) => (
+          <div key={i} className="group flex items-center gap-1.5">
+            <input
+              value={r.time}
+              onChange={e => update(i, { time: e.target.value })}
+              placeholder="0:00.00"
+              title="Timestamp for this line"
+              className={`w-[76px] shrink-0 rounded border px-1.5 py-1 font-mono text-[11px] text-center focus:outline-none focus:border-accent/50 transition-colors ${
+                r.time.trim()
+                  ? 'border-[var(--border)] bg-surface-overlay text-text-primary'
+                  : 'border-dashed border-[var(--border)] bg-transparent text-text-muted'
+              } placeholder:text-text-muted placeholder:opacity-40`}
+            />
+            <input
+              value={r.text}
+              onChange={e => update(i, { text: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); insertAfter(i) } }}
+              placeholder="Lyric line…"
+              className="flex-1 min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-[13px] text-text-primary focus:outline-none focus:border-accent/50 focus:bg-surface-overlay transition-colors placeholder:text-text-muted placeholder:opacity-40"
+            />
+            <button
+              onClick={() => commit(rows.filter((_, j) => j !== i))}
+              title="Remove line"
+              className="shrink-0 p-1 rounded text-text-muted opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-400 transition-all"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+        {rows.length === 0 && (
+          <p className="py-2 text-[11px] text-text-muted opacity-60">No synced lines yet.</p>
+        )}
+      </div>
+      <button
+        onClick={() => commit([...rows, { time: '', text: '' }])}
+        className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-text-muted opacity-70 hover:opacity-100 hover:text-accent transition-colors"
+      >
+        <Plus size={11} /> Add line
+      </button>
+    </div>
+  )
+}
+
 /* ── Genius lyrics helpers ─────────────────────────────────────────────────── */
 const isGeniusUrl = (s: string): boolean =>
   /^https?:\/\/(www\.)?genius\.com\/.+/i.test(s.trim())
@@ -376,6 +452,8 @@ export default function EditorPage(): JSX.Element {
   // every field on screen. Remembered across sessions (and shared with the
   // pop-out editor window, which reads the same key).
   const [basicView,    setBasicView]    = useState(() => localStorage.getItem('editor:view') === 'basic')
+  // Synced lyrics as a timestamp+text table (default) or the raw LRC text.
+  const [syncedTable,  setSyncedTable]  = useState(() => localStorage.getItem('editor:syncedFormat') !== 'raw')
   const [editingPropId, setEditingPropId] = useState<number | null>(null)
   // True while editing a 'create' proposal (new song) — has no backing song object yet
   const [isNewSongDraft, setIsNewSongDraft] = useState(false)
@@ -990,6 +1068,15 @@ export default function EditorPage(): JSX.Element {
                       <div className="flex items-center gap-1.5">
                         <span className={basicLabelClass}>Lyrics</span>
                         <span className="flex-1" />
+                        {showSynced && (
+                          <button
+                            onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
+                            title={syncedTable ? 'Edit the raw LRC text' : 'Edit as timestamped lines'}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity"
+                          >
+                            {syncedTable ? 'Raw' : 'Lines'}
+                          </button>
+                        )}
                         {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
                           const active = lyricsTab === tab
                           const dirty  = tab === 'lyrics'
@@ -1006,13 +1093,17 @@ export default function EditorPage(): JSX.Element {
                           )
                         })}
                       </div>
-                      <textarea
-                        rows={12}
-                        value={value}
-                        onChange={e => (showSynced ? setSynced : setLyrics)(e.target.value)}
-                        placeholder={showSynced ? '[00:00.00] Line one\n[00:05.20] Line two\n…' : 'Full lyrics…'}
-                        className={`${basicControlClass} resize-y mt-1 ${showSynced ? 'font-mono text-xs' : ''}`}
-                      />
+                      {showSynced && syncedTable ? (
+                        <SyncedLyricsTable value={synced} onChange={setSynced} />
+                      ) : (
+                        <textarea
+                          rows={12}
+                          value={value}
+                          onChange={e => (showSynced ? setSynced : setLyrics)(e.target.value)}
+                          placeholder={showSynced ? '[00:00.00] Line one\n[00:05.20] Line two\n…' : 'Full lyrics…'}
+                          className={`${basicControlClass} resize-y mt-1 ${showSynced ? 'font-mono text-xs' : ''}`}
+                        />
+                      )}
                     </div>
                   )
                 })()}
@@ -1339,6 +1430,15 @@ export default function EditorPage(): JSX.Element {
                   title="Lyrics"
                   action={
                     <div className="flex items-center gap-1">
+                      {lyricsTab === 'synced' && (
+                        <button
+                          onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
+                          title={syncedTable ? 'Edit the raw LRC text' : 'Edit as timestamped lines'}
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity"
+                        >
+                          {syncedTable ? 'Raw' : 'Lines'}
+                        </button>
+                      )}
                       {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
                         const active = lyricsTab === tab
                         const dirty = tab === 'lyrics'
@@ -1381,6 +1481,8 @@ export default function EditorPage(): JSX.Element {
                         </div>
                       )}
                     </div>
+                  ) : syncedTable ? (
+                    <SyncedLyricsTable value={synced} onChange={setSynced} />
                   ) : (
                     <textarea
                       rows={15} value={synced} onChange={e => setSynced(e.target.value)}

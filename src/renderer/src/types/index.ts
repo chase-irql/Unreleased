@@ -113,4 +113,4 @@ export interface SyncedLyricLine {
   text: string
 }
 
-export type ViewType = 'api-tracker' | 'api-files' | 'editor' | 'local-editor' | 'admin' | 'liked' | 'playlists' | 'shared-playlist' | 'editor-profile' | 'docs' | 'wrld' | 'library' | 'albums-admin' | 'news' | 'not-found'
+export type ViewType = 'api-tracker' | 'api-files' | 'editor' | 'local-editor' | 'admin' | 'liked' | 'playlists' | 'shared-playlist' | 'editor-profile' | 'docs' | 'wrld' | 'library' | 'albums-admin' | 'news' | 'heardle' | 'stats' | 'not-found'

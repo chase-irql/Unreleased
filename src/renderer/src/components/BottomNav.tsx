@@ -1,4 +1,4 @@
-import { SearchCode, Settings, ShieldCheck, ListMusic, Disc } from 'lucide-react'
+import { SearchCode, Settings, ShieldCheck, ListMusic, Disc, Music4 } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
@@ -14,6 +14,7 @@ export default function BottomNav(): JSX.Element {
     { icon: <img src={logo} alt="WRLD" className="w-8 h-8 object-contain" />, label: 'WRLD', view: 'wrld' },
     { icon: <SearchCode size={24} />, label: 'Tracker', view: 'api-tracker' },
     { icon: <ListMusic size={24} />, label: 'Playlists', view: 'playlists' },
+    { icon: <Music4 size={24} />, label: 'Heardle', view: 'heardle' },
     // The wrlddata.json album editor — an internal tool, not a listener
     // feature. Desktop only reaches it via the editor profile's "Edit
     // albums" button, so mirror that gating here instead of showing an
