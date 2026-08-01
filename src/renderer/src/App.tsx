@@ -2,6 +2,7 @@ import React, { useEffect, Suspense, lazy } from 'react'
 import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
 import { useThemeEffects } from './lib/themeEffects'
+import { runWhenIdle } from './lib/platform'
 import { ViewType } from './types'
 
 function getViewFromPath(pathname: string): ViewType {
@@ -173,7 +174,11 @@ export default function App(): JSX.Element {
 
   // Warm the Tracker/Files offline cache on startup (public data — no auth
   // needed), so those views are ready before the user first opens them.
-  useEffect(() => { prefetchApiData() }, [prefetchApiData])
+  // Deferred to idle: none of it is needed to paint, and running it in the
+  // mount commit put four requests in front of the ones the visible view was
+  // making at that same moment. Overlap with those is still free — apiRequest
+  // dedupes identical in-flight GETs.
+  useEffect(() => runWhenIdle(() => { prefetchApiData() }), [prefetchApiData])
 
   // Warm the local library into the store during idle after boot, so the first
   // Library/Playlists open is instant instead of paying a cold disk read + IPC.

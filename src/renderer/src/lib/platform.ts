@@ -22,6 +22,27 @@ export const IS_ELECTRON =
   typeof window !== 'undefined' &&
   !!(window as unknown as { electron?: unknown }).electron
 
+/** Runs `fn` once the browser is idle, or after `timeoutMs` at the latest.
+ *  Returns a canceller.
+ *
+ *  For background warm-up work only. Anything scheduled here gives up its
+ *  slice of the startup network/CPU budget to whatever the user is actually
+ *  looking at — the point is that a prefetch must never race the visible
+ *  view's own first request. requestIdleCallback isn't in Safari <16.4, hence
+ *  the timeout fallback. */
+export function runWhenIdle(fn: () => void, timeoutMs = 2000): () => void {
+  const w = window as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+    cancelIdleCallback?: (id: number) => void
+  }
+  if (w.requestIdleCallback) {
+    const id = w.requestIdleCallback(fn, { timeout: timeoutMs })
+    return () => w.cancelIdleCallback?.(id)
+  }
+  const id = window.setTimeout(fn, timeoutMs)
+  return () => clearTimeout(id)
+}
+
 // True when the page is running as an installed PWA (launched from the home
 // screen / app icon) rather than in a browser tab.
 export function isStandalonePWA(): boolean {

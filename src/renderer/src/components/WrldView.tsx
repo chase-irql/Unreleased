@@ -1811,7 +1811,10 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
     <div className="w-full flex flex-col gap-1.5 select-none">
       <div
         ref={barRef}
-        className="relative h-1 rounded-full cursor-pointer group/bar"
+        // touch-none: without touch-action:none the browser claims the drag as
+        // a scroll/pan gesture and the bar never gets to scrub (why dragging to
+        // seek did nothing on mobile). Paired with the onTouchStart handler.
+        className="relative h-1 rounded-full cursor-pointer group/bar touch-none"
         style={{ background: 'rgba(255,255,255,0.18)' }}
         onMouseDown={e => {
           const startPct = pctFromClientX(e.clientX)
@@ -1830,6 +1833,24 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
           }
           document.addEventListener('mousemove', onMove)
           document.addEventListener('mouseup', onUp)
+        }}
+        onTouchStart={e => {
+          const startPct = pctFromClientX(e.touches[0].clientX)
+          if (startPct !== null) setDragPct(startPct)
+          const onMove = (ev: TouchEvent): void => {
+            const p = pctFromClientX(ev.touches[0].clientX)
+            if (p !== null) setDragPct(p)
+          }
+          const onEnd = (ev: TouchEvent): void => {
+            const p = pctFromClientX(ev.changedTouches[0]?.clientX ?? 0)
+            const dur = getAudioDuration()
+            if (p !== null && dur > 0) seekAudio(p * dur)
+            setDragPct(null)
+            document.removeEventListener('touchmove', onMove)
+            document.removeEventListener('touchend', onEnd)
+          }
+          document.addEventListener('touchmove', onMove, { passive: true })
+          document.addEventListener('touchend', onEnd)
         }}
       >
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />

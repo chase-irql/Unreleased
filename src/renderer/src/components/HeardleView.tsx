@@ -11,7 +11,7 @@ import {
   MIN_TRIES, MAX_TRIES, POOL_LABELS, DEFAULT_SETTINGS,
   loadPools, loadVersionGroups, filterByEra, poolEras,
   pickDailySong, pickPersonalSong, pickRandomSong, playerSeed, clipStart,
-  searchPool, isCorrectGuess, stageLadder, settingsForMode, clampTries,
+  searchPool, matchedAlias, isCorrectGuess, stageLadder, settingsForMode, clampTries,
   todayKey, puzzleNumber, msUntilNextPuzzle, unlockedSeconds,
   loadRound, saveRound, loadStats, recordResult, shareText,
   loadSettings, saveSettings,
@@ -223,13 +223,14 @@ function Segmented<T extends string>({ options, value, onChange }: {
 
 const numberInput = 'w-16 h-8 px-2 rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-sm text-text-primary text-right focus:outline-none focus:border-accent/50'
 
-/** Game rules. Which of these actually bite depends on the mode — see
- *  settingsForMode — so the panel says so rather than silently doing nothing
- *  in Daily. */
-function SettingsPanel({ settings, onChange, eras, onClose }: {
+/** Game rules for Unlimited. The daily modes ignore all of them (see
+ *  settingsForMode), so the panel says which mode it's editing rather than
+ *  presenting live-looking controls that silently do nothing. */
+function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
   settings: HeardleSettings
   onChange: (s: HeardleSettings) => void
   eras: { era: string; count: number }[]
+  mode: Mode
   onClose: () => void
 }) {
   const set = <K extends keyof HeardleSettings>(key: K, value: HeardleSettings[K]): void =>
@@ -266,10 +267,17 @@ function SettingsPanel({ settings, onChange, eras, onClose }: {
             <X size={16} />
           </button>
         </div>
-        <p className="text-xs text-text-muted mb-4">
-          Daily always uses the standard rules so everyone plays the same game. Personal follows the
-          difficulty settings; Unlimited follows all of them.
+        <p className="text-xs text-text-muted mb-3">
+          These apply to <span className="text-text-secondary font-semibold">Unlimited</span> only. Daily and
+          Personal always run the standard rules — their results are headed for a leaderboard, and a
+          six-try round and a ten-try round aren't the same achievement.
         </p>
+        {mode !== 'unlimited' && (
+          <p className="text-xs text-accent bg-accent/10 border border-accent/25 rounded-lg px-3 py-2 mb-4">
+            You're playing {mode === 'personal' ? 'Personal' : 'Daily'} right now — nothing here changes
+            that round. Switch to Unlimited to play by these.
+          </p>
+        )}
 
         <h3 className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Difficulty</h3>
         <Field label="Tries" hint={`${MIN_TRIES}–${MAX_TRIES} guesses per song`}>
@@ -332,9 +340,7 @@ function SettingsPanel({ settings, onChange, eras, onClose }: {
           Ladder: {ladder.map((s) => `${s}s`).join(' → ')}
         </p>
 
-        <h3 className="text-[10px] font-bold uppercase tracking-widest text-text-muted mt-4 mb-1">
-          Song pool <span className="font-medium normal-case tracking-normal">— Unlimited only</span>
-        </h3>
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-text-muted mt-4 mb-1">Song pool</h3>
         <div className="py-3 border-b border-[var(--border)]">
           <div className="text-sm text-text-primary font-medium mb-2">Catalogues</div>
           <div className="flex flex-wrap gap-1.5">
@@ -869,13 +875,32 @@ export default function HeardleView(): JSX.Element {
 
           {/* The three modes are easy to confuse at a glance, so spell out what
               you're playing rather than leaving it to the tab labels. */}
-          <p className="text-center text-[10px] font-mono tracking-wider text-text-muted mb-6">
+          <p className="text-center text-[10px] font-mono tracking-wider text-text-muted mb-3">
             {mode === 'daily' && `#${puzzleNumber(day)} · `}
             {MODES.find((m) => m.id === mode)?.hint.toLowerCase()}
             {` · ${ladder.length} tries · up to ${formatSeconds(fullWindow)}`}
             {rules.startPoint === 'timestamp' ? ' · from a timestamp' : ' · from the intro'}
             {mode === 'unlimited' && rules.eras.length > 0 && ` · ${rules.eras.join(', ')}`}
           </p>
+
+          {/* Reroll — practice rounds aren't scored, so being stuck with a
+              song you have no chance on is just a dead end. Only here: the
+              daily modes get one song a day, and a reroll would be the whole
+              point of them undone. */}
+          <div className="flex justify-center mb-6">
+            {mode === 'unlimited' ? (
+              <button
+                onClick={newRound}
+                disabled={playablePool.length === 0}
+                title="Skip this song and draw another"
+                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[var(--border)] hover:border-accent/40 text-text-muted hover:text-text-primary text-[10px] font-bold uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
+              >
+                <RefreshCw size={12} /> Reroll
+              </button>
+            ) : (
+              <div className="h-[30px]" aria-hidden />
+            )}
+          </div>
 
           {poolLoading ? (
             <div className="flex flex-col items-center gap-3 py-24 text-text-muted">
@@ -983,19 +1008,29 @@ export default function HeardleView(): JSX.Element {
                       />
                       {dropdownOpen && suggestions.length > 0 && (
                         <div className="absolute bottom-full mb-1 left-0 right-0 max-h-64 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] shadow-xl z-20">
-                          {suggestions.map((s, i) => (
-                            <button
-                              key={s.id}
-                              onMouseEnter={() => setHighlighted(i)}
-                              onClick={() => submitGuess(s)}
-                              className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${
-                                i === highlighted ? 'bg-accent/15' : 'hover:bg-surface-overlay'
-                              }`}
-                            >
-                              <span className="text-sm text-text-primary truncate">{s.name}</span>
-                              {s.era && <span className="ml-auto shrink-0 text-[10px] text-text-muted uppercase tracking-wider">{s.era}</span>}
-                            </button>
-                          ))}
+                          {suggestions.map((s, i) => {
+                            const alias = matchedAlias(s, query)
+                            return (
+                              <button
+                                key={s.id}
+                                onMouseEnter={() => setHighlighted(i)}
+                                onClick={() => submitGuess(s)}
+                                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${
+                                  i === highlighted ? 'bg-accent/15' : 'hover:bg-surface-overlay'
+                                }`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block text-sm text-text-primary truncate">{s.name}</span>
+                                  {/* Why this row is here when the name doesn't
+                                      match what was typed. */}
+                                  {alias && (
+                                    <span className="block text-[10px] text-text-muted truncate">aka {alias}</span>
+                                  )}
+                                </span>
+                                {s.era && <span className="ml-auto shrink-0 text-[10px] text-text-muted uppercase tracking-wider">{s.era}</span>}
+                              </button>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -1116,6 +1151,7 @@ export default function HeardleView(): JSX.Element {
           settings={settings}
           onChange={setSettings}
           eras={availableEras}
+          mode={mode}
           onClose={() => setShowSettings(false)}
         />
       )}

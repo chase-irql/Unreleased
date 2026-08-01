@@ -137,7 +137,13 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const cacheKey = apiUrl(path, params)
   return apiRequest<T>(cacheKey, {
-    cache: 'no-store',
+    // 'no-cache', not 'no-store': both guarantee the response is revalidated
+    // with the server on every call (never a silently stale read), but
+    // no-cache lets an unchanged response come back as a 304 against the HTTP
+    // cache instead of re-downloading the body. Matters most for the song
+    // pages, which are hundreds of KB each. If the API sends no validators
+    // this degrades to exactly the old behaviour.
+    cache: 'no-cache',
     cacheKey,
     parseError: async (res) => `JW API error ${res.status}`,
   })

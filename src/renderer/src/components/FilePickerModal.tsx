@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check } from 'lucide-react'
+import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check, Music2 } from 'lucide-react'
 import {
   apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch, filterSearchResults,
   JWApiFileEntry, JWApiBrowseResponse,
@@ -18,11 +18,11 @@ function parentFolder(path: string): string {
   return i > 0 ? path.slice(0, i) : ''
 }
 
-// Directories first, then images, alphabetically within each — a picker has no
-// need for the full sort/view-mode machinery ApiFilesView offers.
-function sortForPicker(entries: JWApiFileEntry[]): JWApiFileEntry[] {
+// Directories first, then matching files, alphabetically within each — a picker
+// has no need for the full sort/view-mode machinery ApiFilesView offers.
+function sortForPicker(entries: JWApiFileEntry[], kind: PickerKind): JWApiFileEntry[] {
   return [...entries]
-    .filter((e) => e.type === 'directory' || getMediaType(e.name) === 'image')
+    .filter((e) => e.type === 'directory' || getMediaType(e.name) === kind)
     .sort((a, b) => {
       const aDir = a.type === 'directory'
       const bDir = b.type === 'directory'
@@ -31,7 +31,13 @@ function sortForPicker(entries: JWApiFileEntry[]): JWApiFileEntry[] {
     })
 }
 
+export type PickerKind = 'image' | 'audio'
+
 interface Props {
+  /** What the picker browses for. 'image' (default) hands back an absolute
+   *  /files/download/ URL for use as a cover; 'audio' hands back the raw
+   *  storage path, which is the shape the API's `path` field holds. */
+  kind?: PickerKind
   /** The song's title — seeds the initial search so covers already filed
    *  under that name surface immediately instead of an empty root listing. */
   songTitle?: string
@@ -42,15 +48,21 @@ interface Props {
   onClose: () => void
 }
 
-// A scoped-down version of ApiFilesView's browser for picking a single image
-// out of the API's file storage as a song's custom cover — folders + images
-// only, no audio playback/selection/download machinery. Selecting an image
-// hands back its resolved /files/download/ URL (buildStreamUrl), the same
-// absolute-URL shape ApiFilesView's "Copy link" produces — NOT the raw
-// storage path. resolvePrefCoverUrl treats a bare path as an audio track
+// A scoped-down version of ApiFilesView's browser for picking one file out of
+// the API's storage — folders plus files of the requested kind, no playback/
+// selection/download machinery.
+//
+// Image mode hands back the resolved /files/download/ URL (buildStreamUrl),
+// the same absolute-URL shape ApiFilesView's "Copy link" produces — NOT the
+// raw storage path. resolvePrefCoverUrl treats a bare path as an audio track
 // whose embedded art needs extracting via /files/cover-art/, which 404s on a
 // plain image file; an absolute URL passes through untouched instead.
-export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, onClose }: Props): JSX.Element {
+//
+// Audio mode is the opposite: a song's `path` field in the API is the raw
+// storage path ("Compilation/1. Released Discography/…mp3") and the app builds
+// stream URLs from it, so handing back an absolute URL there would double-wrap.
+export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose }: Props): JSX.Element {
+  const isAudio = kind === 'audio'
   const initialQuery = songTitle ? cleanTitleForSearch(songTitle) : ''
   // Alt titles searched alongside the primary one on mount (deduped, and never
   // repeating a name the primary search already covers).
@@ -162,7 +174,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
 
   const goHome = (): void => { setHistory([]); navigate('', false) }
 
-  const shown = sortForPicker(isSearching ? searchResults : entries)
+  const shown = sortForPicker(isSearching ? searchResults : entries, kind)
   const crumbs = breadcrumbs(currentPath)
 
   return createPortal(
@@ -175,7 +187,9 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
         {/* Header */}
         <div className="shrink-0 px-4 pt-4 pb-3 border-b border-[var(--border)]">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-text-primary text-sm font-semibold">Choose a cover from API files</h2>
+            <h2 className="text-text-primary text-sm font-semibold">
+              {isAudio ? 'Choose an audio file from API files' : 'Choose a cover from API files'}
+            </h2>
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors" title="Close">
               <X size={15} className="text-text-muted" />
             </button>
@@ -187,7 +201,7 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search images…"
+              placeholder={isAudio ? 'Search audio files…' : 'Search images…'}
               className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg pl-8 pr-8 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
             />
             {search && (
@@ -258,8 +272,49 @@ export default function CoverPickerModal({ songTitle, altTitles = [], onSelect, 
             </div>
           ) : shown.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-2">
-              <ImageIcon size={26} className="text-text-muted opacity-30" />
-              <p className="text-text-muted text-xs">{isSearching ? `No images match "${debouncedSearch.trim()}"` : 'No folders or images here'}</p>
+              {isAudio
+                ? <Music2 size={26} className="text-text-muted opacity-30" />
+                : <ImageIcon size={26} className="text-text-muted opacity-30" />}
+              <p className="text-text-muted text-xs">
+                {isSearching
+                  ? `No ${isAudio ? 'audio files' : 'images'} match "${debouncedSearch.trim()}"`
+                  : `No folders or ${isAudio ? 'audio files' : 'images'} here`}
+              </p>
+            </div>
+          ) : isAudio ? (
+            /* Audio has no thumbnail worth showing — a compact list reads better
+               than a grid of identical note icons. */
+            <div className="flex flex-col gap-0.5">
+              {currentPath && !isSearching && (
+                <button onClick={goBack} className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left">
+                  <FolderOpen size={16} className="text-text-muted shrink-0" />
+                  <span className="text-text-muted text-xs">..</span>
+                </button>
+              )}
+              {shown.map((entry) => {
+                const isDir = entry.type === 'directory'
+                return (
+                  <button
+                    key={entry.path}
+                    onClick={() => { if (isDir) navigate(entry.path); else onSelect(entry.path) }}
+                    title={entry.path}
+                    className="group flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left"
+                  >
+                    {isDir
+                      ? <Folder size={16} className="text-text-secondary group-hover:text-accent transition-colors shrink-0" />
+                      : <Music2 size={16} className="text-text-muted shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
+                      {isSearching && parentFolder(entry.path) && (
+                        <p className="text-text-muted text-[10px] truncate">{parentFolder(entry.path)}</p>
+                      )}
+                    </div>
+                    {isDir
+                      ? <ChevronRight size={13} className="text-text-muted opacity-40 shrink-0" />
+                      : <Check size={13} className="text-accent opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />}
+                  </button>
+                )
+              })}
             </div>
           ) : (
             <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))' }}>

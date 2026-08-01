@@ -4,7 +4,7 @@ import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
 import { attachToMainWindow, broadcastLibraryTrackUpdate } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 import { Card, FieldGrid, FieldRow, TextareaRow } from './EditorPage'
-import CoverPickerModal from './CoverPickerModal'
+import FilePickerModal from './FilePickerModal'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Local-file metadata editor — the same full-page editor layout the API editor
@@ -157,7 +157,7 @@ export default function LocalEditorPage(): JSX.Element {
     if (dataUrl) set('albumArt', dataUrl)
   }
 
-  // CoverPickerModal hands back an absolute API image URL; the main process
+  // FilePickerModal hands back an absolute API image URL; the main process
   // downloads it and returns an embeddable JPEG data URL (dodging renderer CORS
   // and capping the size). Fetching remotely can be slow/fail, so it drives a
   // spinner over the art and surfaces any error rather than silently no-op'ing.
@@ -478,7 +478,7 @@ export default function LocalEditorPage(): JSX.Element {
       </div>
 
       {showCoverPicker && (
-        <CoverPickerModal
+        <FilePickerModal
           songTitle={fields.title || track.title}
           onSelect={useApiCover}
           onClose={() => setShowCoverPicker(false)}

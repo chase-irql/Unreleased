@@ -6,7 +6,7 @@ import { ls } from '../lib/persist'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
-import { apiFetch, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from '../lib/juicewrldApi'
+import { apiFetch, apiPeek, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import {
   emptySongPref, isEmptySongPref, normalizePrefText, setSongPrefsCache,
@@ -28,6 +28,7 @@ import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getLastfmSession } from '../lib/lastfm'
+import { runWhenIdle } from '../lib/platform'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -1438,8 +1439,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
     get()._flushReports()
     await get().refreshPlaylists()
     // Fire-and-forget: warm playlist tracks + covers in the background so the
-    // Playlists page is ready before the user ever navigates to it.
-    get().prefetchPlaylistDetails()
+    // Playlists page is ready before the user ever navigates to it. Two
+    // requests per playlist, so it waits for idle rather than piling onto the
+    // startup burst.
+    runWhenIdle(() => { get().prefetchPlaylistDetails() })
   },
 
   loginWithDiscord: async () => {
@@ -1526,16 +1529,28 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // keys line up (tracker: stats + eras + first unfiltered song page; files:
   // the root folder listing). Fire-and-forget and failure-tolerant — a miss
   // just means the view does its normal fetch later.
+  //
+  // Anything already in the cache is skipped. This runs at idle, by which point
+  // the view that's actually on screen has usually fetched (and cached) three
+  // of these four itself — re-requesting them would make the prefetch a source
+  // of duplicate traffic rather than a way to avoid it. Refreshing a warm entry
+  // isn't the job here: every view refetches on open anyway, so a stale cache
+  // entry only ever shows for the instant before that lands.
   prefetchApiData: async () => {
     if (_apiPrefetchInFlight) return
     _apiPrefetchInFlight = true
     try {
-      await Promise.allSettled([
-        apiFetch('/stats/'),
-        apiFetch('/eras/'),
-        apiFetch('/songs/', { page: 1, page_size: 50 }),
-        apiFetch('/files/browse/'),
-      ])
+      const targets: Array<[string, Record<string, string | number>]> = [
+        ['/stats/', {}],
+        ['/eras/', {}],
+        ['/songs/', { page: 1, page_size: 50 }],
+        ['/files/browse/', {}],
+      ]
+      await Promise.allSettled(
+        targets
+          .filter(([path, params]) => apiPeek(path, params) === undefined)
+          .map(([path, params]) => apiFetch(path, params)),
+      )
     } finally {
       _apiPrefetchInFlight = false
     }

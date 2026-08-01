@@ -47,13 +47,11 @@ export function unlockedSeconds(guessCount: number, finished: boolean, ladder: n
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 //
-// Applied per mode, deliberately unevenly:
-//   Daily     — none of it. The score is only comparable if everyone plays the
-//               same song under the same rules.
-//   Personal  — difficulty only (tries, ladder, start point). Letting era or
-//               category through would re-roll the day's song, so "one a day"
-//               would mean "re-roll until it's one you know".
-//   Unlimited — everything.
+// Unlimited only. Both once-a-day modes ignore every one of these and play the
+// standard rules, because their results are league material: a run of six-try
+// rounds and a run of ten-try rounds are not the same achievement, and a
+// leaderboard that mixes them ranks whoever turned the difficulty down. The
+// settings panel says so rather than letting the controls look live.
 
 /** Bumped when a default changes in a way a saved blob would otherwise mask —
  *  see loadSettings. */
@@ -98,14 +96,10 @@ export function clampTries(tries: number): number {
   return Math.min(MAX_TRIES, Math.max(MIN_TRIES, Math.round(tries)))
 }
 
-/** Settings as they actually apply to a mode — see the table above. Every
- *  read goes through this so no call site has to remember the rules. */
+/** Settings as they actually apply to a mode — see the note above. Every read
+ *  goes through this so no call site has to remember the rules. */
 export function settingsForMode(settings: HeardleSettings, mode: 'daily' | 'personal' | 'unlimited'): HeardleSettings {
-  if (mode === 'daily') return DEFAULT_SETTINGS
-  if (mode === 'personal') {
-    return { ...settings, eras: [], categories: ['released'] }
-  }
-  return settings
+  return mode === 'unlimited' ? settings : DEFAULT_SETTINGS
 }
 
 export function loadSettings(): HeardleSettings {
@@ -164,7 +158,14 @@ function slim(song: JWApiSong): HeardleSong | null {
   const titles = [song.name, ...(song.track_titles ?? [])].filter(Boolean)
   return {
     id: song.id,
-    name: song.track_titles?.[0] || song.name,
+    // The API's own `name`, NOT track_titles[0] — the rest of the app treats
+    // the first track title as the display title, but here that surfaced
+    // aliases in place of the names people actually know: "Breakthrough" for
+    // Man Of The Year, "AGATS (Pt. 1)" for All Girls Are The Same, "GTA Love"
+    // for Wasted (20 of 321 released songs disagree). `name` also carries the
+    // "(1)"/"(2)" suffixes that tell four identically-titled rows apart.
+    // Every alias still counts as a guess — see `titles`.
+    name: song.name,
     titles: [...new Set(titles)],
     path: song.path,
     era: song.era?.name ?? null,
@@ -177,9 +178,19 @@ function slim(song: JWApiSong): HeardleSong | null {
 // ─── Title matching ───────────────────────────────────────────────────────────
 
 /** Flattens a title for comparison/search: punctuation and casing differ
- *  constantly between a song's `name` and its `track_titles` aliases. */
+ *  constantly between a song's `name` and its `track_titles` aliases.
+ *
+ *  Apostrophes are deleted rather than flattened to a space, so "dont" matches
+ *  "don't" — the way the API's own search behaves, and the way people type.
+ *  Turning them into spaces made "I'll Be Fine" normalize to "i ll be fine",
+ *  which the natural query "ill be fine" doesn't contain, so 30 of the 321
+ *  released songs simply never appeared in the dropdown. */
 export function normalizeTitle(title: string): string {
-  return title.replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
+  return title
+    .replace(/['’‘`´]/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .toLowerCase()
 }
 
 // ─── Version groups ───────────────────────────────────────────────────────────
@@ -227,7 +238,12 @@ export function isCorrectGuess(guess: HeardleSong, answer: HeardleSong, versions
 
 /** Dropdown candidates for what the user has typed so far. Whole-pool
  *  substring match over every alias, prefix matches first, capped so the list
- *  stays renderable. */
+ *  stays renderable.
+ *
+ *  The whole pool is always scanned: an earlier version bailed out as soon as
+ *  the prefix bucket was full, which silently dropped later songs even when
+ *  the list had room for them. 321 rows of `indexOf` per keystroke is nothing.
+ */
 export function searchPool(pool: HeardleSong[], query: string, limit = 50): HeardleSong[] {
   const q = normalizeTitle(query)
   if (!q) return []
@@ -241,9 +257,17 @@ export function searchPool(pool: HeardleSong[], query: string, limit = 50): Hear
     }
     if (best === 0) starts.push(song)
     else if (best > 0) contains.push(song)
-    if (starts.length >= limit) break
   }
   return [...starts, ...contains].slice(0, limit)
+}
+
+/** The alias a query hit, when it isn't the name being displayed — so the
+ *  dropdown can explain why a row it doesn't obviously match is in the list
+ *  (typing "agats" turning up "All Girls Are The Same"). */
+export function matchedAlias(song: HeardleSong, query: string): string | null {
+  const q = normalizeTitle(query)
+  if (!q || normalizeTitle(song.name).includes(q)) return null
+  return song.titles.find((t) => t !== song.name && normalizeTitle(t).includes(q)) ?? null
 }
 
 // ─── Pool loading ─────────────────────────────────────────────────────────────
@@ -289,7 +313,9 @@ export async function loadPool(category: PoolId): Promise<HeardleSong[]> {
   const memo = memoryPool.get(category)
   if (memo) return memo
 
-  const cached = lsGet<CachedPool>(`pool:${category}`)
+  // v2: entries cached before the display name switched from track_titles[0]
+  // to `name` would keep showing aliases until the TTL ran out.
+  const cached = lsGet<CachedPool>(`pool:v2:${category}`)
   if (cached && cached.songs?.length && Date.now() - cached.ts < POOL_TTL_MS) {
     memoryPool.set(category, cached.songs)
     return cached.songs
@@ -307,7 +333,7 @@ export async function loadPool(category: PoolId): Promise<HeardleSong[]> {
     throw err
   }
   memoryPool.set(category, songs)
-  lsSet(`pool:${category}`, { ts: Date.now(), songs } as CachedPool)
+  lsSet(`pool:v2:${category}`, { ts: Date.now(), songs } as CachedPool)
   return songs
 }
 

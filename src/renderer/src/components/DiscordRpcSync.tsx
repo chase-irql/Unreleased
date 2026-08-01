@@ -39,11 +39,15 @@ export default function DiscordRpcSync(): JSX.Element | null {
   // /eras/; this bumps the effect below once they arrive so an activity sent
   // with the bare abbreviation gets re-sent with the full name.
   const [erasReady, setErasReady] = useState(false)
+  // Only worth the two /eras/ pages where an activity can actually be sent —
+  // on the web build there's no RPC bridge at all, so this was two startup
+  // requests whose result nothing could ever read.
   useEffect(() => {
+    if (!el?.discordRpcSetActivity) return
     let on = true
     loadEraFullNames().then(() => { if (on) setErasReady(true) }).catch(() => {})
     return () => { on = false }
-  }, [])
+  }, [el])
   // Cover art for a locally-scanned file, resolved by matching it to the API's
   // song list (see matchLocalSongCover). Tagged with the track it was resolved
   // for, so a match arriving after the user has already skipped on can't be

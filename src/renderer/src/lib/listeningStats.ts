@@ -5,16 +5,17 @@
 // all-time. There is no play log to slice by year or month; if period-bounded
 // stats are ever wanted, a timestamped event log has to be recorded first.
 //
-// Deliberately pure: the view owns fetching the JWApiSong for each played id,
+// Deliberately pure: lib/statsCatalog owns resolving ids to song metadata,
 // this module just joins those against the prefs and ranks them. That keeps
 // the (fiddly) share/percentage math testable without a network or a store.
 
-import { JWApiSong, parseDuration, CATEGORY_LABELS } from './juicewrldApi'
+import { parseDuration, CATEGORY_LABELS } from './juicewrldApi'
 import { SongPreference } from './songPrefs'
+import type { StatsSong } from './statsCatalog'
 
 /** One played song, joined with how many times this user played it. */
 export interface PlayedSong {
-  song: JWApiSong
+  song: StatsSong
   playcount: number
   /** playcount × the song's own length. 0 when the API has no length. */
   seconds: number
@@ -84,7 +85,7 @@ const JUICE = /^juice\s*wrld$/i
  *  zero or more keys — a song with three producers counts once for each. */
 function rank(
   played: PlayedSong[],
-  keyOf: (song: JWApiSong) => { key: string; label: string }[],
+  keyOf: (song: StatsSong) => { key: string; label: string }[],
 ): RankedEntry[] {
   const acc = new Map<string, { label: string; plays: number; songs: number }>()
   let total = 0
@@ -135,7 +136,7 @@ export function buildListeningStats(played: PlayedSong[]): ListeningStats {
  *  couldn't be loaded (deleted upstream, or the request failed). */
 export function joinPlayedSongs(
   prefs: SongPreference[],
-  songs: Map<number, JWApiSong>,
+  songs: Map<number, StatsSong>,
 ): PlayedSong[] {
   const out: PlayedSong[] = []
   for (const p of prefs) {
@@ -157,31 +158,4 @@ export function formatListeningTime(seconds: number): string {
   if (days > 0) return `${days} ${days === 1 ? 'day' : 'days'} ${hours} hr`
   if (hours > 0) return `${hours} hr ${mins} min`
   return `${mins} min`
-}
-
-/** Runs `fn` over `items` with at most `limit` in flight. Used to fetch song
- *  details for a few hundred played songs without opening a few hundred
- *  sockets at once. Failures resolve to null rather than rejecting the batch. */
-export async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-  onSettled?: () => void,
-): Promise<(R | null)[]> {
-  const out: (R | null)[] = new Array(items.length).fill(null)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const i = next++
-      if (i >= items.length) return
-      try {
-        out[i] = await fn(items[i])
-      } catch {
-        out[i] = null
-      }
-      onSettled?.()
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
 }
