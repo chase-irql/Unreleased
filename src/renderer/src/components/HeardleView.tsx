@@ -48,6 +48,12 @@ function secLabel(n: number): string {
   return `${Number.isInteger(n) ? n : n.toFixed(1)}S`
 }
 
+/** Seconds as a position in a song: "1:23". */
+function formatClock(s: number): string {
+  const total = Math.max(0, Math.floor(s))
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 // ─── Scope ────────────────────────────────────────────────────────────────────
 
 const WAVE_BARS = 56
@@ -69,13 +75,19 @@ function barHeights(seed: number, count: number): number[] {
 /** The clip as a scope: solid up to the playhead, dim out to what's unlocked,
  *  barely there beyond it — so the bars carry the same information the old
  *  progress bar did, plus a sense of how much song is still locked. */
-function Waveform({ seed, unlocked, elapsed, ladder, playing }: {
-  seed: number; unlocked: number; elapsed: number; ladder: number[]; playing: boolean
+function Waveform({ seed, unlocked, elapsed, ladder, playing, startAt }: {
+  seed: number; unlocked: number; elapsed: number; ladder: number[]; playing: boolean; startAt: number
 }) {
   const full = ladder[ladder.length - 1]
   const heights = useMemo(() => barHeights(seed, WAVE_BARS), [seed])
   return (
     <div className="relative h-24 rounded-xl border border-[var(--border)] bg-[var(--surface-overlay)]/40 px-3 pb-3 pt-6 overflow-hidden">
+      {/* Where in the song this clip was cut from. Harmless to show — it says
+          nothing about which song it is — and without it a timestamp start
+          just looks like the audio is broken. */}
+      <span className="absolute top-2 left-3 text-[9px] font-mono uppercase tracking-[0.2em] text-text-muted">
+        {startAt > 0 ? `@ ${formatClock(startAt + elapsed)}` : 'From the top'}
+      </span>
       <span className="absolute top-2 right-3 flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-[0.2em] text-text-muted">
         <span className={`w-1.5 h-1.5 rounded-full bg-accent ${playing ? 'animate-pulse' : 'opacity-40'}`} />
         Rec
@@ -297,9 +309,14 @@ function SettingsPanel({ settings, onChange, eras, onClose }: {
             </Field>
           </>
         )}
-        <Field label="Clip starts at" hint={settings.startPoint === 'intro' ? "The song's beginning" : 'A point inside the song'}>
+        <Field
+          label="Clip starts at"
+          hint={settings.startPoint === 'intro'
+            ? "The song's opening seconds"
+            : 'A timestamp somewhere inside the song'}
+        >
           <Segmented
-            options={[{ id: 'intro', label: 'Intro' }, { id: 'random', label: 'Random' }]}
+            options={[{ id: 'timestamp', label: 'Timestamp' }, { id: 'intro', label: 'Intro' }]}
             value={settings.startPoint}
             onChange={(v) => set('startPoint', v)}
           />
@@ -470,6 +487,7 @@ export default function HeardleView(): JSX.Element {
   const [dropdownOpen, setDropdownOpen] = useState(false)
 
   const [playing, setPlaying] = useState(false)
+  const [preparing, setPreparing] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [audioError, setAudioError] = useState(false)
 
@@ -612,6 +630,7 @@ export default function HeardleView(): JSX.Element {
     const audio = audioRef.current
     if (audio) { audio.pause(); audio.currentTime = startRef.current }
     setPlaying(false)
+    setPreparing(false)
     setElapsed(0)
   }, [])
 
@@ -630,11 +649,25 @@ export default function HeardleView(): JSX.Element {
     // Two things playing at once makes the clue unlistenable — yield the room.
     if (isPlaying) setIsPlaying(false)
     setAudioError(false)
+    setPreparing(true)
     audio.volume = volume
-    audio.currentTime = startRef.current
-    audio.play()
-      .then(() => { setPlaying(true); rafRef.current = requestAnimationFrame(tick) })
-      .catch(() => { setAudioError(true); setPlaying(false) })
+
+    // Seeking before the element knows the song's duration is silently
+    // dropped, which put the clip back at 0:00 for every timestamp start —
+    // wait for metadata (and the seek itself) before playing. Nothing to wait
+    // for when the clip starts at the beginning.
+    const begin = (): void => {
+      audio.play()
+        .then(() => { setPreparing(false); setPlaying(true); rafRef.current = requestAnimationFrame(tick) })
+        .catch(() => { setPreparing(false); setAudioError(true); setPlaying(false) })
+    }
+    const seekThenPlay = (): void => {
+      if (startRef.current <= 0 || Math.abs(audio.currentTime - startRef.current) < 0.25) { begin(); return }
+      audio.addEventListener('seeked', begin, { once: true })
+      audio.currentTime = startRef.current
+    }
+    if (audio.readyState >= 1 /* HAVE_METADATA */) seekThenPlay()
+    else audio.addEventListener('loadedmetadata', seekThenPlay, { once: true })
   }, [isPlaying, setIsPlaying, volume, tick])
 
   // New answer → new source, and never carry playback across rounds.
@@ -762,8 +795,17 @@ export default function HeardleView(): JSX.Element {
       <audio ref={audioRef} preload="auto" onError={() => setAudioError(true)} />
 
       {/* Corner controls — the hero owns the middle, so navigation and the
-          panels sit out of its way. */}
-      <div className="absolute top-4 left-4 z-10">
+          panels sit out of its way.
+          z-20 (over the scroll container's z-10): the scroll container fills
+          the whole view and comes later in the DOM, so at equal z it took every
+          click in these corners and left the buttons visible but dead.
+          no-drag: in Electron the frameless window's drag strip runs along the
+          top of this pane, and an app-region rect swallows mouse events no
+          matter what pointer-events says. */}
+      <div
+        className="absolute top-4 left-4 z-20"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <button
           onClick={() => setActiveView('wrld')}
           title="Back"
@@ -772,7 +814,10 @@ export default function HeardleView(): JSX.Element {
           <ChevronLeft size={18} />
         </button>
       </div>
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
+      <div
+        className="absolute top-4 right-4 z-20 flex items-center gap-1"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <button
           onClick={() => setShowSettings(true)}
           title="Game settings"
@@ -828,7 +873,7 @@ export default function HeardleView(): JSX.Element {
             {mode === 'daily' && `#${puzzleNumber(day)} · `}
             {MODES.find((m) => m.id === mode)?.hint.toLowerCase()}
             {` · ${ladder.length} tries · up to ${formatSeconds(fullWindow)}`}
-            {rules.startPoint === 'random' && ' · random start'}
+            {rules.startPoint === 'timestamp' ? ' · from a timestamp' : ' · from the intro'}
             {mode === 'unlimited' && rules.eras.length > 0 && ` · ${rules.eras.join(', ')}`}
           </p>
 
@@ -872,6 +917,7 @@ export default function HeardleView(): JSX.Element {
                   elapsed={elapsed}
                   ladder={ladder}
                   playing={playing}
+                  startAt={startAt}
                 />
 
                 <div>
@@ -880,9 +926,11 @@ export default function HeardleView(): JSX.Element {
                     title={playing ? 'Stop' : `Play ${unlocked}s${startAt > 0 ? ' from the clip start' : ' from the beginning'}`}
                     className="w-full h-12 rounded-xl border border-accent/40 bg-accent/10 hover:bg-accent/20 text-text-primary text-sm font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-colors"
                   >
-                    {playing
-                      ? <><Pause size={16} className="fill-current" /> Stop</>
-                      : <><Play size={16} className="fill-current" /> Play ({secLabel(unlocked)})</>}
+                    {preparing
+                      ? <><Loader2 size={16} className="animate-spin" /> Loading</>
+                      : playing
+                        ? <><Pause size={16} className="fill-current" /> Stop</>
+                        : <><Play size={16} className="fill-current" /> Play ({secLabel(unlocked)})</>}
                   </button>
                   {/* Thin readout under the button — the scope shows the same
                       thing, this just gives it an exact edge to read against. */}

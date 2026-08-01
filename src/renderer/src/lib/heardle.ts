@@ -55,7 +55,13 @@ export function unlockedSeconds(guessCount: number, finished: boolean, ladder: n
 //               would mean "re-roll until it's one you know".
 //   Unlimited — everything.
 
+/** Bumped when a default changes in a way a saved blob would otherwise mask —
+ *  see loadSettings. */
+const SETTINGS_VERSION = 2
+
 export interface HeardleSettings {
+  /** Schema version of the saved blob, for the migration in loadSettings. */
+  v?: number
   /** Guesses allowed per round. */
   tries: number
   ladder: 'classic' | 'linear'
@@ -66,20 +72,24 @@ export interface HeardleSettings {
   eras: string[]
   /** Which catalogues to draw from. Never empty — the UI keeps one selected. */
   categories: PoolId[]
-  /** Whether the clip starts at the song's beginning or somewhere inside it. */
-  startPoint: 'intro' | 'random'
+  /** Where the clip starts: the song's opening, or a timestamp somewhere
+   *  inside it. Timestamp is the default — intros are the most recognisable
+   *  and most sampled part of a song, so starting there every time makes the
+   *  game both easier and more repetitive than it should be. */
+  startPoint: 'intro' | 'timestamp'
   /** The "Same era" badge on wrong guesses. */
   eraHint: boolean
 }
 
 export const DEFAULT_SETTINGS: HeardleSettings = {
+  v: SETTINGS_VERSION,
   tries: DEFAULT_TRIES,
   ladder: 'classic',
   startSeconds: 1,
   stepSeconds: 2,
   eras: [],
   categories: ['released'],
-  startPoint: 'intro',
+  startPoint: 'timestamp',
   eraHint: true,
 }
 
@@ -101,8 +111,21 @@ export function settingsForMode(settings: HeardleSettings, mode: 'daily' | 'pers
 export function loadSettings(): HeardleSettings {
   const saved = lsGet<Partial<HeardleSettings>>('settings')
   const merged = { ...DEFAULT_SETTINGS, ...(saved ?? {}) }
+
+  // A blob is written the first time the tab is opened, so a saved value is
+  // not evidence of a deliberate choice — it's usually just whatever the
+  // default was that day. Without this, changing a default would only ever
+  // reach people who had never played. v1 blobs predate the timestamp start,
+  // so their startPoint is dropped in favour of the current default.
+  const stale = (merged.v ?? 1) < SETTINGS_VERSION
+  const startPoint = stale || (merged.startPoint !== 'intro' && merged.startPoint !== 'timestamp')
+    ? DEFAULT_SETTINGS.startPoint
+    : merged.startPoint
+
   return {
     ...merged,
+    v: SETTINGS_VERSION,
+    startPoint,
     tries: clampTries(merged.tries),
     categories: merged.categories?.length ? merged.categories : DEFAULT_SETTINGS.categories,
   }
@@ -314,8 +337,12 @@ export function poolEras(pool: HeardleSong[]): { era: string; count: number }[] 
 
 // ─── Clip start ───────────────────────────────────────────────────────────────
 
-/** Where in the song the clip begins. 'intro' is always 0; 'random' picks a
+/** Where in the song the clip begins. 'intro' is always 0; 'timestamp' picks a
  *  point that still leaves the full window's worth of audio ahead of it.
+ *
+ *  Skips the first 10 seconds as well as the tail: a "timestamp" that lands on
+ *  0:03 is an intro with extra steps, and lead-ins are often near-silent.
+ *  Songs too short to offer a real interval start at the beginning.
  *
  *  `seed` makes the choice repeatable — a once-a-day round has to resume at
  *  the same offset after a reload, or a player could re-roll an awkward start
@@ -328,12 +355,11 @@ export function clipStart(
 ): number {
   if (startPoint === 'intro') return 0
   const duration = parseDuration(song.length)
-  // Leave a tail so the last unlock isn't half silence past the end. Songs too
-  // short to give one just start at the beginning.
+  const earliest = 10
   const latest = duration - window - 5
-  if (!(latest > 0)) return 0
+  if (!(latest > earliest)) return 0
   const roll = seed === null ? Math.random() : hash32(`${seed}-${song.id}`) / 0x1_0000_0000
-  return Math.floor(roll * latest)
+  return Math.floor(earliest + roll * (latest - earliest))
 }
 
 // ─── Daily selection ──────────────────────────────────────────────────────────
