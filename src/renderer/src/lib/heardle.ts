@@ -7,21 +7,109 @@
 // answer (see pickDailySong), which is what makes the shared score grid mean
 // anything.
 import { apiRequest } from './apiClient'
-import { JWAPI_BASE, buildImageUrl } from './juicewrldApi'
+import { JWAPI_BASE, buildImageUrl, parseDuration } from './juicewrldApi'
 import type { JWApiSong, JWApiPaginatedResponse } from './juicewrldApi'
+import { getVersionMetaForSongs } from './versionsApi'
 
-// Unlocked listening window after each wrong guess/skip, in seconds. Six
-// guesses total — the classic Heardle ladder, which stays tight enough that a
-// first-second win feels like something.
-export const STAGE_SECONDS = [1, 2, 4, 7, 11, 16]
-export const MAX_GUESSES = STAGE_SECONDS.length
-export const FULL_WINDOW = STAGE_SECONDS[STAGE_SECONDS.length - 1]
+// How many guesses a round allows, and how much of the intro each one unlocks.
+// The defaults are the classic Heardle ladder — 1, 2, 4, 7, 11, 16 seconds over
+// six tries — which stays tight enough that a first-second win feels like
+// something. Both are configurable (see HeardleSettings), so nothing outside
+// this file should assume six of anything.
+export const DEFAULT_TRIES = 6
+export const MIN_TRIES = 2
+export const MAX_TRIES = 10
+
+/** The classic ladder in closed form: gaps grow by one second each step
+ *  (1, +1, +2, +3, +4, +5 …), so it extends past six tries on its own. */
+function classicStage(index: number): number {
+  return 1 + (index * (index + 1)) / 2
+}
+
+/** The unlock points for a round, one per try, ascending. */
+export function stageLadder(settings: HeardleSettings): number[] {
+  const tries = clampTries(settings.tries)
+  if (settings.ladder === 'linear') {
+    const start = Math.max(0.5, settings.startSeconds)
+    const step = Math.max(0.5, settings.stepSeconds)
+    return Array.from({ length: tries }, (_, i) => Math.round((start + step * i) * 10) / 10)
+  }
+  return Array.from({ length: tries }, (_, i) => classicStage(i))
+}
 
 /** Seconds unlocked after `guessCount` wrong guesses (the whole window once
  *  the round is over). */
-export function unlockedSeconds(guessCount: number, finished: boolean): number {
-  if (finished) return FULL_WINDOW
-  return STAGE_SECONDS[Math.min(guessCount, MAX_GUESSES - 1)]
+export function unlockedSeconds(guessCount: number, finished: boolean, ladder: number[]): number {
+  const full = ladder[ladder.length - 1]
+  if (finished) return full
+  return ladder[Math.min(guessCount, ladder.length - 1)]
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+//
+// Applied per mode, deliberately unevenly:
+//   Daily     — none of it. The score is only comparable if everyone plays the
+//               same song under the same rules.
+//   Personal  — difficulty only (tries, ladder, start point). Letting era or
+//               category through would re-roll the day's song, so "one a day"
+//               would mean "re-roll until it's one you know".
+//   Unlimited — everything.
+
+export interface HeardleSettings {
+  /** Guesses allowed per round. */
+  tries: number
+  ladder: 'classic' | 'linear'
+  /** Linear ladder only: first unlock, and how much each miss adds. */
+  startSeconds: number
+  stepSeconds: number
+  /** Era abbreviations to draw from; empty means all of them. */
+  eras: string[]
+  /** Which catalogues to draw from. Never empty — the UI keeps one selected. */
+  categories: PoolId[]
+  /** Whether the clip starts at the song's beginning or somewhere inside it. */
+  startPoint: 'intro' | 'random'
+  /** The "Same era" badge on wrong guesses. */
+  eraHint: boolean
+}
+
+export const DEFAULT_SETTINGS: HeardleSettings = {
+  tries: DEFAULT_TRIES,
+  ladder: 'classic',
+  startSeconds: 1,
+  stepSeconds: 2,
+  eras: [],
+  categories: ['released'],
+  startPoint: 'intro',
+  eraHint: true,
+}
+
+export function clampTries(tries: number): number {
+  if (!Number.isFinite(tries)) return DEFAULT_TRIES
+  return Math.min(MAX_TRIES, Math.max(MIN_TRIES, Math.round(tries)))
+}
+
+/** Settings as they actually apply to a mode — see the table above. Every
+ *  read goes through this so no call site has to remember the rules. */
+export function settingsForMode(settings: HeardleSettings, mode: 'daily' | 'personal' | 'unlimited'): HeardleSettings {
+  if (mode === 'daily') return DEFAULT_SETTINGS
+  if (mode === 'personal') {
+    return { ...settings, eras: [], categories: ['released'] }
+  }
+  return settings
+}
+
+export function loadSettings(): HeardleSettings {
+  const saved = lsGet<Partial<HeardleSettings>>('settings')
+  const merged = { ...DEFAULT_SETTINGS, ...(saved ?? {}) }
+  return {
+    ...merged,
+    tries: clampTries(merged.tries),
+    categories: merged.categories?.length ? merged.categories : DEFAULT_SETTINGS.categories,
+  }
+}
+
+export function saveSettings(settings: HeardleSettings): void {
+  lsSet('settings', settings)
 }
 
 // Puzzle #1. Any date before this still works (the number just goes ≤ 0), but
@@ -71,11 +159,45 @@ export function normalizeTitle(title: string): string {
   return title.replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
 }
 
-/** True when a guess names the answer. Ids first, then titles: the catalogue
- *  holds several rows that are the same song under different eras/versions, and
- *  picking the "wrong" one of those out of the dropdown is not a wrong guess. */
-export function isCorrectGuess(guess: HeardleSong, answer: HeardleSong): boolean {
+// ─── Version groups ───────────────────────────────────────────────────────────
+//
+// The /versions/ table links rows that are the same underlying song under
+// different cuts — "Zoom (v1)" / "(v2)", an unreleased take and its session.
+// Guessing any member of the group is guessing the song, so all of them count.
+
+export interface VersionInfo {
+  groupId: number
+  /** The group's shared name, e.g. "Zoom". */
+  versionTitle: string | null
+  /** This cut's own label within the group, e.g. "v2", "Session". */
+  version: string | null
+}
+
+export type VersionMap = Map<number, VersionInfo>
+
+/** Version metadata for everything in a pool, keyed by song id. One bulk
+ *  request; failures come back empty, which just falls the matching back to
+ *  titles. Never block the round on this. */
+export async function loadVersionGroups(pool: HeardleSong[]): Promise<VersionMap> {
+  const meta = await getVersionMetaForSongs(pool.map((s) => s.id))
+  const out: VersionMap = new Map()
+  for (const [songId, m] of meta) {
+    out.set(songId, { groupId: m.groupId, versionTitle: m.versionTitle, version: m.version })
+  }
+  return out
+}
+
+/** True when a guess names the answer: the same row, a linked version of it,
+ *  or a row that shares one of its titles. The catalogue holds plenty of songs
+ *  that are the same thing filed twice, and picking the "wrong" one of those
+ *  out of the dropdown is not a wrong guess. */
+export function isCorrectGuess(guess: HeardleSong, answer: HeardleSong, versions?: VersionMap): boolean {
   if (guess.id === answer.id) return true
+  if (versions) {
+    const g = versions.get(guess.id)
+    const a = versions.get(answer.id)
+    if (g && a && g.groupId === a.groupId) return true
+  }
   const wanted = new Set(answer.titles.map(normalizeTitle))
   return guess.titles.some((t) => wanted.has(normalizeTitle(t)))
 }
@@ -166,6 +288,54 @@ export async function loadPool(category: PoolId): Promise<HeardleSong[]> {
   return songs
 }
 
+/** Every pool in `categories`, concatenated. */
+export async function loadPools(categories: PoolId[]): Promise<HeardleSong[]> {
+  const pools = await Promise.all(categories.map(loadPool))
+  return pools.flat()
+}
+
+/** Narrows a pool to the chosen eras (empty = all). */
+export function filterByEra(pool: HeardleSong[], eras: string[]): HeardleSong[] {
+  if (eras.length === 0) return pool
+  const wanted = new Set(eras)
+  return pool.filter((s) => s.era && wanted.has(s.era))
+}
+
+/** Era abbreviations present in a pool, with song counts, most first. */
+export function poolEras(pool: HeardleSong[]): { era: string; count: number }[] {
+  const counts = new Map<string, number>()
+  for (const s of pool) {
+    if (s.era) counts.set(s.era, (counts.get(s.era) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([era, count]) => ({ era, count }))
+    .sort((a, b) => b.count - a.count || a.era.localeCompare(b.era))
+}
+
+// ─── Clip start ───────────────────────────────────────────────────────────────
+
+/** Where in the song the clip begins. 'intro' is always 0; 'random' picks a
+ *  point that still leaves the full window's worth of audio ahead of it.
+ *
+ *  `seed` makes the choice repeatable — a once-a-day round has to resume at
+ *  the same offset after a reload, or a player could re-roll an awkward start
+ *  by refreshing. Pass null for practice rounds, which re-roll freely. */
+export function clipStart(
+  song: HeardleSong,
+  window: number,
+  startPoint: HeardleSettings['startPoint'],
+  seed: string | null,
+): number {
+  if (startPoint === 'intro') return 0
+  const duration = parseDuration(song.length)
+  // Leave a tail so the last unlock isn't half silence past the end. Songs too
+  // short to give one just start at the beginning.
+  const latest = duration - window - 5
+  if (!(latest > 0)) return 0
+  const roll = seed === null ? Math.random() : hash32(`${seed}-${song.id}`) / 0x1_0000_0000
+  return Math.floor(roll * latest)
+}
+
 // ─── Daily selection ──────────────────────────────────────────────────────────
 
 /** Local calendar day as YYYY-MM-DD — the puzzle rolls over at the player's
@@ -252,6 +422,10 @@ export interface Guess {
   era: string | null
   /** Wrong guess that shares the answer's era — shown as a warm "close" hint. */
   sameEra: boolean
+  /** Won on a different row than the answer's — a linked version, or a
+   *  duplicate filed under the same title. Worth saying so on the reveal, or
+   *  it reads like the game accepted the wrong song. */
+  viaVersion?: boolean
 }
 
 export type GameStatus = 'playing' | 'won' | 'lost'
@@ -281,7 +455,7 @@ export interface Stats {
 
 export const EMPTY_STATS: Stats = {
   played: 0, won: 0, currentStreak: 0, maxStreak: 0,
-  distribution: Array(MAX_GUESSES).fill(0), lastDay: null,
+  distribution: Array(MAX_TRIES).fill(0), lastDay: null,
 }
 
 const LS_PREFIX = 'unreleased:heardle:'
@@ -316,11 +490,11 @@ export function saveRound(mode: DailyMode, state: RoundState): void {
 
 export function loadStats(mode: DailyMode): Stats {
   const saved = lsGet<Stats>(`stats:${mode}`)
-  if (!saved) return { ...EMPTY_STATS, distribution: Array(MAX_GUESSES).fill(0) }
+  if (!saved) return { ...EMPTY_STATS, distribution: Array(MAX_TRIES).fill(0) }
   return {
     ...EMPTY_STATS,
     ...saved,
-    distribution: Array.from({ length: MAX_GUESSES }, (_, i) => saved.distribution?.[i] ?? 0),
+    distribution: Array.from({ length: MAX_TRIES }, (_, i) => saved.distribution?.[i] ?? 0),
   }
 }
 
@@ -350,10 +524,10 @@ export function recordResult(mode: DailyMode, dayKey: string, won: boolean, gues
 /** The spoiler-free result grid: a square per guess, left to right. Personal
  *  rounds get their own title — the grid isn't comparable with anyone else's,
  *  so it shouldn't read as if it were. */
-export function shareText(mode: DailyMode, dayKey: string, guesses: Guess[], status: GameStatus): string {
+export function shareText(mode: DailyMode, dayKey: string, guesses: Guess[], status: GameStatus, tries: number): string {
   const squares: string[] = guesses.map((g) => (g.songId === null ? '⬛' : '🟥'))
   if (status === 'won') squares[squares.length - 1] = '🟩'
-  while (squares.length < MAX_GUESSES) squares.push('⬜')
+  while (squares.length < tries) squares.push('⬜')
   const title = mode === 'daily'
     ? `Unreleased Heardle #${puzzleNumber(dayKey)}`
     : `My Heardle — ${dayKey}`

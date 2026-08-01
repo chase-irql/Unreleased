@@ -221,6 +221,8 @@ function OverviewTab() {
           <Endpoint method="GET" path="/eras/" description="All eras — paginated (34 total, 20 per page)" />
           <Endpoint method="GET" path="/stats/" description="Database-wide counts by category and era" />
           <Endpoint method="GET" path="/radio/random/" description="Random playable song with full metadata" />
+          <Endpoint method="GET" path="/radio/live/" description="Live 999 FM station state — now playing, votes, listeners" />
+          <Endpoint method="GET" path="/radio/stream.mp3" description="Live radio MP3 stream (WebSocket /ws/radio/ carries the same audio + metadata)" />
           <Endpoint method="GET" path="/files/browse/" description="Browse the file system" />
           <Endpoint method="GET" path="/files/info/" description="Metadata for a single file" />
           <Endpoint method="GET" path="/files/cover-art/" description="Cover art image for an audio file" />
@@ -232,8 +234,8 @@ function OverviewTab() {
           <Endpoint method="POST" path="/playlists/share/" description="Create a public shared playlist link" />
           <Endpoint method="GET" path="/playlists/shared/{share_id}/" description="Fetch a shared playlist by ID" />
           <Endpoint method="POST" path="/plays/" description="Record a play event (no auth required)" />
-          <Endpoint method="GET" path="/accounts/account/me/" description="Current user info (public-facing), incl. user_preferences + playlist_folders" />
-          <Endpoint method="PATCH" path="/accounts/account/me/" description="Update user_preferences and/or playlist_folders" />
+          <Endpoint method="GET" path="/accounts/account/me/" description="Current user info (public-facing), incl. per-song preferences + playlist folders" />
+          <Endpoint method="PATCH" path="/accounts/account/me/" description="Update user_preferences (custom titles, covers, default version, playcounts) and/or playlist_folders" />
           <Endpoint method="GET" path="/accounts/me/" description="Current user with role — editor/admin dashboards" />
           <Endpoint method="POST" path="/feedback/" description="Submit API feedback (no auth)" />
           <Endpoint method="POST" path="/reports/" description="Report wrong info on a song (no auth)" />
@@ -339,6 +341,7 @@ function SongsTab() {
             [<Code>search</Code>, 'string', 'Search names, artists, track titles (normalizes special chars — "dont" matches "don\'t")'],
             [<Code>searchall</Code>, 'string', 'Search names, artists, producers, track titles'],
             [<Code>lyrics</Code>, 'string', 'Full-text search within lyrics content'],
+            [<Code>all</Code>, 'string', <>&quot;true&quot; returns the <span className="font-semibold text-text-primary">entire catalogue in one response</span> as a plain array — no pagination envelope, and <Code>page</Code>/<Code>page_size</Code> are ignored. It&apos;s ~2,500 songs, so use it for whole-dataset work (calendars, grouping, offline seeding), not for lists a user scrolls.</>],
             [<Code>file_names_array</Code>, 'string', '"true" to return file_names as array instead of string'],
             [<Code>versions</Code>, 'string', <>"true" to add <Code>version_title</Code> and a <Code>versions</Code> array to each song. Collection endpoint only — <Code>{'/songs/{id}/'}</Code> ignores it.</>],
           ]}
@@ -350,6 +353,13 @@ function SongsTab() {
   "previous": null,
   "results": [ /* Song objects */ ]
 }`}</Pre>
+        <p className="text-xs text-text-muted font-semibold mt-2">With <Code>?all=true</Code> — bare array, no envelope:</p>
+        <Pre>{`[ /* every Song object */ ]`}</Pre>
+        <p className="text-xs text-text-muted">
+          Note there is <span className="font-semibold text-text-primary">no ordering/sort param</span>, and{' '}
+          <Code>category</Code>/<Code>era</Code> each accept only one value per request — sorting, and any
+          multi-category or multi-era view, has to be assembled client-side.
+        </p>
       </Section>
 
       <Section title="GET /songs/{id}/ — Single Song">
@@ -713,7 +723,7 @@ Authorization: Token <token>`}</Pre>
   "is_administrator": false,
   "otp_enabled": false,
   "user_preferences": [
-    { "song": 94086, "cover_url": "https://...", "name": "Custom title", "default_version": "v1", "playcount": 12 }
+    { "song": 94086, "name": "My title", "cover_url": "/assets/wod.jpg", "default_version": "v1", "playcount": 12 }
   ],
   "playlist_folders": [
     { "id": "f1", "name": "Favorites", "playlist_ids": [12, 34] }
@@ -726,27 +736,9 @@ Authorization: Token <token>`}</Pre>
           <div>
             <div className="flex items-center gap-2 mb-1"><Badge color="patch">PATCH</Badge><code className="text-xs font-mono text-text-primary">/accounts/account/me/</code></div>
             <p className="text-xs text-text-muted mb-2">
-              Updates the logged-in user&apos;s own <Code>user_preferences</Code> and/or <Code>playlist_folders</Code> blobs. Send
-              the whole array for whichever field you&apos;re updating — this replaces it, it doesn&apos;t merge entries.
+              Updates the logged-in user&apos;s own <Code>user_preferences</Code> and/or <Code>playlist_folders</Code> blobs —
+              see the two sections below for what goes in them.
             </p>
-            <Pre>{`PATCH /accounts/account/me/
-Authorization: Token <token>
-
-{
-  "user_preferences": [
-    { "song": 94086, "cover_url": null, "name": "Custom title", "default_version": null, "playcount": 12 }
-  ],
-  "playlist_folders": [
-    { "id": "f1", "name": "Favorites", "playlist_ids": [12, 34] }
-  ]
-}`}</Pre>
-            <Table
-              headers={['Field', 'Limit', 'Description']}
-              rows={[
-                [<Code>user_preferences</Code>, 'max 500 items', <>Per-song overrides — <Code>song</Code>, <Code>cover_url</Code>, <Code>name</Code>, <Code>default_version</Code>, <Code>playcount</Code>. All fields but <Code>song</Code> are optional/nullable.</>],
-                [<Code>playlist_folders</Code>, 'max 200 folders, 500 playlist ids each', <><Code>id</Code>, <Code>name</Code>, <Code>playlist_ids</Code> (array of int playlist IDs).</>],
-              ]}
-            />
           </div>
           <div>
             <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/me/</code></div>
@@ -766,6 +758,73 @@ Authorization: Token <token>
 }`}</Pre>
           </div>
         </div>
+      </Section>
+
+      <Section title="Per-Song Preferences — custom titles, covers, playcounts">
+        <p className="text-sm text-text-secondary leading-relaxed">
+          <Code>user_preferences</Code> is a per-user, per-song override list carried on the profile: a personal
+          display <span className="font-semibold text-text-primary">name</span>, a personal{' '}
+          <span className="font-semibold text-text-primary">cover</span>, a preferred{' '}
+          <span className="font-semibold text-text-primary">version</span> to play within the song&apos;s version
+          group, and a <span className="font-semibold text-text-primary">playcount</span>. These are personal only —
+          they never change the song for anyone else, and editors proposing upstream edits see the API&apos;s own
+          untouched values.
+        </p>
+        <Pre>{`{
+  "song": 94086,              // API song id (song.id, not public_id)
+  "name": "My title",         // null = use the song's own title
+  "cover_url": "Compilation/.../cover.jpg",
+  "default_version": "v1",    // null = no preference
+  "playcount": 12
+}`}</Pre>
+        <Table
+          headers={['Field', 'Type', 'Meaning']}
+          rows={[
+            [<Code>song</Code>, 'number', 'Which song this row overrides. The only required field.'],
+            [<Code>name</Code>, 'string | null', 'Custom display title. Null falls back to the song\'s own title.'],
+            [<Code>cover_url</Code>, 'string | null', 'Custom cover art. Null falls back to the song\'s image_url.'],
+            [<Code>default_version</Code>, 'string | null', <>Preferred version <span className="font-semibold text-text-primary">label</span> (e.g. <Code>v1</Code>, <Code>OG</Code>, <Code>TV Mix</Code>) — matched against the <Code>version</Code> field in the <Code>/versions/</Code> table, not a song id, so it survives songs being relinked or groups merging. A default set on any group member governs the whole group.</>],
+            [<Code>playcount</Code>, 'number', 'How many times this user played the song. Client-owned — there is no server-side increment endpoint.'],
+          ]}
+        />
+        <p className="text-xs text-text-muted font-semibold mt-3">Resolving <Code>cover_url</Code>:</p>
+        <Table
+          headers={['Form', 'Example', 'Resolves to']}
+          rows={[
+            ['Absolute URL', 'https://… / data: / blob:', 'Used as-is'],
+            ['Leading slash', '/assets/wod.jpg', <>Site-relative asset — prepend <Code>https://juicewrldapi.com</Code> (same shape as a song&apos;s <Code>image_url</Code>)</>],
+            ['Anything else', 'Compilation/…/cover.jpg', <>A path into file storage — fetch via <Code>/files/cover-art/?path=</Code></>],
+          ]}
+        />
+        <p className="text-xs text-text-muted font-semibold mt-3">Write semantics — read this before implementing:</p>
+        <ul className="space-y-2 text-sm text-text-secondary">
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> It&apos;s <span className="font-semibold text-text-primary">one JSON blob, not per-song rows</span> — there is no per-song save and no delete. The client owns the whole array and PATCHes it in full; sending a shorter array is how a row gets removed.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> Debounce the pushes. A burst of edits (or plays) should collapse into one PATCH rather than one per change.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> On login, merge the server&apos;s copy into the local one taking <Code>max()</Code> of each <Code>playcount</Code> — otherwise plays made while signed out or on another device get overwritten.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> The validator caps the array at <span className="font-semibold text-text-primary">500 rows</span>. Past that, drop playcount-only rows first — rows carrying a real override (name/cover/version) are the ones worth keeping, since every song played creates a playcount row.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> Normalize cleared text fields to <Code>null</Code>, not <Code>""</Code> — an empty string reads as a real override downstream.</li>
+        </ul>
+      </Section>
+
+      <Section title="Playlist Folders">
+        <p className="text-sm text-text-secondary">
+          <Code>playlist_folders</Code> groups the user&apos;s playlists into folders. Same blob mechanics as{' '}
+          <Code>user_preferences</Code> above — whole-array PATCH on <Code>/accounts/account/me/</Code>, no per-folder route.
+        </p>
+        <Pre>{`{
+  "id": "f1",
+  "name": "Favorites",
+  "playlist_ids": [12, 34]
+}`}</Pre>
+        <Table
+          headers={['Field', 'Type', 'Meaning']}
+          rows={[
+            [<Code>id</Code>, 'string', 'Client-generated folder id — round-trips unchanged'],
+            [<Code>name</Code>, 'string', 'Folder display name'],
+            [<Code>playlist_ids</Code>, 'number[]', 'Library playlist IDs in this folder'],
+          ]}
+        />
+        <p className="text-xs text-text-muted">Limits: max 200 folders, max 500 playlist ids per folder.</p>
       </Section>
 
       <Section title="Permission Matrix">
@@ -935,6 +994,29 @@ Content-Type: application/json
   "contact": "optional"
 }`}</Pre>
         <p className="text-xs text-text-muted">Throttled at <Code>10/min</Code>.</p>
+        <p className="text-xs text-text-muted font-semibold mt-3">Report row (from the editor list):</p>
+        <Pre>{`{
+  "id": 31,
+  "song": 94086,
+  "song_name": "Maze",
+  "message": "Issues: Wrong era\\n\\nSong: Maze\\n\\n— Unreleased v1.18.0",
+  "contact": "someuser",
+  "status": "pending",
+  "review_notes": "",
+  "reviewer_username": null,
+  "created_at": "...",
+  "reviewed_at": null
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          Read the list defensively: it may come back as a bare array <span className="font-semibold text-text-primary">or</span> a
+          DRF <Code>{'{ results: [...] }'}</Code> envelope, and the song id has been seen under{' '}
+          <Code>song</Code>, <Code>song_id</Code>, and <Code>public_id</Code> depending on the serializer. Only{' '}
+          <Code>status</Code>, <Code>review_notes</Code>, and the reviewer/timestamp fields are guaranteed.
+        </p>
+        <p className="text-xs text-text-muted">
+          There&apos;s no structured category/issue field on submit — clients fold those into the{' '}
+          <Code>message</Code> text, which is why the messages above look pre-formatted.
+        </p>
         <p className="text-xs text-text-muted font-semibold mt-3">Review:</p>
         <Pre>{`PATCH /juicewrld/reports/{id}/
 Authorization: Token <token>
@@ -943,6 +1025,10 @@ Authorization: Token <token>
   "status": "resolved",     // "pending" | "resolved"
   "review_notes": "optional"
 }`}</Pre>
+        <p className="text-xs text-text-muted">
+          The server records the reviewer and review time itself — don&apos;t send those. Note there is no
+          idempotency key on submit, so a client retrying a queued report can double-post.
+        </p>
       </Section>
 
       <Section title="Beta App (installer gating)" defaultOpen={false}>
@@ -1393,6 +1479,103 @@ function RadioPlayer() {
     </div>
   );
 }`}</Pre>
+      </Section>
+
+      <Section title="Live Radio — one shared broadcast">
+        <p className="text-sm text-text-secondary leading-relaxed">
+          Separate from <Code>/radio/random/</Code> above. That endpoint hands each client its own random song;
+          this is a single <span className="font-semibold text-text-primary">shared station</span> — every listener
+          hears the same audio at the same time, with listener counts and community skip/queue votes. No auth required.
+        </p>
+        <Table
+          headers={['Transport', 'Endpoint', 'Purpose']}
+          rows={[
+            ['REST', 'GET /radio/live/', 'One-shot snapshot of station state — now playing, up next, vote, listener counts'],
+            ['WebSocket', '/ws/radio/', 'Live metadata pushes, vote participation, and (optionally) the audio itself'],
+            ['HTTP', 'GET /radio/stream.mp3', 'Plain MP3 stream — the fallback when MediaSource is unavailable'],
+          ]}
+        />
+        <p className="text-xs text-text-muted">
+          The websocket URL is the API base with its scheme swapped to <Code>ws</Code>/<Code>wss</Code> and{' '}
+          <Code>/ws/radio/</Code> appended — e.g. <Code>wss://juicewrldapi.com/juicewrld/ws/radio/</Code>.
+        </p>
+      </Section>
+
+      <Section title="GET /radio/live/ — Station State">
+        <Pre>{`{
+  "is_live": true,
+  "station": "999 FM",
+  "state": "playing",
+  "stream_url": "https://juicewrldapi.com/juicewrld/radio/stream.mp3",
+  "now_playing": {
+    "title": "Maze",
+    "artist": "Juice WRLD",
+    "album": "...",
+    "display": "Juice WRLD — Maze",
+    "elapsed_ms": 41000,
+    "duration_ms": 144000,
+    "image_url": "/assets/wod.jpg",
+    "song_id": 95001
+  },
+  "up_next": { /* same shape, or null */ },
+  "queue_preview": ["Song A", "Song B"],
+  "dj_enabled": true,
+  "dj_line": "Coming up next…",
+  "vote": {
+    "active": true,
+    "kind": "skip",           // "skip" | "queue"
+    "yes": 3,
+    "no": 1,
+    "votes_needed": 5,
+    "total_listeners": 12,
+    "seconds_left": 20,
+    "track": "Maze"
+  },
+  "web_listeners": 8,
+  "discord_listeners": 4,
+  "total_listeners": 12,
+  "stale_seconds": null
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          <Code>song_id</Code> on a track is the numeric API song id, so a live track can be looked up via{' '}
+          <Code>{'/songs/{id}/'}</Code> for full metadata, lyrics, or cover art. <Code>image_url</Code> is
+          relative — prepend <Code>https://juicewrldapi.com</Code>. <Code>vote.active: false</Code> means no vote
+          is running and the other vote fields may be absent.
+        </p>
+      </Section>
+
+      <Section title="WebSocket /ws/radio/">
+        <p className="text-sm text-text-secondary">
+          The socket carries <span className="font-semibold text-text-primary">both</span> metadata and audio:
+          text frames are JSON station-state objects (same shape as <Code>/radio/live/</Code>), binary frames are
+          MP3 chunks. Set <Code>binaryType = &apos;arraybuffer&apos;</Code> and branch on the frame type.
+        </p>
+        <Pre>{`const ws = new WebSocket('wss://juicewrldapi.com/juicewrld/ws/radio/')
+ws.binaryType = 'arraybuffer'
+
+ws.onmessage = (e) => {
+  if (typeof e.data === 'string') {
+    const state = JSON.parse(e.data)   // RadioLiveState — update the UI
+  } else {
+    // MP3 chunk — feed to a MediaSource SourceBuffer('audio/mpeg')
+  }
+}`}</Pre>
+        <p className="text-xs text-text-muted font-semibold mt-3">Client → server messages:</p>
+        <Table
+          headers={['Message', 'Purpose']}
+          rows={[
+            [<Code>{'{ type: "listening", value, audio }'}</Code>, <>Join/leave the listener count. <Code>audio</Code> is <Code>&quot;ws&quot;</Code> or <Code>&quot;http&quot;</Code> depending on which stream you&apos;re consuming. Re-send on reconnect if still listening.</>],
+            [<Code>{'{ type: "propose_skip" }'}</Code>, 'Start a vote to skip the current track'],
+            [<Code>{'{ type: "propose_queue", song_id }'}</Code>, <>Start a vote to queue a song. <Code>song_id</Code> must be the <span className="font-semibold text-text-primary">number</span> — a stringified id is silently ignored and the vote never starts.</>],
+            [<Code>{'{ type: "vote", value }'}</Code>, <><Code>&quot;yes&quot;</Code> or <Code>&quot;no&quot;</Code> on the active vote</>],
+          ]}
+        />
+        <p className="text-xs text-text-muted font-semibold mt-3">Playback notes:</p>
+        <ul className="space-y-2 text-sm text-text-secondary">
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> Binary frames only make sense with MediaSource (<Code>audio/mpeg</Code>). Where it&apos;s unsupported, ignore them and point an <Code>{'<audio>'}</Code> element at <Code>/radio/stream.mp3</Code> instead — tell the server which you chose via the <Code>audio</Code> field.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> Because it&apos;s a live stream, buffered audio drifts behind. Seek forward when you fall more than a few seconds behind the buffered end, and evict old buffered ranges or the SourceBuffer eventually throws <Code>QuotaExceededError</Code>.</li>
+          <li className="flex items-start gap-2"><span className="text-accent mt-0.5">•</span> Reconnect on close — background tabs get their socket closed and audio paused silently, with no event fired, so a periodic health check is worth having.</li>
+        </ul>
       </Section>
 
       <Section title="Notes">

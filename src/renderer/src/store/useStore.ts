@@ -2,6 +2,7 @@
 import { useShallow } from 'zustand/react/shallow'
 import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
 import { APP_VERSION } from '../lib/appVersion'
+import { ls } from '../lib/persist'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
@@ -43,22 +44,8 @@ const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
 // so two windows flushing the same queue would double-send every report.
 export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
-// Lightweight localStorage persistence helper
-const ls = {
-  get: <T>(key: string): T | null => {
-    try {
-      const v = localStorage.getItem(`unreleased:${key}`)
-      return v ? (JSON.parse(v) as T) : null
-    } catch {
-      return null
-    }
-  },
-  set: <T>(key: string, value: T): void => {
-    try {
-      localStorage.setItem(`unreleased:${key}`, JSON.stringify(value))
-    } catch {}
-  },
-}
+// Lightweight localStorage persistence helper — see lib/persist.ts (it lives
+// there so queueSlice can share it without importing this module back).
 
 // ─── Download item (in-session, Electron only) ────────────────────────────────
 

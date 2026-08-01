@@ -168,7 +168,7 @@ export default function StatsView(): JSX.Element {
   return (
     <>
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        <div className="px-5 pt-5 pb-8 max-w-5xl w-full">
+        <div className="px-5 pt-5 pb-8">
           {/* ── Hero ── */}
           <div className="flex items-center gap-4 mb-5">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center shrink-0">
@@ -214,7 +214,7 @@ export default function StatsView(): JSX.Element {
           </div>
 
           {/* ── Breakdowns ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
             <BarList title="Top eras" entries={stats.eras} empty="No era data on your played songs." />
             <BarList title="By category" entries={stats.categories} empty="No category data." />
             <BarList title="Top producers" entries={stats.producers} empty="No producer credits on your played songs." />
