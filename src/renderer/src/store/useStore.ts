@@ -853,6 +853,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'news': '/news',
       'heardle': '/heardle',
       'stats': '/stats',
+      'download': '/download',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
     set((s) => ({ activeView: view, previousView: view === s.activeView ? s.previousView : s.activeView }))
