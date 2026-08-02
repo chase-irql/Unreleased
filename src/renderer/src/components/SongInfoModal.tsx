@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState, CSSProperties } from 'react'
+import { useEffect, useRef, useState, CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Music2, Pencil, Flag, PictureInPicture2, Minimize2 } from 'lucide-react'
+import {
+  X, Music2, Pencil, Flag, PictureInPicture2, Minimize2,
+  Clock, Hash, MicVocal, Music, Wrench, FileText, Piano, MapPin,
+  Calendar, CalendarClock, CalendarDays, Droplets, Gauge, Layers,
+  GitBranch, Info, StickyNote, Quote, LucideIcon
+} from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { attachToMainWindow } from '../lib/windowSync'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
@@ -15,20 +20,45 @@ const CATEGORY_COLORS: Record<string, string> = {
   recording_session: 'bg-purple-500/15 text-purple-400 border-purple-500/25',
 }
 
-function Row({ label, value }: { label: string; value: string | null | undefined }): JSX.Element | null {
-  if (!value) return null
+// One info block styled like the reference design: a squircle icon chip on
+// the left, an uppercase tracked label, and the value(s) underneath. The row
+// highlights on hover and its values are text-selectable for copying.
+function Section({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="flex gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
-      <span className="text-text-muted text-xs shrink-0 w-28 pt-px">{label}</span>
-      <span className="text-text-primary text-xs leading-relaxed whitespace-pre-wrap flex-1">{value}</span>
+    <div className="group flex gap-3.5 px-3 py-3 -mx-3 rounded-xl border border-transparent hover:border-[var(--border)] hover:bg-surface-raised transition-colors">
+      <div className="shrink-0 w-9 h-9 rounded-xl bg-surface-overlay border border-[var(--border)] flex items-center justify-center text-text-muted group-hover:text-text-primary transition-colors">
+        <Icon size={15} strokeWidth={1.75} />
+      </div>
+      <div className="flex-1 min-w-0 pt-0.5">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted mb-1.5 select-none">{label}</p>
+        <div className="select-text cursor-text">{children}</div>
+      </div>
     </div>
   )
 }
 
-function GroupLabel({ children }: { children: string }): JSX.Element {
+function TextSection({ icon, label, value, mono = false }: {
+  icon: LucideIcon
+  label: string
+  value: string | null | undefined
+  mono?: boolean
+}): JSX.Element | null {
+  if (!value) return null
   return (
-    <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted pt-4 pb-1 first:pt-0">
-      {children}
+    <Section icon={icon} label={label}>
+      <p className={`text-text-primary leading-relaxed whitespace-pre-wrap ${mono ? 'text-[11px] font-mono' : 'text-xs'}`}>
+        {value}
+      </p>
+    </Section>
+  )
+}
+
+// A "Label: value" line inside a Section that holds several related fields.
+function SubVal({ label, value }: { label: string; value: string | null | undefined }): JSX.Element | null {
+  if (!value) return null
+  return (
+    <p className="text-text-primary text-xs leading-relaxed whitespace-pre-wrap">
+      <span className="text-text-muted">{label}: </span>{value}
     </p>
   )
 }
@@ -123,8 +153,6 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
   const catColor = CATEGORY_COLORS[displaySong.category] ?? 'bg-surface-overlay text-text-muted border-[var(--border)]'
   const catLabel = CATEGORY_LABELS[displaySong.category] ?? displaySong.category
 
-  const hasRecording = displaySong.recording_locations || displaySong.record_dates
-  const hasImportantDates = displaySong.preview_date || displaySong.release_date || displaySong.dates
   const hasInstrumentals = displaySong.instrumentals || displaySong.instrumental_names
   const hasSession = displaySong.session_titles || displaySong.session_tracking
 
@@ -239,6 +267,16 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
                     {displaySong.era.name}
                   </span>
                 )}
+                {displaySong.leak_type && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full text-white/60 border border-white/20">
+                    {displaySong.leak_type}
+                  </span>
+                )}
+                {!!parseDuration(displaySong.length) && (
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-black/30 text-white/70 border border-white/15">
+                    <Clock size={9} /> {duration}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -257,143 +295,110 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
             altTitles={altTitles}
           />
 
-          <div>
-            <Row label="Artist" value={displaySong.credited_artists || 'Juice WRLD'} />
-            <Row label="Duration" value={parseDuration(displaySong.length) ? duration : null} />
-            <Row label="Leak type" value={displaySong.leak_type} />
-            <Row label="Date leaked" value={displaySong.date_leaked} />
-            <Row label="Bitrate" value={displaySong.bitrate} />
-          </div>
-
-          {/* Alt names sit right beside Other Versions rather than up in the
-              generic row list — both are "other ways this same song shows up",
-              and alt titles are also what widens the cover picker's search
-              (see SongPrefsSection's altTitles prop). */}
+          {/* Alt names as chips right under the hero, like the reference —
+              they're also what widens the cover picker's search (see
+              SongPrefsSection's altTitles prop). */}
           {altTitles.length > 0 && (
-            <>
-              <GroupLabel>Also Known As</GroupLabel>
-              <p className="text-text-primary text-xs leading-relaxed pb-2.5 border-b border-[var(--border)]">
-                {altTitles.join(' · ')}
+            <div className="px-3 py-3 -mx-3 rounded-xl border border-transparent hover:border-[var(--border)] hover:bg-surface-raised transition-colors">
+              <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted mb-2 select-none">
+                <Hash size={11} /> Also Known As
               </p>
-            </>
+              <div className="flex flex-wrap gap-1.5">
+                {altTitles.map((t) => (
+                  <span key={t} className="select-text cursor-text text-xs px-2.5 py-1 rounded-full bg-surface-overlay border border-[var(--border)] text-text-primary">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
 
-          {versionsEnabled && (
-            <>
-              <GroupLabel>Other Versions</GroupLabel>
-              <div className="pb-2.5 border-b border-[var(--border)]">
-                {loadingVersions ? (
-                  <p className="text-text-muted text-xs py-1">Loading…</p>
-                ) : versions.length === 0 ? (
-                  <p className="text-text-muted text-xs py-1">No other versions linked.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {versions.map(({ song: v, meta }) => (
-                      <button
-                        key={v.id}
-                        onClick={() => handleViewVersion(v.id)}
-                        className="w-full text-left hover:bg-surface-overlay rounded-lg px-1.5 py-1 -mx-1.5 transition-colors"
-                      >
-                        <span className="text-text-primary text-xs truncate block">
-                          {v.track_titles?.[0] || v.name}
-                          {meta.version && <span className="text-text-muted"> ({meta.version}{meta.versionTitle ? ` — ${meta.versionTitle}` : ''})</span>}
-                          {!meta.version && meta.versionTitle && <span className="text-text-muted"> ({meta.versionTitle})</span>}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+          <TextSection icon={MicVocal} label="Credited Artist(s)" value={displaySong.credited_artists || 'Juice WRLD'} />
+          <TextSection icon={Music} label="Producer(s)" value={displaySong.producers} />
+          <TextSection icon={Wrench} label="Engineer(s)" value={displaySong.engineers} />
 
-          {(displaySong.producers || displaySong.engineers) && (
-            <>
-              <GroupLabel>Credits</GroupLabel>
-              <div>
-                <Row label="Producers" value={displaySong.producers} />
-                <Row label="Engineers" value={displaySong.engineers} />
-              </div>
-            </>
-          )}
-
-          {hasRecording && (
-            <>
-              <GroupLabel>Recording</GroupLabel>
-              <div>
-                <Row label="Location" value={displaySong.recording_locations} />
-                <Row label="Date" value={displaySong.record_dates} />
-              </div>
-            </>
-          )}
-
-          {hasImportantDates && (
-            <>
-              <GroupLabel>Dates</GroupLabel>
-              <div>
-                <Row label="Released" value={displaySong.release_date} />
-                <Row label="Preview" value={displaySong.preview_date} />
-                <Row label="Other" value={displaySong.dates} />
-              </div>
-            </>
+          {displaySong.file_names && (
+            <Section icon={FileText} label="File Name(s)">
+              <p className="text-text-primary text-[11px] font-mono leading-relaxed whitespace-pre-wrap">
+                {displaySong.file_names}
+              </p>
+            </Section>
           )}
 
           {hasInstrumentals && (
-            <>
-              <GroupLabel>Instrumentals</GroupLabel>
-              <div>
-                <Row label="Info" value={displaySong.instrumentals} />
-                {displaySong.instrumental_names !== displaySong.instrumentals && (
-                  <Row label="Names" value={displaySong.instrumental_names} />
+            <Section icon={Piano} label="Instrumental Name(s)">
+              <div className="space-y-0.5">
+                {displaySong.instrumentals && (
+                  <p className="text-text-primary text-xs leading-relaxed whitespace-pre-wrap">{displaySong.instrumentals}</p>
+                )}
+                {displaySong.instrumental_names && displaySong.instrumental_names !== displaySong.instrumentals && (
+                  <p className="text-text-primary text-xs leading-relaxed whitespace-pre-wrap">{displaySong.instrumental_names}</p>
                 )}
               </div>
-            </>
+            </Section>
           )}
+
+          <TextSection icon={MapPin} label="Recording Location" value={displaySong.recording_locations} />
+          <TextSection icon={Calendar} label="Record Date(s)" value={displaySong.record_dates} />
+          <TextSection icon={CalendarClock} label="Preview Date" value={displaySong.preview_date} />
+          <TextSection icon={CalendarDays} label="Release Date" value={displaySong.release_date} />
+          <TextSection icon={CalendarDays} label="Other Date(s)" value={displaySong.dates} />
+
+          {(displaySong.leak_type || displaySong.date_leaked) && (
+            <Section icon={Droplets} label="Leak Info">
+              <div className="space-y-0.5">
+                <SubVal label="Type" value={displaySong.leak_type} />
+                <SubVal label="Date leaked" value={displaySong.date_leaked} />
+              </div>
+            </Section>
+          )}
+
+          <TextSection icon={Gauge} label="Bitrate" value={displaySong.bitrate} />
 
           {hasSession && (
-            <>
-              <GroupLabel>Session</GroupLabel>
-              <div>
-                <Row label="Titles" value={displaySong.session_titles} />
-                <Row label="Tracking" value={displaySong.session_tracking} />
+            <Section icon={Layers} label="Session">
+              <div className="space-y-0.5">
+                <SubVal label="Titles" value={displaySong.session_titles} />
+                <SubVal label="Tracking" value={displaySong.session_tracking} />
               </div>
-            </>
+            </Section>
           )}
 
-          {displaySong.file_names && (
-            <>
-              <GroupLabel>File Names</GroupLabel>
-              <p className="text-text-primary text-[11px] font-mono leading-relaxed pb-2.5 border-b border-[var(--border)]">
-                {displaySong.file_names}
-              </p>
-            </>
+          {versionsEnabled && (
+            <Section icon={GitBranch} label="Other Versions">
+              {loadingVersions ? (
+                <p className="text-text-muted text-xs py-0.5">Loading…</p>
+              ) : versions.length === 0 ? (
+                <p className="text-text-muted text-xs py-0.5">No other versions linked.</p>
+              ) : (
+                <div className="space-y-1">
+                  {versions.map(({ song: v, meta }) => (
+                    <button
+                      key={v.id}
+                      onClick={() => handleViewVersion(v.id)}
+                      className="w-full text-left cursor-pointer hover:bg-surface-overlay rounded-lg px-1.5 py-1 -mx-1.5 transition-colors"
+                    >
+                      <span className="text-text-primary text-xs truncate block">
+                        {v.track_titles?.[0] || v.name}
+                        {meta.version && <span className="text-text-muted"> ({meta.version}{meta.versionTitle ? ` — ${meta.versionTitle}` : ''})</span>}
+                        {!meta.version && meta.versionTitle && <span className="text-text-muted"> ({meta.versionTitle})</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Section>
           )}
 
-          {displaySong.additional_information && (
-            <>
-              <GroupLabel>Additional Info</GroupLabel>
-              <p className="text-text-primary text-xs leading-relaxed pb-2.5 border-b border-[var(--border)] whitespace-pre-wrap">
-                {displaySong.additional_information}
-              </p>
-            </>
-          )}
-
-          {notesDisplay && (
-            <>
-              <GroupLabel>Notes</GroupLabel>
-              <p className="text-text-primary text-xs leading-relaxed pb-2.5 border-b border-[var(--border)] whitespace-pre-wrap">
-                {notesDisplay}
-              </p>
-            </>
-          )}
+          <TextSection icon={Info} label="Additional Info" value={displaySong.additional_information} />
+          <TextSection icon={StickyNote} label="Notes" value={notesDisplay} />
 
           {displaySong.lyrics && (
-            <>
-              <GroupLabel>Lyrics</GroupLabel>
-              <pre className="text-text-secondary text-xs leading-relaxed whitespace-pre-wrap font-sans pb-2">
+            <Section icon={Quote} label="Lyrics">
+              <pre className="text-text-secondary text-xs leading-relaxed whitespace-pre-wrap font-sans">
                 {displaySong.lyrics}
               </pre>
-            </>
+            </Section>
           )}
 
           <button

@@ -107,10 +107,10 @@ export default function Sidebar(): JSX.Element {
         )
       case 'download':
         return (
-          <a key="download" href="https://github.com/leanwrldd/unreleased/releases/latest" target="_blank" rel="noopener noreferrer" title={collapsed ? 'Download desktop app' : undefined} className={rowCls}>
+          <button key="download" onClick={() => setActiveView('download')} title={collapsed ? 'Download desktop app' : undefined} className={rowCls}>
             <span className={iconWrap}><Download size={18} /></span>
             <span aria-hidden={collapsed} className={labelCls}>Download app</span>
-          </a>
+          </button>
         )
       case 'settings':
         return (
@@ -141,7 +141,7 @@ export default function Sidebar(): JSX.Element {
       case 'diagnostics':
         return <button key="diagnostics" onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={barIconBtn}><Info size={18} /></button>
       case 'download':
-        return <a key="download" href="https://github.com/leanwrldd/unreleased/releases/latest" target="_blank" rel="noopener noreferrer" title="Download desktop app" className={barIconBtn}><Download size={18} /></a>
+        return <button key="download" onClick={() => setActiveView('download')} title="Download desktop app" className={barIconBtn}><Download size={18} /></button>
       case 'settings':
         return <button key="settings" onClick={() => toggleSettings()} title="Settings" className={barIconBtn}><Settings size={18} /></button>
     }

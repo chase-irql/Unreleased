@@ -42,6 +42,32 @@ function dismissed(): boolean {
   try { return localStorage.getItem(DISMISS_KEY) === '1' } catch { return false }
 }
 
+// ── Shared access to the captured install prompt ────────────────────────────
+// The download page offers its own "Install" button; both UIs drive the same
+// one-shot prompt, so it lives here (the module that captures it) and is
+// consumed through these helpers.
+
+export function hasPwaInstallPrompt(): boolean {
+  return !!deferredPrompt
+}
+
+/** Subscribe to availability changes of the install prompt. Returns an unsubscriber. */
+export function onPwaInstallPromptChange(fn: () => void): () => void {
+  promptListeners.add(fn)
+  return () => { promptListeners.delete(fn) }
+}
+
+/** Fire the captured native install prompt (no-op if none). Consumes it either way. */
+export async function showPwaInstallPrompt(): Promise<void> {
+  if (!deferredPrompt) return
+  try {
+    await deferredPrompt.prompt()
+    await deferredPrompt.userChoice
+  } catch { /* user bailed */ }
+  deferredPrompt = null
+  promptListeners.forEach((fn) => fn())
+}
+
 export default function InstallPrompt(): JSX.Element | null {
   const [visible, setVisible] = useState(false)
   const [hasPrompt, setHasPrompt] = useState(!!deferredPrompt)
@@ -77,12 +103,7 @@ export default function InstallPrompt(): JSX.Element | null {
   }
 
   const install = async (): Promise<void> => {
-    if (!deferredPrompt) return
-    try {
-      await deferredPrompt.prompt()
-      await deferredPrompt.userChoice
-    } catch { /* user bailed */ }
-    deferredPrompt = null
+    await showPwaInstallPrompt()
     close()
   }
 

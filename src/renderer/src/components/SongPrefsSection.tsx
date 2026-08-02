@@ -210,7 +210,7 @@ export default function SongPrefsSection({
   }
 
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-surface-overlay/40 px-3.5 py-3 mt-1">
+    <div className="rounded-xl border border-[var(--border)] bg-surface-raised px-4 py-3.5 mt-2 mb-4">
       <div className="flex items-center gap-2">
         <Sparkles size={13} className="text-accent" />
         <span className="text-xs font-semibold text-text-primary">Personalize</span>
