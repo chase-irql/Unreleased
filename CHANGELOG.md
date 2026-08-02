@@ -6,6 +6,98 @@ All notable changes to this project are documented here.
 
 ---
 
+## [1.18.7] — 2026-08-02
+
+- **New** *(Web)* In-app "Download the app" page — live version and file-size info pulled straight from GitHub Releases, with automatic fallback to the newest release that actually has a macOS build if the latest one hasn't been built for Mac yet
+- **Improve** Song info modal redesigned with a cleaner icon-chip layout for its metadata rows
+
+---
+
+## [1.18.4] — 2026-08-01
+
+- **New** Song editor's File URL field gained a Browse button to pick a file straight from the API's file storage
+- **Improve** Albums and Editor/Admin tabs can now be hidden from the mobile bottom nav and desktop side menu, like any other nav item
+- **Improve** The Wrapped page loads dramatically faster — resolves your play history from one cached bulk fetch instead of a request per song
+- **Fix** The collapsed player bar's thin progress line is now click/drag seekable
+- **Fix** WRLD view's seek bar now responds to touch drags on mobile — previously only mouse dragging worked
+
+---
+
+## [1.18.3] — 2026-08-01
+
+- **Improve** Heardle's daily clip now skips near-silent intros and song outros when picking where to start, for a fairer guess window
+
+---
+
+## [1.18.2] — 2026-08-01
+
+- **New** Heardle gained **Personal** and **Unlimited** modes alongside Daily — adjustable difficulty (guess count, reveal ladder, start point), and Unlimited can filter by era/category
+- **New** Heardle results can be copied to the clipboard to share, Wordle-style
+
+---
+
+## [1.18.1] — 2026-08-01
+
+- **New** Heardle — a daily "name the song from its opening seconds" game, with a shared daily puzzle and a six-guess reveal ladder
+- **New** "Wrapped" — an all-time listening stats page built from your play counts: top songs, totals, and more
+- **New** API Docs page gained full-text search across every tab
+- **Improve** Song editor's synced-lyrics field is now a line-by-line table (timestamp + text) instead of a raw LRC text box
+- **Fix** A version-read error could whiteout Settings → About with a blank error screen
+
+---
+
+## [1.18.0] — 2026-07-29
+
+- **Fix** Tracker grid/list rows no longer clip song text when Settings → App text size is scaled up
+
+---
+
+## [1.17.10] — 2026-07-28
+
+- **New** Tracker gained a **Grid view** — a virtualized card layout mirroring juicewrldapi.com's own song cards
+- **New** Song editor gained a "Basic" layout — a flat, quick-edit form as an alternative to the full card layout
+- **Fix** WRLD view fullscreen no longer swallows the Escape key or blocks other overlays (Settings, equalizer, pickers) from opening on top of it
+
+---
+
+## [1.17.6] — 2026-07-28
+
+- **New** Bulk edit — multi-select songs in the Tracker or tracks in the Library and edit shared fields (era, category, credits, and more) across all of them at once, with per-field replace/add/remove/append/fill/clear
+- **New** The Library tab gained the same ctrl/shift multi-select the Tracker already had
+
+---
+
+## [1.17.5] — 2026-07-27
+
+- **Improve** *(Desktop)* Application menu's Playback section reorganized into Seek / Volume & Speed / Crossfade submenus instead of one long list
+
+---
+
+## [1.17.4] — 2026-07-26
+
+- **Improve** *(Desktop)* "Import from YouTube" generalized into **Import from URL** — paste a link from YouTube, SoundCloud, Bandcamp, a direct audio file, or any of ~1800 other sites to add it to your library
+- **Fix** Album art now scales with the app text-size setting instead of staying pinned at a fixed size
+
+---
+
+## [1.17.3] — 2026-07-25
+
+- **Improve** *(Desktop)* Discord Rich Presence now shows real cover art for local library files that match a catalog song, instead of the fallback logo
+
+---
+
+## [1.17.2] — 2026-07-25
+
+- **New** *(Desktop)* Import from YouTube — download a video's audio straight into your local library (superseded by Import from URL in 1.17.4)
+
+---
+
+## [1.17.1] — 2026-07-24
+
+- **New** Terms of Service and Privacy Policy pages, linked from Settings → About, plus a one-time notice explaining the app's local storage use
+
+---
+
 ## [1.17.0] — 2026-07-22
 
 - **New** *(Desktop)* macOS builds — signed DMGs for Intel and Apple Silicon are now built and published alongside the Windows and Linux releases

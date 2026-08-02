@@ -342,26 +342,11 @@ class ReleaseWorker(QThread):
         self.done.emit(version, note)
 
     def _refresh_bundled_binaries(self):
-        """Mirror release.py's refresh_bundled_binaries: self-update the bundled
-        yt-dlp before packaging so the installer doesn't ship a stale extractor
-        that YouTube breaks within weeks. Non-fatal -- a failed update just
-        ships whatever copy is already on disk."""
-        r, root = self.r, self.root
-        exe = root / "node_modules" / "youtube-dl-exec" / "bin" / (
-            "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
-        if not exe.exists():
-            self.log.emit(f"yt-dlp binary not found -- skipping update ({exe})", "warn")
-            return
-        before = r.capture(f'"{exe}" --version')
-        self.log.emit(f"Refreshing bundled yt-dlp (current: {before or 'unknown'})...", "info")
-        rc = self.cmd(f'"{exe}" -U')
-        after = r.capture(f'"{exe}" --version')
-        if rc != 0:
-            self.log.emit("yt-dlp self-update failed -- shipping the existing binary", "warn")
-        elif after and after != before:
-            self.log.emit(f"yt-dlp updated: {before} -> {after}", "ok")
-        else:
-            self.log.emit(f"yt-dlp already current ({after or before})", "ok")
+        """Obsolete: ffmpeg/yt-dlp are no longer bundled -- the app downloads
+        both on first use (always the latest yt-dlp release), so there is
+        nothing to refresh before packaging. Kept as a stub to mirror
+        release.py."""
+        self.log.emit("Skipping bundled-binary refresh -- ffmpeg/yt-dlp download on demand since v1.19", "info")
 
     def _rollback(self):
         """Mirror release.py's rollback(): undo whatever earlier steps already

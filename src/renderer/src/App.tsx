@@ -206,7 +206,7 @@ export default function App(): JSX.Element {
   const titleBarMenu = isElectron && !wrldFullscreen && appMenuPosition === 'title-bar'
 
   return (
-    <div className="flex flex-col h-dvh bg-surface overflow-hidden">
+    <div className="app-shell flex flex-col h-dvh bg-surface overflow-hidden">
       {/* Reserved title bar — only when the app-menu button is parked here. A
           real row (not an overlay) so content flows BELOW it and the menu can
           never overlap a view's top-left corner. It carries the window's drag

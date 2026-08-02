@@ -1919,22 +1919,136 @@ ipcMain.handle('download-to-library', async (_, { url, songName, artist, songPat
 })
 
 // ── Audio format conversion (ffmpeg) ─────────────────────────────────────────
-// Local library files can be transcoded to another format via the bundled
-// ffmpeg-static binary. The output lands next to the source (never overwriting
-// it), inherits tags + embedded cover where the target container supports one,
-// and is registered into library-data.json so it shows up in the library.
+// Local library files can be transcoded to another format via the on-demand
+// ffmpeg binary (see the tools section above). The output lands next to the
+// source (never overwriting it), inherits tags + embedded cover where the
+// target container supports one, and is registered into library-data.json so
+// it shows up in the library.
 
-// ffmpeg-static resolves to a path inside node_modules; in a packaged build
-// that path lives inside the asar archive, but a native binary can't execute
-// from there — electron-builder unpacks it (see package.json asarUnpack), so we
-// remap onto the unpacked copy. Returns null if the dependency is missing.
-function resolveFfmpegPath() {
+// ── On-demand tool binaries (ffmpeg / yt-dlp) ────────────────────────────────
+// Neither binary ships with the app — together they'd add ~100 MB to every
+// install for features many users never touch. Instead each is downloaded on
+// first use into userData/bin (progress streamed to the requesting window via
+// 'tools-download-progress') and reused forever after. In dev the copies inside
+// node_modules (ffmpeg-static / youtube-dl-exec, both devDependencies now, so
+// absent from packaged builds) serve as a fallback, keeping `electron:dev`
+// working without any download.
+
+const TOOL_SPECS = {
+  ffmpeg: {
+    // The exact build ffmpeg-static would have bundled, from its own releases.
+    // Served gzipped (~40 MB down, ~80 MB on disk).
+    url: () => `https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-${process.platform}-${process.arch}.gz`,
+    gunzip: true,
+    file: process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+  },
+  ytdlp: {
+    // Always the latest release: yt-dlp's site extractors rot quickly, so a
+    // fresh copy beats anything pinned. Re-downloading (force:true) is also the
+    // fix when a site link fails with an "outdated downloader" error.
+    url: () => {
+      const name = process.platform === 'win32' ? 'yt-dlp.exe'
+        : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp'
+      return `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${name}`
+    },
+    gunzip: false,
+    file: process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp',
+  },
+}
+
+function toolsDir() {
+  return path.join(app.getPath('userData'), 'bin')
+}
+
+function downloadedToolPath(tool) {
+  const p = path.join(toolsDir(), TOOL_SPECS[tool].file)
+  return fs.existsSync(p) ? p : null
+}
+
+function devFfmpegPath() {
   let p
   try { p = require('ffmpeg-static') } catch { return null }
   if (!p) return null
   if (app.isPackaged) p = p.replace('app.asar', 'app.asar.unpacked')
   return fs.existsSync(p) ? p : null
 }
+
+function devYtDlpPath() {
+  let dir
+  try { dir = path.dirname(require.resolve('youtube-dl-exec/package.json')) } catch { return null }
+  if (app.isPackaged) dir = dir.replace('app.asar', 'app.asar.unpacked')
+  const p = path.join(dir, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
+  return fs.existsSync(p) ? p : null
+}
+
+// Downloaded copy first: it's the one the "update downloader" path refreshes,
+// so it must win over a stale dev copy when both exist.
+function resolveFfmpegPath() {
+  return downloadedToolPath('ffmpeg') || devFfmpegPath()
+}
+
+function resolveYtDlpPath() {
+  return downloadedToolPath('ytdlp') || devYtDlpPath()
+}
+
+// One download per tool at a time; concurrent requests (e.g. the convert dialog
+// and the URL-import dialog both open at once) latch onto the same promise —
+// only the first caller's progress callback is wired, which is fine because a
+// second dialog re-checks tools-status when the handler resolves.
+const toolDownloadsInFlight = {}
+
+function downloadTool(tool, onProgress) {
+  if (toolDownloadsInFlight[tool]) return toolDownloadsInFlight[tool]
+  const spec = TOOL_SPECS[tool]
+  const dest = path.join(toolsDir(), spec.file)
+  const run = (async () => {
+    fs.mkdirSync(toolsDir(), { recursive: true })
+    await downloadAnyUrl(spec.url(), dest, onProgress, 0, spec.gunzip)
+    if (process.platform !== 'win32') { try { fs.chmodSync(dest, 0o755) } catch {} }
+  })()
+  toolDownloadsInFlight[tool] = run.finally(() => { delete toolDownloadsInFlight[tool] })
+  return toolDownloadsInFlight[tool]
+}
+
+// { ffmpeg: bool, ytdlp: bool } — whether each binary is currently runnable
+// (downloaded copy or dev fallback).
+ipcMain.handle('tools-status', () => ({
+  ffmpeg: !!resolveFfmpegPath(),
+  ytdlp: !!resolveYtDlpPath(),
+}))
+
+// Download the given tools (default: both), skipping any that already resolve
+// unless force:true — which re-fetches even a present copy, the "update the
+// downloader" path when yt-dlp reports its extractors are stale. Progress
+// arrives on 'tools-download-progress' as { tool, percent, received, total,
+// done }. Resolves { ok: true } | { error }.
+ipcMain.handle('tools-download', async (event, opts) => {
+  const { tools, force } = opts || {}
+  const wanted = (Array.isArray(tools) && tools.length ? tools : ['ytdlp', 'ffmpeg'])
+    .filter(t => TOOL_SPECS[t])
+  for (const tool of wanted) {
+    const present = tool === 'ffmpeg' ? resolveFfmpegPath() : resolveYtDlpPath()
+    if (present && !force) continue
+    let lastPct = -1
+    const emit = (percent, received, total) => {
+      if (percent === lastPct) return
+      lastPct = percent
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('tools-download-progress', { tool, percent, received, total, done: false })
+      }
+    }
+    try {
+      await downloadTool(tool, emit)
+    } catch (e) {
+      const label = tool === 'ytdlp' ? 'the downloader' : 'the audio converter'
+      return { error: `Could not download ${label}: ${e.message}` }
+    }
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('tools-download-progress', { tool, percent: 100, done: true })
+    }
+  }
+  return { ok: true }
+})
 
 // Target format → { file extension, codec-arg builder, whether the container
 // can carry an embedded cover }. `bitrate` is only consulted for lossy codecs.
@@ -1973,7 +2087,7 @@ ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate, s
   if (!filePath || !fs.existsSync(filePath)) return { error: 'Source file not found' }
 
   const ffmpegPath = resolveFfmpegPath()
-  if (!ffmpegPath) return { error: 'ffmpeg is unavailable — the bundled converter could not be found.' }
+  if (!ffmpegPath) return { error: 'The audio converter is not installed — reopen this dialog to download it.' }
 
   let mm
   try { mm = require('music-metadata') } catch { return { error: 'music-metadata not installed' } }
@@ -2096,17 +2210,8 @@ ipcMain.handle('convert-audio', async (event, { id, filePath, format, bitrate, s
 // download-to-library and is registered in library-data.json, so it shows up
 // like any other local track.
 
-// yt-dlp ships as a native binary inside youtube-dl-exec/bin; same asar caveat
-// as ffmpeg-static (see resolveFfmpegPath) — remap onto the unpacked copy for
-// packaged builds. Returns null if the dependency/binary is missing.
-function resolveYtDlpPath() {
-  let dir
-  try { dir = path.dirname(require.resolve('youtube-dl-exec/package.json')) } catch { return null }
-  if (app.isPackaged) dir = dir.replace('app.asar', 'app.asar.unpacked')
-  const name = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
-  const p = path.join(dir, 'bin', name)
-  return fs.existsSync(p) ? p : null
-}
+// yt-dlp resolution lives with the other on-demand tools — see the
+// "On-demand tool binaries" section above resolveFfmpegPath.
 
 // format id → { yt-dlp --audio-format value, final file extension, is it lossy
 // (so a target bitrate applies) }.
@@ -2185,8 +2290,10 @@ function probeAudioUrl(u, depth = 0) {
 // Like downloadFile above, but for arbitrary user-supplied URLs: handles http
 // as well as https, preserves a non-default port, and follows the full set of
 // redirect codes. Kept separate so the updater/offline paths keep using the
-// helper they were written against.
-function downloadAnyUrl(url, dest, onProgress, depth = 0) {
+// helper they were written against. gunzip:true decompresses on the way to
+// disk (the ffmpeg release assets are served as .gz); progress still tracks
+// the compressed byte count, which is what content-length describes.
+function downloadAnyUrl(url, dest, onProgress, depth = 0, gunzip = false) {
   const tmp = dest + '.part'
   return new Promise((resolve, reject) => {
     if (depth > 5) return reject(new Error('Too many redirects'))
@@ -2201,13 +2308,16 @@ function downloadAnyUrl(url, dest, onProgress, depth = 0) {
     }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume()
-        return resolve(downloadAnyUrl(new URL(res.headers.location, url).href, dest, onProgress, depth + 1))
+        return resolve(downloadAnyUrl(new URL(res.headers.location, url).href, dest, onProgress, depth + 1, gunzip))
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)) }
       const total = parseInt(res.headers['content-length'] || '0', 10)
       let received = 0
       const out = fs.createWriteStream(tmp)
+      const sink = gunzip ? require('zlib').createGunzip() : out
+      if (gunzip) sink.pipe(out)
       const fail = (err) => {
+        sink.destroy()
         out.destroy()
         try { fs.unlinkSync(tmp) } catch {}
         reject(err)
@@ -2216,37 +2326,38 @@ function downloadAnyUrl(url, dest, onProgress, depth = 0) {
         received += chunk.length
         if (onProgress) onProgress(total > 0 ? Math.round(received / total * 100) : 0, received, total)
       })
-      res.pipe(out)
+      res.pipe(sink)
       out.on('finish', () => {
         if (total > 0 && received !== total) return fail(new Error(`Truncated download: got ${received} of ${total} bytes`))
         try { fs.renameSync(tmp, dest) } catch (e) { return fail(e) }
         resolve()
       })
+      sink.on('error', fail)
       out.on('error', fail)
       res.on('error', fail)
     }).on('error', reject)
   })
 }
 
-// Lets the renderer show a dedicated "feature unavailable" page the moment the
-// dialog opens, instead of a bare error after a failed attempt. Direct file
-// downloads don't actually need either binary, but a missing one means the
-// install is broken — worth saying up front rather than letting site links
-// fail mysteriously. Freshness (whether yt-dlp's extractors still work) can't
-// be known without a real request, so that's surfaced reactively via
-// `needsUpdate` below.
+// Lets the renderer show the one-time download page the moment the dialog
+// opens, instead of a bare error after a failed attempt. Direct file downloads
+// don't actually need either binary, but gating up front keeps the flow simple
+// and the binaries are needed for every site link anyway. Freshness (whether
+// yt-dlp's extractors still work) can't be known without a real request, so
+// that's surfaced reactively via `needsUpdate` below.
 ipcMain.handle('url-import-status', () => {
-  if (!resolveYtDlpPath()) return { available: false, reason: 'missing-ytdlp' }
-  if (!resolveFfmpegPath()) return { available: false, reason: 'missing-ffmpeg' }
+  const missing = []
+  if (!resolveYtDlpPath()) missing.push('ytdlp')
+  if (!resolveFfmpegPath()) missing.push('ffmpeg')
+  if (missing.length) return { available: false, reason: 'needs-download', missing }
   return { available: true }
 })
 
 // yt-dlp prints this family of phrases when a failure is likely caused by a
 // site-side change its extractor doesn't understand yet — as opposed to a
 // bad URL, a private/deleted video, or a network hiccup. When it matches, the
-// renderer shows a distinct "needs an update" page (with a shortcut to check
-// for app updates, since that's what refreshes the bundled binary — see
-// scripts/python/release.py refresh_bundled_binaries) rather than a plain
+// renderer shows a distinct "needs an update" page whose button re-downloads
+// the latest yt-dlp (tools-download with force:true) rather than a plain
 // error the user might retry forever.
 function looksOutdated(stderr) {
   return /yt-dlp(?:\.exe)? -U\b|update-to\b|on the latest version|yt-dlp is outdated|please update yt-dlp/i.test(stderr)
@@ -2302,9 +2413,9 @@ ipcMain.handle('url-import', async (event, { id, url, format, bitrate }) => {
   } else {
     // ── Site link: hand off to yt-dlp ─────────────────────────────────────
     const ytDlpPath = resolveYtDlpPath()
-    if (!ytDlpPath) return { error: 'yt-dlp is unavailable — the bundled downloader could not be found.' }
+    if (!ytDlpPath) return { error: 'The downloader component is not installed — reopen this dialog to download it.' }
     const ffmpegPath = resolveFfmpegPath()
-    if (!ffmpegPath) return { error: 'ffmpeg is unavailable — the bundled converter could not be found.' }
+    if (!ffmpegPath) return { error: 'The audio converter is not installed — reopen this dialog to download it.' }
 
     // Download into a throwaway dir so exactly one produced file is easy to
     // find, regardless of how yt-dlp renders the title into the filename.
@@ -2368,7 +2479,7 @@ ipcMain.handle('url-import', async (event, { id, url, format, bitrate }) => {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {}
       if (e.needsUpdate) {
         return {
-          error: 'This link needs an updated downloader — the next app update will include it.',
+          error: 'This link needs a newer downloader — update it below and try again.',
           needsUpdate: true,
         }
       }

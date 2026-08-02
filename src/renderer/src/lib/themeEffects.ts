@@ -156,8 +156,8 @@ let songAccentActive = false
 // <html>. Shared by App and the pop-out window shell (FloatApp) so a floating
 // window restyles itself exactly like the main one.
 export function useThemeEffects(): void {
-  const { theme, customSkins, accentColor, appTextScale, appFont, lyricsFont } = useStorePick(
-    'theme', 'customSkins', 'accentColor', 'appTextScale', 'appFont', 'lyricsFont',
+  const { theme, customSkins, accentColor, appTextScale, appFont, lyricsFont, gradientsEnabled } = useStorePick(
+    'theme', 'customSkins', 'accentColor', 'appTextScale', 'appFont', 'lyricsFont', 'gradientsEnabled',
   )
   // `customSkins` is picked so that editing the active custom skin's palette
   // (which mutates the array, not the theme id) still reruns the effect below
@@ -224,6 +224,13 @@ export function useThemeEffects(): void {
     root.style.setProperty('--font-app', getFont(appFont).stack)
     root.style.setProperty('--font-lyrics', getFont(lyricsFont).stack)
   }, [appFont, lyricsFont])
+
+  // Gradient surfaces — index.css keys the accent-tinted washes and the
+  // accent-button sheen off this class. Purely cosmetic overlays on top of
+  // the flat palette, so toggling never changes any skin's base colors.
+  useEffect(() => {
+    document.documentElement.classList.toggle('gradients', gradientsEnabled)
+  }, [gradientsEnabled])
 
   // Palette cross-fades (index.css transitions the registered vars) switch on
   // only after the persisted skin has painted once — two rAFs so the browser

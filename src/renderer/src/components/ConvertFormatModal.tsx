@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser } from 'lucide-react'
+import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 
 // "Convert format" dialog for a local file, driven by the store's `convertModal`
-// target. Transcodes via the bundled ffmpeg (main process `convert-audio`),
-// writing the result next to the original and registering it in the library.
+// target. Transcodes via the on-demand ffmpeg (main process `convert-audio`;
+// first use shows a one-time download gate), writing the result next to the
+// original and registering it in the library.
 //
 // Two mounts: the app root mounts it as an in-app modal (backdrop + centered
 // card), and the pop-out window (FloatApp's `convert` view) mounts it with
@@ -50,6 +51,12 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ outPath: string } | null>(null)
+  // ffmpeg is fetched on demand (see main.js "On-demand tool binaries") — when
+  // it isn't on disk yet the form is replaced by a one-time download gate.
+  const [needsFfmpeg, setNeedsFfmpeg] = useState(false)
+  const [dlBusy, setDlBusy] = useState(false)
+  const [dlPercent, setDlPercent] = useState(0)
+  const [dlError, setDlError] = useState<string | null>(null)
   const convertId = useRef<string | null>(null)
 
   const sourceExt = track ? extOf(track.path) : ''
@@ -65,8 +72,47 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
     setProgress(0)
     setError(null)
     setDone(null)
+    setNeedsFfmpeg(false)
+    setDlBusy(false)
+    setDlPercent(0)
+    setDlError(null)
     convertId.current = null
   }, [track?.id])
+
+  // Is ffmpeg present? Checked per open so the gate clears once downloaded
+  // (possibly by the URL-import dialog or another window).
+  useEffect(() => {
+    if (!track || !el?.toolsStatus) return
+    let cancelled = false
+    el.toolsStatus().then((s: { ffmpeg: boolean }) => {
+      if (!cancelled && s && !s.ffmpeg) setNeedsFfmpeg(true)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [track?.id, el])
+
+  useEffect(() => {
+    if (!track || !el?.onToolsDownloadProgress) return
+    const off = el.onToolsDownloadProgress((d: { tool: string; percent: number }) => {
+      if (d.tool === 'ffmpeg') setDlPercent(d.percent)
+    })
+    return () => off?.()
+  }, [track?.id, el])
+
+  const downloadFfmpeg = async (): Promise<void> => {
+    if (!el?.toolsDownload || dlBusy) return
+    setDlBusy(true)
+    setDlError(null)
+    setDlPercent(0)
+    try {
+      const r = await el.toolsDownload({ tools: ['ffmpeg'] })
+      if (r?.error) { setDlError(r.error); return }
+      setNeedsFfmpeg(false)
+    } catch (e: any) {
+      setDlError(e?.message ?? 'Download failed')
+    } finally {
+      setDlBusy(false)
+    }
+  }
 
   // Progress events are keyed by the id we pass into convertAudio.
   useEffect(() => {
@@ -159,7 +205,49 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
             </p>
           </div>
 
-          {done ? (
+          {needsFfmpeg ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-sm text-text-primary flex flex-col items-center gap-2 text-center">
+              <Download size={22} className="text-amber-400" />
+              <p className="font-medium">One-time download needed</p>
+              <p className="text-text-muted text-xs max-w-[280px]">
+                Converting uses an open-source audio converter (ffmpeg). It downloads once (~40 MB) and stays on this device.
+              </p>
+              {dlError && (
+                <div className="flex items-start gap-2 text-red-400 text-xs max-w-[280px]">
+                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                  <span className="min-w-0 break-words">{dlError}</span>
+                </div>
+              )}
+              {dlBusy && (
+                <div className="w-full max-w-[280px] space-y-1.5 mt-1">
+                  <div className="h-1.5 rounded-full bg-surface-overlay overflow-hidden">
+                    <div className="h-full bg-accent transition-[width] duration-200" style={{ width: `${dlPercent}%` }} />
+                  </div>
+                  <p className="text-[11px] text-text-muted text-center tabular-nums">
+                    Downloading… {dlPercent > 0 && `${dlPercent}%`}
+                  </p>
+                </div>
+              )}
+              <div className="flex flex-col items-center gap-2 mt-2 w-full">
+                {el?.toolsDownload && (
+                  <button
+                    onClick={downloadFfmpeg}
+                    disabled={dlBusy}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-60"
+                  >
+                    {dlBusy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                    {dlBusy ? 'Downloading…' : 'Download converter'}
+                  </button>
+                )}
+                <button
+                  onClick={close}
+                  className="px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-primary transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : done ? (
             <div className="rounded-xl border border-accent/40 bg-accent/10 px-4 py-4 text-sm text-text-primary flex flex-col items-center gap-2 text-center">
               <Check size={22} className="text-accent" />
               <p className="font-medium">Converted to {selected.label}</p>

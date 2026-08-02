@@ -210,6 +210,11 @@ interface AppState {
   lyricsAlign: 'left' | 'center'
   // Soften not-yet-played synced lines with a slight blur (on by default).
   lyricsBlur: boolean
+  // Accent-tinted gradient washes on the app shell/sidebar/player and a sheen
+  // on accent buttons (index.css `html.gradients` rules; class applied by
+  // useThemeEffects). They ride the accent vars, so the Now Playing skin's
+  // song accent recolors them too.
+  gradientsEnabled: boolean
   // When enabled, if a track has a linked "OG" version (same song, grouped via
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
@@ -418,6 +423,7 @@ interface AppActions {
   setLyricsScale: (scale: number) => void
   setLyricsAlign: (align: 'left' | 'center') => void
   setLyricsBlur: (enabled: boolean) => void
+  setGradientsEnabled: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
   setLastfmUser: (name: string | null) => void
   setLastfmEnabled: (enabled: boolean) => void
@@ -979,6 +985,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   lyricsScale: ls.get<number>('lyricsScale') ?? 1,
   lyricsAlign: ls.get<'left' | 'center'>('lyricsAlign') ?? 'left',
   lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
+  gradientsEnabled: ls.get<boolean>('gradientsEnabled') ?? true,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
@@ -1012,6 +1019,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setLyricsScale: (lyricsScale) => { set({ lyricsScale }); ls.set('lyricsScale', lyricsScale) },
   setLyricsAlign: (lyricsAlign) => { set({ lyricsAlign }); ls.set('lyricsAlign', lyricsAlign) },
   setLyricsBlur: (lyricsBlur) => { set({ lyricsBlur }); ls.set('lyricsBlur', lyricsBlur) },
+  setGradientsEnabled: (gradientsEnabled) => { set({ gradientsEnabled }); ls.set('gradientsEnabled', gradientsEnabled) },
 
   setHotkeyBinding: (actionId, combo) => {
     const current = get().hotkeyBindings

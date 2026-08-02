@@ -1387,7 +1387,7 @@ export default function Player(): JSX.Element {
           whole stack. Adding it here too (it reads ~0 in Safari, where the URL
           bar occupies the inset, but the real ~34px once installed as a
           standalone PWA) injected a dead gap between the player and the nav. */}
-      <div className="md:hidden bg-surface border-t border-[var(--border)] shrink-0" onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
+      <div className="app-player md:hidden bg-surface border-t border-[var(--border)] shrink-0" onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
         {/* Thin progress bar */}
         {radioFmActive ? (
           <div className="h-[2px] bg-red-900/40 relative">
@@ -1504,7 +1504,7 @@ export default function Player(): JSX.Element {
       </div>
 
       {/* ── Desktop player ── */}
-      <div className={`hidden md:flex bg-surface border-t border-[var(--border)] items-center shrink-0 relative ${playerCollapsed ? 'h-7' : 'h-[90px] px-4 gap-4'}`} onContextMenu={(e) => { e.preventDefault(); if (currentTrack) { setCtxMenuPos({ x: e.clientX, y: e.clientY }); setShowContextMenu(true) } }}>
+      <div className={`app-player hidden md:flex bg-surface border-t border-[var(--border)] items-center shrink-0 relative ${playerCollapsed ? 'h-7' : 'h-[90px] px-4 gap-4'}`} onContextMenu={(e) => { e.preventDefault(); if (currentTrack) { setCtxMenuPos({ x: e.clientX, y: e.clientY }); setShowContextMenu(true) } }}>
         {playerCollapsed ? (
         <>
           {/* Thin progress line along the top edge */}

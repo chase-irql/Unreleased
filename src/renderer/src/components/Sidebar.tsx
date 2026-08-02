@@ -153,7 +153,7 @@ export default function Sidebar(): JSX.Element {
   if (sidebarPosition === 'top' || sidebarPosition === 'bottom') {
     const iconBtn = 'flex items-center justify-center w-8 h-8 rounded text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors shrink-0'
     return (
-      <aside className={`hidden md:flex flex-col w-full bg-sidebar shrink-0 border-[var(--border)] ${sidebarPosition === 'top' ? 'border-b' : 'border-t'}`}>
+      <aside className={`app-sidebar hidden md:flex flex-col w-full bg-sidebar shrink-0 border-[var(--border)] ${sidebarPosition === 'top' ? 'border-b' : 'border-t'}`}>
         {/* Bar touches the frameless window's top edge, so it carries the
             drag strip that main's overlay provides in the other layouts.
             mr-[188px] keeps the strip clear of the min/max/close buttons
@@ -201,7 +201,7 @@ export default function Sidebar(): JSX.Element {
 
   return (
     <aside
-      className={`hidden md:flex flex-col h-full bg-sidebar shrink-0 ${sidebarPosition === 'right' ? 'border-l' : 'border-r'} border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
+      className={`app-sidebar hidden md:flex flex-col h-full bg-sidebar shrink-0 ${sidebarPosition === 'right' ? 'border-l' : 'border-r'} border-[var(--border)] transition-[width] duration-200 ${collapsed ? 'w-16' : 'w-60'}`}
     >
       {/* On the right, the sidebar's top edge sits under the window buttons
           (132px) and the fixed downloads trigger next to them (right: 144px

@@ -126,7 +126,21 @@ contextBridge.exposeInMainWorld('electron', {
   copyFileToClipboard: (filePath)     => ipcRenderer.invoke('copy-file-to-clipboard', filePath),
   copyTextToClipboard: (text)         => ipcRenderer.invoke('copy-text-to-clipboard', text),
 
-  // Local audio format conversion (bundled ffmpeg). Progress arrives on
+  // On-demand tool binaries (ffmpeg / yt-dlp): downloaded into userData/bin on
+  // first use instead of shipping ~100 MB with every install.
+  // toolsStatus resolves { ffmpeg: bool, ytdlp: bool }; toolsDownload fetches
+  // the given tools ({ tools?: ['ffmpeg'|'ytdlp'], force?: bool }, default =
+  // whichever are missing) and resolves { ok } | { error }. Progress arrives on
+  // 'tools-download-progress' as { tool, percent, received, total, done }.
+  toolsStatus:   ()     => ipcRenderer.invoke('tools-status'),
+  toolsDownload: (opts) => ipcRenderer.invoke('tools-download', opts),
+  onToolsDownloadProgress: (cb) => {
+    const fn = (_, d) => cb(d)
+    ipcRenderer.on('tools-download-progress', fn)
+    return () => ipcRenderer.removeListener('tools-download-progress', fn)
+  },
+
+  // Local audio format conversion (on-demand ffmpeg). Progress arrives on
   // 'convert-progress' keyed by the id passed into convertAudio.
   convertAudio: (payload) => ipcRenderer.invoke('convert-audio', payload),
   onConvertProgress: (cb) => {
@@ -136,9 +150,9 @@ contextBridge.exposeInMainWorld('electron', {
   },
 
   // Import audio from any URL — a direct file link is downloaded as-is, any
-  // other link goes through the bundled yt-dlp (YouTube, SoundCloud, Bandcamp,
-  // …) with ffmpeg for extraction. Progress arrives on 'url-import-progress'
-  // keyed by the id passed into urlImport.
+  // other link goes through yt-dlp (YouTube, SoundCloud, Bandcamp, …) with
+  // ffmpeg for extraction. Progress arrives on 'url-import-progress' keyed by
+  // the id passed into urlImport.
   // Resolves { track, outPath } | { error, needsUpdate? } | { warning }.
   urlImport: (payload) => ipcRenderer.invoke('url-import', payload),
   onUrlImportProgress: (cb) => {
@@ -146,9 +160,9 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('url-import-progress', fn)
     return () => ipcRenderer.removeListener('url-import-progress', fn)
   },
-  // Checks whether the bundled yt-dlp/ffmpeg binaries are actually present
-  // (catches a packaging problem before the user ever hits "Import").
-  // Resolves { available: true } | { available: false, reason }.
+  // Checks whether the yt-dlp/ffmpeg binaries are present (gates the dialog on
+  // the one-time download page when they aren't).
+  // Resolves { available: true } | { available: false, reason, missing }.
   urlImportStatus: () => ipcRenderer.invoke('url-import-status'),
 
   // Local playlists
