@@ -104,6 +104,40 @@ html.theme-animate {
     --accent-hover-rgb 350ms ease;
 }
 
+/* ─── Gradient surfaces ──────────────────────────────────────────────────────────
+   Opt-in (Settings → Appearance → Gradient surfaces; useThemeEffects toggles
+   the `gradients` class). Accent-tinted washes layered as background-image on
+   top of the existing flat background-color, so no skin's palette changes —
+   and because they ride rgb(var(--accent-rgb) / α), they recolor with the
+   accent, follow the Now Playing skin's per-song accent, and animate through
+   the same registered-property cross-fade as everything else. */
+
+/* App shell: a glow from the top-right + a faint answering one bottom-left.
+   Sidebar/player paint over their own strips, so this reads as depth behind
+   the main content area. */
+html.gradients .app-shell {
+  background-image:
+    radial-gradient(100% 80% at 100% 0%, rgb(var(--accent-rgb) / 0.14), transparent 55%),
+    radial-gradient(80% 70% at 0% 100%, rgb(var(--accent-rgb) / 0.08), transparent 55%);
+}
+
+/* Sidebar: wash fading downward from the top. */
+html.gradients .app-sidebar {
+  background-image: linear-gradient(180deg, rgb(var(--accent-rgb) / 0.10), rgb(var(--accent-rgb) / 0.03) 45%, transparent 75%);
+}
+
+/* Player bar: mirror of the sidebar, rising from the bottom edge. */
+html.gradients .app-player {
+  background-image: linear-gradient(0deg, rgb(var(--accent-rgb) / 0.10), transparent 80%);
+}
+
+/* Accent-filled controls get a subtle two-tone sheen (hover-accent → accent).
+   background-image over Tailwind's background-color, so `bg-accent` keeps
+   working everywhere — tiny dots/indicators just look flat, buttons look lit. */
+html.gradients .bg-accent {
+  background-image: linear-gradient(135deg, rgb(var(--accent-hover-rgb) / 1), rgb(var(--accent-rgb) / 1) 70%);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root {

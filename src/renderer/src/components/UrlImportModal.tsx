@@ -7,9 +7,11 @@ import { LibraryTrack } from '../types'
 
 // "Import from URL" dialog. Takes any http(s) link and hands it to the main
 // process (`url-import`), which picks one of two modes: a direct audio file
-// link is downloaded as-is, anything else goes through the bundled yt-dlp
-// (YouTube, SoundCloud, Bandcamp, …). Either way the result is registered into
-// the library, landing in Music/JuiceWRLD Library with other local imports.
+// link is downloaded as-is, anything else goes through yt-dlp (YouTube,
+// SoundCloud, Bandcamp, …). Either way the result is registered into the
+// library, landing in Music/JuiceWRLD Library with other local imports.
+// yt-dlp + ffmpeg are fetched on demand (see main.js "On-demand tool
+// binaries"), so the first open may show a one-time download gate.
 
 type FormatId = 'mp3' | 'm4a' | 'opus' | 'ogg' | 'flac' | 'wav'
 
@@ -40,14 +42,15 @@ const STAGE_LABEL: Record<string, string> = {
 }
 
 // Reason codes from the main process's url-import-status / needsUpdate
-// checks, mapped to user-facing copy for the "feature unavailable" page.
+// checks, mapped to user-facing copy for the gate page. Both gates resolve via
+// tools-download: 'needs-download' fetches whatever is missing, 'needs-update'
+// force-refreshes yt-dlp to the latest release.
 const UNAVAILABLE_COPY: Record<string, string> = {
-  'missing-ytdlp': 'The downloader component is missing from this install.',
-  'missing-ffmpeg': 'The audio converter component is missing from this install.',
-  'needs-update': "The site changed something the bundled downloader doesn't support yet.",
+  'needs-download': 'Site imports use two small open-source components — a downloader and an audio converter. They download once (~60 MB) and stay on this device.',
+  'needs-update': "The site changed something the downloader doesn't support yet. Updating the downloader usually fixes it.",
 }
 
-type AppUpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloaded' | 'error'
+const TOOL_LABEL: Record<string, string> = { ytdlp: 'downloader', ffmpeg: 'audio converter' }
 
 export default function UrlImportModal(): JSX.Element | null {
   const open = useStore((s) => s.urlImportModal)
@@ -68,7 +71,10 @@ export default function UrlImportModal(): JSX.Element | null {
   // binaries just aren't there) or reactively when an import attempt reports
   // `needsUpdate` (the binaries are there but yt-dlp's extractor is stale).
   const [unavailable, setUnavailable] = useState<string | null>(null)
-  const [appUpdateState, setAppUpdateState] = useState<AppUpdateState>('idle')
+  const [dlBusy, setDlBusy] = useState(false)
+  const [dlTool, setDlTool] = useState<string | null>(null)
+  const [dlPercent, setDlPercent] = useState(0)
+  const [dlError, setDlError] = useState<string | null>(null)
   const importId = useRef<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -84,49 +90,52 @@ export default function UrlImportModal(): JSX.Element | null {
     setError(null)
     setDone(null)
     setUnavailable(null)
-    setAppUpdateState('idle')
+    setDlBusy(false)
+    setDlTool(null)
+    setDlPercent(0)
+    setDlError(null)
     importId.current = null
     setTimeout(() => inputRef.current?.focus(), 50)
   }, [open])
 
-  // Preemptive check: are the bundled binaries even present? Catches a broken
-  // package (missing asarUnpack entry, etc.) before the user ever hits Import.
+  // Preemptive check: are the on-demand binaries present? Shows the one-time
+  // download page before the user ever hits Import.
   useEffect(() => {
     if (!open || !el?.urlImportStatus) return
     let cancelled = false
     el.urlImportStatus().then((s: { available: boolean; reason?: string }) => {
-      if (!cancelled && s && s.available === false) setUnavailable(s.reason || 'missing-ytdlp')
+      if (!cancelled && s && s.available === false) setUnavailable(s.reason || 'needs-download')
     }).catch(() => {})
     return () => { cancelled = true }
   }, [open, el])
 
-  // Mirrors Settings' app-update flow, scoped to this dialog: gives the
-  // "needs an update" page a working "Check for Updates" button, since an app
-  // update is what actually refreshes the bundled yt-dlp binary (see
-  // scripts/python/release.py refresh_bundled_binaries).
+  // Progress for the gate page's download bar.
   useEffect(() => {
-    if (!open || !el?.onUpdateStatus) return
-    const off = el.onUpdateStatus((d: { type: string }) => {
-      if (d.type === 'checking') setAppUpdateState('checking')
-      else if (d.type === 'available') setAppUpdateState('available')
-      else if (d.type === 'not-available') { setAppUpdateState('latest'); setTimeout(() => setAppUpdateState('idle'), 5000) }
-      else if (d.type === 'downloading') setAppUpdateState('checking')
-      else if (d.type === 'downloaded') setAppUpdateState('downloaded')
-      else if (d.type === 'error') { setAppUpdateState('error'); setTimeout(() => setAppUpdateState('idle'), 5000) }
+    if (!open || !el?.onToolsDownloadProgress) return
+    const off = el.onToolsDownloadProgress((d: { tool: string; percent: number }) => {
+      setDlTool(d.tool)
+      setDlPercent(d.percent)
     })
     return () => off?.()
   }, [open, el])
 
-  const checkForAppUpdate = async (): Promise<void> => {
-    if (!el?.checkForUpdates || appUpdateState === 'checking') return
-    setAppUpdateState('checking')
+  // Fetch missing components, or with (['ytdlp'], true) force-refresh the
+  // downloader after an extractor-outdated failure. Success clears the gate.
+  const downloadTools = async (tools?: string[], force = false): Promise<void> => {
+    if (!el?.toolsDownload || dlBusy) return
+    setDlBusy(true)
+    setDlError(null)
+    setDlTool(null)
+    setDlPercent(0)
     try {
-      await el.checkForUpdates()
-      setAppUpdateState((s: AppUpdateState) => s === 'checking' ? 'latest' : s)
-      setTimeout(() => setAppUpdateState((s: AppUpdateState) => s === 'latest' ? 'idle' : s), 5000)
-    } catch {
-      setAppUpdateState('error')
-      setTimeout(() => setAppUpdateState('idle'), 5000)
+      const r = await el.toolsDownload(tools ? { tools, force } : undefined)
+      if (r?.error) { setDlError(r.error); return }
+      setUnavailable(null)
+    } catch (e: any) {
+      setDlError(e?.message ?? 'Download failed')
+    } finally {
+      setDlBusy(false)
+      setDlTool(null)
     }
   }
 
@@ -213,32 +222,42 @@ export default function UrlImportModal(): JSX.Element | null {
         <div className="px-5 py-4 space-y-4">
           {unavailable ? (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-sm text-text-primary flex flex-col items-center gap-2 text-center">
-              <Wrench size={22} className="text-amber-400" />
-              <p className="font-medium">URL import is temporarily unavailable</p>
+              {unavailable === 'needs-update'
+                ? <Wrench size={22} className="text-amber-400" />
+                : <Download size={22} className="text-amber-400" />}
+              <p className="font-medium">
+                {unavailable === 'needs-update' ? 'The downloader needs an update' : 'One-time download needed'}
+              </p>
               <p className="text-text-muted text-xs max-w-[280px]">
                 {UNAVAILABLE_COPY[unavailable] || 'This feature needs attention before it can run.'}
               </p>
-              {unavailable === 'needs-update' && (
-                <p className="text-text-muted text-[11px] max-w-[280px]">
-                  This is fixed by the next app update, not by retrying.
-                </p>
+              {dlError && (
+                <div className="flex items-start gap-2 text-red-400 text-xs max-w-[280px]">
+                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                  <span className="min-w-0 break-words">{dlError}</span>
+                </div>
+              )}
+              {dlBusy && (
+                <div className="w-full max-w-[280px] space-y-1.5 mt-1">
+                  <div className="h-1.5 rounded-full bg-surface-overlay overflow-hidden">
+                    <div className="h-full bg-accent transition-[width] duration-200" style={{ width: `${dlPercent}%` }} />
+                  </div>
+                  <p className="text-[11px] text-text-muted text-center tabular-nums">
+                    Downloading {TOOL_LABEL[dlTool || ''] || 'components'}… {dlPercent > 0 && `${dlPercent}%`}
+                  </p>
+                </div>
               )}
               <div className="flex flex-col items-center gap-2 mt-2 w-full">
-                {el?.checkForUpdates && (
+                {el?.toolsDownload && (
                   <button
-                    onClick={checkForAppUpdate}
-                    disabled={appUpdateState === 'checking'}
+                    onClick={() => unavailable === 'needs-update' ? downloadTools(['ytdlp'], true) : downloadTools()}
+                    disabled={dlBusy}
                     className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-60"
                   >
-                    {appUpdateState === 'checking'
-                      ? <Loader2 size={13} className="animate-spin" />
-                      : <Download size={13} />}
-                    {appUpdateState === 'checking' ? 'Checking…'
-                      : appUpdateState === 'available' ? 'Update available'
-                      : appUpdateState === 'downloaded' ? 'Update ready to install'
-                      : appUpdateState === 'latest' ? 'Already up to date'
-                      : appUpdateState === 'error' ? 'Check failed — try again'
-                      : 'Check for updates'}
+                    {dlBusy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                    {dlBusy ? 'Downloading…'
+                      : unavailable === 'needs-update' ? 'Update downloader'
+                      : 'Download components'}
                   </button>
                 )}
                 <button
