@@ -6,9 +6,9 @@ import { ViewType } from '../types'
 export default function BottomNav(): JSX.Element {
   const { activeView, setActiveView, toggleSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility')
   const isAdmin = !!account?.is_administrator
-  // Editor-only accounts don't get the Admin page — their review tools
-  // (Proposals/Reports) live in their own profile page instead.
   const isEditor = !!account?.is_editor
+  const isContributor = !!account?.is_contributor
+  const profileView = isContributor && !isEditor ? 'contributor-profile' : 'editor-profile'
 
   // Album (albums-admin) and the Editor/Admin profile tab are editor/admin-only
   // extras. They're hideable from Settings → Appearance → Menu items — the
@@ -61,16 +61,20 @@ export default function BottomNav(): JSX.Element {
       {/* Admin review tools live inside the editor profile page (Admin tab)
           now — one profile entry for both roles instead of a separate Admin
           view in the nav. Hideable via Settings (see showEditorTab). */}
-      {showEditorTab && (
+      {((isAdmin || isEditor || isContributor) && (
+        isContributor && !isEditor ? (navVisibility['contributor-profile'] ?? true) : showEditorTab
+      )) && (
         <button
-          onClick={() => setActiveView('editor-profile')}
-          className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === 'editor-profile' ? 'text-accent' : 'text-text-muted'}`}
+          onClick={() => setActiveView(profileView)}
+          className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === profileView ? 'text-accent' : 'text-text-muted'}`}
         >
-          {activeView === 'editor-profile' && (
+          {activeView === profileView && (
             <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full" style={{ background: 'var(--accent)' }} />
           )}
           <ShieldCheck size={24} />
-          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">{isAdmin ? 'Admin' : 'Editor'}</span>
+          <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">
+            {isAdmin ? 'Admin' : isEditor && isContributor ? 'Staff' : isEditor ? 'Editor' : 'Contributor'}
+          </span>
         </button>
       )}
       <button

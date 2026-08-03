@@ -12,6 +12,12 @@ import {
   emptySongPref, isEmptySongPref, normalizePrefText, setSongPrefsCache,
 } from '../lib/songPrefs'
 import type { SongPreference, SongPrefMap, SongPrefPatch } from '../lib/songPrefs'
+import {
+  appendListeningPlay,
+  mergeListeningPlays,
+  normalizeListeningPlayEvent,
+} from '../lib/listeningPlays'
+import type { ListeningPlayEvent } from '../lib/listeningPlays'
 import * as reportsApi from '../lib/reportsApi'
 import { newReportId, isDeliverable } from '../lib/reports'
 import type {
@@ -251,11 +257,8 @@ interface AppState {
   // and which can't import this store without a cycle — stays in step.
   songPrefs: SongPrefMap
 
-  // In-app reports (feedback + song issue reports). `pendingReports` is a
-  // persisted outbox: a report is queued locally on submit and delivered when
-  // the endpoints exist and the network is reachable (see lib/reportsApi's
-  // reportsApiEnabled), so nothing is lost while the backend is still pending.
-  // `reportModal` is the open report dialog's target (null = closed).
+  listeningPlays: ListeningPlayEvent[]
+
   pendingReports: PendingReport[]
   reportModal: ReportTarget | null
 
@@ -455,11 +458,11 @@ interface AppActions {
    *  state — profile wins per song except playcount, which takes the max —
    *  then pushes the merged array back up. Runs on login. */
   syncSongPrefs: (serverPrefs?: SongPreference[]) => Promise<void>
-  /** Internal — the single write path for songPrefs (state + localStorage +
-   *  lib/songPrefs' cache). */
+  syncListeningPlays: (serverPlays?: ListeningPlayEvent[]) => Promise<void>
   _setSongPrefs: (next: SongPrefMap) => void
-  /** Internal — debounced whole-array push of songPrefs to the profile. */
+  _setListeningPlays: (next: ListeningPlayEvent[]) => void
   _schedulePrefsPush: () => void
+  _scheduleListeningPlaysPush: () => void
   /** Internal — patches one song's row and syncs it to the server. */
   _writeSongPref: (songId: number, patch: SongPrefPatch) => void
   /** Internal — pushes a row's name/cover onto Tracks already in the queue. */
@@ -669,6 +672,16 @@ function hydrateSongPrefs(): SongPrefMap {
   return stored
 }
 
+function hydrateListeningPlays(): ListeningPlayEvent[] {
+  const stored = ls.get<unknown[]>('listeningPlays') ?? []
+  const out: ListeningPlayEvent[] = []
+  for (const row of stored) {
+    const event = normalizeListeningPlayEvent(row)
+    if (event) out.push(event)
+  }
+  return out
+}
+
 /** Loads the persisted custom skins and seeds lib/skins' module cache with them
  *  before the store's `theme` initializer resolves the active id via getSkin —
  *  so a saved custom skin is the active look on the very first paint. */
@@ -719,6 +732,7 @@ function waitForReportSettled(id: string, timeoutMs = 8000): Promise<boolean> {
 // next login's merge — re-sends everything anyway.
 const PROFILE_PUSH_DEBOUNCE_MS = 1500
 let _prefsPushTimer: ReturnType<typeof setTimeout> | null = null
+let _listeningPlaysPushTimer: ReturnType<typeof setTimeout> | null = null
 let _foldersPushTimer: ReturnType<typeof setTimeout> | null = null
 
 // Chains `fn` behind any in-flight offline work for `key` so writers for the
@@ -844,14 +858,24 @@ export const useStore = create<AppStore>((set, get, store) => ({
   appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
   navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
-  navControlOrder: ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER,
-  navControlVisibility: { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...(ls.get<Record<string, boolean>>('navControlVisibility') ?? {}) },
+  navControlOrder: (() => {
+    const saved = ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER
+    return saved.filter((id) => id !== 'download' && id !== 'return-api')
+  })(),
+  navControlVisibility: (() => {
+    const saved = ls.get<Record<string, boolean>>('navControlVisibility') ?? {}
+    const merged = { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...saved }
+    delete merged['download']
+    delete merged['return-api']
+    return merged
+  })(),
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
       'api-tracker': '/tracker',
       'api-files': '/files',
       'editor': '/editor',
+      'contributor': '/contributor',
       'admin': '/admin',
       'liked': '/liked',
       'playlists': '/playlists',
@@ -1074,11 +1098,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // ── Song preferences ──────────────────────────────────────────────────────
   songPrefs: hydrateSongPrefs(),
+  listeningPlays: hydrateListeningPlays(),
 
-  // Every write lands in three places: Zustand state (so React re-renders),
-  // localStorage (so overrides survive a restart and work logged out), and
-  // lib/songPrefs' module cache (so songToTrack — which can't import this
-  // store without a cycle — resolves overrides for Tracks built later).
   _setSongPrefs: (next) => {
     set({ songPrefs: next })
     ls.set('songPrefs', next)
@@ -1111,6 +1132,20 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }, PROFILE_PUSH_DEBOUNCE_MS)
   },
 
+  _setListeningPlays: (next) => {
+    set({ listeningPlays: next })
+    ls.set('listeningPlays', next)
+  },
+
+  _scheduleListeningPlaysPush: () => {
+    if (!get().account || !preferencesApi.preferencesApiEnabled) return
+    if (_listeningPlaysPushTimer) clearTimeout(_listeningPlaysPushTimer)
+    _listeningPlaysPushTimer = setTimeout(() => {
+      _listeningPlaysPushTimer = null
+      preferencesApi.pushListeningPlays(get().listeningPlays).catch(() => {})
+    }, PROFILE_PUSH_DEBOUNCE_MS)
+  },
+
   _writeSongPref: (songId, patch) => {
     get()._setSongPrefs(patchPrefMap(get().songPrefs, songId, patch))
     if (patch.name !== undefined || patch.cover_url !== undefined) get()._reapplySongPref(songId)
@@ -1136,12 +1171,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   bumpSongPlaycount: (songId) => {
     const prefs = get().songPrefs
-    // The profile blob stores absolute counts (there's no server-side
-    // increment), so this device just bumps locally and the debounced push
-    // sends its totals; login merges take max() per song across devices so
-    // one device's push can't erase plays made on another.
     get()._setSongPrefs(patchPrefMap(prefs, songId, { playcount: (prefs[songId]?.playcount ?? 0) + 1 }))
+    get()._setListeningPlays(appendListeningPlay(get().listeningPlays, songId))
     get()._schedulePrefsPush()
+    get()._scheduleListeningPlaysPush()
   },
 
   syncSongPrefs: async (serverPrefs) => {
@@ -1166,6 +1199,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
       get()._setSongPrefs(merged)
       await preferencesApi.pushPreferences(Object.values(merged)).catch(() => {})
+    } catch {}
+  },
+
+  syncListeningPlays: async (serverPlays) => {
+    if (!preferencesApi.preferencesApiEnabled) return
+    try {
+      const serverRows = (serverPlays ?? [])
+        .map(normalizeListeningPlayEvent)
+        .filter((row): row is ListeningPlayEvent => row != null)
+      const merged = mergeListeningPlays(get().listeningPlays, serverRows)
+      get()._setListeningPlays(merged)
+      await preferencesApi.pushListeningPlays(merged).catch(() => {})
     } catch {}
   },
 
@@ -1442,6 +1487,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // with local state and push the result back, no extra requests needed.
     const profile = get().account
     await get().syncSongPrefs(profile?.user_preferences)
+    await get().syncListeningPlays(profile?.listening_plays)
     get().syncFolders(profile?.playlist_folders)
     // Deliver any reports queued while signed out — a logged-in flush can
     // attach the account's Discord username as the contact field.
@@ -1485,6 +1531,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // Overrides stay on this device after signing out, the same way likes do —
     // they're re-merged upward on the next login.
     get()._setSongPrefs(ls.get<SongPrefMap>('songPrefs') ?? {})
+    get()._setListeningPlays(hydrateListeningPlays())
   },
 
   refreshPlaylists: async () => {

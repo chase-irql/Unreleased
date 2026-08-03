@@ -27,7 +27,7 @@ const SYNC_KEYS = [
   // the main window's audio chain (only the main window owns audio elements).
   'eqEnabled', 'eqGains', 'eqPreset', 'eqBalance', 'eqMono', 'skipSilence',
   'reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift', 'communityEdits',
-  'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
+  'likedTrackIds', 'songPrefs', 'listeningPlays', 'playlistFolders', 'account', 'playlists',
   // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
   // their own store instance — without this, that report only ever reaches
   // localStorage and just sits there, since _flushReports deliberately no-ops

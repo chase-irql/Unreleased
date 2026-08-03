@@ -1818,6 +1818,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     Become an Editor
                   </button>
                 )}
+                {(!account || (!account.is_contributor && !account.is_administrator)) && (
+                  <button
+                    onClick={() => openMainView('contributor')}
+                    className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/15 border border-sky-500/25 text-sky-400 text-sm font-medium transition-colors mt-2"
+                  >
+                    <FolderOpen size={15} />
+                    Become a Contributor
+                  </button>
+                )}
                 {account && (
                   <div className="mt-2 rounded-xl border border-[var(--border)] overflow-hidden">
                     <button

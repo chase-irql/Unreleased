@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
+import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, Download, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
@@ -65,7 +65,7 @@ export default function Sidebar(): JSX.Element {
     }
   }
 
-  // Foot-of-menu controls (Profile, Log out, Diagnostics, Download, Settings) —
+  // Foot-of-menu controls (Profile, Log out, Diagnostics, Settings) —
   // ordered and filtered to what's both available and toggled on in Settings.
   // Log in and the collapse toggle are rendered separately (never hideable).
   const controlCtx = { account: !!account, isElectron, developerMode }
@@ -75,13 +75,44 @@ export default function Sidebar(): JSX.Element {
   const iconWrap = 'w-6 h-6 flex items-center justify-center shrink-0'
   const labelCls = `truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`
 
+  const returnToApiVertical = !isElectron ? (
+    <a
+      key="return-api"
+      href="https://juicewrldapi.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      title={collapsed ? 'Return to API' : undefined}
+      className={rowCls}
+    >
+      <span className={iconWrap}><ArrowLeft size={18} /></span>
+      <span aria-hidden={collapsed} className={labelCls}>Return to API</span>
+    </a>
+  ) : null
+
+  const returnToApiHorizontal = !isElectron ? (
+    <a
+      key="return-api"
+      href="https://juicewrldapi.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Return to API"
+      className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded text-sm font-medium whitespace-nowrap text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+    >
+      <span className="w-6 h-6 shrink-0 flex items-center justify-center"><ArrowLeft size={18} /></span>
+      <span>Return to API</span>
+    </a>
+  ) : null
+
   // Full-width control row for the vertical (left/right) side menu.
+  const profileView = account?.is_contributor && !account?.is_editor ? 'contributor-profile' : 'editor-profile'
+  const showStaffProfile = !!(account?.is_administrator || account?.is_editor || account?.is_contributor)
+
   const renderControl = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account) return null
+        if (!account || !showStaffProfile) return null
         return (
-          <button key="profile" onClick={() => setActiveView('editor-profile')} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
+          <button key="profile" onClick={() => setActiveView(profileView)} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
             <span className={iconWrap}>
               {account.discord_avatar
                 ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
@@ -127,9 +158,9 @@ export default function Sidebar(): JSX.Element {
   const renderControlIcon = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account) return null
+        if (!account || !showStaffProfile) return null
         return (
-          <button key="profile" onClick={() => setActiveView('editor-profile')} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
+          <button key="profile" onClick={() => setActiveView(profileView)} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
             {account.discord_avatar
               ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
               : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
@@ -169,6 +200,7 @@ export default function Sidebar(): JSX.Element {
             <div className="shrink-0 mr-0.5"><AppMenu variant="sidebar-icon" /></div>
           )}
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+            {returnToApiHorizontal}
             {items.map(({ icon, label, view }) => (
               <button
                 key={view}
@@ -243,6 +275,7 @@ export default function Sidebar(): JSX.Element {
 
       {/* Nav items */}
       <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto px-3">
+        {returnToApiVertical}
         {items.map(({ icon, label, view }) => (
           <div key={view}>
             <div

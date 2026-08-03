@@ -12,6 +12,9 @@
 import { parseDuration, CATEGORY_LABELS } from './juicewrldApi'
 import { SongPreference } from './songPrefs'
 import type { StatsSong } from './statsCatalog'
+import { ListeningPlayEvent, filterListeningPlaysByDays, playcountsFromEvents } from './listeningPlays'
+
+export type ListeningPeriod = 'all' | '7' | '30'
 
 /** One played song, joined with how many times this user played it. */
 export interface PlayedSong {
@@ -145,6 +148,33 @@ export function joinPlayedSongs(
     out.push({ song, playcount: p.playcount, seconds: parseDuration(song.length) * p.playcount })
   }
   return out.sort((a, b) => b.playcount - a.playcount)
+}
+
+export function prefsFromEvents(events: ListeningPlayEvent[]): SongPreference[] {
+  const counts = playcountsFromEvents(events)
+  return [...counts.entries()]
+    .map(([song, playcount]) => ({
+      song,
+      playcount,
+      name: null,
+      cover_url: null,
+      default_version: null,
+    }))
+    .sort((a, b) => b.playcount - a.playcount)
+}
+
+export function eventsForPeriod(events: ListeningPlayEvent[], period: ListeningPeriod): ListeningPlayEvent[] {
+  if (period === 'all') return events
+  return filterListeningPlaysByDays(events, Number(period))
+}
+
+export function prefsForPeriod(
+  songPrefs: Record<number, SongPreference>,
+  events: ListeningPlayEvent[],
+  period: ListeningPeriod,
+): SongPreference[] {
+  if (period === 'all') return playedPrefs(songPrefs)
+  return prefsFromEvents(eventsForPeriod(events, period))
 }
 
 /** Seconds → "3 days 4 hr" / "6 hr 12 min" / "45 min". Distinct from

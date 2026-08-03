@@ -3,6 +3,7 @@ import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCo
 import type { JWApiSong } from './juicewrldApi'
 import { peekSongPref } from './songPrefs'
 import type { SongPreference } from './songPrefs'
+import type { ListeningPlayEvent } from './listeningPlays'
 import type { ServerPlaylistFolder } from './playlistFolders'
 import { apiRequest, cacheDelete } from './apiClient'
 import { cacheSet } from './apiCache'
@@ -18,12 +19,15 @@ export interface AccountUser {
   discord_username: string
   discord_avatar: string
   is_editor: boolean
+  is_contributor: boolean
   is_administrator: boolean
+  is_manager?: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
   // per-song preferences and playlist folders (see lib/preferencesApi and
   // lib/foldersApi). Optional so cached/older responses stay assignable.
   user_preferences?: SongPreference[]
+  listening_plays?: ListeningPlayEvent[]
   playlist_folders?: ServerPlaylistFolder[]
   // Channel ids the user follows for news notifications (see lib/newsNotifications).
   news_subscriptions?: string[]
@@ -415,6 +419,39 @@ export async function removeFromPlaylist(id: number, songId: number): Promise<vo
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
+export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete'
+
+export interface CompFileProposal {
+  id: number
+  contributor_username: string
+  contributor_id: number
+  file_path: string
+  destination_path: string
+  change_type: CompProposalChangeType
+  staging_filename: string
+  original_snapshot: Record<string, unknown>
+  contributor_notes: string
+  status: ProposalStatus
+  reviewer_username: string | null
+  review_notes: string
+  applied_commit_id: string
+  edit_count: number
+  last_edited_at: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+export interface CompFileRevision {
+  id: number
+  filepath: string
+  hash: string
+  size: number
+  archive_path: string
+  proposal_id: number | null
+  commit_id: string
+  is_current: boolean
+  created_at: string
+}
 export type ProposalChangeType = 'create' | 'update' | 'delete'
 
 export interface EditorBadgeAward {
@@ -464,6 +501,7 @@ export interface EditorApplication {
   experience: string
   motivation: string
   areas: string
+  application_type: 'editor' | 'contributor'
   status: ApplicationStatus
   reviewer_username: string | null
   review_notes: string
@@ -476,15 +514,19 @@ export interface AdminUser {
   username: string
   is_active: boolean
   role: string
+  contributor_enabled: boolean
   discord_id: string
   discord_username: string
   discord_avatar: string
   otp_enabled: boolean
   auto_approve_proposals: boolean
+  auto_approve_comp_proposals: boolean
   date_joined: string
   last_login: string | null
   proposal_count: number
   approved_count: number
+  comp_proposal_count: number
+  comp_approved_count: number
   badges: EditorBadgeAward[]
 }
 
@@ -506,6 +548,7 @@ export async function submitApplication(payload: {
   experience?: string
   motivation: string
   areas?: string
+  application_type?: 'editor' | 'contributor'
 }): Promise<EditorApplication> {
   return request(`${ACCOUNT_BASE}/application/`, {
     method: 'POST',
@@ -615,9 +658,11 @@ export async function adminListUsers(roleFilter?: string): Promise<AdminUser[]> 
 }
 
 export async function adminUpdateUser(userId: number, payload: {
-  role?: 'editor' | 'applicant'
+  role?: 'editor' | 'contributor' | 'applicant'
+  contributor_enabled?: boolean
   is_active?: boolean
   auto_approve_proposals?: boolean
+  auto_approve_comp_proposals?: boolean
 }): Promise<AdminUser> {
   return request(`${ACCOUNT_BASE}/admin/users/${userId}/`, {
     method: 'PATCH',
@@ -634,4 +679,64 @@ export async function confirmOtpSetup(otpToken: string): Promise<{ otp_enabled: 
     method: 'POST',
     body: JSON.stringify({ otp_token: otpToken }),
   })
+}
+
+async function multipartRequest<T>(url: string, form: FormData, method = 'POST'): Promise<T> {
+  const headers: Record<string, string> = {}
+  const token = getToken()
+  if (token) headers['Authorization'] = `Token ${token}`
+  const res = await fetch(url, { method, headers, body: form })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const detail = (data as { detail?: string }).detail
+    const first = Object.values(data as Record<string, unknown>)[0]
+    const msg = detail || (Array.isArray(first) ? first.join(' ') : String(first || res.statusText))
+    throw new Error(msg)
+  }
+  return data as T
+}
+
+export async function getMyCompProposals(): Promise<CompFileProposal[]> {
+  return request(`${ACCOUNT_BASE}/contributor/proposals/`, { method: 'GET' })
+}
+
+export async function createCompProposal(form: FormData): Promise<CompFileProposal> {
+  return multipartRequest(`${ACCOUNT_BASE}/contributor/proposals/`, form)
+}
+
+export async function updateCompProposal(id: number, form: FormData): Promise<CompFileProposal> {
+  return multipartRequest(`${ACCOUNT_BASE}/contributor/proposals/${id}/`, form, 'PATCH')
+}
+
+export async function withdrawCompProposal(id: number): Promise<void> {
+  await request(`${ACCOUNT_BASE}/contributor/proposals/${id}/`, { method: 'DELETE' })
+}
+
+export async function adminListCompProposals(statusFilter?: ProposalStatus): Promise<CompFileProposal[]> {
+  const url = new URL(`${ACCOUNT_BASE}/admin/comp-proposals/`)
+  if (statusFilter) url.searchParams.set('status', statusFilter)
+  return request(url.toString(), { method: 'GET' })
+}
+
+export async function adminReviewCompProposal(id: number, payload: {
+  action: 'approve' | 'reject'
+  review_notes?: string
+}): Promise<CompFileProposal> {
+  return request(`${ACCOUNT_BASE}/admin/comp-proposals/${id}/review/`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function adminReverseCompProposal(id: number): Promise<CompFileProposal> {
+  return request(`${ACCOUNT_BASE}/admin/comp-proposals/${id}/reverse/`, { method: 'POST' })
+}
+
+export function adminCompProposalStagingUrl(id: number): string {
+  return `${ACCOUNT_BASE}/admin/comp-proposals/${id}/staging/`
+}
+
+export async function adminCompFileHistory(filepath: string): Promise<{ filepath: string; revisions: CompFileRevision[] }> {
+  const encoded = filepath.split('/').map(encodeURIComponent).join('/')
+  return request(`${ACCOUNT_BASE}/admin/comp-files/${encoded}/history/`, { method: 'GET' })
 }
