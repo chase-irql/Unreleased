@@ -747,7 +747,6 @@ export default function WrldView(): JSX.Element {
       <div className="absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:left-4 md:right-auto">
         <button
           onClick={() => {
-            if (fmDisabled) return
             const next = !radioFmActive
             if (next) {
               setIsPlaying(false)

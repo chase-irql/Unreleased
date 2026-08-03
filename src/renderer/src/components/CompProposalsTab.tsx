@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Loader2, CheckCircle, XCircle, RotateCcw, Download, Calendar, Hash,
+  Loader2, CheckCircle, XCircle, RotateCcw, Download, Calendar, Hash, AlertCircle,
 } from 'lucide-react'
 import * as userApi from '../lib/userApi'
 import type { CompFileProposal, ProposalStatus } from '../lib/userApi'
@@ -15,13 +15,18 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   const [actionId, setActionId] = useState<number | null>(null)
   const [reviewNotes, setReviewNotes] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
     userApi.adminListCompProposals(status || undefined)
       .then(rows => {
         setProposals(rows)
+        // Reviewing a proposal reloads the list and moves the selection, so
+        // the notes box has to reset with it — otherwise the text typed for
+        // the proposal just approved rides along into the next Approve.
         setSelected(rows[0] ?? null)
+        setReviewNotes('')
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -34,9 +39,12 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
 
   const doReview = async (id: number, action: 'approve' | 'reject'): Promise<void> => {
     setActionId(id)
+    setError(null)
     try {
       await userApi.adminReviewCompProposal(id, { action, review_notes: reviewNotes })
       reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Could not ${action} this proposal`)
     } finally {
       setActionId(null)
     }
@@ -44,9 +52,12 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
 
   const doReverse = async (id: number): Promise<void> => {
     setActionId(id)
+    setError(null)
     try {
       await userApi.adminReverseCompProposal(id)
       reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reverse this proposal')
     } finally {
       setActionId(null)
     }
@@ -58,11 +69,17 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
     fetch(url, { headers: token ? { Authorization: `Token ${token}` } : {} })
       .then(r => r.blob())
       .then(blob => {
+        const href = URL.createObjectURL(blob)
         const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
+        a.href = href
         a.download = p.staging_filename || 'staged-file'
+        // Anchor has to be in the document for the click to count in some
+        // browsers, and the object URL has to outlive the click — revoking it
+        // on the same tick cancels the download before it starts.
+        document.body.appendChild(a)
         a.click()
-        URL.revokeObjectURL(a.href)
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(href), 60_000)
       })
       .catch(() => {})
   }
@@ -84,7 +101,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
           {loading && <div className="flex justify-center py-8"><Loader2 className="animate-spin text-text-muted" size={18} /></div>}
           {!loading && proposals.length === 0 && <Empty label="No comp proposals" />}
           {proposals.map(item => (
-            <button key={item.id} onClick={() => { setSelected(item); setReviewNotes('') }}
+            <button key={item.id} onClick={() => { setSelected(item); setReviewNotes(''); setError(null) }}
               className={`w-full text-left px-3 py-3 border-b border-[var(--border)] transition-colors ${selected?.id === item.id ? 'bg-accent/10' : 'hover:bg-surface-raised'}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <StatusChip status={item.status} />
@@ -150,6 +167,9 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
               </div>
               <textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} rows={2} placeholder="Review notes (optional)"
                 className="mt-3 w-full rounded-lg border border-[var(--border)] bg-surface-overlay px-3 py-2 text-xs text-text-primary focus:outline-none resize-none" />
+              {error && (
+                <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5"><AlertCircle size={12} />{error}</p>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm">
               {p.contributor_notes && (

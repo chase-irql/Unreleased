@@ -15,6 +15,7 @@ import { invalidateLyricsCache } from './Player'
 import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection } from './adminShared'
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 
 type Tab = 'proposals' | 'comp-proposals' | 'applications' | 'reports' | 'users' | 'stats' | 'security'
 
@@ -220,7 +221,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   type NavItem = { id: Tab; label: string; icon: React.ReactNode; badge?: number }
   const nav: NavItem[] = [
     { id: 'proposals',    label: 'Song edits',   icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
-    { id: 'comp-proposals', label: 'Comp files', icon: <FileCheck size={13} /> },
+    ...(CONTRIBUTOR_ENABLED ? [{ id: 'comp-proposals' as const, label: 'Comp files', icon: <FileCheck size={13} /> }] : []),
     { id: 'applications', label: 'Applications', icon: <Clock size={13} />,      badge: pendingApps || undefined },
     { id: 'reports',      label: 'Reports',      icon: <Flag size={13} />,       badge: pendingReports || undefined },
     { id: 'users',        label: 'Users',        icon: <Users size={13} /> },
@@ -838,8 +839,11 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
     { id: 'all' as const,        label: 'All',        count: users.length },
     { id: 'admins' as const,     label: 'Admins',     count: users.filter(u => u.role === 'administrator').length },
     { id: 'editors' as const,    label: 'Editors',    count: users.filter(u => u.role === 'editor').length },
+    // Contributors cuts across the role buckets rather than being one of them
+    // — contributor_enabled is a flag on top of a role, so a contributor is
+    // still counted under whichever of Admins/Editors/Applicants they are.
     { id: 'contributors' as const, label: 'Contributors', count: users.filter(u => u.contributor_enabled).length },
-    { id: 'applicants' as const, label: 'Applicants', count: users.filter(u => u.role === 'applicant' && !u.contributor_enabled).length },
+    { id: 'applicants' as const, label: 'Applicants', count: users.filter(u => u.role === 'applicant').length },
   ]
 
   const ROLE = {
@@ -858,7 +862,7 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
           ? u.role === 'editor'
           : filter === 'contributors'
             ? u.contributor_enabled
-            : u.role === 'applicant' && !u.contributor_enabled
+            : u.role === 'applicant'
     const q = search.toLowerCase()
     return ok && (!q || (u.discord_username || u.username || '').toLowerCase().includes(q))
   }), [users, filter, search])

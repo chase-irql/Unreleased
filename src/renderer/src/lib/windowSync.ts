@@ -27,7 +27,11 @@ const SYNC_KEYS = [
   // the main window's audio chain (only the main window owns audio elements).
   'eqEnabled', 'eqGains', 'eqPreset', 'eqBalance', 'eqMono', 'skipSilence',
   'reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift', 'communityEdits',
-  'likedTrackIds', 'songPrefs', 'listeningPlays', 'playlistFolders', 'account', 'playlists',
+  // `listeningPlays` is deliberately absent for the same reason libraryTracks
+  // is: it's a few thousand rows that grow on every credited play, and only
+  // the main window ever appends to it. Pop-outs read it back from shared
+  // localStorage when they need it (nothing outside StatsView does).
+  'likedTrackIds', 'songPrefs', 'playlistFolders', 'account', 'playlists',
   // Pop-outs (Settings' Feedback tab, a song's "Report issue") queue into
   // their own store instance — without this, that report only ever reaches
   // localStorage and just sits there, since _flushReports deliberately no-ops

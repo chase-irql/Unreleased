@@ -13,7 +13,7 @@ import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
 import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
-import { getToken } from '../lib/userApi'
+import { getToken, CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import { APP_VERSION } from '../lib/appVersion'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
@@ -1818,7 +1818,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     Become an Editor
                   </button>
                 )}
-                {(!account || (!account.is_contributor && !account.is_administrator)) && (
+                {CONTRIBUTOR_ENABLED && (!account || (!account.is_contributor && !account.is_administrator)) && (
                   <button
                     onClick={() => openMainView('contributor')}
                     className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/15 border border-sky-500/25 text-sky-400 text-sm font-medium transition-colors mt-2"

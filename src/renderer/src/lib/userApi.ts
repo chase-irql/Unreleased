@@ -21,7 +21,6 @@ export interface AccountUser {
   is_editor: boolean
   is_contributor: boolean
   is_administrator: boolean
-  is_manager?: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
   // per-song preferences and playlist folders (see lib/preferencesApi and
@@ -489,6 +488,7 @@ export interface SongEditProposal {
 }
 
 export type ApplicationStatus = 'pending' | 'approved' | 'rejected'
+export type ApplicationType = 'editor' | 'contributor'
 
 export interface EditorApplication {
   id: number
@@ -501,7 +501,10 @@ export interface EditorApplication {
   experience: string
   motivation: string
   areas: string
-  application_type: 'editor' | 'contributor'
+  // Optional on the way in: applications created before contributor
+  // applications existed have no type, and neither do cached rows. Read it
+  // through applicationType() rather than directly.
+  application_type?: ApplicationType
   status: ApplicationStatus
   reviewer_username: string | null
   review_notes: string
@@ -538,8 +541,27 @@ export interface OtpSetupPayload {
   qr_code?: string
 }
 
-export async function getMyApplication(): Promise<{ application: EditorApplication | null }> {
-  return request(`${ACCOUNT_BASE}/application/`, { method: 'GET' })
+/** Editor was the only kind of application until contributor applications
+ *  shipped, so an untyped row is an editor row. */
+export function applicationType(app: Pick<EditorApplication, 'application_type'> | null | undefined): ApplicationType {
+  return app?.application_type === 'contributor' ? 'contributor' : 'editor'
+}
+
+/** The caller's application *of one kind*.
+ *
+ *  `type` is sent as a query param for a backend that can narrow, and the
+ *  result is filtered client-side regardless — the endpoint historically
+ *  returned "the" single application, and a page that blocks on the wrong kind
+ *  strands the user (an editor rejection is not a reason to refuse a
+ *  contributor application, and vice versa). Filtering here means the worst
+ *  case is an apply form whose POST fails with the server's own message,
+ *  rather than a dead end with no controls. */
+export async function getMyApplication(type?: ApplicationType): Promise<{ application: EditorApplication | null }> {
+  const url = new URL(`${ACCOUNT_BASE}/application/`)
+  if (type) url.searchParams.set('type', type)
+  const res = await request<{ application: EditorApplication | null }>(url.toString(), { method: 'GET' })
+  if (type && res.application && applicationType(res.application) !== type) return { application: null }
+  return res
 }
 
 export async function submitApplication(payload: {
@@ -548,7 +570,7 @@ export async function submitApplication(payload: {
   experience?: string
   motivation: string
   areas?: string
-  application_type?: 'editor' | 'contributor'
+  application_type?: ApplicationType
 }): Promise<EditorApplication> {
   return request(`${ACCOUNT_BASE}/application/`, {
     method: 'POST',
@@ -681,38 +703,49 @@ export async function confirmOtpSetup(otpToken: string): Promise<{ otp_enabled: 
   })
 }
 
+// Same path as request(), minus the JSON Content-Type — the browser has to set
+// its own multipart boundary. Everything else (error parsing, offline cache
+// fallback) comes from apiClient like every other call in this module.
+// Comp-file contributions (proposals, the admin review queue, file history)
+// hang off routes that are newer than the rest of this module. Everything the
+// feature touches is gated on this one flag the way lib/newsApi gates `/news/`
+// — flip it to false and the contributor role disappears from the UI instead
+// of leading users to forms that fail on submit.
+export const CONTRIBUTOR_ENABLED = true
+
+function assertContributorApi(): void {
+  if (!CONTRIBUTOR_ENABLED) throw new Error('Comp file contributions are not available yet')
+}
+
 async function multipartRequest<T>(url: string, form: FormData, method = 'POST'): Promise<T> {
   const headers: Record<string, string> = {}
   const token = getToken()
   if (token) headers['Authorization'] = `Token ${token}`
-  const res = await fetch(url, { method, headers, body: form })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const detail = (data as { detail?: string }).detail
-    const first = Object.values(data as Record<string, unknown>)[0]
-    const msg = detail || (Array.isArray(first) ? first.join(' ') : String(first || res.statusText))
-    throw new Error(msg)
-  }
-  return data as T
+  return apiRequest<T>(url, { method, headers, body: form })
 }
 
 export async function getMyCompProposals(): Promise<CompFileProposal[]> {
+  assertContributorApi()
   return request(`${ACCOUNT_BASE}/contributor/proposals/`, { method: 'GET' })
 }
 
 export async function createCompProposal(form: FormData): Promise<CompFileProposal> {
+  assertContributorApi()
   return multipartRequest(`${ACCOUNT_BASE}/contributor/proposals/`, form)
 }
 
 export async function updateCompProposal(id: number, form: FormData): Promise<CompFileProposal> {
+  assertContributorApi()
   return multipartRequest(`${ACCOUNT_BASE}/contributor/proposals/${id}/`, form, 'PATCH')
 }
 
 export async function withdrawCompProposal(id: number): Promise<void> {
+  assertContributorApi()
   await request(`${ACCOUNT_BASE}/contributor/proposals/${id}/`, { method: 'DELETE' })
 }
 
 export async function adminListCompProposals(statusFilter?: ProposalStatus): Promise<CompFileProposal[]> {
+  if (!CONTRIBUTOR_ENABLED) return []
   const url = new URL(`${ACCOUNT_BASE}/admin/comp-proposals/`)
   if (statusFilter) url.searchParams.set('status', statusFilter)
   return request(url.toString(), { method: 'GET' })
@@ -722,6 +755,7 @@ export async function adminReviewCompProposal(id: number, payload: {
   action: 'approve' | 'reject'
   review_notes?: string
 }): Promise<CompFileProposal> {
+  assertContributorApi()
   return request(`${ACCOUNT_BASE}/admin/comp-proposals/${id}/review/`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -729,6 +763,7 @@ export async function adminReviewCompProposal(id: number, payload: {
 }
 
 export async function adminReverseCompProposal(id: number): Promise<CompFileProposal> {
+  assertContributorApi()
   return request(`${ACCOUNT_BASE}/admin/comp-proposals/${id}/reverse/`, { method: 'POST' })
 }
 
@@ -737,6 +772,7 @@ export function adminCompProposalStagingUrl(id: number): string {
 }
 
 export async function adminCompFileHistory(filepath: string): Promise<{ filepath: string; revisions: CompFileRevision[] }> {
+  assertContributorApi()
   const encoded = filepath.split('/').map(encodeURIComponent).join('/')
   return request(`${ACCOUNT_BASE}/admin/comp-files/${encoded}/history/`, { method: 'GET' })
 }

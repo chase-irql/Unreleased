@@ -1,15 +1,15 @@
 import { useEffect, useState, useRef } from 'react'
 import {
-  Loader2, Check, AlertCircle, LogIn, Clock, X, Upload, Replace, Trash2,
+  Loader2, Check, AlertCircle, LogIn, Clock, XCircle, Upload, Replace, Trash2,
   FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight,
 } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import type { CompFileProposal, CompProposalChangeType, EditorApplication } from '../lib/userApi'
-import { StatusChip, relativeTime } from './adminShared'
+import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
 
 type SubmitState = 'idle' | 'submitting' | 'submitted' | 'error'
-type FilterTab = 'all' | 'pending' | 'approved' | 'rejected'
 
 const CHANGE_OPTIONS: { value: CompProposalChangeType; label: string; icon: typeof Upload }[] = [
   { value: 'upload', label: 'Upload', icon: Upload },
@@ -18,7 +18,7 @@ const CHANGE_OPTIONS: { value: CompProposalChangeType; label: string; icon: type
   { value: 'delete', label: 'Delete', icon: Trash2 },
 ]
 
-function ApplyPanel({ onSubmitted }: { onSubmitted: () => void }): JSX.Element {
+function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejection?: EditorApplication | null }): JSX.Element {
   const [motivation, setMotivation] = useState('')
   const [contact, setContact] = useState('')
   const [experience, setExperience] = useState('')
@@ -49,6 +49,14 @@ function ApplyPanel({ onSubmitted }: { onSubmitted: () => void }): JSX.Element {
 
   return (
     <div className="max-w-lg mx-auto px-6 py-12">
+      {/* A rejected application is shown, not enforced — the reviewer's notes
+          usually say what to fix, so the form stays open underneath. */}
+      {rejection && (
+        <div className="mb-4 rounded-2xl border border-red-500/25 bg-red-500/5 p-4">
+          <p className="text-sm font-semibold text-red-400 flex items-center gap-1.5"><XCircle size={14} /> Previous application not approved</p>
+          {rejection.review_notes && <p className="text-sm text-text-muted italic mt-1.5 leading-relaxed">"{rejection.review_notes}"</p>}
+        </div>
+      )}
       <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-6 space-y-4">
         <div>
           <h1 className="text-xl font-bold text-text-primary">Apply as contributor</h1>
@@ -78,7 +86,7 @@ export default function ContributorPage(): JSX.Element {
   const [application, setApplication] = useState<EditorApplication | null | undefined>(undefined)
   const [proposals, setProposals] = useState<CompFileProposal[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<FilterTab>('all')
+  const [filter, setFilter] = useState<CompFilterTab>('all')
   const [filePath, setFilePath] = useState('')
   const [destinationPath, setDestinationPath] = useState('')
   const [changeType, setChangeType] = useState<CompProposalChangeType>('upload')
@@ -103,12 +111,12 @@ export default function ContributorPage(): JSX.Element {
       setLoading(false)
       return
     }
-    userApi.getMyApplication().then(r => setApplication(r.application)).catch(() => setApplication(null))
+    userApi.getMyApplication('contributor').then(r => setApplication(r.application)).catch(() => setApplication(null))
     if (isContributor) reload()
     else setLoading(false)
   }, [account, isContributor])
 
-  const filtered = filter === 'all' ? proposals : proposals.filter(p => p.status === filter)
+  const filtered = filterCompProposals(proposals, filter)
 
   const submitProposal = async (): Promise<void> => {
     if (!filePath.trim() || submitState === 'submitting') return
@@ -145,12 +153,25 @@ export default function ContributorPage(): JSX.Element {
 
   const withdraw = async (id: number): Promise<void> => {
     setWithdrawingId(id)
+    setSubmitError(null)
     try {
       await userApi.withdrawCompProposal(id)
       setProposals(prev => prev.filter(p => p.id !== id))
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : 'Could not withdraw that proposal')
     } finally {
       setWithdrawingId(null)
     }
+  }
+
+  if (!CONTRIBUTOR_ENABLED) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted px-6 text-center">
+        <FolderOpen size={32} className="opacity-40" />
+        <p className="text-sm font-medium text-text-primary">Comp contributions aren't open yet</p>
+        <p className="text-xs opacity-70">This page turns on once the contribution endpoints ship.</p>
+      </div>
+    )
   }
 
   if (!account) {
@@ -173,7 +194,12 @@ export default function ContributorPage(): JSX.Element {
         </div>
       )
     }
-    return <ApplyPanel onSubmitted={() => userApi.getMyApplication().then(r => setApplication(r.application))} />
+    return (
+      <ApplyPanel
+        rejection={application?.status === 'rejected' ? application : null}
+        onSubmitted={() => userApi.getMyApplication('contributor').then(r => setApplication(r.application))}
+      />
+    )
   }
 
   return (
@@ -241,43 +267,16 @@ export default function ContributorPage(): JSX.Element {
           </section>
 
           <section>
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              {(['all', 'pending', 'approved', 'rejected'] as FilterTab[]).map(key => (
-                <button key={key} onClick={() => setFilter(key)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${filter === key ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
-                  {key}
-                </button>
-              ))}
+            <div className="mb-3">
+              <CompFilterBar filter={filter} setFilter={setFilter} />
             </div>
-            {loading ? (
-              <div className="flex justify-center py-8"><Loader2 className="animate-spin text-text-muted" /></div>
-            ) : filtered.length === 0 ? (
-              <p className="text-sm text-text-muted text-center py-8">No proposals yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {filtered.map(p => (
-                  <div key={p.id} className="rounded-xl border border-[var(--border)] bg-surface-raised/40 px-4 py-3 flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <StatusChip status={p.status} />
-                        <span className="text-[10px] uppercase font-bold text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded">{p.change_type}</span>
-                      </div>
-                      <p className="text-sm font-mono text-text-primary truncate">{p.file_path}</p>
-                      {p.change_type === 'move' && p.destination_path && (
-                        <p className="text-xs font-mono text-text-muted truncate mt-0.5">→ {p.destination_path}</p>
-                      )}
-                      <p className="text-[11px] text-text-muted mt-1">{relativeTime(p.created_at)}{p.edit_count ? ` · ${p.edit_count} edit(s)` : ''}</p>
-                    </div>
-                    {p.status === 'pending' && (
-                      <button onClick={() => withdraw(p.id)} disabled={withdrawingId === p.id}
-                        className="p-2 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0">
-                        {withdrawingId === p.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <CompProposalList
+              proposals={filtered}
+              loading={loading}
+              onWithdraw={withdraw}
+              withdrawingId={withdrawingId}
+              empty="No proposals yet."
+            />
           </section>
         </div>
       </div>

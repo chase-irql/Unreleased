@@ -2,12 +2,13 @@ import { SearchCode, Settings, ShieldCheck, ListMusic, Disc, Music4 } from 'luci
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 
 export default function BottomNav(): JSX.Element {
   const { activeView, setActiveView, toggleSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
-  const isContributor = !!account?.is_contributor
+  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
   const profileView = isContributor && !isEditor ? 'contributor-profile' : 'editor-profile'
 
   // Album (albums-admin) and the Editor/Admin profile tab are editor/admin-only

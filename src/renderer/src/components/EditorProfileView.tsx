@@ -9,7 +9,8 @@ import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import ReportsTab from './ReportsTab'
 import FilePickerModal from './FilePickerModal'
 import AdminPage from './AdminPage'
-import { StatusChip, relativeTime } from './adminShared'
+import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 
 const CATEGORIES = [
   { value: 'released', label: 'Released' },
@@ -326,7 +327,10 @@ export default function EditorProfileView(): JSX.Element {
   // Reports review (moved out of the Admin sidebar entry for editor-only
   // accounts — it now lives as a tab alongside their own proposals).
   const canReviewReports = !!(account?.is_editor || account?.is_administrator)
-  const isContributor = !!(account?.is_contributor || account?.is_administrator)
+  // Not `|| is_administrator`: this tab lists proposals *you* submitted, and
+  // an admin who never contributed has none. Their review queue is the Admin
+  // tab's "Comp files" — the one place proposals are reviewed.
+  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
   const isAdmin = !!account?.is_administrator
   const [profileTab, setProfileTab] = useState<'proposals' | 'reports' | 'admin' | 'comp'>('proposals')
   const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
@@ -334,7 +338,7 @@ export default function EditorProfileView(): JSX.Element {
   const [loadingReports, setLoadingReports] = useState(false)
   const [compProposals, setCompProposals] = useState<CompFileProposal[]>([])
   const [loadingComp, setLoadingComp] = useState(false)
-  const [compFilter, setCompFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [compFilter, setCompFilter] = useState<CompFilterTab>('all')
 
   useEffect(() => {
     if (profileTab !== 'comp' || !isContributor) return
@@ -540,36 +544,14 @@ export default function EditorProfileView(): JSX.Element {
               <Plus size={12} /> New comp proposal
             </button>
           </div>
-          <div className="flex gap-2 mb-4 flex-wrap max-w-2xl">
-            {(['all', 'pending', 'approved', 'rejected'] as const).map(key => (
-              <button key={key} onClick={() => setCompFilter(key)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize ${compFilter === key ? 'bg-accent/15 text-accent' : 'text-text-muted'}`}>
-                {key}
-              </button>
-            ))}
+          <div className="mb-4 max-w-2xl">
+            <CompFilterBar filter={compFilter} setFilter={setCompFilter} />
           </div>
-          {loadingComp ? (
-            <div className="flex justify-center py-12"><Loader2 className="animate-spin text-text-muted" /></div>
-          ) : (compFilter === 'all' ? compProposals : compProposals.filter(p => p.status === compFilter)).length === 0 ? (
-            <p className="text-sm text-text-muted text-center py-12">No comp proposals yet.</p>
-          ) : (
-            <div className="space-y-2 max-w-2xl">
-              {(compFilter === 'all' ? compProposals : compProposals.filter(p => p.status === compFilter)).map(p => (
-                <button key={p.id} onClick={() => setActiveView('contributor')}
-                  className="w-full text-left rounded-xl border border-[var(--border)] bg-surface-raised/40 px-4 py-3 hover:bg-surface-raised transition-colors">
-                  <div className="flex items-center gap-2 mb-1">
-                    <StatusChip status={p.status} />
-                    <span className="text-[10px] uppercase font-bold text-text-muted">{p.change_type}</span>
-                  </div>
-                  <p className="text-sm font-mono text-text-primary truncate">{p.file_path}</p>
-                  {p.change_type === 'move' && p.destination_path && (
-                    <p className="text-xs font-mono text-text-muted truncate mt-0.5">→ {p.destination_path}</p>
-                  )}
-                  <p className="text-[11px] text-text-muted mt-1">{relativeTime(p.created_at)}</p>
-                </button>
-              ))}
-            </div>
-          )}
+          <CompProposalList
+            proposals={filterCompProposals(compProposals, compFilter)}
+            loading={loadingComp}
+            onSelect={() => setActiveView('contributor')}
+          />
         </div>
       ) : profileTab === 'reports' && canReviewReports ? (
         <div className="flex-1 overflow-hidden p-5">

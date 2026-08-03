@@ -3,19 +3,47 @@ import { BarChart3, Play, Loader2, MoreHorizontal, Music2, Clock, ListMusic, Dis
 import { useStorePick } from '../store/useStore'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import {
-  joinPlayedSongs, buildListeningStats, formatListeningTime,
-  prefsForPeriod, eventsForPeriod, type RankedEntry, type ListeningPeriod,
+  playedPrefs, joinPlayedSongs, buildListeningStats, formatListeningTime,
+  prefsForPeriod, eventsForPeriod, periodCoverage, type RankedEntry, type ListeningPeriod,
 } from '../lib/listeningStats'
 import { resolveStatsSongs, statsSongToTrack, type StatsSong, type ResolveProgress } from '../lib/statsCatalog'
 import { sortListeningPlays } from '../lib/listeningPlays'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
-import { relativeTime } from './adminShared'
+import { relativeTime, shortDate } from './adminShared'
 
+// "Your Wrapped" — a listening summary over two different sources, because
+// they answer different questions:
+//
+//   All time  → lib/songPrefs' per-song playcounts. Absolute counters that
+//               predate the play log, so they're the only honest all-time
+//               number — but they carry no timestamps.
+//   7 / 30 d  → lib/listeningPlays' timestamped events, rolled back up into
+//               playcounts.
+//
+// The two don't cover the same span, and pretending they do is what makes a
+// period view lie: the log starts at whichever build first shipped it and
+// loses its oldest rows once it hits its cap, so "last 30 days" can easily
+// have only a week of data behind it. listeningStats' periodCoverage reports
+// that gap, and the header below labels a short window "Since <date>" rather
+// than quietly reporting a number that's missing plays. The plays that fall
+// in the gap are shown as a count, so All time and the periods visibly add up.
+//
+// Song metadata isn't stored alongside either — a pref row is just
+// {song id, playcount} and an event is just {song id, played_at} — so ids have
+// to be resolved to songs before anything can be ranked. lib/statsCatalog owns
+// that and picks the cheap route (a few per-id fetches, or one cached
+// catalogue crawl); this file just renders.
 
+// Rows shown before "Show all" — a heavy listener can have hundreds.
 const TOP_SONGS_COLLAPSED = 25
+
+// How many songs the header's Play button queues up.
 const PLAY_TOP_N = 50
+
+// Rows in the recent-plays timeline. Also bounds how many extra song ids the
+// timeline alone can drag into the metadata fetch (see idsKey).
 const TIMELINE_LIMIT = 40
 
 const PERIOD_OPTIONS: { id: ListeningPeriod; label: string }[] = [
@@ -84,8 +112,19 @@ export default function StatsView(): JSX.Element {
 
   const prefs = useMemo(() => prefsForPeriod(songPrefs, listeningPlays, period), [songPrefs, listeningPlays, period])
   const periodEvents = useMemo(() => sortListeningPlays(eventsForPeriod(listeningPlays, period)), [listeningPlays, period])
-  const periodLabel = PERIOD_OPTIONS.find((p) => p.id === period)?.label ?? 'All time'
+  const coverage = useMemo(
+    () => periodCoverage(songPrefs, listeningPlays, period),
+    [songPrefs, listeningPlays, period],
+  )
+  const optionLabel = PERIOD_OPTIONS.find((p) => p.id === period)?.label ?? 'All time'
+  // A window the log can't fill is named for what it actually holds.
+  const periodLabel = coverage.complete || coverage.start === null
+    ? optionLabel
+    : `Since ${shortDate(new Date(coverage.start).toISOString())}`
 
+  // Only the *set* of played ids drives fetching. Crediting a play while this
+  // page is open bumps a count (and the numbers below re-derive from it), but
+  // it must not re-run a few hundred requests — the metadata didn't change.
   const idsKey = useMemo(() => {
     const ids = new Set<number>()
     for (const p of prefs) ids.add(p.song)
@@ -131,7 +170,13 @@ export default function StatsView(): JSX.Element {
     try { setInfoSong(await apiFetch<JWApiSong>(`/songs/${songId}/`)) } catch {}
   }
 
-  if (prefs.length === 0 && periodEvents.length === 0) {
+  // Bail to the empty screen only when the user has never played anything.
+  // A *period* with no plays still renders the full page (the period switcher
+  // included) — otherwise picking "7 days" on a quiet week, or right after
+  // upgrading to a build that has a play log at all, strands the user on a
+  // dead-end screen with no way back to All time.
+  const nothingEverPlayed = playedPrefs(songPrefs).length === 0 && listeningPlays.length === 0
+  if (nothingEverPlayed) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
         <BarChart3 size={40} className="text-text-muted mb-4" />
@@ -188,6 +233,36 @@ export default function StatsView(): JSX.Element {
               </button>
             ))}
           </div>
+
+          {coverage.untracked > 0 && (
+            <p className="text-text-muted text-xs mb-5 leading-relaxed">
+              {period === 'all' ? (
+                <>
+                  All {coverage.allTimePlays.toLocaleString()} plays counted.{' '}
+                  {coverage.loggedPlays.toLocaleString()} of them are timestamped
+                  {coverage.start !== null && <> (since {shortDate(new Date(coverage.start).toISOString())})</>}
+                  {' '}— the other {coverage.untracked.toLocaleString()} were counted before the
+                  history log existed, so the 7- and 30-day views can't see them.
+                </>
+              ) : coverage.start === null ? (
+                <>
+                  No timestamped history yet, so this window is empty. Your{' '}
+                  {coverage.allTimePlays.toLocaleString()} earlier plays are all still in All time.
+                </>
+              ) : !coverage.complete ? (
+                <>
+                  History only reaches back to {shortDate(new Date(coverage.start).toISOString())}, so
+                  this is a shorter window than {optionLabel.toLowerCase()}. The{' '}
+                  {coverage.untracked.toLocaleString()} plays from before that are counted in All time.
+                </>
+              ) : (
+                <>
+                  Counted from timestamped history. All time additionally includes{' '}
+                  {coverage.untracked.toLocaleString()} plays from before the log existed.
+                </>
+              )}
+            </p>
+          )}
 
           {loading && (
             <div className="flex items-center gap-2 text-text-muted text-xs mb-4">
@@ -318,8 +393,11 @@ export default function StatsView(): JSX.Element {
               <Music2 size={12} className="mt-0.5 shrink-0 opacity-60" />
               <span>
                 A play counts once you've listened to 30 seconds of a song (or half of it, if it's
-                shorter than a minute). Skipping through a queue doesn't count. Each credited play
-                is timestamped for your timeline and period stats.
+                shorter than a minute). Skipping through a queue doesn't count. Downloaded songs
+                count the same as streamed ones — local files you imported yourself aren't tracked.
+                All time counts every play ever. The 7- and 30-day views read from the
+                timestamped history, which starts later and holds a bounded number of plays —
+                the line under the period buttons says exactly how much it covers.
               </span>
             </p>
             {!account && (

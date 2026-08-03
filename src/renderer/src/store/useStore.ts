@@ -257,8 +257,17 @@ interface AppState {
   // and which can't import this store without a cycle — stays in step.
   songPrefs: SongPrefMap
 
+  // Timestamped play history — one row per credited play (see
+  // lib/listeningPlays). songPrefs' aggregate playcounts remain the all-time
+  // source of truth; this exists so StatsView can answer "last 7/30 days" and
+  // show a recent-plays timeline, which absolute counters can't.
   listeningPlays: ListeningPlayEvent[]
 
+  // In-app reports (feedback + song issue reports). `pendingReports` is a
+  // persisted outbox: a report is queued locally on submit and delivered when
+  // the endpoints exist and the network is reachable (see lib/reportsApi's
+  // reportsApiEnabled), so nothing is lost while the backend is still pending.
+  // `reportModal` is the open report dialog's target (null = closed).
   pendingReports: PendingReport[]
   reportModal: ReportTarget | null
 
@@ -458,10 +467,19 @@ interface AppActions {
    *  state — profile wins per song except playcount, which takes the max —
    *  then pushes the merged array back up. Runs on login. */
   syncSongPrefs: (serverPrefs?: SongPreference[]) => Promise<void>
+  /** Same shape as syncSongPrefs, but a union rather than a per-key merge —
+   *  play events are immutable, so the two sides just get deduped. */
   syncListeningPlays: (serverPlays?: ListeningPlayEvent[]) => Promise<void>
+  /** Internal — the single write path for songPrefs (state + localStorage +
+   *  lib/songPrefs' cache). */
   _setSongPrefs: (next: SongPrefMap) => void
+  /** Internal — the single write path for listeningPlays (state + localStorage). */
   _setListeningPlays: (next: ListeningPlayEvent[]) => void
+  /** Internal — debounced whole-array push of songPrefs to the profile. */
   _schedulePrefsPush: () => void
+  /** Internal — debounced whole-array push of listeningPlays to the profile.
+   *  Whole-array because there's no append endpoint; see the cap in
+   *  lib/listeningPlays for why the array can't be allowed to grow freely. */
   _scheduleListeningPlaysPush: () => void
   /** Internal — patches one song's row and syncs it to the server. */
   _writeSongPref: (songId: number, patch: SongPrefPatch) => void
@@ -858,17 +876,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
   navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
-  navControlOrder: (() => {
-    const saved = ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER
-    return saved.filter((id) => id !== 'download' && id !== 'return-api')
-  })(),
-  navControlVisibility: (() => {
-    const saved = ls.get<Record<string, boolean>>('navControlVisibility') ?? {}
-    const merged = { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...saved }
-    delete merged['download']
-    delete merged['return-api']
-    return merged
-  })(),
+  navControlOrder: ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER,
+  navControlVisibility: { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...(ls.get<Record<string, boolean>>('navControlVisibility') ?? {}) },
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
@@ -1100,6 +1109,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
   songPrefs: hydrateSongPrefs(),
   listeningPlays: hydrateListeningPlays(),
 
+  // Every write lands in three places: Zustand state (so React re-renders),
+  // localStorage (so overrides survive a restart and work logged out), and
+  // lib/songPrefs' module cache (so songToTrack — which can't import this
+  // store without a cycle — resolves overrides for Tracks built later).
   _setSongPrefs: (next) => {
     set({ songPrefs: next })
     ls.set('songPrefs', next)
@@ -1171,6 +1184,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   bumpSongPlaycount: (songId) => {
     const prefs = get().songPrefs
+    // The profile blob stores absolute counts (there's no server-side
+    // increment), so this device just bumps locally and the debounced push
+    // sends its totals; login merges take max() per song across devices so
+    // one device's push can't erase plays made on another. The play *event*
+    // appended alongside it is additive instead — merges union the two sides.
     get()._setSongPrefs(patchPrefMap(prefs, songId, { playcount: (prefs[songId]?.playcount ?? 0) + 1 }))
     get()._setListeningPlays(appendListeningPlay(get().listeningPlays, songId))
     get()._schedulePrefsPush()
@@ -1487,7 +1505,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // with local state and push the result back, no extra requests needed.
     const profile = get().account
     await get().syncSongPrefs(profile?.user_preferences)
-    await get().syncListeningPlays(profile?.listening_plays)
+    get().syncListeningPlays(profile?.listening_plays)
     get().syncFolders(profile?.playlist_folders)
     // Deliver any reports queued while signed out — a logged-in flush can
     // attach the account's Discord username as the contact field.
@@ -1531,7 +1549,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // Overrides stay on this device after signing out, the same way likes do —
     // they're re-merged upward on the next login.
     get()._setSongPrefs(ls.get<SongPrefMap>('songPrefs') ?? {})
-    get()._setListeningPlays(hydrateListeningPlays())
+    // Play history does NOT stay: unlike a rename or a cover override, it's a
+    // timestamped record of what this person listened to, and the next account
+    // to sign in on this machine would merge it in and push it to their own
+    // profile. The server copy is authoritative from the next login anyway.
+    get()._setListeningPlays([])
   },
 
   refreshPlaylists: async () => {

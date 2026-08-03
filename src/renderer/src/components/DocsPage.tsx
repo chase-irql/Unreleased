@@ -242,13 +242,22 @@ function OverviewTab() {
           <Endpoint method="GET" path="/reports/" description="List song reports (editor+)" />
           <Endpoint method="PATCH" path="/reports/{id}/" description="Review a song report (editor+)" />
           <Endpoint method="POST" path="/accounts/logout/" description="Invalidate the current token" />
-          <Endpoint method="GET" path="/accounts/application/" description="Fetch the logged-in user's editor application" />
-          <Endpoint method="POST" path="/accounts/application/" description="Apply to become an editor" />
+          <Endpoint method="GET" path="/accounts/application/" description="Fetch the logged-in user's editor or contributor application" />
+          <Endpoint method="POST" path="/accounts/application/" description="Apply to become an editor or contributor" />
           <Endpoint method="GET" path="/accounts/editor/proposals/" description="List your own edit proposals" />
           <Endpoint method="POST" path="/accounts/editor/proposals/" description="Submit an edit proposal (editor+)" />
           <Endpoint method="PATCH" path="/accounts/editor/proposals/{id}/" description="Edit a pending proposal" />
           <Endpoint method="DELETE" path="/accounts/editor/proposals/{id}/" description="Withdraw a proposal" />
           <Endpoint method="GET" path="/accounts/editor/leaderboard/" description="Editor approved-count leaderboard with badges" />
+          <Endpoint method="GET" path="/accounts/contributor/proposals/" description="List your own comp-file proposals (contributor+)" />
+          <Endpoint method="POST" path="/accounts/contributor/proposals/" description="Submit a comp-file proposal — multipart (contributor+)" />
+          <Endpoint method="PATCH" path="/accounts/contributor/proposals/{id}/" description="Edit a pending comp-file proposal — multipart" />
+          <Endpoint method="DELETE" path="/accounts/contributor/proposals/{id}/" description="Withdraw a comp-file proposal" />
+          <Endpoint method="GET" path="/accounts/admin/comp-proposals/" description="List all comp-file proposals (admin)" />
+          <Endpoint method="POST" path="/accounts/admin/comp-proposals/{id}/review/" description="Approve/reject a comp-file proposal (admin)" />
+          <Endpoint method="POST" path="/accounts/admin/comp-proposals/{id}/reverse/" description="Reverse an approved comp-file proposal (admin)" />
+          <Endpoint method="GET" path="/accounts/admin/comp-proposals/{id}/staging/" description="Download the staged file for review (admin)" />
+          <Endpoint method="GET" path="/accounts/admin/comp-files/{filepath}/history/" description="Revision history for a compilation file (admin)" />
           <Endpoint method="GET" path="/library/favorites/" description="List personal favorites (any logged-in user)" />
           <Endpoint method="POST" path="/library/favorites/" description="Add a favorite" />
           <Endpoint method="DELETE" path="/library/favorites/{song_id}/" description="Remove a favorite" />
@@ -479,8 +488,15 @@ function FilesTab() {
           headers={['Param', 'Required', 'Description']}
           rows={[
             [<Code>path</Code>, 'Yes', 'File path relative to compilation root'],
+            [<Code>small</Code>, 'No', <>&quot;true&quot; — for an image path, returns a degraded/downscaled version instead of the original</>],
           ]}
         />
+        <p className="text-xs text-text-muted">
+          <Code>small=true</Code> only makes sense when <Code>path</Code> points at an image (e.g. a cover art
+          file) — pass it to shrink a large cover for a thumbnail without fetching the full-size original.
+          For audio, it has no effect.
+        </p>
+        <Pre>{`GET /files/download/?path=Compilation/cover.jpg&small=true`}</Pre>
         <p className="text-xs text-text-muted font-semibold mt-3">Simple playback:</p>
         <Pre>{`<audio
   controls
@@ -658,16 +674,24 @@ function AuthTab() {
     <div className="space-y-6">
       <Section title="Roles">
         <Table
-          headers={['Role', 'role string', 'is_editor', 'is_administrator']}
+          headers={['Role', 'role string', 'is_editor', 'is_administrator', 'is_contributor']}
           rows={[
-            ['Standard', <Code>applicant</Code>, '—', '—'],
-            ['Editor', <Code>editor</Code>, '✓', '—'],
-            ['Admin', <Code>administrator</Code>, '✓', '✓'],
+            ['Standard', <Code>applicant</Code>, '—', '—', '—'],
+            ['Editor', <Code>editor</Code>, '✓', '—', '—'],
+            ['Contributor', <Code>contributor</Code>, '—', '—', '✓'],
+            ['Admin', <Code>administrator</Code>, '✓', '✓', '—'],
           ]}
         />
         <p className="text-xs text-text-muted mt-2">
           New Discord users start as <Code>applicant</Code>. Editors are promoted after application approval. Admins are assigned manually.
           Admins always have <Code>is_editor: true</Code>.
+        </p>
+        <p className="text-xs text-text-muted mt-2">
+          <Code>contributor</Code> is a separate track from editor — it grants access to the comp-file proposal
+          pipeline below (uploading/replacing/moving/deleting files in the compilation), not to song-data edit
+          proposals. A user can hold either role independently of the other. <Code>is_manager</Code> is an optional
+          flag layered on top of admin for reviewing comp-file proposals specifically — treat it as absent unless
+          the account payload actually includes it.
         </p>
         <p className="text-xs text-text-muted font-semibold mt-3">Attach token to every authenticated request:</p>
         <Pre>{`Authorization: Token YOUR_TOKEN_HERE`}</Pre>
@@ -721,23 +745,31 @@ Authorization: Token <token>`}</Pre>
   "discord_avatar": "https://cdn.discordapp.com/avatars/...",
   "is_editor": false,
   "is_administrator": false,
+  "is_contributor": false,
   "otp_enabled": false,
   "user_preferences": [
     { "song": 94086, "name": "My title", "cover_url": "/assets/wod.jpg", "default_version": "v1", "playcount": 12 }
   ],
   "playlist_folders": [
     { "id": "f1", "name": "Favorites", "playlist_ids": [12, 34] }
+  ],
+  "listening_plays": [
+    { "song": 94086, "played_at": "2026-08-03T20:14:00Z" }
   ]
 }`}</Pre>
             <p className="text-xs text-text-muted mt-2">
               Also mounted at <Code>/juicewrld/accounts/account/me/</Code> (same handler, different prefix).
             </p>
+            <p className="text-xs text-text-muted mt-2">
+              <Code>listening_plays</Code> and <Code>is_manager</Code> aren&apos;t guaranteed present on every
+              account payload yet — read them defensively (optional/undefined, not required).
+            </p>
           </div>
           <div>
             <div className="flex items-center gap-2 mb-1"><Badge color="patch">PATCH</Badge><code className="text-xs font-mono text-text-primary">/accounts/account/me/</code></div>
             <p className="text-xs text-text-muted mb-2">
-              Updates the logged-in user&apos;s own <Code>user_preferences</Code> and/or <Code>playlist_folders</Code> blobs —
-              see the two sections below for what goes in them.
+              Updates the logged-in user&apos;s own <Code>user_preferences</Code>, <Code>playlist_folders</Code>, and/or{' '}
+              <Code>listening_plays</Code> blobs — see the sections below for what goes in each.
             </p>
           </div>
           <div>
@@ -748,6 +780,7 @@ Authorization: Token <token>`}</Pre>
   "role": "applicant",
   "is_editor": false,
   "is_administrator": false,
+  "is_contributor": false,
   "is_superuser": false,
   "otp_enabled": false,
   "discord_id": "123456789",
@@ -756,6 +789,12 @@ Authorization: Token <token>`}</Pre>
   "approved_count": 0,
   "badges": []
 }`}</Pre>
+            <p className="text-xs text-text-muted mt-2">
+              <Code>role</Code> is <Code>&quot;applicant&quot; | &quot;editor&quot; | &quot;contributor&quot; | &quot;administrator&quot;</Code> —
+              widened from three values to four with the contributor track. Don&apos;t treat it as a strict
+              editor-vs-admin ladder; check the specific boolean (<Code>is_editor</Code>/<Code>is_contributor</Code>/<Code>is_administrator</Code>)
+              for the access you actually need.
+            </p>
           </div>
         </div>
       </Section>
@@ -827,6 +866,30 @@ Authorization: Token <token>`}</Pre>
         <p className="text-xs text-text-muted">Limits: max 200 folders, max 500 playlist ids per folder.</p>
       </Section>
 
+      <Section title="Listening History">
+        <p className="text-sm text-text-secondary">
+          <Code>listening_plays</Code> is a raw per-play log — one entry per listen, distinct from{' '}
+          <Code>user_preferences[].playcount</Code> which is just a running total per song. Same blob mechanics:
+          whole-array PATCH on <Code>/accounts/account/me/</Code>, no per-event route.
+        </p>
+        <Pre>{`{
+  "song": 94086,
+  "played_at": "2026-08-03T20:14:00Z"
+}`}</Pre>
+        <Table
+          headers={['Field', 'Type', 'Meaning']}
+          rows={[
+            [<Code>song</Code>, 'number', 'API song id that was played'],
+            [<Code>played_at</Code>, 'string', 'ISO 8601 timestamp of the play'],
+          ]}
+        />
+        <p className="text-xs text-text-muted">
+          Capped at <span className="font-semibold text-text-primary">10,000 events</span> — send the whole array,
+          debounced the same way as <Code>user_preferences</Code>, so a burst of plays collapses into one PATCH
+          rather than one per play.
+        </p>
+      </Section>
+
       <Section title="Permission Matrix">
         <Table
           headers={['Access Level', 'Endpoints']}
@@ -834,7 +897,8 @@ Authorization: Token <token>`}</Pre>
             ['No login', 'Songs, eras, categories, files, radio, stats, shared playlists, play tracking, feedback, report submission'],
             ['Any logged-in user', '/account/me/ (incl. PATCH), /application/, /library/*'],
             ['Editor or admin', '/me/, /editor/proposals/, /editor/leaderboard/, /badges/, /reports/ (read + review)'],
-            ['Admin only', '/admin/users/, /admin/proposals/, /admin/applications/'],
+            ['Contributor', '/contributor/proposals/ (comp-file proposals — read/write your own)'],
+            ['Admin only', '/admin/users/, /admin/proposals/, /admin/applications/, /admin/comp-proposals/, /admin/comp-files/'],
             ['Beta code (X-Beta-Code)', '/beta/versions, /beta/download — independent of the token/role system'],
           ]}
         />
@@ -909,8 +973,11 @@ Content-Type: application/json
         <p className="text-xs text-text-muted"><Code>status</Code> is one of <Code>pending</Code>, <Code>approved</Code>, <Code>rejected</Code>, <Code>reversed</Code>.</p>
       </Section>
 
-      <Section title="Editor Applications">
-        <p className="text-sm text-text-secondary">How a standard user applies to become an editor.</p>
+      <Section title="Applications (Editor or Contributor)">
+        <p className="text-sm text-text-secondary">
+          How a standard user applies for either the editor or the contributor track — same endpoint, distinguished
+          by <Code>application_type</Code>.
+        </p>
         <Table
           headers={['Method', 'Path', 'Description']}
           rows={[
@@ -921,13 +988,18 @@ Content-Type: application/json
         <Pre>{`POST /accounts/application/
 
 {
+  "application_type": "editor",  // "editor" | "contributor"
   "display_name": "optional",
   "contact": "optional",
   "experience": "optional",
-  "motivation": "required — why you want editor access",
+  "motivation": "required — why you want this access",
   "areas": "optional"
 }`}</Pre>
         <p className="text-xs text-text-muted"><Code>status</Code> on the returned application is <Code>pending</Code>, <Code>approved</Code>, or <Code>rejected</Code>.</p>
+        <p className="text-xs text-text-muted">
+          Approving a <Code>contributor</Code> application should set <Code>is_contributor</Code>, not{' '}
+          <Code>is_editor</Code> — the two tracks are separate (see Roles above).
+        </p>
       </Section>
 
       <Section title="Editor Leaderboard">
@@ -1052,18 +1124,29 @@ X-Beta-Code: YOUR_CODE`}</Pre>
         <Table
           headers={['Method', 'Path', 'Description']}
           rows={[
-            ['GET', '/accounts/admin/users/', 'List all users. Filter: ?role=editor|administrator|applicant'],
+            ['GET', '/accounts/admin/users/', 'List all users. Filter: ?role=editor|contributor|administrator|applicant'],
             ['GET', '/accounts/admin/users/{user_id}/', 'Single user detail — role, is_active, Discord info, proposal counts, badges'],
-            ['PATCH', '/accounts/admin/users/{user_id}/', 'Update role, is_active, or auto_approve_proposals'],
+            ['PATCH', '/accounts/admin/users/{user_id}/', 'Update role, is_active, auto_approve_proposals, or contributor flags'],
           ]}
         />
         <Pre>{`PATCH /accounts/admin/users/{user_id}/
 
 {
-  "role": "editor",             // "editor" | "applicant"
+  "role": "contributor",            // "editor" | "contributor" | "applicant"
   "is_active": true,
-  "auto_approve_proposals": false
+  "auto_approve_proposals": false,
+  "contributor_enabled": true,
+  "auto_approve_comp_proposals": false
 }`}</Pre>
+        <Table
+          headers={['Field', 'Type', 'Meaning']}
+          rows={[
+            [<Code>contributor_enabled</Code>, 'boolean', 'Whether this user has comp-file proposal access, independent of role string'],
+            [<Code>auto_approve_comp_proposals</Code>, 'boolean', "Skip manual review and apply this user's comp-file proposals automatically"],
+            [<Code>comp_proposal_count</Code>, 'number', "Read-only — this user's total comp-file proposal submissions"],
+            [<Code>comp_approved_count</Code>, 'number', 'Read-only — how many of those were approved'],
+          ]}
+        />
         <p className="text-xs text-text-muted">Requires admin token (<Code>is_administrator: true</Code>).</p>
       </Section>
 
@@ -1099,7 +1182,136 @@ X-Beta-Code: YOUR_CODE`}</Pre>
   "action": "approve",          // "approve" | "reject"
   "review_notes": "optional"
 }`}</Pre>
-        <p className="text-xs text-text-muted">Approving promotes the applicant to <Code>editor</Code>.</p>
+        <p className="text-xs text-text-muted">
+          Approving promotes the applicant to the role matching the application&apos;s{' '}
+          <Code>application_type</Code> — <Code>editor</Code> or <Code>contributor</Code>.
+        </p>
+      </Section>
+
+      <Section title="Comp File Proposals — Overview" defaultOpen={false}>
+        <p className="text-sm text-text-secondary leading-relaxed">
+          A second, separate proposal pipeline from song-data Edit Proposals above — this one is for changes to the{' '}
+          <span className="font-semibold text-text-primary">compilation&apos;s files themselves</span> (uploading a
+          new file, replacing one, moving/renaming, or deleting), submitted by contributors and reviewed by admins.
+          Everything under <Code>/accounts/contributor/</Code> requires <Code>is_contributor</Code>; everything
+          under <Code>/accounts/admin/comp-proposals/</Code> and <Code>/accounts/admin/comp-files/</Code> requires{' '}
+          <Code>is_administrator</Code>.
+        </p>
+        <p className="text-xs text-text-muted mt-2">
+          Backend note: none of this works until the server ships these routes plus the underlying{' '}
+          <Code>listening_plays</Code> profile field and file staging/archive storage — the client codes against
+          this contract ahead of the backend landing it.
+        </p>
+      </Section>
+
+      <Section title="Contributor: Comp File Proposals" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/contributor/proposals/', "List the logged-in contributor's own comp-file proposals"],
+            ['POST', '/accounts/contributor/proposals/', 'Submit a new comp-file proposal — multipart'],
+            ['PATCH', '/accounts/contributor/proposals/{id}/', 'Edit a still-pending proposal — multipart'],
+            ['DELETE', '/accounts/contributor/proposals/{id}/', 'Withdraw a proposal'],
+          ]}
+        />
+        <p className="text-xs text-text-muted">
+          The two write endpoints send <Code>multipart/form-data</Code>, not JSON — the request carries the actual
+          file being uploaded/replaced alongside the metadata fields. Send{' '}
+          <Code>Authorization: Token &lt;token&gt;</Code> and deliberately{' '}
+          <span className="font-semibold text-text-primary">omit</span> <Code>Content-Type</Code> so the browser
+          sets the multipart boundary itself — setting it manually breaks the boundary and the server can&apos;t
+          parse the body.
+        </p>
+        <Pre>{`POST /accounts/contributor/proposals/
+Authorization: Token <token>
+Content-Type: multipart/form-data; boundary=... (set automatically — do not set this header yourself)
+
+FormData:
+  change_type       "upload" | "replace" | "move" | "delete"
+  file_path         "Compilation/Unreleased/Song.mp3"     // target path in the compilation
+  destination_path  "Compilation/Unreleased/New Name.mp3" // only for "move"
+  contributor_notes "optional"
+  file              <binary>                              // only for "upload"/"replace"`}</Pre>
+        <p className="text-xs text-text-muted font-semibold mt-3">Comp file proposal object shape:</p>
+        <Pre>{`{
+  "id": 55,
+  "contributor_username": "someuser",
+  "contributor_id": 12,
+  "file_path": "Compilation/Unreleased/Song.mp3",
+  "destination_path": null,
+  "change_type": "replace",
+  "staging_filename": "staged-a1b2c3.mp3",
+  "original_snapshot": { /* file metadata before this change */ },
+  "contributor_notes": "Higher quality rip",
+  "status": "pending",
+  "reviewer_username": null,
+  "review_notes": "",
+  "applied_commit_id": null,
+  "edit_count": 0,
+  "created_at": "...",
+  "reviewed_at": null
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          <Code>status</Code> is <Code>pending</Code>, <Code>approved</Code>, <Code>rejected</Code>, or{' '}
+          <Code>reversed</Code>. <Code>staging_filename</Code> points at the uploaded file sitting in staging until
+          an admin approves it; <Code>applied_commit_id</Code> is set once approval actually lands the change.
+        </p>
+      </Section>
+
+      <Section title="Admin: Comp File Proposal Review" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/admin/comp-proposals/', 'List all comp-file proposals. Filter: ?status=pending|approved|rejected|reversed'],
+            ['POST', '/accounts/admin/comp-proposals/{id}/review/', 'Approve or reject a proposal'],
+            ['POST', '/accounts/admin/comp-proposals/{id}/reverse/', 'Reverse a previously approved proposal'],
+            ['GET', '/accounts/admin/comp-proposals/{id}/staging/', 'Download the staged file to inspect before approving'],
+          ]}
+        />
+        <Pre>{`POST /accounts/admin/comp-proposals/{id}/review/
+
+{
+  "action": "approve",          // "approve" | "reject"
+  "review_notes": "optional"
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          Unlike song-data proposals, there is no <Code>&quot;revise&quot;</Code> action here — a comp-file change
+          is either accepted as staged or rejected, since there&apos;s no meaningful way to hand-edit a binary file
+          upload.
+        </p>
+        <p className="text-xs text-text-muted">
+          <Code>/staging/</Code> streams the actual staged file (not JSON) — treat it as a download/preview link,
+          the same way <Code>/files/download/</Code> is used for library audio.
+        </p>
+      </Section>
+
+      <Section title="Admin: Comp File History" defaultOpen={false}>
+        <Table
+          headers={['Method', 'Path', 'Description']}
+          rows={[
+            ['GET', '/accounts/admin/comp-files/{filepath}/history/', 'Every revision applied to a given compilation file path'],
+          ]}
+        />
+        <Pre>{`{
+  "filepath": "Compilation/Unreleased/Song.mp3",
+  "revisions": [
+    {
+      "id": 9,
+      "filepath": "Compilation/Unreleased/Song.mp3",
+      "hash": "d199a85e510b32b9ef3c02a29044a41d",
+      "size": 7381244,
+      "archive_path": "archive/Compilation/Unreleased/Song.mp3.v9",
+      "proposal_id": 55,
+      "commit_id": "c_9f2a",
+      "is_current": true,
+      "created_at": "..."
+    }
+  ]
+}`}</Pre>
+        <p className="text-xs text-text-muted">
+          Exactly one revision per file has <Code>is_current: true</Code>. Older revisions stay addressable via{' '}
+          <Code>archive_path</Code> for rollback/audit, even after a newer one supersedes them.
+        </p>
       </Section>
 
       <Section title="Two-Factor (OTP)" defaultOpen={false}>
