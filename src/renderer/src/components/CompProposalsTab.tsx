@@ -87,7 +87,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   const p = selected
 
   return (
-    <div className={`h-full flex overflow-hidden ${embedded ? '' : 'bg-[var(--surface)]'}`}>
+    <div className={`flex-1 min-w-0 h-full flex overflow-hidden ${embedded ? '' : 'bg-[var(--surface)]'}`}>
       <div className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col">
         <div className="shrink-0 p-3 border-b border-[var(--border)] flex gap-2">
           {(['pending', 'approved', 'rejected', 'reversed', ''] as const).map(s => (

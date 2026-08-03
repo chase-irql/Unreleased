@@ -33,13 +33,13 @@ export default function ContributorProfileView(): JSX.Element {
 
   if (!account) {
     return (
-      <div className="flex items-center justify-center h-full text-text-muted text-sm">Sign in to view your contributor profile.</div>
+      <div className="flex-1 min-w-0 flex items-center justify-center h-full text-text-muted text-sm">Sign in to view your contributor profile.</div>
     )
   }
 
   if (!isContributor) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
+      <div className="flex-1 min-w-0 flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
         <p className="text-sm text-text-muted">You are not a contributor yet.</p>
         <button onClick={() => setActiveView('contributor')} className="px-4 py-2 rounded-xl bg-accent text-white text-sm font-semibold">Apply or submit</button>
       </div>
@@ -47,7 +47,7 @@ export default function ContributorProfileView(): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
       <div className="shrink-0 px-5 py-4 border-b border-[var(--border)] flex items-center gap-3">
         <button onClick={() => setActiveView('api-tracker')} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors md:hidden">
           <ChevronLeft size={18} />

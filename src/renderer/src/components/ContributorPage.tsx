@@ -1,13 +1,22 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, XCircle, Upload, Replace, Trash2,
-  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight,
+  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import type { CompFileProposal, CompProposalChangeType, EditorApplication } from '../lib/userApi'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
+import FilePickerModal from './FilePickerModal'
+
+/** Which field the browse modal is currently filling. Upload and a move's
+ *  destination name a path that doesn't exist yet, so those browse for a
+ *  folder and the filename is appended; the rest point at a real file. */
+type PickerTarget = 'file' | 'upload-folder' | 'dest-folder'
+
+const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? ''
+const joinPath = (folder: string, name: string): string => (folder ? `${folder}/${name}` : name)
 
 type SubmitState = 'idle' | 'submitting' | 'submitted' | 'error'
 
@@ -48,7 +57,8 @@ function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejec
   }
 
   return (
-    <div className="max-w-lg mx-auto px-6 py-12">
+    <div className="flex-1 min-w-0 overflow-y-auto">
+      <div className="max-w-lg mx-auto px-6 py-12">
       {/* A rejected application is shown, not enforced — the reviewer's notes
           usually say what to fix, so the form stays open underneath. */}
       {rejection && (
@@ -76,6 +86,7 @@ function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejec
           {state === 'submitting' ? <Loader2 size={16} className="animate-spin" /> : state === 'submitted' ? <Check size={16} /> : <LogIn size={16} />}
           {state === 'submitted' ? 'Application submitted' : 'Submit application'}
         </button>
+        </div>
       </div>
     </div>
   )
@@ -95,6 +106,7 @@ export default function ContributorPage(): JSX.Element {
   const [submitState, setSubmitState] = useState<SubmitState>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
+  const [picker, setPicker] = useState<PickerTarget | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isContributor = !!(account?.is_contributor || account?.is_administrator)
@@ -166,7 +178,7 @@ export default function ContributorPage(): JSX.Element {
 
   if (!CONTRIBUTOR_ENABLED) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted px-6 text-center">
+      <div className="flex-1 min-w-0 flex flex-col items-center justify-center h-full gap-3 text-text-muted px-6 text-center">
         <FolderOpen size={32} className="opacity-40" />
         <p className="text-sm font-medium text-text-primary">Comp contributions aren't open yet</p>
         <p className="text-xs opacity-70">This page turns on once the contribution endpoints ship.</p>
@@ -176,7 +188,7 @@ export default function ContributorPage(): JSX.Element {
 
   if (!account) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-text-muted">
+      <div className="flex-1 min-w-0 flex flex-col items-center justify-center h-full gap-4 text-text-muted">
         <LogIn size={32} className="opacity-40" />
         <p className="text-sm">Sign in with Discord to contribute comp files.</p>
       </div>
@@ -184,10 +196,10 @@ export default function ContributorPage(): JSX.Element {
   }
 
   if (!isContributor) {
-    if (application === undefined) return <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-text-muted" /></div>
+    if (application === undefined) return <div className="flex-1 min-w-0 flex items-center justify-center h-full"><Loader2 className="animate-spin text-text-muted" /></div>
     if (application?.status === 'pending') {
       return (
-        <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted px-6 text-center">
+        <div className="flex-1 min-w-0 flex flex-col items-center justify-center h-full gap-3 text-text-muted px-6 text-center">
           <Clock size={32} className="opacity-40" />
           <p className="text-sm font-medium text-text-primary">Contributor application pending</p>
           <p className="text-xs opacity-70">An admin will review your application soon.</p>
@@ -203,7 +215,7 @@ export default function ContributorPage(): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
       <div className="shrink-0 flex items-center gap-3 px-5 py-4 border-b border-[var(--border)]">
         <button onClick={() => setActiveView('contributor-profile')} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors">
           <ChevronLeft size={18} />
@@ -228,14 +240,34 @@ export default function ContributorPage(): JSX.Element {
               <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
                 {changeType === 'move' ? 'Source path (relative to comp/)' : 'Target path (relative to comp/)'}
               </label>
-              <input value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="Compilation/My Song.mp3"
-                className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+              <div className="mt-1.5 flex gap-2">
+                <input value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="Compilation/My Song.mp3"
+                  className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+                <button
+                  type="button"
+                  onClick={() => setPicker(changeType === 'upload' ? 'upload-folder' : 'file')}
+                  title={changeType === 'upload' ? 'Pick the folder to upload into' : 'Pick the file this applies to'}
+                  className="shrink-0 px-3 rounded-xl border border-[var(--border)] bg-surface-overlay text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                >
+                  <FolderSearch size={14} /> Browse
+                </button>
+              </div>
             </div>
             {changeType === 'move' && (
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Destination path (relative to comp/)</label>
-                <input value={destinationPath} onChange={e => setDestinationPath(e.target.value)} placeholder="Compilation/Renamed Song.mp3"
-                  className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+                <div className="mt-1.5 flex gap-2">
+                  <input value={destinationPath} onChange={e => setDestinationPath(e.target.value)} placeholder="Compilation/Renamed Song.mp3"
+                    className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+                  <button
+                    type="button"
+                    onClick={() => setPicker('dest-folder')}
+                    title="Pick the folder to move it into"
+                    className="shrink-0 px-3 rounded-xl border border-[var(--border)] bg-surface-overlay text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                  >
+                    <FolderSearch size={14} /> Browse
+                  </button>
+                </div>
               </div>
             )}
             <div className="flex flex-wrap gap-2">
@@ -250,7 +282,15 @@ export default function ContributorPage(): JSX.Element {
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">File</label>
                 <div className="mt-1.5 flex items-center gap-3">
-                  <input ref={fileInputRef} type="file" onChange={e => setSelectedFile(e.target.files?.[0] ?? null)}
+                  <input ref={fileInputRef} type="file"
+                    onChange={e => {
+                      const file = e.target.files?.[0] ?? null
+                      setSelectedFile(file)
+                      // A folder picked before the file leaves a trailing
+                      // slash — fill the name in rather than making the user
+                      // retype what they just chose from disk.
+                      if (file && (!filePath.trim() || filePath.endsWith('/'))) setFilePath(filePath + file.name)
+                    }}
                     className="text-sm text-text-muted file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-accent/15 file:text-accent file:text-xs file:font-semibold" />
                   {selectedFile && <span className="text-xs text-text-muted truncate">{selectedFile.name}</span>}
                 </div>
@@ -280,6 +320,36 @@ export default function ContributorPage(): JSX.Element {
           </section>
         </div>
       </div>
+
+      {picker && (
+        <FilePickerModal
+          // 'any' rather than 'audio': a comp proposal can target artwork or a
+          // tracklist just as easily as a song.
+          kind="any"
+          allowFolderSelect={picker !== 'file'}
+          title={
+            picker === 'file' ? 'Pick the file this proposal applies to'
+              : picker === 'upload-folder' ? 'Pick the folder to upload into'
+              : 'Pick the folder to move it into'
+          }
+          onClose={() => setPicker(null)}
+          onSelect={(path) => {
+            if (picker === 'file') {
+              setFilePath(path)
+            } else if (picker === 'upload-folder') {
+              // Folder mode hands back the folder; the filename comes from the
+              // chosen local file, or is left for the user after the slash.
+              setFilePath(selectedFile ? joinPath(path, selectedFile.name) : path ? `${path}/` : '')
+            } else {
+              // A move keeps its filename unless the user renames it — that's
+              // the whole difference between a move and a rename.
+              setDestinationPath(joinPath(path, basename(filePath)))
+            }
+            setSubmitError(null)
+            setPicker(null)
+          }}
+        />
+      )}
     </div>
   )
 }
