@@ -12,6 +12,12 @@ import {
   emptySongPref, isEmptySongPref, normalizePrefText, setSongPrefsCache,
 } from '../lib/songPrefs'
 import type { SongPreference, SongPrefMap, SongPrefPatch } from '../lib/songPrefs'
+import {
+  appendListeningPlay,
+  mergeListeningPlays,
+  normalizeListeningPlayEvent,
+} from '../lib/listeningPlays'
+import type { ListeningPlayEvent } from '../lib/listeningPlays'
 import * as reportsApi from '../lib/reportsApi'
 import { newReportId, isDeliverable } from '../lib/reports'
 import type {
@@ -251,6 +257,12 @@ interface AppState {
   // and which can't import this store without a cycle — stays in step.
   songPrefs: SongPrefMap
 
+  // Timestamped play history — one row per credited play (see
+  // lib/listeningPlays). songPrefs' aggregate playcounts remain the all-time
+  // source of truth; this exists so StatsView can answer "last 7/30 days" and
+  // show a recent-plays timeline, which absolute counters can't.
+  listeningPlays: ListeningPlayEvent[]
+
   // In-app reports (feedback + song issue reports). `pendingReports` is a
   // persisted outbox: a report is queued locally on submit and delivered when
   // the endpoints exist and the network is reachable (see lib/reportsApi's
@@ -455,11 +467,20 @@ interface AppActions {
    *  state — profile wins per song except playcount, which takes the max —
    *  then pushes the merged array back up. Runs on login. */
   syncSongPrefs: (serverPrefs?: SongPreference[]) => Promise<void>
+  /** Same shape as syncSongPrefs, but a union rather than a per-key merge —
+   *  play events are immutable, so the two sides just get deduped. */
+  syncListeningPlays: (serverPlays?: ListeningPlayEvent[]) => Promise<void>
   /** Internal — the single write path for songPrefs (state + localStorage +
    *  lib/songPrefs' cache). */
   _setSongPrefs: (next: SongPrefMap) => void
+  /** Internal — the single write path for listeningPlays (state + localStorage). */
+  _setListeningPlays: (next: ListeningPlayEvent[]) => void
   /** Internal — debounced whole-array push of songPrefs to the profile. */
   _schedulePrefsPush: () => void
+  /** Internal — debounced whole-array push of listeningPlays to the profile.
+   *  Whole-array because there's no append endpoint; see the cap in
+   *  lib/listeningPlays for why the array can't be allowed to grow freely. */
+  _scheduleListeningPlaysPush: () => void
   /** Internal — patches one song's row and syncs it to the server. */
   _writeSongPref: (songId: number, patch: SongPrefPatch) => void
   /** Internal — pushes a row's name/cover onto Tracks already in the queue. */
@@ -669,6 +690,16 @@ function hydrateSongPrefs(): SongPrefMap {
   return stored
 }
 
+function hydrateListeningPlays(): ListeningPlayEvent[] {
+  const stored = ls.get<unknown[]>('listeningPlays') ?? []
+  const out: ListeningPlayEvent[] = []
+  for (const row of stored) {
+    const event = normalizeListeningPlayEvent(row)
+    if (event) out.push(event)
+  }
+  return out
+}
+
 /** Loads the persisted custom skins and seeds lib/skins' module cache with them
  *  before the store's `theme` initializer resolves the active id via getSkin —
  *  so a saved custom skin is the active look on the very first paint. */
@@ -719,6 +750,7 @@ function waitForReportSettled(id: string, timeoutMs = 8000): Promise<boolean> {
 // next login's merge — re-sends everything anyway.
 const PROFILE_PUSH_DEBOUNCE_MS = 1500
 let _prefsPushTimer: ReturnType<typeof setTimeout> | null = null
+let _listeningPlaysPushTimer: ReturnType<typeof setTimeout> | null = null
 let _foldersPushTimer: ReturnType<typeof setTimeout> | null = null
 
 // Chains `fn` behind any in-flight offline work for `key` so writers for the
@@ -852,6 +884,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'api-tracker': '/tracker',
       'api-files': '/files',
       'editor': '/editor',
+      'contributor': '/contributor',
       'admin': '/admin',
       'liked': '/liked',
       'playlists': '/playlists',
@@ -1074,6 +1107,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // ── Song preferences ──────────────────────────────────────────────────────
   songPrefs: hydrateSongPrefs(),
+  listeningPlays: hydrateListeningPlays(),
 
   // Every write lands in three places: Zustand state (so React re-renders),
   // localStorage (so overrides survive a restart and work logged out), and
@@ -1111,6 +1145,20 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }, PROFILE_PUSH_DEBOUNCE_MS)
   },
 
+  _setListeningPlays: (next) => {
+    set({ listeningPlays: next })
+    ls.set('listeningPlays', next)
+  },
+
+  _scheduleListeningPlaysPush: () => {
+    if (!get().account || !preferencesApi.preferencesApiEnabled) return
+    if (_listeningPlaysPushTimer) clearTimeout(_listeningPlaysPushTimer)
+    _listeningPlaysPushTimer = setTimeout(() => {
+      _listeningPlaysPushTimer = null
+      preferencesApi.pushListeningPlays(get().listeningPlays).catch(() => {})
+    }, PROFILE_PUSH_DEBOUNCE_MS)
+  },
+
   _writeSongPref: (songId, patch) => {
     get()._setSongPrefs(patchPrefMap(get().songPrefs, songId, patch))
     if (patch.name !== undefined || patch.cover_url !== undefined) get()._reapplySongPref(songId)
@@ -1139,9 +1187,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // The profile blob stores absolute counts (there's no server-side
     // increment), so this device just bumps locally and the debounced push
     // sends its totals; login merges take max() per song across devices so
-    // one device's push can't erase plays made on another.
+    // one device's push can't erase plays made on another. The play *event*
+    // appended alongside it is additive instead — merges union the two sides.
     get()._setSongPrefs(patchPrefMap(prefs, songId, { playcount: (prefs[songId]?.playcount ?? 0) + 1 }))
+    get()._setListeningPlays(appendListeningPlay(get().listeningPlays, songId))
     get()._schedulePrefsPush()
+    get()._scheduleListeningPlaysPush()
   },
 
   syncSongPrefs: async (serverPrefs) => {
@@ -1166,6 +1217,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
       get()._setSongPrefs(merged)
       await preferencesApi.pushPreferences(Object.values(merged)).catch(() => {})
+    } catch {}
+  },
+
+  syncListeningPlays: async (serverPlays) => {
+    if (!preferencesApi.preferencesApiEnabled) return
+    try {
+      const serverRows = (serverPlays ?? [])
+        .map(normalizeListeningPlayEvent)
+        .filter((row): row is ListeningPlayEvent => row != null)
+      const merged = mergeListeningPlays(get().listeningPlays, serverRows)
+      get()._setListeningPlays(merged)
+      await preferencesApi.pushListeningPlays(merged).catch(() => {})
     } catch {}
   },
 
@@ -1442,6 +1505,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // with local state and push the result back, no extra requests needed.
     const profile = get().account
     await get().syncSongPrefs(profile?.user_preferences)
+    get().syncListeningPlays(profile?.listening_plays)
     get().syncFolders(profile?.playlist_folders)
     // Deliver any reports queued while signed out — a logged-in flush can
     // attach the account's Discord username as the contact field.
@@ -1485,6 +1549,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // Overrides stay on this device after signing out, the same way likes do —
     // they're re-merged upward on the next login.
     get()._setSongPrefs(ls.get<SongPrefMap>('songPrefs') ?? {})
+    // Play history does NOT stay: unlike a rename or a cover override, it's a
+    // timestamped record of what this person listened to, and the next account
+    // to sign in on this machine would merge it in and push it to their own
+    // profile. The server copy is authoritative from the next login anyway.
+    get()._setListeningPlays([])
   },
 
   refreshPlaylists: async () => {

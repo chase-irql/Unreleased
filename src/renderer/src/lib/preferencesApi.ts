@@ -18,6 +18,8 @@ import { getToken } from './userApi'
 import { apiRequest } from './apiClient'
 import { capSongPrefs } from './songPrefs'
 import type { SongPreference } from './songPrefs'
+import { capListeningPlays } from './listeningPlays'
+import type { ListeningPlayEvent } from './listeningPlays'
 
 /** Live since the profile-blob fields shipped (2026-07-17). */
 export const preferencesApiEnabled = true
@@ -34,5 +36,16 @@ export async function pushPreferences(prefs: SongPreference[]): Promise<void> {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
     body: JSON.stringify({ user_preferences: capSongPrefs(prefs) }),
+  })
+}
+
+export async function pushListeningPlays(events: ListeningPlayEvent[]): Promise<void> {
+  if (!preferencesApiEnabled) return
+  const token = getToken()
+  if (!token) return
+  await apiRequest<unknown>(ME_URL, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
+    body: JSON.stringify({ listening_plays: capListeningPlays(events) }),
   })
 }

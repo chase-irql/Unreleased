@@ -3,6 +3,7 @@ import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, Chevro
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible, orderedNavControls, isNavControlVisible, type NavControlId } from '../lib/navItems'
 import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
@@ -76,12 +77,16 @@ export default function Sidebar(): JSX.Element {
   const labelCls = `truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`
 
   // Full-width control row for the vertical (left/right) side menu.
+  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
+  const profileView = isContributor && !account?.is_editor ? 'contributor-profile' : 'editor-profile'
+  const showStaffProfile = !!(account?.is_administrator || account?.is_editor) || isContributor
+
   const renderControl = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account) return null
+        if (!account || !showStaffProfile) return null
         return (
-          <button key="profile" onClick={() => setActiveView('editor-profile')} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
+          <button key="profile" onClick={() => setActiveView(profileView)} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
             <span className={iconWrap}>
               {account.discord_avatar
                 ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
@@ -127,9 +132,9 @@ export default function Sidebar(): JSX.Element {
   const renderControlIcon = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account) return null
+        if (!account || !showStaffProfile) return null
         return (
-          <button key="profile" onClick={() => setActiveView('editor-profile')} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
+          <button key="profile" onClick={() => setActiveView(profileView)} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
             {account.discord_avatar
               ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
               : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}

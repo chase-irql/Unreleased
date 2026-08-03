@@ -1,4 +1,5 @@
 import { JWAPI_BASE } from './juicewrldApi'
+import { resumeEffectsContext } from './audioEffects'
 import type { RadioLiveState } from './radioLive'
 
 const RECONNECT_MS = 3000
@@ -54,6 +55,10 @@ export class RadioStreamClient {
 
   attach(audioEl: HTMLAudioElement): void {
     this.audioEl = audioEl
+  }
+
+  isListening(): boolean {
+    return this.listening
   }
 
   connect(): void {
@@ -147,6 +152,7 @@ export class RadioStreamClient {
       this.open()
     }
     if (this.listening && this.audioEl?.paused) {
+      resumeEffectsContext()
       this.audioEl.play().catch(() => {})
     }
   }
@@ -171,11 +177,17 @@ export class RadioStreamClient {
 
   async startListening(): Promise<void> {
     if (!this.audioEl) return
+    if (this.listening) {
+      resumeEffectsContext()
+      await this.audioEl.play().catch(() => {})
+      return
+    }
     this.listening = true
     this.onListening(true)
     this.sendListening(true)
     if (!this.supportsMse) {
       this.audioEl.src = `${this.httpStreamUrl}?_=${Date.now()}`
+      resumeEffectsContext()
       await this.audioEl.play()
       return
     }
@@ -252,6 +264,7 @@ export class RadioStreamClient {
     this.trim(false)
     this.pump()
     if (this.audioEl && this.audioEl.paused && this.listening) {
+      resumeEffectsContext()
       this.audioEl.play().catch(() => {})
     }
   }

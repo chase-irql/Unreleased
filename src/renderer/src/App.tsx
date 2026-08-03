@@ -9,6 +9,7 @@ function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/' || pathname === '/tracker') return 'api-tracker'
   if (pathname.startsWith('/files')) return 'api-files'
   if (pathname === '/editor') return 'editor'
+  if (pathname === '/contributor') return 'contributor'
   if (pathname === '/admin') return 'admin'
   if (pathname === '/liked') return 'liked'
   if (pathname === '/playlists') return 'playlists'
@@ -67,6 +68,8 @@ const StatsView = lazy(() => import('./components/StatsView'))
 const DownloadAppView = lazy(() => import('./components/DownloadAppView'))
 const AlbumsAdminView = lazy(() => import('./components/AlbumsAdminView'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
+const ContributorPage = lazy(() => import('./components/ContributorPage'))
+const ContributorProfileView = lazy(() => import('./components/ContributorProfileView'))
 const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
@@ -246,6 +249,8 @@ export default function App(): JSX.Element {
             {activeView === 'api-tracker' ? <ApiTrackerView />
               : activeView === 'api-files' ? <ApiFilesView />
               : activeView === 'editor' ? <EditorPage />
+              : activeView === 'contributor' ? <ContributorPage />
+              : activeView === 'contributor-profile' ? <ContributorProfileView />
               : activeView === 'admin' ? <AdminPage />
               : activeView === 'liked' ? <LikedSongsView />
               : activeView === 'playlists' ? <PlaylistsView />

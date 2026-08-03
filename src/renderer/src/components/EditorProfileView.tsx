@@ -2,13 +2,15 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus } from '../lib/userApi'
+import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, CompFileProposal } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import ReportsTab from './ReportsTab'
 import FilePickerModal from './FilePickerModal'
 import AdminPage from './AdminPage'
+import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 
 const CATEGORIES = [
   { value: 'released', label: 'Released' },
@@ -325,14 +327,24 @@ export default function EditorProfileView(): JSX.Element {
   // Reports review (moved out of the Admin sidebar entry for editor-only
   // accounts — it now lives as a tab alongside their own proposals).
   const canReviewReports = !!(account?.is_editor || account?.is_administrator)
-  // Admin review tools (all-proposals queue, applications, users, stats,
-  // security) live here as a tab now — the standalone Admin side-menu entry
-  // is gone, everything reachable from this one profile page.
+  // Not `|| is_administrator`: this tab lists proposals *you* submitted, and
+  // an admin who never contributed has none. Their review queue is the Admin
+  // tab's "Comp files" — the one place proposals are reviewed.
+  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
   const isAdmin = !!account?.is_administrator
-  const [profileTab, setProfileTab] = useState<'proposals' | 'reports' | 'admin'>('proposals')
+  const [profileTab, setProfileTab] = useState<'proposals' | 'reports' | 'admin' | 'comp'>('proposals')
   const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
   const [reports, setReports] = useState<SongReportRow[]>([])
   const [loadingReports, setLoadingReports] = useState(false)
+  const [compProposals, setCompProposals] = useState<CompFileProposal[]>([])
+  const [loadingComp, setLoadingComp] = useState(false)
+  const [compFilter, setCompFilter] = useState<CompFilterTab>('all')
+
+  useEffect(() => {
+    if (profileTab !== 'comp' || !isContributor) return
+    setLoadingComp(true)
+    getMyCompProposals().then(setCompProposals).catch(() => {}).finally(() => setLoadingComp(false))
+  }, [profileTab, isContributor, refreshKey])
 
   useEffect(() => {
     if (profileTab !== 'reports' || !canReviewReports) return
@@ -477,6 +489,9 @@ export default function EditorProfileView(): JSX.Element {
               {account?.is_editor && !account.is_administrator && (
                 <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary text-[10px] font-semibold uppercase tracking-wide shrink-0">Editor</span>
               )}
+              {isContributor && !account?.is_administrator && (
+                <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Contributor</span>
+              )}
             </div>
             <div className="flex items-center gap-3 mt-1.5 flex-wrap">
               {myEntry && (
@@ -494,11 +509,12 @@ export default function EditorProfileView(): JSX.Element {
       </div>
 
       {/* ── Tabs ── */}
-      {canReviewReports && (
+      {(canReviewReports || isContributor) && (
         <div className="flex items-center gap-1 px-6 pt-3 shrink-0 border-b border-[var(--border)]">
           {([
             { id: 'proposals' as const, label: 'Proposals', icon: <FileEdit size={13} /> },
-            { id: 'reports'   as const, label: 'Reports',   icon: <Flag size={13} /> },
+            ...(isContributor ? [{ id: 'comp' as const, label: 'Comp files', icon: <FolderOpen size={13} /> }] : []),
+            ...(canReviewReports ? [{ id: 'reports' as const, label: 'Reports', icon: <Flag size={13} /> }] : []),
             ...(isAdmin ? [{ id: 'admin' as const, label: 'Admin', icon: <ShieldCheck size={13} /> }] : []),
           ]).map(t => (
             <button key={t.id} onClick={() => setProfileTab(t.id)}
@@ -519,6 +535,23 @@ export default function EditorProfileView(): JSX.Element {
           <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden flex flex-col">
             <AdminPage embedded />
           </div>
+        </div>
+      ) : profileTab === 'comp' && isContributor ? (
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex items-center justify-between mb-4 max-w-2xl">
+            <p className="text-xs text-text-muted">{compProposals.filter(p => p.status === 'approved').length} approved comp proposals</p>
+            <button onClick={() => setActiveView('contributor')} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white flex items-center gap-1.5">
+              <Plus size={12} /> New comp proposal
+            </button>
+          </div>
+          <div className="mb-4 max-w-2xl">
+            <CompFilterBar filter={compFilter} setFilter={setCompFilter} />
+          </div>
+          <CompProposalList
+            proposals={filterCompProposals(compProposals, compFilter)}
+            loading={loadingComp}
+            onSelect={() => setActiveView('contributor')}
+          />
         </div>
       ) : profileTab === 'reports' && canReviewReports ? (
         <div className="flex-1 overflow-hidden p-5">

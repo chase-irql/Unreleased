@@ -14,8 +14,10 @@ import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import { invalidateLyricsCache } from './Player'
 import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection } from './adminShared'
 import ReportsTab from './ReportsTab'
+import CompProposalsTab from './CompProposalsTab'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 
-type Tab = 'proposals' | 'applications' | 'reports' | 'users' | 'stats' | 'security'
+type Tab = 'proposals' | 'comp-proposals' | 'applications' | 'reports' | 'users' | 'stats' | 'security'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -218,7 +220,8 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
 
   type NavItem = { id: Tab; label: string; icon: React.ReactNode; badge?: number }
   const nav: NavItem[] = [
-    { id: 'proposals',    label: 'Proposals',    icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
+    { id: 'proposals',    label: 'Song edits',   icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
+    ...(CONTRIBUTOR_ENABLED ? [{ id: 'comp-proposals' as const, label: 'Comp files', icon: <FileCheck size={13} /> }] : []),
     { id: 'applications', label: 'Applications', icon: <Clock size={13} />,      badge: pendingApps || undefined },
     { id: 'reports',      label: 'Reports',      icon: <Flag size={13} />,       badge: pendingReports || undefined },
     { id: 'users',        label: 'Users',        icon: <Users size={13} /> },
@@ -291,6 +294,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
           </div>
         )}
         {tab === 'proposals'    && <ProposalsTab proposals={proposals} status={propStatus} setStatus={setPropStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
+        {tab === 'comp-proposals' && <CompProposalsTab embedded onChanged={() => setRefreshKey(k => k + 1)} />}
         {tab === 'applications' && <ApplicationsTab applications={applications} onChanged={() => setRefreshKey(k => k + 1)} />}
         {tab === 'reports'      && <ReportsTab reports={reports} status={reportStatus} setStatus={setReportStatus} onChanged={() => setRefreshKey(k => k + 1)} />}
         {tab === 'users'        && <UsersTab users={users} onChanged={() => setRefreshKey(k => k + 1)} currentUserId={account?.id} />}
@@ -725,7 +729,7 @@ function ApplicationsTab({ applications, onChanged }: { applications: EditorAppl
                 <Avatar src={item.discord_avatar} name={item.display_name || item.username} size={8} />
                 <div className="min-w-0 flex-1">
                   <p className="text-text-primary text-xs font-semibold truncate">{item.display_name || item.username}</p>
-                  <p className="text-text-muted text-[10px] truncate">{item.discord_username} · {relativeTime(item.created_at)}</p>
+                  <p className="text-text-muted text-[10px] truncate">{item.application_type} · {item.discord_username} · {relativeTime(item.created_at)}</p>
                 </div>
               </div>
             </button>
@@ -822,7 +826,7 @@ function ApplicationsTab({ applications, onChanged }: { applications: EditorAppl
 
 function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onChanged: () => void; currentUserId?: number }): JSX.Element {
   const [actionId, setActionId] = useState<number | null>(null)
-  const [filter,   setFilter]   = useState<'all' | 'admins' | 'editors' | 'applicants'>('all')
+  const [filter,   setFilter]   = useState<'all' | 'admins' | 'editors' | 'contributors' | 'applicants'>('all')
   const [search,   setSearch]   = useState('')
 
   const doUpdate = async (uid: number, payload: Parameters<typeof userApi.adminUpdateUser>[1]) => {
@@ -835,6 +839,10 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
     { id: 'all' as const,        label: 'All',        count: users.length },
     { id: 'admins' as const,     label: 'Admins',     count: users.filter(u => u.role === 'administrator').length },
     { id: 'editors' as const,    label: 'Editors',    count: users.filter(u => u.role === 'editor').length },
+    // Contributors cuts across the role buckets rather than being one of them
+    // — contributor_enabled is a flag on top of a role, so a contributor is
+    // still counted under whichever of Admins/Editors/Applicants they are.
+    { id: 'contributors' as const, label: 'Contributors', count: users.filter(u => u.contributor_enabled).length },
     { id: 'applicants' as const, label: 'Applicants', count: users.filter(u => u.role === 'applicant').length },
   ]
 
@@ -843,9 +851,18 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
     editor:        'text-emerald-400 bg-emerald-500/15 border-emerald-500/20',
     applicant:     'text-text-muted bg-surface-raised border-[var(--border)]',
   } as Record<string, string>
+  const CONTRIBUTOR_BADGE = 'text-sky-400 bg-sky-500/15 border-sky-500/20'
 
   const visible = useMemo(() => users.filter(u => {
-    const ok = filter === 'all' ? true : filter === 'admins' ? u.role === 'administrator' : filter === 'editors' ? u.role === 'editor' : u.role === 'applicant'
+    const ok = filter === 'all'
+      ? true
+      : filter === 'admins'
+        ? u.role === 'administrator'
+        : filter === 'editors'
+          ? u.role === 'editor'
+          : filter === 'contributors'
+            ? u.contributor_enabled
+            : u.role === 'applicant'
     const q = search.toLowerCase()
     return ok && (!q || (u.discord_username || u.username || '').toLowerCase().includes(q))
   }), [users, filter, search])
@@ -890,10 +907,22 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
               </div>
               <p className="text-text-muted text-[10px]">joined {shortDate(u.date_joined)}</p>
             </div>
-            <div>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE[u.role] ?? 'text-text-muted bg-surface-raised'}`}>
-                {u.role}
-              </span>
+            <div className="flex flex-wrap items-center gap-1">
+              {u.role !== 'administrator' && (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE[u.role] ?? 'text-text-muted bg-surface-raised border-[var(--border)]'}`}>
+                  {u.role}
+                </span>
+              )}
+              {u.role === 'administrator' && (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE.administrator}`}>
+                  administrator
+                </span>
+              )}
+              {u.contributor_enabled && (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${CONTRIBUTOR_BADGE}`}>
+                  contributor
+                </span>
+              )}
             </div>
             <p className="text-text-primary text-sm font-semibold">{u.approved_count}</p>
             <p className="text-text-muted text-sm">{u.proposal_count}</p>
@@ -910,12 +939,27 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
                       auto
                     </label>
                   )}
+                  {u.contributor_enabled && (
+                    <label className="flex items-center gap-1 text-[10px] text-text-muted cursor-pointer mr-2 hover:text-text-muted">
+                      <input type="checkbox" checked={u.auto_approve_comp_proposals}
+                        onChange={e => doUpdate(u.user_id, { auto_approve_comp_proposals: e.target.checked })}
+                        className="w-3 h-3 accent-[var(--accent)]" />
+                      auto
+                    </label>
+                  )}
                   {u.role === 'editor' ? (
                     <button onClick={() => doUpdate(u.user_id, { role: 'applicant' })}
-                      className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors font-medium">Demote</button>
+                      className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors font-medium">−Editor</button>
                   ) : (
                     <button onClick={() => doUpdate(u.user_id, { role: 'editor' })}
-                      className="px-2 py-1 rounded text-[10px] text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">Promote</button>
+                      className="px-2 py-1 rounded text-[10px] text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">+Editor</button>
+                  )}
+                  {u.contributor_enabled ? (
+                    <button onClick={() => doUpdate(u.user_id, { contributor_enabled: false })}
+                      className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors font-medium">−Contrib</button>
+                  ) : (
+                    <button onClick={() => doUpdate(u.user_id, { contributor_enabled: true })}
+                      className="px-2 py-1 rounded text-[10px] text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">+Contrib</button>
                   )}
                   <button onClick={() => doUpdate(u.user_id, { is_active: !u.is_active })}
                     className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-text-muted hover:bg-surface-raised transition-colors font-medium">

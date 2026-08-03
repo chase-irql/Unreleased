@@ -750,7 +750,7 @@ export default function EditorPage(): JSX.Element {
   useEffect(() => {
     if (!account || canEdit) { setApplication(null); return }
     setAppLoading(true)
-    userApi.getMyApplication()
+    userApi.getMyApplication('editor')
       .then(r => setApplication(r.application))
       .catch(() => setApplication(null))
       .finally(() => setAppLoading(false))

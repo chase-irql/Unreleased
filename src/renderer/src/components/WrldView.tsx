@@ -8,6 +8,7 @@ import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
 import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
+import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
@@ -745,7 +746,17 @@ export default function WrldView(): JSX.Element {
           living in its own corner. */}
       <div className="absolute z-30 flex items-center gap-2 top-3 right-3 md:top-4 md:left-4 md:right-auto">
         <button
-          onClick={() => setRadioFmActive(!radioFmActive)}
+          onClick={() => {
+            const next = !radioFmActive
+            if (next) {
+              setIsPlaying(false)
+              resumeEffectsContext()
+              void getActiveRadioClient()?.startListening()?.catch(() => setRadioFmActive(false))
+            } else {
+              getActiveRadioClient()?.stopListening()
+            }
+            setRadioFmActive(next)
+          }}
           disabled={fmDisabled}
           className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1.5 transition-all disabled:opacity-40
             ${radioFmActive && radioFmIsLive

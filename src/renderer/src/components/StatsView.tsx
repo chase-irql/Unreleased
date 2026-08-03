@@ -1,31 +1,56 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Play, Loader2, MoreHorizontal, Music2, Clock, ListMusic, Disc3 } from 'lucide-react'
+import { BarChart3, Play, Loader2, MoreHorizontal, Music2, Clock, ListMusic, Disc3, CalendarDays } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
-import * as userApi from '../lib/userApi'
 import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
 import {
   playedPrefs, joinPlayedSongs, buildListeningStats, formatListeningTime,
-  type RankedEntry,
+  prefsForPeriod, eventsForPeriod, periodCoverage, type RankedEntry, type ListeningPeriod,
 } from '../lib/listeningStats'
 import { resolveStatsSongs, statsSongToTrack, type StatsSong, type ResolveProgress } from '../lib/statsCatalog'
+import { sortListeningPlays } from '../lib/listeningPlays'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
+import { relativeTime, shortDate } from './adminShared'
 
-// "Your Wrapped" — an all-time listening summary built from lib/songPrefs'
-// per-song playcounts. There's no timestamped play history in the app, so
-// every number here is all-time by construction (see lib/listeningStats).
+// "Your Wrapped" — a listening summary over two different sources, because
+// they answer different questions:
 //
-// Song metadata isn't stored alongside the counts — a pref row is just
-// {song id, playcount} — so ids have to be resolved to songs before anything
-// can be ranked. lib/statsCatalog owns that and picks the cheap route (a few
-// per-id fetches, or one cached catalogue crawl); this file just renders.
+//   All time  → lib/songPrefs' per-song playcounts. Absolute counters that
+//               predate the play log, so they're the only honest all-time
+//               number — but they carry no timestamps.
+//   7 / 30 d  → lib/listeningPlays' timestamped events, rolled back up into
+//               playcounts.
+//
+// The two don't cover the same span, and pretending they do is what makes a
+// period view lie: the log starts at whichever build first shipped it and
+// loses its oldest rows once it hits its cap, so "last 30 days" can easily
+// have only a week of data behind it. listeningStats' periodCoverage reports
+// that gap, and the header below labels a short window "Since <date>" rather
+// than quietly reporting a number that's missing plays. The plays that fall
+// in the gap are shown as a count, so All time and the periods visibly add up.
+//
+// Song metadata isn't stored alongside either — a pref row is just
+// {song id, playcount} and an event is just {song id, played_at} — so ids have
+// to be resolved to songs before anything can be ranked. lib/statsCatalog owns
+// that and picks the cheap route (a few per-id fetches, or one cached
+// catalogue crawl); this file just renders.
 
 // Rows shown before "Show all" — a heavy listener can have hundreds.
 const TOP_SONGS_COLLAPSED = 25
 
 // How many songs the header's Play button queues up.
 const PLAY_TOP_N = 50
+
+// Rows in the recent-plays timeline. Also bounds how many extra song ids the
+// timeline alone can drag into the metadata fetch (see idsKey).
+const TIMELINE_LIMIT = 40
+
+const PERIOD_OPTIONS: { id: ListeningPeriod; label: string }[] = [
+  { id: 'all', label: 'All time' },
+  { id: '30', label: '30 days' },
+  { id: '7', label: '7 days' },
+]
 
 function StatCard({ icon, value, label }: { icon: JSX.Element; value: string; label: string }): JSX.Element {
   return (
@@ -73,10 +98,11 @@ function BarList({ title, entries, empty }: { title: string; entries: RankedEntr
 }
 
 export default function StatsView(): JSX.Element {
-  const { songPrefs, account, playTrack, playCollection, playNext, setActiveView, setPendingEditorSongId } = useStorePick(
-    'songPrefs', 'account', 'playTrack', 'playCollection', 'playNext', 'setActiveView', 'setPendingEditorSongId')
+  const { songPrefs, listeningPlays, account, playTrack, playCollection, playNext, setActiveView, setPendingEditorSongId } = useStorePick(
+    'songPrefs', 'listeningPlays', 'account', 'playTrack', 'playCollection', 'playNext', 'setActiveView', 'setPendingEditorSongId')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
+  const [period, setPeriod] = useState<ListeningPeriod>('all')
   const [songs, setSongs] = useState<Map<number, StatsSong>>(new Map())
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState<ResolveProgress | null>(null)
@@ -84,12 +110,27 @@ export default function StatsView(): JSX.Element {
   const [ctxMenu, setCtxMenu] = useState<SongContextMenuState | null>(null)
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
 
-  const prefs = useMemo(() => playedPrefs(songPrefs), [songPrefs])
+  const prefs = useMemo(() => prefsForPeriod(songPrefs, listeningPlays, period), [songPrefs, listeningPlays, period])
+  const periodEvents = useMemo(() => sortListeningPlays(eventsForPeriod(listeningPlays, period)), [listeningPlays, period])
+  const coverage = useMemo(
+    () => periodCoverage(songPrefs, listeningPlays, period),
+    [songPrefs, listeningPlays, period],
+  )
+  const optionLabel = PERIOD_OPTIONS.find((p) => p.id === period)?.label ?? 'All time'
+  // A window the log can't fill is named for what it actually holds.
+  const periodLabel = coverage.complete || coverage.start === null
+    ? optionLabel
+    : `Since ${shortDate(new Date(coverage.start).toISOString())}`
 
   // Only the *set* of played ids drives fetching. Crediting a play while this
   // page is open bumps a count (and the numbers below re-derive from it), but
   // it must not re-run a few hundred requests — the metadata didn't change.
-  const idsKey = useMemo(() => prefs.map((p) => p.song).sort((a, b) => a - b).join(','), [prefs])
+  const idsKey = useMemo(() => {
+    const ids = new Set<number>()
+    for (const p of prefs) ids.add(p.song)
+    for (const e of periodEvents.slice(0, TIMELINE_LIMIT)) ids.add(e.song)
+    return [...ids].sort((a, b) => a - b).join(',')
+  }, [prefs, periodEvents])
 
   useEffect(() => {
     const ids = idsKey ? idsKey.split(',').map(Number) : []
@@ -129,7 +170,13 @@ export default function StatsView(): JSX.Element {
     try { setInfoSong(await apiFetch<JWApiSong>(`/songs/${songId}/`)) } catch {}
   }
 
-  if (prefs.length === 0) {
+  // Bail to the empty screen only when the user has never played anything.
+  // A *period* with no plays still renders the full page (the period switcher
+  // included) — otherwise picking "7 days" on a quiet week, or right after
+  // upgrading to a build that has a play log at all, strands the user on a
+  // dead-end screen with no way back to All time.
+  const nothingEverPlayed = playedPrefs(songPrefs).length === 0 && listeningPlays.length === 0
+  if (nothingEverPlayed) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
         <BarChart3 size={40} className="text-text-muted mb-4" />
@@ -147,15 +194,15 @@ export default function StatsView(): JSX.Element {
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
         <div className="px-5 pt-5 pb-8">
           {/* ── Hero ── */}
-          <div className="flex items-center gap-4 mb-5">
+          <div className="flex items-center gap-4 mb-5 flex-wrap">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center shrink-0">
               <BarChart3 size={32} className="text-accent" />
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-text-primary text-2xl font-bold">Your Wrapped</h1>
                 <span className="px-2 py-0.5 rounded-full bg-surface-raised text-text-muted text-[10px] font-semibold uppercase tracking-widest shrink-0">
-                  All time
+                  {periodLabel}
                 </span>
               </div>
               <p className="text-text-muted text-sm mt-1">
@@ -165,13 +212,57 @@ export default function StatsView(): JSX.Element {
             {topTracks.length > 0 && (
               <button
                 onClick={() => playCollection(topTracks.slice(0, PLAY_TOP_N))}
-                className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-full bg-accent text-black text-sm font-semibold hover:scale-105 transition-transform shrink-0"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-accent text-black text-sm font-semibold hover:scale-105 transition-transform shrink-0"
                 title={`Play your top ${Math.min(PLAY_TOP_N, topTracks.length)} songs`}
               >
                 <Play size={16} fill="currentColor" /> Play top songs
               </button>
             )}
           </div>
+
+          <div className="flex gap-2 mb-5 flex-wrap">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => { setPeriod(opt.id); setExpanded(false) }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  period === opt.id ? 'bg-accent text-black' : 'bg-surface-overlay text-text-muted hover:text-text-primary'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {coverage.untracked > 0 && (
+            <p className="text-text-muted text-xs mb-5 leading-relaxed">
+              {period === 'all' ? (
+                <>
+                  All {coverage.allTimePlays.toLocaleString()} plays counted.{' '}
+                  {coverage.loggedPlays.toLocaleString()} of them are timestamped
+                  {coverage.start !== null && <> (since {shortDate(new Date(coverage.start).toISOString())})</>}
+                  {' '}— the other {coverage.untracked.toLocaleString()} were counted before the
+                  history log existed, so the 7- and 30-day views can't see them.
+                </>
+              ) : coverage.start === null ? (
+                <>
+                  No timestamped history yet, so this window is empty. Your{' '}
+                  {coverage.allTimePlays.toLocaleString()} earlier plays are all still in All time.
+                </>
+              ) : !coverage.complete ? (
+                <>
+                  History only reaches back to {shortDate(new Date(coverage.start).toISOString())}, so
+                  this is a shorter window than {optionLabel.toLowerCase()}. The{' '}
+                  {coverage.untracked.toLocaleString()} plays from before that are counted in All time.
+                </>
+              ) : (
+                <>
+                  Counted from timestamped history. All time additionally includes{' '}
+                  {coverage.untracked.toLocaleString()} plays from before the log existed.
+                </>
+              )}
+            </p>
+          )}
 
           {loading && (
             <div className="flex items-center gap-2 text-text-muted text-xs mb-4">
@@ -270,6 +361,33 @@ export default function StatsView(): JSX.Element {
             </p>
           )}
 
+          {periodEvents.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <CalendarDays size={14} className="text-text-muted" />
+                <h2 className="text-text-primary text-sm font-semibold">Listening timeline</h2>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-surface-overlay/40 divide-y divide-[var(--border)] overflow-hidden">
+                {periodEvents.slice(0, TIMELINE_LIMIT).map((event, index) => {
+                  const song = songs.get(event.song)
+                  const title = song?.name ?? `Song #${event.song}`
+                  return (
+                    <div key={`${event.song}-${event.played_at}-${index}`} className="flex items-center gap-3 px-3 py-2.5">
+                      <span className="text-text-muted text-[11px] tabular-nums shrink-0 w-24">{relativeTime(event.played_at)}</span>
+                      <button
+                        onClick={() => song && playTrack(statsSongToTrack(song))}
+                        className="min-w-0 flex-1 text-left text-sm text-text-primary truncate hover:text-accent transition-colors"
+                        title={title}
+                      >
+                        {title}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 pt-4 border-t border-[var(--border)] space-y-1.5">
             <p className="text-text-muted text-[11px] leading-relaxed flex items-start gap-1.5">
               <Music2 size={12} className="mt-0.5 shrink-0 opacity-60" />
@@ -277,6 +395,9 @@ export default function StatsView(): JSX.Element {
                 A play counts once you've listened to 30 seconds of a song (or half of it, if it's
                 shorter than a minute). Skipping through a queue doesn't count. Downloaded songs
                 count the same as streamed ones — local files you imported yourself aren't tracked.
+                All time counts every play ever. The 7- and 30-day views read from the
+                timestamped history, which starts later and holds a bounded number of plays —
+                the line under the period buttons says exactly how much it covers.
               </span>
             </p>
             {!account && (

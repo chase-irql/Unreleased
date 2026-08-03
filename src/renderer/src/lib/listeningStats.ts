@@ -12,6 +12,12 @@
 import { parseDuration, CATEGORY_LABELS } from './juicewrldApi'
 import { SongPreference } from './songPrefs'
 import type { StatsSong } from './statsCatalog'
+import {
+  ListeningPlayEvent, filterListeningPlaysByDays, playcountsFromEvents,
+  listeningPlaysCoverageStart, coversPeriod,
+} from './listeningPlays'
+
+export type ListeningPeriod = 'all' | '7' | '30'
 
 /** One played song, joined with how many times this user played it. */
 export interface PlayedSong {
@@ -145,6 +151,76 @@ export function joinPlayedSongs(
     out.push({ song, playcount: p.playcount, seconds: parseDuration(song.length) * p.playcount })
   }
   return out.sort((a, b) => b.playcount - a.playcount)
+}
+
+/** Days in a period, or 0 for "all time". */
+export function periodDays(period: ListeningPeriod): number {
+  return period === 'all' ? 0 : Number(period)
+}
+
+/** How the two sources line up for the selected period.
+ *
+ *  The aggregate counters in lib/songPrefs are absolute and complete — they
+ *  are the all-time truth. The timestamped log is the only thing that can
+ *  answer "last 7 days", but it starts later than the counters do and gets
+ *  evicted from the back once it hits its cap, so a window can ask for more
+ *  history than exists. Rather than silently under-reporting, the caller gets
+ *  `complete: false` plus the date the log actually starts, and labels the
+ *  period accordingly.
+ *
+ *  `untracked` is the arithmetic that ties the two together: every all-time
+ *  play that has no event row, i.e. everything that happened before the log
+ *  began (or has since aged out of it). */
+export interface PeriodCoverage {
+  complete: boolean
+  start: number | null
+  allTimePlays: number
+  loggedPlays: number
+  untracked: number
+}
+
+export function periodCoverage(
+  songPrefs: Record<number, SongPreference>,
+  events: ListeningPlayEvent[],
+  period: ListeningPeriod,
+): PeriodCoverage {
+  let allTimePlays = 0
+  for (const p of playedPrefs(songPrefs)) allTimePlays += p.playcount
+  const loggedPlays = events.length
+  return {
+    complete: coversPeriod(events, periodDays(period)),
+    start: listeningPlaysCoverageStart(events),
+    allTimePlays,
+    loggedPlays,
+    untracked: Math.max(0, allTimePlays - loggedPlays),
+  }
+}
+
+export function prefsFromEvents(events: ListeningPlayEvent[]): SongPreference[] {
+  const counts = playcountsFromEvents(events)
+  return [...counts.entries()]
+    .map(([song, playcount]) => ({
+      song,
+      playcount,
+      name: null,
+      cover_url: null,
+      default_version: null,
+    }))
+    .sort((a, b) => b.playcount - a.playcount)
+}
+
+export function eventsForPeriod(events: ListeningPlayEvent[], period: ListeningPeriod): ListeningPlayEvent[] {
+  if (period === 'all') return events
+  return filterListeningPlaysByDays(events, Number(period))
+}
+
+export function prefsForPeriod(
+  songPrefs: Record<number, SongPreference>,
+  events: ListeningPlayEvent[],
+  period: ListeningPeriod,
+): SongPreference[] {
+  if (period === 'all') return playedPrefs(songPrefs)
+  return prefsFromEvents(eventsForPeriod(events, period))
 }
 
 /** Seconds → "3 days 4 hr" / "6 hr 12 min" / "45 min". Distinct from

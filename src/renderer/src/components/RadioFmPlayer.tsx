@@ -1,10 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { useStore, useStorePick } from '../store/useStore'
 import { RadioStreamClient, setActiveRadioClient } from '../lib/radioSocketService'
 import { fetchRadioLive } from '../lib/radioLive'
 import { apiFetch, buildImageUrl } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
-import { attachAudioElement } from '../lib/audioEffects'
+import { attachAudioElement, resumeEffectsContext } from '../lib/audioEffects'
 
 export default function RadioFmPlayer(): JSX.Element {
   const {
@@ -17,8 +17,17 @@ export default function RadioFmPlayer(): JSX.Element {
     volume,
   } = useStorePick('radioFmActive', 'setRadioFmActive', 'setRadioFmIsLive', 'setRadioFmNowPlaying', 'setRadioFmVote', 'setRadioFmUpNext', 'setRadioFmQueuePreview', 'setRadioFmMatchedSong', 'radioFmNowPlaying', 'setIsPlaying', 'volume')
 
-  const audioRef  = useRef<HTMLAudioElement>(null)
+  const audioRef  = useRef<HTMLAudioElement | null>(null)
   const clientRef = useRef<RadioStreamClient | null>(null)
+
+  const wireAudio = useCallback((el: HTMLAudioElement | null): void => {
+    audioRef.current = el
+    const client = clientRef.current
+    if (!el || !client) return
+    client.attach(el)
+    attachAudioElement(el)
+    el.volume = useStore.getState().volume
+  }, [])
 
   useEffect(() => {
     const client = new RadioStreamClient({
@@ -30,15 +39,10 @@ export default function RadioFmPlayer(): JSX.Element {
         setRadioFmQueuePreview(data.queue_preview ?? [])
       },
     })
-    if (audioRef.current) {
-      client.attach(audioRef.current)
-      // Route FM through the shared effects chain too, so the equalizer /
-      // balance / mono settings apply to every playable — not just the queue.
-      attachAudioElement(audioRef.current)
-    }
     client.connect()
     clientRef.current = client
     setActiveRadioClient(client)
+    wireAudio(audioRef.current)
 
     fetchRadioLive()
       .then((data) => {
@@ -82,6 +86,7 @@ export default function RadioFmPlayer(): JSX.Element {
     if (!client) return
     if (radioFmActive) {
       setIsPlaying(false)
+      resumeEffectsContext()
       client.startListening().catch(() => setRadioFmActive(false))
     } else {
       client.stopListening()
@@ -129,7 +134,7 @@ export default function RadioFmPlayer(): JSX.Element {
 
   return (
     <audio
-      ref={audioRef}
+      ref={wireAudio}
       preload="none"
       // MSE playback uses a same-origin blob: URL (crossOrigin is a no-op
       // there); the HTTP fallback streams from the API, which sends CORS
