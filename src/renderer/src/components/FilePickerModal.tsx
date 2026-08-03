@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check, Music2 } from 'lucide-react'
+import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check, Music2, File, FolderCheck } from 'lucide-react'
 import {
   apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch, filterSearchResults,
   JWApiFileEntry, JWApiBrowseResponse,
@@ -22,7 +22,7 @@ function parentFolder(path: string): string {
 // has no need for the full sort/view-mode machinery ApiFilesView offers.
 function sortForPicker(entries: JWApiFileEntry[], kind: PickerKind): JWApiFileEntry[] {
   return [...entries]
-    .filter((e) => e.type === 'directory' || getMediaType(e.name) === kind)
+    .filter((e) => e.type === 'directory' || kind === 'any' || getMediaType(e.name) === kind)
     .sort((a, b) => {
       const aDir = a.type === 'directory'
       const bDir = b.type === 'directory'
@@ -31,7 +31,7 @@ function sortForPicker(entries: JWApiFileEntry[], kind: PickerKind): JWApiFileEn
     })
 }
 
-export type PickerKind = 'image' | 'audio'
+export type PickerKind = 'image' | 'audio' | 'any'
 
 interface Props {
   /** What the picker browses for. 'image' (default) hands back an absolute
@@ -46,6 +46,12 @@ interface Props {
   altTitles?: string[]
   onSelect: (path: string) => void
   onClose: () => void
+  /** Show a "Use this folder" action that hands back the folder currently
+   *  being browsed instead of a file. For targets that don't exist yet — a
+   *  comp upload names a new file, so there's nothing to click. */
+  allowFolderSelect?: boolean
+  /** Overrides the header text. */
+  title?: string
 }
 
 // A scoped-down version of ApiFilesView's browser for picking one file out of
@@ -61,8 +67,12 @@ interface Props {
 // Audio mode is the opposite: a song's `path` field in the API is the raw
 // storage path ("Compilation/1. Released Discography/…mp3") and the app builds
 // stream URLs from it, so handing back an absolute URL there would double-wrap.
-export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose }: Props): JSX.Element {
+export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title }: Props): JSX.Element {
   const isAudio = kind === 'audio'
+  // Image mode is the only one that earns a thumbnail grid; audio and 'any'
+  // both render the compact list.
+  const isList = kind !== 'image'
+  const noun = kind === 'audio' ? 'audio files' : kind === 'any' ? 'files' : 'images'
   const initialQuery = songTitle ? cleanTitleForSearch(songTitle) : ''
   // Alt titles searched alongside the primary one on mount (deduped, and never
   // repeating a name the primary search already covers).
@@ -188,7 +198,7 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
         <div className="shrink-0 px-4 pt-4 pb-3 border-b border-[var(--border)]">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-text-primary text-sm font-semibold">
-              {isAudio ? 'Choose an audio file from API files' : 'Choose a cover from API files'}
+              {title ?? (isAudio ? 'Choose an audio file from API files' : kind === 'any' ? 'Choose a file from API files' : 'Choose a cover from API files')}
             </h2>
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors" title="Close">
               <X size={15} className="text-text-muted" />
@@ -201,7 +211,7 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={isAudio ? 'Search audio files…' : 'Search images…'}
+              placeholder={`Search ${noun}…`}
               className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg pl-8 pr-8 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
             />
             {search && (
@@ -274,14 +284,16 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
             <div className="flex flex-col items-center justify-center h-40 gap-2">
               {isAudio
                 ? <Music2 size={26} className="text-text-muted opacity-30" />
-                : <ImageIcon size={26} className="text-text-muted opacity-30" />}
+                : kind === 'any'
+                  ? <File size={26} className="text-text-muted opacity-30" />
+                  : <ImageIcon size={26} className="text-text-muted opacity-30" />}
               <p className="text-text-muted text-xs">
                 {isSearching
-                  ? `No ${isAudio ? 'audio files' : 'images'} match "${debouncedSearch.trim()}"`
-                  : `No folders or ${isAudio ? 'audio files' : 'images'} here`}
+                  ? `No ${noun} match "${debouncedSearch.trim()}"`
+                  : `No folders or ${noun} here`}
               </p>
             </div>
-          ) : isAudio ? (
+          ) : isList ? (
             /* Audio has no thumbnail worth showing — a compact list reads better
                than a grid of identical note icons. */
             <div className="flex flex-col gap-0.5">
@@ -302,7 +314,9 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
                   >
                     {isDir
                       ? <Folder size={16} className="text-text-secondary group-hover:text-accent transition-colors shrink-0" />
-                      : <Music2 size={16} className="text-text-muted shrink-0" />}
+                      : isAudio
+                        ? <Music2 size={16} className="text-text-muted shrink-0" />
+                        : <File size={16} className="text-text-muted shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
                       {isSearching && parentFolder(entry.path) && (
@@ -364,6 +378,23 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
             </div>
           )}
         </div>
+
+        {allowFolderSelect && (
+          <div className="shrink-0 border-t border-[var(--border)] px-4 py-3 flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Selected folder</p>
+              <p className="text-xs font-mono text-text-primary truncate" title={currentPath || 'Root'}>{currentPath || 'Root'}</p>
+            </div>
+            <button
+              onClick={() => onSelect(currentPath)}
+              disabled={isSearching}
+              title={isSearching ? 'Clear the search to pick the folder you are browsing' : 'Use this folder'}
+              className="shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
+            >
+              <FolderCheck size={14} /> Use this folder
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body
