@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
 import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
-import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl } from '../lib/juicewrldApi'
+import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl, smallCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
@@ -14,6 +14,7 @@ import type { JWApiSong } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import SongInfoModal from './SongInfoModal'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
+import { ProgressiveCover } from './ProgressiveCover'
 import SongContextMenu from './SongContextMenu'
 import { getSkin } from '../lib/skins'
 
@@ -439,7 +440,12 @@ export default function WrldView(): JSX.Element {
       style={mobile ? {} : { aspectRatio: '1' }}
     >
       {artSrc && !artError ? (
-        <img src={artSrc} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
+        // The mobile box is 56px, so the degraded cover is all it ever needs;
+        // the desktop box is the biggest cover in the app and loads the full
+        // one behind a degraded first paint.
+        mobile
+          ? <img src={smallCoverUrl(artSrc)} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
+          : <ProgressiveCover src={artSrc} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
       ) : radioFmActive ? (
         <div className="w-full h-full bg-gradient-to-br from-red-900/60 to-black flex flex-col items-center justify-center gap-2">
           <Radio className={`text-red-400 opacity-70 ${mobile ? 'w-6 h-6' : 'w-16 h-16'}`} />
@@ -795,7 +801,9 @@ export default function WrldView(): JSX.Element {
           {/* Blurred background */}
           <div className="absolute inset-0 overflow-hidden">
             {artSrc && !artError ? (
-              <img src={artSrc} alt=""
+              // Blurred to 60px, so resolution is meaningless here — always the
+              // degraded copy, which also gets the backdrop up on the first frame.
+              <img src={smallCoverUrl(artSrc)} alt=""
                 className="absolute inset-0 w-full h-full object-cover"
                 style={{ filter: `blur(60px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
                 onError={() => setArtError(true)}

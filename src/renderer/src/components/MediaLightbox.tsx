@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useState } from 'react'
 import { X, ChevronLeft, ChevronRight, AlertCircle, Download } from 'lucide-react'
+import { smallCoverUrl } from '../lib/juicewrldApi'
 
 export interface LightboxItem {
   url: string
@@ -156,7 +157,9 @@ export default function MediaLightbox({ items, index, onClose, onNav }: Props): 
               }`}
             >
               {it.type === 'image' ? (
-                <img src={it.url} alt="" className="w-full h-full object-cover" />
+                // 48px filmstrip cell — the degraded copy, while the main
+                // view above keeps the original.
+                <img src={smallCoverUrl(it.url)} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full bg-surface-overlay flex items-center justify-center text-[10px] text-white/60 uppercase">
                   vid

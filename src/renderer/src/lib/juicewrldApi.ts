@@ -166,8 +166,47 @@ export function buildStreamUrl(path: string): string {
   return `${JWAPI_BASE}/files/download/?path=${encodeURIComponent(path)}`
 }
 
-export function buildCoverArtUrl(path: string): string {
-  return `${JWAPI_BASE}/files/cover-art/?path=${encodeURIComponent(path)}`
+// The API serves cover art at full size — /files/cover-art/ hands back the art
+// embedded in an audio file (often a ~1MB 600x600 PNG) and /files/download/
+// hands back a standalone image file whole (a few hundred KB). Either is absurd
+// for a 36px list row, and it adds up fast when a virtualized list paints dozens
+// at once. `small=1` asks for a degraded ~128px JPEG instead (a few KB, same
+// image): plenty for anything drawn at thumbnail size, and a good first paint
+// for anything bigger.
+const SMALL_COVER_PARAM = 'small=1'
+
+// Endpoints that honour `small`. /files/download/ only degrades when the path is
+// an image — for audio the API ignores the param — so it's matched by extension
+// rather than blanket-applied, keeping stream URLs untouched.
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|avif|heic|tiff?)(&|$)/i
+
+function degradable(url: string): boolean {
+  if (url.includes(SMALL_COVER_PARAM)) return false
+  if (url.includes('/files/cover-art/')) return true
+  return url.includes('/files/download/') && IMAGE_EXT.test(url)
+}
+
+export function buildCoverArtUrl(path: string, small = false): string {
+  const url = `${JWAPI_BASE}/files/cover-art/?path=${encodeURIComponent(path)}`
+  return small ? `${url}&${SMALL_COVER_PARAM}` : url
+}
+
+/** Rewrites an already-built cover URL to the API's degraded variant.
+ *
+ *  Most cover URLs in the app arrive as opaque strings (a Track's imageUrl, a
+ *  preference's resolved cover, a song's `image_url`) with no path to rebuild
+ *  from, so degrading happens at the point of render rather than at the source.
+ *  Anything the API can't degrade — a site asset, a data/blob URL, a local
+ *  file's extracted art, an audio stream URL — passes through untouched. */
+export function smallCoverUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  return degradable(url) ? `${url}&${SMALL_COVER_PARAM}` : url
+}
+
+/** True when `url` has a cheaper degraded variant worth loading first — the
+ *  signal ProgressiveCover uses to decide whether a two-step load buys anything. */
+export function hasSmallCoverVariant(url: string | null | undefined): boolean {
+  return !!url && degradable(url)
 }
 
 // ─── API file → track (for liking raw file-browser entries) ───────────────────

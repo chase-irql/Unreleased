@@ -1,5 +1,6 @@
 import { Music2 } from 'lucide-react'
 import { Track } from '../types'
+import { smallCoverUrl } from '../lib/juicewrldApi'
 
 interface Props {
   track: Track
@@ -33,7 +34,11 @@ export function AlbumArtThumbnail({ track, size = 40, className = '', fill = fal
   if (track.imageUrl) {
     return (
       <img
-        src={track.imageUrl}
+        // Every caller draws this at 56px or less, so the API's degraded 128px
+        // cover is more than enough resolution even on a 2x display — and it's
+        // ~300x smaller than the original, which is what makes a long list of
+        // API tracks paint its art at all quickly.
+        src={smallCoverUrl(track.imageUrl)}
         alt={track.title}
         style={sizeStyle}
         className={`object-cover shrink-0 ${className}`}

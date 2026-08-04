@@ -83,20 +83,25 @@ function FloatSongInfo(): JSX.Element | null {
 }
 
 function FloatEditor(): JSX.Element {
-  // EditorPage picks its song up from pendingEditorSongId, exactly like an
-  // in-app navigation would have set it. Seed it from the boot URL, and keep
-  // following float-params so "Edit" on another song retargets this window.
-  useEffect(() => {
+  // The boot song rides in as a prop rather than through pendingEditorSongId:
+  // child effects run before the parent's, so seeding the store from an effect
+  // here happened *after* EditorPage's own mount effects had already looked,
+  // found nothing pending, and prefilled from whatever was playing — the two
+  // loads then raced and the wrong song often won.
+  const [bootSongId] = useState<number | null>(() => {
     const raw = initialParam('songId')
-    if (raw) useStore.setState({ pendingEditorSongId: Number(raw) })
-    return el?.onFloatParams?.((p: Record<string, string>) => {
-      if (p?.songId) useStore.setState({ pendingEditorSongId: Number(p.songId) })
-    })
-  }, [])
+    return raw ? Number(raw) : null
+  })
+
+  // Retargeting an already-open window still goes through the store, which is
+  // fine — EditorPage is mounted by then and picks the change up directly.
+  useEffect(() => el?.onFloatParams?.((p: Record<string, string>) => {
+    if (p?.songId) useStore.setState({ pendingEditorSongId: Number(p.songId) })
+  }), [])
 
   return (
     <div className="flex-1 min-h-0 overflow-hidden flex">
-      <EditorPage />
+      <EditorPage initialSongId={bootSongId} />
     </div>
   )
 }

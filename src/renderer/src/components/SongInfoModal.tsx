@@ -12,6 +12,7 @@ import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, res
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
 import SongPrefsSection from './SongPrefsSection'
+import { ProgressiveCover } from './ProgressiveCover'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
@@ -246,7 +247,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
           <div className="relative flex items-end gap-4 px-5 pt-8 pb-5">
             <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay">
               {coverUrl ? (
-                <img src={coverUrl} alt={primaryTitle} className="w-full h-full object-cover" />
+                <ProgressiveCover src={coverUrl} alt={primaryTitle} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <Music2 size={32} className="text-text-muted opacity-30" />

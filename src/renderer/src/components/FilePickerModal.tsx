@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check, Music2, File, FolderCheck } from 'lucide-react'
+import { X, Folder, FolderOpen, ArrowLeft, Home, ChevronRight, Loader2, ImageIcon, Search, Check, Music2, File, FolderCheck, FolderPlus } from 'lucide-react'
 import {
-  apiFetch, apiPeek, buildStreamUrl, parseBrowseEntries, cleanTitleForSearch, filterSearchResults,
+  apiFetch, apiPeek, buildStreamUrl, smallCoverUrl, parseBrowseEntries, cleanTitleForSearch, filterSearchResults,
   JWApiFileEntry, JWApiBrowseResponse,
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
@@ -11,6 +11,13 @@ function breadcrumbs(path: string): { label: string; path: string }[] {
   if (!path) return []
   const parts = path.split('/').filter(Boolean)
   return parts.map((label, i) => ({ label, path: parts.slice(0, i + 1).join('/') }))
+}
+
+// Path join that tolerates a typed name with stray slashes or spaces.
+function joinFolder(base: string, name: string): string {
+  const clean = name.trim().replace(/^\/+|\/+$/g, '')
+  if (!clean) return base
+  return base ? `${base}/${clean}` : clean
 }
 
 function parentFolder(path: string): string {
@@ -52,6 +59,11 @@ interface Props {
   allowFolderSelect?: boolean
   /** Overrides the header text. */
   title?: string
+  /** Check off several files and hand them back at once. Selection survives
+   *  navigation, so a batch can be gathered from more than one folder.
+   *  Requires onSelectMany; onSelect is then unused for files. */
+  multiple?: boolean
+  onSelectMany?: (paths: string[]) => void
 }
 
 // A scoped-down version of ApiFilesView's browser for picking one file out of
@@ -67,7 +79,7 @@ interface Props {
 // Audio mode is the opposite: a song's `path` field in the API is the raw
 // storage path ("Compilation/1. Released Discography/…mp3") and the app builds
 // stream URLs from it, so handing back an absolute URL there would double-wrap.
-export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title }: Props): JSX.Element {
+export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title, multiple = false, onSelectMany }: Props): JSX.Element {
   const isAudio = kind === 'audio'
   // Image mode is the only one that earns a thumbnail grid; audio and 'any'
   // both render the compact list.
@@ -85,6 +97,17 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
   const [loading, setLoading] = useState(!initialQuery)
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([])
+  // Kept across navigation on purpose — gathering a batch usually means
+  // dipping into a few folders before committing.
+  const [checked, setChecked] = useState<string[]>([])
+  // Naming a folder that doesn't exist yet. There's no endpoint that creates
+  // one — the API has no mkdir, and a comp proposal's change types are
+  // upload/replace/move/delete — so this only composes a path. The folder
+  // comes into existence when an upload into it is approved.
+  const [newFolder, setNewFolder] = useState<string | null>(null)
+  const isMulti = multiple && !!onSelectMany
+  const toggle = (path: string): void =>
+    setChecked((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]))
 
   // Seeded from the song title (if any) so the picker opens already showing
   // title-matched results — see the mount effect below for the root prefetch
@@ -308,9 +331,15 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
                 return (
                   <button
                     key={entry.path}
-                    onClick={() => { if (isDir) navigate(entry.path); else onSelect(entry.path) }}
+                    onClick={() => {
+                      if (isDir) navigate(entry.path)
+                      else if (isMulti) toggle(entry.path)
+                      else onSelect(entry.path)
+                    }}
                     title={entry.path}
-                    className="group flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left"
+                    className={`group flex items-center gap-2.5 px-2 py-2 rounded-lg transition-colors text-left ${
+                      isMulti && checked.includes(entry.path) ? 'bg-accent/10' : 'hover:bg-surface-overlay'
+                    }`}
                   >
                     {isDir
                       ? <Folder size={16} className="text-text-secondary group-hover:text-accent transition-colors shrink-0" />
@@ -325,7 +354,9 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
                     </div>
                     {isDir
                       ? <ChevronRight size={13} className="text-text-muted opacity-40 shrink-0" />
-                      : <Check size={13} className="text-accent opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />}
+                      : <Check size={13} className={`text-accent shrink-0 transition-opacity ${
+                          isMulti && checked.includes(entry.path) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        }`} />}
                   </button>
                 )
               })}
@@ -353,7 +384,9 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
                       ) : (
                         <>
                           <img
-                            src={buildStreamUrl(entry.path)}
+                            // Picker thumbnails only — the path handed back on
+                            // select is still the full-size one.
+                            src={smallCoverUrl(buildStreamUrl(entry.path))}
                             alt=""
                             className="w-full h-full object-cover"
                             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
@@ -379,20 +412,86 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
           )}
         </div>
 
-        {allowFolderSelect && (
+        {isMulti && (
           <div className="shrink-0 border-t border-[var(--border)] px-4 py-3 flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Selected folder</p>
-              <p className="text-xs font-mono text-text-primary truncate" title={currentPath || 'Root'}>{currentPath || 'Root'}</p>
+              <p className="text-xs text-text-primary font-medium">
+                {checked.length} file{checked.length === 1 ? '' : 's'} selected
+              </p>
+              {checked.length > 0 && (
+                <button onClick={() => setChecked([])} className="text-[11px] text-text-muted hover:text-text-primary transition-colors">
+                  Clear selection
+                </button>
+              )}
             </div>
             <button
-              onClick={() => onSelect(currentPath)}
-              disabled={isSearching}
-              title={isSearching ? 'Clear the search to pick the folder you are browsing' : 'Use this folder'}
+              onClick={() => onSelectMany?.(checked)}
+              disabled={checked.length === 0}
               className="shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
             >
-              <FolderCheck size={14} /> Use this folder
+              <Check size={14} /> Add {checked.length || ''} file{checked.length === 1 ? '' : 's'}
             </button>
+          </div>
+        )}
+
+        {allowFolderSelect && (
+          <div className="shrink-0 border-t border-[var(--border)] px-4 py-3 space-y-2.5">
+            {newFolder === null ? (
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Selected folder</p>
+                  <p className="text-xs font-mono text-text-primary truncate" title={currentPath || 'Root'}>{currentPath || 'Root'}</p>
+                </div>
+                <button
+                  onClick={() => setNewFolder('')}
+                  disabled={isSearching}
+                  title={isSearching ? 'Clear the search first' : 'Name a new folder inside this one'}
+                  className="shrink-0 px-2.5 py-2 rounded-lg border border-[var(--border)] text-text-secondary hover:text-text-primary hover:border-accent/40 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 transition-colors"
+                >
+                  <FolderPlus size={14} /> New folder
+                </button>
+                <button
+                  onClick={() => onSelect(currentPath)}
+                  disabled={isSearching}
+                  title={isSearching ? 'Clear the search to pick the folder you are browsing' : 'Use this folder'}
+                  className="shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
+                >
+                  <FolderCheck size={14} /> Use this folder
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    autoFocus
+                    value={newFolder}
+                    onChange={(e) => setNewFolder(e.target.value.replace(/^\/+/, ''))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newFolder.trim()) onSelect(joinFolder(currentPath, newFolder))
+                      if (e.key === 'Escape') { e.stopPropagation(); setNewFolder(null) }
+                    }}
+                    placeholder="New folder name"
+                    className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-3 py-2 text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
+                  />
+                  <button onClick={() => setNewFolder(null)}
+                    className="shrink-0 px-2.5 py-2 rounded-lg text-text-muted hover:text-text-primary text-xs font-semibold transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => onSelect(joinFolder(currentPath, newFolder))}
+                    disabled={!newFolder.trim()}
+                    className="shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
+                  >
+                    <FolderCheck size={14} /> Use
+                  </button>
+                </div>
+                <p className="text-[11px] text-text-muted leading-relaxed">
+                  <span className="font-mono text-text-secondary">{joinFolder(currentPath, newFolder) || '…'}</span>
+                  {' '}— the folder is created when an upload into it is approved. An empty folder
+                  can't be proposed on its own.
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>

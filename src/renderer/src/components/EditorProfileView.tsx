@@ -527,6 +527,15 @@ export default function EditorProfileView(): JSX.Element {
               {t.label}
             </button>
           ))}
+          {/* Page-level action, so it lives on the tab row pinned to the far
+              right. Inside the content column it landed mid-viewport, since
+              that column is capped at max-w-2xl. */}
+          {profileTab === 'comp' && (
+            <button onClick={() => setActiveView('contributor')}
+              className="ml-auto mb-2 shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white flex items-center gap-1.5 hover:opacity-90 transition-opacity">
+              <Plus size={12} /> New comp proposal
+            </button>
+          )}
         </div>
       )}
 
@@ -538,15 +547,12 @@ export default function EditorProfileView(): JSX.Element {
         </div>
       ) : profileTab === 'comp' && isContributor ? (
         <div className="flex-1 overflow-y-auto p-5">
-          <div className="flex items-center justify-between mb-4 max-w-2xl">
-            <p className="text-xs text-text-muted">{compProposals.filter(p => p.status === 'approved').length} approved comp proposals</p>
-            <button onClick={() => setActiveView('contributor')} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white flex items-center gap-1.5">
-              <Plus size={12} /> New comp proposal
-            </button>
-          </div>
-          <div className="mb-4 max-w-2xl">
+          <div className="max-w-2xl flex items-center gap-3 flex-wrap mb-2">
             <CompFilterBar filter={compFilter} setFilter={setCompFilter} />
           </div>
+          <p className="max-w-2xl text-xs text-text-muted mb-4">
+            {compProposals.filter(p => p.status === 'approved').length} approved comp proposals
+          </p>
           <CompProposalList
             proposals={filterCompProposals(compProposals, compFilter)}
             loading={loadingComp}

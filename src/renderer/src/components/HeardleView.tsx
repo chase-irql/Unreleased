@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronLeft, Play, Pause, SkipForward, Search, X, Check, Music2,
-  BarChart3, Share2, RefreshCw, AlertCircle, Loader2, Volume2, SlidersHorizontal, RotateCcw,
+  BarChart3, Share2, RefreshCw, AlertCircle, Loader2, Volume2, SlidersHorizontal, RotateCcw, Trophy,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
-import { apiFetch, songToTrack, buildStreamUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
+import { Avatar } from './adminShared'
+import { apiFetch, songToTrack, buildStreamUrl, smallCoverUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { eraFullName, loadEraFullNames } from '../lib/eras'
 import {
@@ -19,6 +20,10 @@ import {
 import type {
   HeardleSong, Guess, GameStatus, PoolId, Stats, DailyMode, VersionMap, HeardleSettings,
 } from '../lib/heardle'
+import {
+  HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize,
+} from '../lib/heardleApi'
+import type { LeaderboardBoard, LeaderboardEntry } from '../lib/heardleApi'
 
 type Mode = DailyMode | 'unlimited'
 
@@ -471,11 +476,150 @@ function StatsPanel({ initialMode, onClose }: { initialMode: DailyMode; onClose:
   )
 }
 
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+/** Standings for the two once-a-day modes. Both run fixed rules (see
+ *  settingsForMode), which is what makes a ranking mean anything.
+ *
+ *  The endpoint doesn't exist yet — see lib/heardleApi. Until it does this
+ *  shows what's waiting to be sent rather than pretending to be empty. */
+function LeaderboardPanel({ initialMode, signedIn, onClose }: {
+  initialMode: DailyMode
+  signedIn: boolean
+  onClose: () => void
+}) {
+  const [board, setBoard] = useState<LeaderboardBoard>('today')
+  const [mode, setMode] = useState<DailyMode>(initialMode)
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([])
+  const [me, setMe] = useState<LeaderboardEntry | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const day = useMemo(() => todayKey(), [])
+  const pending = useMemo(() => outboxSize(), [])
+
+  useEffect(() => {
+    if (!HEARDLE_LEADERBOARD_ENABLED || !signedIn) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    fetchLeaderboard(board, mode, day)
+      .then((res) => {
+        if (cancelled) return
+        setEntries(res.entries ?? [])
+        setMe(res.me ?? null)
+      })
+      .catch((err: Error) => { if (!cancelled) setError(err.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [board, mode, day, signedIn])
+
+  const score = (e: LeaderboardEntry): string => {
+    if (board === 'streak') return `${e.current_streak ?? 0}`
+    if (e.won === false || e.guesses == null) return '—'
+    return `${e.guesses}`
+  }
+
+  const row = (e: LeaderboardEntry, isMe: boolean): JSX.Element => (
+    <div
+      key={`${e.user_id}-${e.rank}`}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
+        isMe ? 'bg-accent/15 border border-accent/30' : ''
+      }`}
+    >
+      <span className="w-6 shrink-0 text-xs font-bold tabular-nums text-text-muted text-right">{e.rank}</span>
+      <Avatar src={e.discord_avatar ?? undefined} name={e.display_name} size={7} />
+      <span className="min-w-0 flex-1 text-sm text-text-primary truncate">{e.display_name}</span>
+      {board === 'streak' && e.max_streak != null && (
+        <span className="shrink-0 text-[10px] text-text-muted">best {e.max_streak}</span>
+      )}
+      <span className="shrink-0 text-sm font-bold tabular-nums text-text-primary">{score(e)}</span>
+    </div>
+  )
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <Trophy size={16} className="text-accent" />
+          <h2 className="text-text-primary font-bold">Leaderboard</h2>
+          <button onClick={onClose} className="ml-auto p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
+            {([['today', 'Today'], ['streak', 'Streaks']] as [LeaderboardBoard, string][]).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setBoard(id)}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  board === id ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex rounded-lg border border-[var(--border)] overflow-hidden ml-auto">
+            {(['daily', 'personal'] as DailyMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                  mode === m ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!HEARDLE_LEADERBOARD_ENABLED ? (
+          <div className="py-8 text-center">
+            <Trophy size={24} className="mx-auto text-text-muted mb-3" />
+            <p className="text-sm text-text-secondary">Leaderboards aren't live yet.</p>
+            <p className="text-xs text-text-muted mt-2 leading-relaxed">
+              The API has no endpoint for them — nothing to rank against until it does. Your finished
+              Daily and Personal rounds are being saved{pending > 0 ? ` (${pending} waiting)` : ''} and
+              will be sent the moment it ships, so you won't start from zero.
+            </p>
+          </div>
+        ) : !signedIn ? (
+          <p className="py-8 text-center text-sm text-text-muted">Sign in to appear on the leaderboard.</p>
+        ) : loading ? (
+          <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
+        ) : error ? (
+          <p className="py-8 text-center text-sm text-red-400">{error}</p>
+        ) : entries.length === 0 ? (
+          <p className="py-8 text-center text-sm text-text-muted">
+            {board === 'today' ? "Nobody's finished today's round yet." : 'No streaks going yet.'}
+          </p>
+        ) : (
+          <>
+            <div className="space-y-0.5">
+              {entries.map((e) => row(e, e.user_id === me?.user_id))}
+            </div>
+            {/* Your own row again when you placed outside the page. */}
+            {me && !entries.some((e) => e.user_id === me.user_id) && (
+              <div className="mt-2 pt-2 border-t border-[var(--border)]">{row(me, true)}</div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── View ─────────────────────────────────────────────────────────────────────
 
 export default function HeardleView(): JSX.Element {
-  const { setActiveView, playTrack, setIsPlaying, isPlaying, volume, setVolume } = useStorePick(
-    'setActiveView', 'playTrack', 'setIsPlaying', 'isPlaying', 'volume', 'setVolume')
+  const { setActiveView, playTrack, setIsPlaying, isPlaying, volume, setVolume, account } = useStorePick(
+    'setActiveView', 'playTrack', 'setIsPlaying', 'isPlaying', 'volume', 'setVolume', 'account')
 
   const [mode, setMode] = useState<Mode>('daily')
   const [settings, setSettings] = useState<HeardleSettings>(() => loadSettings())
@@ -499,6 +643,7 @@ export default function HeardleView(): JSX.Element {
 
   const [showStats, setShowStats] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [countdown, setCountdown] = useState(() => msUntilNextPuzzle())
   const [copied, setCopied] = useState(false)
   const [startAt, setStartAt] = useState(0)
@@ -611,11 +756,27 @@ export default function HeardleView(): JSX.Element {
   }, [isDaily, dailyMode, answer, day, guesses, status])
 
   // Fold a finished round into that mode's stats (once — see recordResult's
-  // lastDay guard).
+  // lastDay guard) and hand it to the leaderboard. submitResult queues rather
+  // than throwing while the endpoint is missing or the user is signed out, so
+  // rounds played today still count once it's live.
   useEffect(() => {
-    if (!isDaily || status === 'playing') return
+    if (!isDaily || status === 'playing' || !answer) return
     recordResult(dailyMode, day, status === 'won', guesses.length)
-  }, [isDaily, dailyMode, status, day, guesses.length])
+    submitResult({
+      day,
+      mode: dailyMode,
+      song_id: answer.id,
+      guesses: guesses.length,
+      won: status === 'won',
+      guess_song_ids: guesses.map((g) => g.songId),
+    })
+    // `guesses` is read whole but only its length can change here — a finished
+    // round's guesses are frozen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDaily, dailyMode, status, day, guesses.length, answer])
+
+  // Deliver anything queued in an earlier session.
+  useEffect(() => { flushResults() }, [account])
 
   useEffect(() => {
     if (!finished) return
@@ -631,7 +792,15 @@ export default function HeardleView(): JSX.Element {
   //
   // Positions are tracked relative to `startAt`, since a "random" clip start
   // means the element's currentTime is offset from what the player sees.
+  // Every start claims a token. Anything that ends playback bumps it, so the
+  // async continuations below (waiting on metadata, on a seek, on play()) can
+  // tell they've been superseded — a start that was still loading when the
+  // view went away would otherwise land on a detached element and play the
+  // song through, unsupervised. Refs survive unmount; audioRef.current doesn't.
+  const playTokenRef = useRef(0)
+
   const stopPlayback = useCallback((): void => {
+    playTokenRef.current++
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     const audio = audioRef.current
     if (audio) { audio.pause(); audio.currentTime = startRef.current }
@@ -649,6 +818,16 @@ export default function HeardleView(): JSX.Element {
     rafRef.current = requestAnimationFrame(tick)
   }, [stopPlayback])
 
+  /** The authoritative cutoff. requestAnimationFrame drives the readout, but
+   *  it stops firing while the page is hidden, so it cannot be what enforces
+   *  the limit — this rides the media element's own timeupdate, which keeps
+   *  firing as long as audio is being decoded. */
+  const enforceLimit = useCallback((): void => {
+    const audio = audioRef.current
+    if (!audio || audio.paused) return
+    if (audio.currentTime - startRef.current >= limitRef.current) stopPlayback()
+  }, [stopPlayback])
+
   const startPlayback = useCallback((): void => {
     const audio = audioRef.current
     if (!audio) return
@@ -658,16 +837,30 @@ export default function HeardleView(): JSX.Element {
     setPreparing(true)
     audio.volume = volume
 
+    const token = ++playTokenRef.current
+    const live = (): boolean => playTokenRef.current === token && !!audioRef.current
+
     // Seeking before the element knows the song's duration is silently
     // dropped, which put the clip back at 0:00 for every timestamp start —
     // wait for metadata (and the seek itself) before playing. Nothing to wait
     // for when the clip starts at the beginning.
     const begin = (): void => {
+      if (!live()) { audio.pause(); return }
       audio.play()
-        .then(() => { setPreparing(false); setPlaying(true); rafRef.current = requestAnimationFrame(tick) })
-        .catch(() => { setPreparing(false); setAudioError(true); setPlaying(false) })
+        .then(() => {
+          // play() resolves asynchronously too — the round can have ended, or
+          // the view gone, in the meantime.
+          if (!live()) { audio.pause(); return }
+          setPreparing(false); setPlaying(true)
+          rafRef.current = requestAnimationFrame(tick)
+        })
+        .catch(() => {
+          if (!live()) return
+          setPreparing(false); setAudioError(true); setPlaying(false)
+        })
     }
     const seekThenPlay = (): void => {
+      if (!live()) { audio.pause(); return }
       if (startRef.current <= 0 || Math.abs(audio.currentTime - startRef.current) < 0.25) { begin(); return }
       audio.addEventListener('seeked', begin, { once: true })
       audio.currentTime = startRef.current
@@ -675,6 +868,17 @@ export default function HeardleView(): JSX.Element {
     if (audio.readyState >= 1 /* HAVE_METADATA */) seekThenPlay()
     else audio.addEventListener('loadedmetadata', seekThenPlay, { once: true })
   }, [isPlaying, setIsPlaying, volume, tick])
+
+  // Leaving the page stops the clip. Without this you could start a snippet,
+  // switch away, and let the song run on underneath — the whole track for
+  // free, on the first guess. Covers a backgrounded tab and a minimised
+  // desktop window; navigating to another view unmounts this component, which
+  // stops it through the cleanup below.
+  useEffect(() => {
+    const onVisibility = (): void => { if (document.hidden) stopPlayback() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [stopPlayback])
 
   // New answer → new source, and never carry playback across rounds.
   useEffect(() => {
@@ -684,7 +888,18 @@ export default function HeardleView(): JSX.Element {
     setAudioError(false)
   }, [answer, stopPlayback])
 
-  useEffect(() => stopPlayback, [stopPlayback])
+  // Teardown. The element is captured on mount rather than read from the ref
+  // in the cleanup: React detaches refs before passive cleanups run, so
+  // audioRef.current can already be null here — and a paused-by-nobody element
+  // keeps playing after the view is gone.
+  useEffect(() => {
+    const audio = audioRef.current
+    return () => {
+      playTokenRef.current++
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      audio?.pause()
+    }
+  }, [])
 
   // ── Guessing ───────────────────────────────────────────────────────────────
   // Suggestions come from the filtered pool: under an era filter, songs that
@@ -798,7 +1013,12 @@ export default function HeardleView(): JSX.Element {
         className="absolute inset-x-0 top-0 h-80 pointer-events-none"
         style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent)' }}
       />
-      <audio ref={audioRef} preload="auto" onError={() => setAudioError(true)} />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        onTimeUpdate={enforceLimit}
+        onError={() => setAudioError(true)}
+      />
 
       {/* Corner controls — the hero owns the middle, so navigation and the
           panels sit out of its way.
@@ -830,6 +1050,13 @@ export default function HeardleView(): JSX.Element {
           className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
         >
           <SlidersHorizontal size={16} />
+        </button>
+        <button
+          onClick={() => setShowLeaderboard(true)}
+          title="Leaderboard"
+          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+        >
+          <Trophy size={16} />
         </button>
         <button
           onClick={() => setShowStats(true)}
@@ -1079,7 +1306,7 @@ export default function HeardleView(): JSX.Element {
                         shared, so showing one early would narrow the field. */}
                     <div className="w-20 h-20 sm:w-24 sm:h-24 shrink-0 rounded-xl border border-[var(--border)] bg-[var(--surface-overlay)] overflow-hidden flex items-center justify-center">
                       {answer.imageUrl
-                        ? <img src={answer.imageUrl} alt="" className="w-full h-full object-cover" />
+                        ? <img src={smallCoverUrl(answer.imageUrl)} alt="" className="w-full h-full object-cover" />
                         : <Music2 size={28} className="text-text-muted" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1126,6 +1353,14 @@ export default function HeardleView(): JSX.Element {
                       </button>
                     )}
                     {isDaily && (
+                      <button
+                        onClick={() => setShowLeaderboard(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                      >
+                        <Trophy size={15} /> Leaderboard
+                      </button>
+                    )}
+                    {isDaily && (
                       <span className="ml-auto text-xs text-text-muted tabular-nums">
                         Next {mode === 'personal' ? 'song' : 'puzzle'} in {formatCountdown(countdown)}
                       </span>
@@ -1146,6 +1381,13 @@ export default function HeardleView(): JSX.Element {
       </div>
 
       {showStats && <StatsPanel initialMode={dailyMode} onClose={() => setShowStats(false)} />}
+      {showLeaderboard && (
+        <LeaderboardPanel
+          initialMode={dailyMode}
+          signedIn={!!account}
+          onClose={() => setShowLeaderboard(false)}
+        />
+      )}
       {showSettings && (
         <SettingsPanel
           settings={settings}

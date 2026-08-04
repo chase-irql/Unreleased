@@ -397,7 +397,13 @@ function extractGeniusLyrics(html: string): string {
 }
 
 /* ── Main export ──────────────────────────────────────────────────────────── */
-export default function EditorPage(): JSX.Element {
+export default function EditorPage({ initialSongId = null }: {
+  /** Song to open on mount, for callers that know their target before this
+   *  page renders (the pop-out editor window boots straight into one). Known
+   *  during the first render, so it beats the currently-playing prefill
+   *  without depending on effect ordering. */
+  initialSongId?: number | null
+} = {}): JSX.Element {
   const {
     account, currentTrack,
     pendingEditorSongId, setPendingEditorSongId, setActiveView, previousView,
@@ -435,7 +441,13 @@ export default function EditorPage(): JSX.Element {
   // "prefill from currently-playing track" effect below would incorrectly
   // fire and race the manual load, sometimes clobbering it with whatever's
   // currently playing.
-  const manualLoadRef = useRef(false)
+  // Starts true when the caller already named a song (initialSongId), so the
+  // prefill effect is blocked from the very first render rather than from the
+  // first effect pass.
+  const manualLoadRef = useRef(initialSongId != null)
+  // Consumed once by the mount effect below; nulled so a later re-render can't
+  // reopen it after the user has closed the song.
+  const bootSongIdRef = useRef<number | null>(initialSongId)
   // True once a song/draft has actually been opened in this visit — lets the
   // "nothing to edit" redirect below tell "backed out of an edit" apart from
   // "landed here fresh with nothing pending" (the latter still goes to the
@@ -654,6 +666,15 @@ export default function EditorPage(): JSX.Element {
     }
     setTimeout(() => setVersionSaveStatus('idle'), 2500)
   }
+
+  // The song this page was mounted for, if the caller named one. Kept until
+  // canEdit is known, since an account still loading would otherwise drop it.
+  useEffect(() => {
+    const id = bootSongIdRef.current
+    if (id == null || !canEdit) return
+    bootSongIdRef.current = null
+    loadSong(id)
+  }, [canEdit, loadSong])
 
   useEffect(() => {
     if (!pendingEditorSongId || !canEdit) return

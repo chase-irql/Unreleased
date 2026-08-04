@@ -3,7 +3,7 @@ import { Check, X, ImageIcon, RotateCcw, Star, Music2, Play, Sparkles, FolderSea
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  JWApiSong, resolvePrefCoverUrl, apiFetch, buildStreamUrl,
+  JWApiSong, resolvePrefCoverUrl, apiFetch, buildStreamUrl, smallCoverUrl,
   parseBrowseEntries, cleanTitleForSearch, filterSearchResults, JWApiBrowseResponse,
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
@@ -258,7 +258,7 @@ export default function SongPrefsSection({
             // Keyed by URL: onError hides the element imperatively, and React
             // would otherwise reuse that hidden node when the cover changes —
             // leaving a working cover invisible after one bad URL.
-            <img key={effectiveCover} src={effectiveCover} alt="" className="w-full h-full object-cover"
+            <img key={effectiveCover} src={smallCoverUrl(effectiveCover)} alt="" className="w-full h-full object-cover"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
           ) : (
             <Music2 size={18} className="text-text-muted opacity-30" />
@@ -296,7 +296,7 @@ export default function SongPrefsSection({
                       title={c.title}
                       className={`relative aspect-square rounded-md overflow-hidden bg-surface-overlay border transition-colors ${active ? 'border-accent' : 'border-transparent hover:border-[var(--border)]'}`}
                     >
-                      <img src={c.url} alt={c.title} className="w-full h-full object-cover"
+                      <img src={smallCoverUrl(c.url)} alt={c.title} className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
                       {active && (
                         <span className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full bg-accent flex items-center justify-center">
@@ -327,7 +327,7 @@ export default function SongPrefsSection({
                       title={c.path}
                       className={`relative aspect-square rounded-md overflow-hidden bg-surface-overlay border transition-colors ${active ? 'border-accent' : 'border-transparent hover:border-[var(--border)]'}`}
                     >
-                      <img src={c.url} alt="" className="w-full h-full object-cover"
+                      <img src={smallCoverUrl(c.url)} alt="" className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
                       {active && (
                         <span className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded-full bg-accent flex items-center justify-center">
@@ -354,7 +354,7 @@ export default function SongPrefsSection({
             <div className="flex items-center gap-1.5">
               <div className="shrink-0 w-8 h-8 rounded-md overflow-hidden bg-surface-overlay flex items-center justify-center">
                 {coverDraftPreview ? (
-                  <img key={coverDraftPreview} src={coverDraftPreview} alt="" className="w-full h-full object-cover"
+                  <img key={coverDraftPreview} src={smallCoverUrl(coverDraftPreview)} alt="" className="w-full h-full object-cover"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                 ) : (
                   <ImageIcon size={12} className="text-text-muted opacity-40" />
