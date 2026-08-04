@@ -4,7 +4,8 @@ import { X, Music, ChevronUp, ChevronDown, Pencil, Info } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import LyricsDisplay from './LyricsDisplay'
 import SongInfoModal from './SongInfoModal'
-import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
+import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
+import { ProgressiveCover } from './ProgressiveCover'
 
 export default function NowPlaying(): JSX.Element {
   const {
@@ -123,7 +124,7 @@ export default function NowPlaying(): JSX.Element {
                 <div className="px-6 shrink-0">
                   <div className={`${isMobile ? 'h-48' : 'aspect-square'} w-full rounded-xl overflow-hidden bg-surface-overlay shadow-2xl`}>
                     {artSrc ? (
-                      <img src={artSrc} alt="Album Art" className="w-full h-full object-cover" />
+                      <ProgressiveCover src={artSrc} alt="Album Art" className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <Music className="text-text-muted w-16 h-16" />
@@ -139,7 +140,7 @@ export default function NowPlaying(): JSX.Element {
                 <div className={`px-6 shrink-0 ${artCollapsed ? 'pt-2 pb-3' : 'py-3'}`}>
                   {artCollapsed && (
                     <div className="flex gap-3 items-center mb-3">
-                      {artSrc && <img src={artSrc} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
+                      {artSrc && <img src={smallCoverUrl(artSrc)} alt="" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
                       <div className="min-w-0">
                         <p className="text-text-primary font-bold text-base truncate" title={currentTrack.title}>{currentTrack.title}</p>
                         <p className="text-text-muted text-xs truncate">{currentTrack.artist}</p>

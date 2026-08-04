@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useStore, useStorePick } from '../store/useStore'
-import { buildImageUrl } from './juicewrldApi'
+import { buildImageUrl, smallCoverUrl } from './juicewrldApi'
 import { getFont } from './fonts'
 import { getSkin, SKIN_OPTIONAL_VAR_KEYS, type Skin } from './skins'
 
@@ -166,9 +166,12 @@ export function useThemeEffects(): void {
   // Only the dynamic skin subscribes to the current song's art (same source
   // chain WrldView uses for the big cover); null otherwise so track changes
   // don't rerun the effect for static skins.
+  // Degraded where available: the palette is averaged down to a handful of
+  // colours anyway, so a 128px copy yields the same result as the 600px one and
+  // repaints the skin a lot sooner after a track change.
   const songArt = useStore((s) =>
     skin.dynamic
-      ? buildImageUrl(s.currentTrackFull?.albumArt ?? s.currentTrack?.imageUrl ?? null) ?? null
+      ? smallCoverUrl(buildImageUrl(s.currentTrackFull?.albumArt ?? s.currentTrack?.imageUrl ?? null)) ?? null
       : null,
   )
 

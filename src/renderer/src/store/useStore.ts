@@ -308,6 +308,11 @@ interface AppState {
   playlistsSelectedId: number | null
   playlistsSelectedLocalId: string | null
 
+  // A comp proposal started from the Files page's context menu — the
+   // contributor page reads it once on mount and clears it, the same
+   // hand-off pendingEditorSongId does for the song editor.
+  pendingCompProposal: { paths: string[]; changeType: 'delete' | 'replace' } | null
+
   // Editor
   pendingEditorSongId: number | null
   pendingEditProposal: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null
@@ -550,6 +555,7 @@ interface AppActions {
   setPlaylistsSelectedId: (id: number | null) => void
   setPlaylistsSelectedLocalId: (id: string | null) => void
 
+  setPendingCompProposal: (v: { paths: string[]; changeType: 'delete' | 'replace' } | null) => void
   setPendingEditorSongId: (id: number | null) => void
   // "Edit this song" from anywhere — desktop opens the pop-out editor
   // window, web navigates to the in-app editor view.
@@ -1635,6 +1641,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   // ── Editor ────────────────────────────────────────────────────────────────
+  pendingCompProposal: null,
   pendingEditorSongId: null,
   pendingEditProposal: null,
   pendingLocalEditTrack: null,
@@ -1642,12 +1649,22 @@ export const useStore = create<AppStore>((set, get, store) => ({
   openBulkEditor: (songs) => set({ bulkEdit: songs.length ? { kind: 'api', songs } : null }),
   openBulkTrackEditor: (tracks) => set({ bulkEdit: tracks.length ? { kind: 'local', tracks } : null }),
   closeBulkEditor: () => set({ bulkEdit: null }),
+  setPendingCompProposal: (pendingCompProposal) => set({ pendingCompProposal }),
   setPendingEditorSongId: (pendingEditorSongId) => set({ pendingEditorSongId }),
   openSongEditor: (songId) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const el = (window as any).electron
     if (el?.openFloatWindow && get().popoutWindows.editor) {
       el.openFloatWindow('editor', { songId })
+      return
+    }
+    // Pop-outs render whichever view their URL names — they have no in-app
+    // router, so setting activeView here would silently do nothing (this is
+    // how "Edit" in a pop-out song-info window used to be a dead button).
+    // Hand it to the main window instead, same as the attach button does.
+    if (IS_FLOAT_WINDOW) {
+      el?.windowSyncSend?.({ type: 'attach', target: { view: 'editor', songId } })
+      el?.focusMainWindow?.()
       return
     }
     set({ pendingEditorSongId: songId })
@@ -1660,6 +1677,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const el = (window as any).electron
     if (el?.openFloatWindow && get().popoutWindows.localEditor) {
       el.openFloatWindow('local-editor', { trackId: track.id })
+      return
+    }
+    // Same dead-button problem as openSongEditor above — a pop-out can't
+    // navigate itself, so the main window opens the editor instead. It looks
+    // the track up by id from its own library rather than taking this object.
+    if (IS_FLOAT_WINDOW) {
+      el?.windowSyncSend?.({ type: 'attach', target: { view: 'local-editor', trackId: track.id } })
+      el?.focusMainWindow?.()
       return
     }
     set({ pendingLocalEditTrack: track })

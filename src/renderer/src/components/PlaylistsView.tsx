@@ -12,7 +12,8 @@ import * as userApi from '../lib/userApi'
 import type { PlaylistDetail, PlaylistSummary } from '../lib/userApi'
 import { Track, LocalPlaylist, LibraryTrack } from '../types'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
-import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl } from '../lib/juicewrldApi'
+import { ProgressiveCover } from './ProgressiveCover'
+import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl, smallCoverUrl } from '../lib/juicewrldApi'
 import { toFileUrl, libraryTrackToTrack as libTrackToTrack } from '../lib/fileTypes'
 import { formatDuration, formatTotalDuration } from '../lib/format'
 import { fisherYates } from '../store/queueSlice'
@@ -41,11 +42,13 @@ function PlaylistMosaic({ tracks, className = '' }: { tracks: Track[]; className
       </div>
     )
   }
-  if (artUrls.length < 4) return <img src={artUrls[0]} alt="" className={`object-cover ${className}`} />
+  if (artUrls.length < 4) return <ProgressiveCover src={artUrls[0]} className={`object-cover ${className}`} />
   return (
     <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
+      {/* Each quadrant is half the box, so the degraded covers are enough — and
+          four full-size ones per playlist is exactly the load worth avoiding. */}
       {artUrls.map((url, i) => (
-        <img key={i} src={url} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
+        <img key={i} src={smallCoverUrl(url)} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
       ))}
     </div>
   )
@@ -59,7 +62,9 @@ function HeroBackdrop({ src }: { src?: string | null }): JSX.Element {
     <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 0 }}>
       {src && (
         <img
-          src={src}
+          // Blurred past recognition, so the degraded copy is indistinguishable
+          // from the original and shows up far sooner.
+          src={smallCoverUrl(src)}
           alt=""
           className="absolute inset-0 w-full h-full object-cover"
           style={{ filter: 'blur(50px) saturate(1.7) brightness(0.5)', transform: 'scale(1.3)' }}
@@ -1302,10 +1307,10 @@ export default function PlaylistsView(): JSX.Element {
           const imgs = mosaicImages[p.id] ?? []
           if (imgs.length >= 4) return (
             <div className="w-full h-full grid grid-cols-2" style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
-              {imgs.map((url, i) => <img key={i} src={url} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />)}
+              {imgs.map((url, i) => <img key={i} src={smallCoverUrl(url)} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />)}
             </div>
           )
-          if (imgs.length > 0) return <img src={imgs[0]} alt="" className="w-full h-full object-cover" />
+          if (imgs.length > 0) return <img src={smallCoverUrl(imgs[0])} alt="" className="w-full h-full object-cover" />
           return (
             <div className="w-full h-full bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center">
               <Music2 size={40} className="text-accent/50" />

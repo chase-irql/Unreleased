@@ -27,7 +27,7 @@ import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
-import { apiFetch, JWApiSong } from '../lib/juicewrldApi'
+import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
 import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
@@ -1449,7 +1449,7 @@ export default function Player(): JSX.Element {
                 ? <img src={radioFmMatchedSong.imageUrl} alt="" className="w-full h-full object-cover" />
                 : <div className="w-full h-full bg-gradient-to-br from-red-900/70 to-black flex items-center justify-center"><Radio size={16} className="text-red-400 opacity-80" /></div>
             ) : (!coverArtError && (currentTrackFull?.albumArt ?? currentTrack?.imageUrl)) ? (
-              <img src={currentTrackFull?.albumArt ?? currentTrack?.imageUrl} alt="" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
+              <img src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-text-muted">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
@@ -1562,7 +1562,7 @@ export default function Player(): JSX.Element {
                 ? <img src={radioFmMatchedSong.imageUrl} alt="" className="w-full h-full object-cover" />
                 : <div className="w-full h-full bg-gradient-to-br from-red-900/70 to-black flex items-center justify-center"><Radio size={22} className="text-red-400 opacity-80" /></div>
             ) : (!coverArtError && (currentTrackFull?.albumArt ?? currentTrack?.imageUrl)) ? (
-              <img src={currentTrackFull?.albumArt ?? currentTrack?.imageUrl} alt="Album art" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
+              <img src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="Album art" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-text-muted">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">

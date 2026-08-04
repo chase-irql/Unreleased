@@ -24,6 +24,7 @@ import { useStorePick } from '../store/useStore'
 import { sendPlayerCommand } from '../lib/windowSync'
 import { formatDuration } from '../lib/format'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
+import { ProgressiveCover } from './ProgressiveCover'
 import LyricsDisplay from './LyricsDisplay'
 import type { Track } from '../types'
 
@@ -403,7 +404,7 @@ export default function MiniPlayer(): JSX.Element {
                 <Radio size={28} className="text-red-400 opacity-80" />
               </div>
             ) : artSrc && !artError ? (
-              <img src={artSrc} alt="" className="w-full h-full object-cover" onError={() => setArtError(true)} />
+              <ProgressiveCover src={artSrc} className="w-full h-full object-cover" onError={() => setArtError(true)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-text-muted">
                 <Music size={28} className="opacity-40" />

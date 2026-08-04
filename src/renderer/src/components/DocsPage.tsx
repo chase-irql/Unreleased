@@ -475,8 +475,15 @@ function FilesTab() {
           headers={['Param', 'Required', 'Description']}
           rows={[
             [<Code>path</Code>, 'Yes', 'Audio file path relative to compilation root'],
+            [<Code>small</Code>, 'No', <>&quot;true&quot; — returns a degraded ~128px JPEG instead of the full-size embedded art</>],
           ]}
         />
+        <p className="text-xs text-text-muted">
+          The original is often a 600×600 PNG around 1&nbsp;MB. <Code>small=true</Code> serves the same image
+          downscaled to a few KB — use it for anything drawn at thumbnail size, and as a fast first paint
+          before the full-size one loads.
+        </p>
+        <Pre>{`GET /files/cover-art/?path=Compilation/…/Lucid Dreams.mp3&small=true`}</Pre>
       </Section>
 
       <Section title="GET /files/download/ — Audio Stream">

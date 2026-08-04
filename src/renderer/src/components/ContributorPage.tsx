@@ -7,15 +7,23 @@ import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import type { CompFileProposal, CompProposalChangeType, EditorApplication } from '../lib/userApi'
+import type { ViewType } from '../types'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
 import FilePickerModal from './FilePickerModal'
 
 /** Which field the browse modal is currently filling. Upload and a move's
  *  destination name a path that doesn't exist yet, so those browse for a
  *  folder and the filename is appended; the rest point at a real file. */
-type PickerTarget = 'file' | 'upload-folder' | 'dest-folder'
+type PickerTarget = 'file' | 'upload-folder' | 'dest-folder' | 'delete-files'
 
 const basename = (path: string): string => path.split('/').filter(Boolean).pop() ?? ''
+const parentOf = (path: string): string => path.split('/').filter(Boolean).slice(0, -1).join('/')
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 const joinPath = (folder: string, name: string): string => (folder ? `${folder}/${name}` : name)
 
 type SubmitState = 'idle' | 'submitting' | 'submitted' | 'error'
@@ -93,16 +101,27 @@ function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejec
 }
 
 export default function ContributorPage(): JSX.Element {
-  const { account, setActiveView } = useStorePick('account', 'setActiveView')
+  const { account, setActiveView, previousView, pendingCompProposal, setPendingCompProposal } = useStorePick('account', 'setActiveView', 'previousView', 'pendingCompProposal', 'setPendingCompProposal')
   const [application, setApplication] = useState<EditorApplication | null | undefined>(undefined)
   const [proposals, setProposals] = useState<CompFileProposal[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<CompFilterTab>('all')
-  const [filePath, setFilePath] = useState('')
-  const [destinationPath, setDestinationPath] = useState('')
+  // The API takes one `file_path`, but typing a whole path by hand is what
+  // made this page painful — a folder comes from the browser, a filename from
+  // the file you picked or from typing. They're joined on submit.
+  const [folderPath, setFolderPath] = useState('')
+  const [fileName, setFileName] = useState('')
+  const [destFolder, setDestFolder] = useState('')
+  const [destFileName, setDestFileName] = useState('')
   const [changeType, setChangeType] = useState<CompProposalChangeType>('upload')
   const [notes, setNotes] = useState('')
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  // A batch shares one folder, change type and note; the API takes one file
+  // per proposal, so N files become N proposals submitted in sequence.
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
+  // Delete works off existing paths rather than local files, so it keeps its
+  // own list — gathered from the picker's multi-select.
+  const [deletePaths, setDeletePaths] = useState<string[]>([])
   const [submitState, setSubmitState] = useState<SubmitState>('idle')
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
@@ -110,6 +129,15 @@ export default function ContributorPage(): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isContributor = !!(account?.is_contributor || account?.is_administrator)
+
+  // Where "back" goes. Prefer the profile the user actually arrived from —
+  // an editor-contributor reaches this page from the editor profile, and
+  // sending them to the contributor profile strands them without the
+  // Proposals/Reports tabs. Fall back to whichever profile their role owns
+  // (same rule as Sidebar/BottomNav) when they deep-linked straight here.
+  const backView: ViewType = previousView === 'editor-profile' || previousView === 'contributor-profile'
+    ? previousView
+    : account?.is_editor || account?.is_administrator ? 'editor-profile' : 'contributor-profile'
 
   const reload = (): void => {
     if (!isContributor) return
@@ -128,31 +156,118 @@ export default function ContributorPage(): JSX.Element {
     else setLoading(false)
   }, [account, isContributor])
 
+  // Arrived from the Files context menu with a file already in mind. Consumed
+  // once and cleared, so coming back to this page later starts blank instead
+  // of silently re-arming the last proposal.
+  useEffect(() => {
+    if (!pendingCompProposal || !isContributor) return
+    const { paths, changeType: type } = pendingCompProposal
+    if (paths.length === 0) { setPendingCompProposal(null); return }
+    setChangeType(type)
+    if (type === 'delete') {
+      setDeletePaths((prev) => [...prev, ...paths.filter((x) => !prev.includes(x))])
+    } else {
+      // Replace is single by definition — a selection can only seed the first.
+      setFolderPath(parentOf(paths[0]))
+      setFileName(basename(paths[0]))
+    }
+    setSubmitError(null)
+    setPendingCompProposal(null)
+  }, [pendingCompProposal, isContributor, setPendingCompProposal])
+
   const filtered = filterCompProposals(proposals, filter)
+  const cleanFolder = folderPath.trim().replace(/\/+$/, '')
+  const filePath = joinPath(cleanFolder, fileName.trim())
+  const carriesFile = changeType !== 'delete' && changeType !== 'move'
+  // Upload is the only type that batches local files: a replace targets one
+  // existing file with one new body, and a move renames one path to another.
+  const isUpload = changeType === 'upload'
+  const isDelete = changeType === 'delete'
+  // Past one file each keeps its own name, so the editable filename field is
+  // replaced by the batch list. One file still allows renaming on upload.
+  const isBatch = (isUpload && selectedFiles.length > 1) || (isDelete && deletePaths.length > 1)
+  const batchPaths = selectedFiles.map((f) => joinPath(cleanFolder, f.name))
+  // Delete drives everything off its own list, so the folder/filename pair is
+  // hidden for it entirely.
+  const usesPathFields = !isDelete
+  const destinationPath = joinPath(destFolder.trim().replace(/\/+$/, ''), destFileName.trim())
+
+  const buildForm = (path: string, file: File | null): FormData => {
+    const form = new FormData()
+    form.append('file_path', path)
+    if (changeType === 'move') form.append('destination_path', destinationPath)
+    form.append('change_type', changeType)
+    form.append('contributor_notes', notes)
+    if (file) form.append('file', file)
+    return form
+  }
 
   const submitProposal = async (): Promise<void> => {
-    if (!filePath.trim() || submitState === 'submitting') return
-    if (changeType === 'move' && !destinationPath.trim()) {
-      setSubmitError('Enter a destination path for move proposals.')
+    if (submitState === 'submitting') return
+    if (isDelete && deletePaths.length === 0) {
+      setSubmitError('Pick at least one file to delete.')
       return
     }
-    if (changeType !== 'delete' && changeType !== 'move' && !selectedFile) {
+    if (usesPathFields && !isBatch && !fileName.trim()) {
+      setSubmitError('Enter a filename.')
+      return
+    }
+    if (changeType === 'move' && !destFileName.trim()) {
+      setSubmitError('Enter a destination filename for move proposals.')
+      return
+    }
+    if (carriesFile && selectedFiles.length === 0) {
       setSubmitError('Select a file for upload or replace proposals.')
       return
     }
     setSubmitState('submitting')
     setSubmitError(null)
-    const form = new FormData()
-    form.append('file_path', filePath.trim())
-    if (changeType === 'move') form.append('destination_path', destinationPath.trim())
-    form.append('change_type', changeType)
-    form.append('contributor_notes', notes)
-    if (selectedFile) form.append('file', selectedFile)
+
+    // Sequential, not Promise.all: these carry file bodies, and a batch of
+    // twenty firing at once is a good way to get rate-limited halfway through
+    // with no idea which ones landed.
+    const jobs = isDelete
+      ? deletePaths.map((path) => ({ path, file: null as File | null }))
+      : isUpload && selectedFiles.length > 1
+        ? selectedFiles.map((file, i) => ({ path: batchPaths[i], file: file as File | null }))
+        : [{ path: filePath, file: selectedFiles[0] ?? null }]
+    const failed: string[] = []
+    setBatchProgress(jobs.length > 1 ? { done: 0, total: jobs.length } : null)
+    for (const [i, job] of jobs.entries()) {
+      try {
+        await userApi.createCompProposal(buildForm(job.path, job.file))
+      } catch {
+        failed.push(basename(job.path))
+      }
+      if (jobs.length > 1) setBatchProgress({ done: i + 1, total: jobs.length })
+    }
+    setBatchProgress(null)
+
+    // A partial batch is the interesting case: the ones that landed are real
+    // proposals, so don't roll the form back as if nothing happened — keep
+    // the failures named and let them retry just those.
+    if (failed.length === jobs.length) {
+      setSubmitState('error')
+      setSubmitError(jobs.length > 1 ? 'None of the files could be submitted.' : 'Submission failed')
+      setTimeout(() => setSubmitState('idle'), 4000)
+      reload()
+      return
+    }
+    if (failed.length > 0) {
+      setSubmitState('error')
+      setSubmitError(`${jobs.length - failed.length} of ${jobs.length} submitted. Failed: ${failed.join(', ')}`)
+      setTimeout(() => setSubmitState('idle'), 6000)
+      reload()
+      return
+    }
+
     try {
-      await userApi.createCompProposal(form)
       setSubmitState('submitted')
-      setSelectedFile(null)
+      setSelectedFiles([])
+      setDeletePaths([])
       setNotes('')
+      setFileName('')
+      setDestFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
       reload()
       setTimeout(() => setSubmitState('idle'), 2000)
@@ -217,7 +332,8 @@ export default function ContributorPage(): JSX.Element {
   return (
     <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
       <div className="shrink-0 flex items-center gap-3 px-5 py-4 border-b border-[var(--border)]">
-        <button onClick={() => setActiveView('contributor-profile')} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors">
+        <button onClick={() => setActiveView(backView)} title="Back to your profile"
+          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors">
           <ChevronLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
@@ -236,12 +352,13 @@ export default function ContributorPage(): JSX.Element {
         <div className="max-w-3xl mx-auto px-5 py-6 space-y-6">
           <section className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-5 space-y-4">
             <h2 className="text-sm font-bold text-text-primary">New proposal</h2>
-            <div>
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-                {changeType === 'move' ? 'Source path (relative to comp/)' : 'Target path (relative to comp/)'}
+            {usesPathFields && (
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
+                {changeType === 'move' ? 'Source (relative to comp/)' : 'Target (relative to comp/)'}
               </label>
-              <div className="mt-1.5 flex gap-2">
-                <input value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="Compilation/My Song.mp3"
+              <div className="flex gap-2">
+                <input value={folderPath} onChange={e => setFolderPath(e.target.value)} placeholder="Folder — e.g. Compilation/Unreleased"
                   className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
                 <button
                   type="button"
@@ -252,12 +369,60 @@ export default function ContributorPage(): JSX.Element {
                   <FolderSearch size={14} /> Browse
                 </button>
               </div>
+              {!isBatch && (
+                <input value={fileName} onChange={e => setFileName(e.target.value)} placeholder="Filename — e.g. My Song.mp3"
+                  className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+              )}
+              {/* The joined value is what actually gets submitted, so show it
+                  rather than making the contributor assemble it mentally. */}
+              {!isBatch && (
+                <p className="text-[11px] font-mono text-text-muted truncate" title={filePath || undefined}>
+                  {filePath ? `comp/${filePath}` : 'comp/…'}
+                </p>
+              )}
             </div>
+            )}
+
+            {isDelete && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                    Files to delete
+                  </label>
+                  <button type="button" onClick={() => setPicker('delete-files')}
+                    className="shrink-0 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-surface-overlay text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors flex items-center gap-1.5 text-xs font-semibold">
+                    <FolderSearch size={14} /> Pick files
+                  </button>
+                </div>
+                {deletePaths.length === 0 ? (
+                  <p className="text-xs text-text-muted py-2">No files picked yet.</p>
+                ) : (
+                  <div className="rounded-xl border border-[var(--border)] divide-y divide-[var(--border)] overflow-hidden">
+                    {deletePaths.map((path) => (
+                      <div key={path} className="flex items-center gap-2 px-3 py-2">
+                        <Trash2 size={13} className="text-text-muted shrink-0" />
+                        <span className="text-xs font-mono text-text-primary truncate flex-1 min-w-0" title={`comp/${path}`}>{path}</span>
+                        <button type="button" onClick={() => setDeletePaths(prev => prev.filter(x => x !== path))}
+                          title="Remove from this batch"
+                          className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0">
+                          <XCircle size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {deletePaths.length > 1 && (
+                  <p className="text-[11px] text-text-muted leading-relaxed">
+                    {deletePaths.length} separate deletion proposals, reviewed individually.
+                  </p>
+                )}
+              </div>
+            )}
             {changeType === 'move' && (
-              <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Destination path (relative to comp/)</label>
-                <div className="mt-1.5 flex gap-2">
-                  <input value={destinationPath} onChange={e => setDestinationPath(e.target.value)} placeholder="Compilation/Renamed Song.mp3"
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">Destination (relative to comp/)</label>
+                <div className="flex gap-2">
+                  <input value={destFolder} onChange={e => setDestFolder(e.target.value)} placeholder="Folder — e.g. Compilation/Released"
                     className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
                   <button
                     type="button"
@@ -268,6 +433,11 @@ export default function ContributorPage(): JSX.Element {
                     <FolderSearch size={14} /> Browse
                   </button>
                 </div>
+                <input value={destFileName} onChange={e => setDestFileName(e.target.value)} placeholder="Filename — leave as-is to keep the name"
+                  className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
+                <p className="text-[11px] font-mono text-text-muted truncate" title={destinationPath || undefined}>
+                  {destinationPath ? `comp/${destinationPath}` : 'comp/…'}
+                </p>
               </div>
             )}
             <div className="flex flex-wrap gap-2">
@@ -278,31 +448,70 @@ export default function ContributorPage(): JSX.Element {
                 </button>
               ))}
             </div>
-            {changeType !== 'delete' && changeType !== 'move' && (
+            {carriesFile && (
               <div>
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">File</label>
-                <div className="mt-1.5 flex items-center gap-3">
-                  <input ref={fileInputRef} type="file"
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                  {isUpload ? 'Files' : 'File'}
+                  {isUpload && <span className="normal-case tracking-normal font-normal opacity-70"> — pick several to propose them all into the folder above</span>}
+                </label>
+                <div className="mt-1.5">
+                  <input ref={fileInputRef} type="file" multiple={isUpload}
                     onChange={e => {
-                      const file = e.target.files?.[0] ?? null
-                      setSelectedFile(file)
-                      // A folder picked before the file leaves a trailing
-                      // slash — fill the name in rather than making the user
-                      // retype what they just chose from disk.
-                      if (file && (!filePath.trim() || filePath.endsWith('/'))) setFilePath(filePath + file.name)
+                      // A replace swaps one file's contents, so it never
+                      // takes more than the first even if the OS dialog is
+                      // coaxed into handing over several.
+                      const files = Array.from(e.target.files ?? []).slice(0, isUpload ? Infinity : 1)
+                      setSelectedFiles(files)
+                      // Don't make them retype the name of the file they just
+                      // picked off disk — but never clobber one they typed.
+                      // Only meaningful for a single file; a batch keeps each
+                      // file's own name.
+                      if (files.length === 1 && !fileName.trim()) setFileName(files[0].name)
                     }}
                     className="text-sm text-text-muted file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-accent/15 file:text-accent file:text-xs file:font-semibold" />
-                  {selectedFile && <span className="text-xs text-text-muted truncate">{selectedFile.name}</span>}
                 </div>
+                {selectedFiles.length > 0 && (
+                  <div className="mt-2.5 rounded-xl border border-[var(--border)] divide-y divide-[var(--border)] overflow-hidden">
+                    {selectedFiles.map((f, i) => (
+                      <div key={`${f.name}-${i}`} className="flex items-center gap-2 px-3 py-2">
+                        <FileUp size={13} className="text-text-muted shrink-0" />
+                        <span className="text-xs font-mono text-text-primary truncate flex-1 min-w-0"
+                          title={isBatch ? `comp/${batchPaths[i]}` : undefined}>
+                          {isBatch ? batchPaths[i] : f.name}
+                        </span>
+                        <span className="text-[10px] text-text-muted shrink-0 tabular-nums">{formatBytes(f.size)}</span>
+                        <button type="button" onClick={() => setSelectedFiles(prev => prev.filter((_, j) => j !== i))}
+                          title="Remove from this batch"
+                          className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0">
+                          <XCircle size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {isBatch && (
+                  <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
+                    {selectedFiles.length} separate proposals, one per file, each keeping its own
+                    name under <span className="font-mono">comp/{cleanFolder || '…'}</span>. Reviewers
+                    approve or reject them individually.
+                  </p>
+                )}
               </div>
             )}
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Notes for reviewers (optional)"
               className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent resize-none" />
             {submitError && <p className="text-sm text-red-400 flex items-center gap-1.5"><AlertCircle size={14} />{submitError}</p>}
-            <button onClick={submitProposal} disabled={submitState === 'submitting' || !filePath.trim() || (changeType === 'move' && !destinationPath.trim())}
+            <button onClick={submitProposal}
+              disabled={submitState === 'submitting'
+                || (isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
+                || (carriesFile && selectedFiles.length === 0)
+                || (changeType === 'move' && !destFileName.trim())}
               className="px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold disabled:opacity-40 flex items-center gap-2">
               {submitState === 'submitting' ? <Loader2 size={15} className="animate-spin" /> : submitState === 'submitted' ? <Check size={15} /> : <FileUp size={15} />}
-              {submitState === 'submitted' ? 'Submitted' : 'Submit proposal'}
+              {submitState === 'submitted' ? 'Submitted'
+                : batchProgress ? `Submitting ${batchProgress.done}/${batchProgress.total}…`
+                : isBatch ? `Submit ${isDelete ? deletePaths.length : selectedFiles.length} proposals`
+                : 'Submit proposal'}
             </button>
           </section>
 
@@ -326,24 +535,33 @@ export default function ContributorPage(): JSX.Element {
           // 'any' rather than 'audio': a comp proposal can target artwork or a
           // tracklist just as easily as a song.
           kind="any"
-          allowFolderSelect={picker !== 'file'}
+          allowFolderSelect={picker === 'upload-folder' || picker === 'dest-folder'}
+          multiple={picker === 'delete-files'}
+          onSelectMany={(paths) => {
+            setDeletePaths(prev => [...prev, ...paths.filter(x => !prev.includes(x))])
+            setSubmitError(null)
+            setPicker(null)
+          }}
           title={
             picker === 'file' ? 'Pick the file this proposal applies to'
+              : picker === 'delete-files' ? 'Pick the files to delete'
               : picker === 'upload-folder' ? 'Pick the folder to upload into'
               : 'Pick the folder to move it into'
           }
           onClose={() => setPicker(null)}
           onSelect={(path) => {
             if (picker === 'file') {
-              setFilePath(path)
+              // A picked file fills both halves.
+              setFolderPath(parentOf(path))
+              setFileName(basename(path))
             } else if (picker === 'upload-folder') {
-              // Folder mode hands back the folder; the filename comes from the
-              // chosen local file, or is left for the user after the slash.
-              setFilePath(selectedFile ? joinPath(path, selectedFile.name) : path ? `${path}/` : '')
+              setFolderPath(path)
+              if (!fileName.trim() && selectedFiles.length === 1) setFileName(selectedFiles[0].name)
             } else {
+              setDestFolder(path)
               // A move keeps its filename unless the user renames it — that's
               // the whole difference between a move and a rename.
-              setDestinationPath(joinPath(path, basename(filePath)))
+              if (!destFileName.trim()) setDestFileName(fileName.trim())
             }
             setSubmitError(null)
             setPicker(null)

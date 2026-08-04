@@ -4,16 +4,18 @@ import {
   FolderOpen, HardDrive, LayoutList, LayoutGrid, ImageIcon, Video,
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
-  Filter, MoreHorizontal, Clipboard, Plus, ListMusic,
+  Filter, MoreHorizontal, Clipboard, Plus, ListMusic, Replace, Trash2,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
+import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import { placeFlyout } from '../lib/menuFlyout'
 import {
   apiFetch,
   apiPeek,
   buildStreamUrl,
   buildCoverArtUrl,
+  smallCoverUrl,
   apiFileTrackId,
   apiFilePathToTrack,
   parseBrowseEntries as parseEntries,
@@ -25,6 +27,7 @@ import {
 } from '../lib/juicewrldApi'
 import { getFileExt, getMediaType, toFileUrl } from '../lib/fileTypes'
 import { Track } from '../types'
+import { ProgressiveCover } from './ProgressiveCover'
 import MediaLightbox, { LightboxItem } from './MediaLightbox'
 import SongInfoModal from './SongInfoModal'
 
@@ -92,7 +95,7 @@ function ApiCoverThumb({ path, size = 36 }: { path: string; size?: number }): JS
   }
   return (
     <img
-      src={buildCoverArtUrl(path)}
+      src={buildCoverArtUrl(path, true)}
       alt=""
       className="rounded object-cover"
       style={{ width: size, height: size }}
@@ -112,7 +115,10 @@ function ApiImageThumb({ path, size = 36 }: { path: string; size?: number }): JS
   }
   return (
     <img
-      src={buildStreamUrl(path)}
+      // Image entries are served whole by /files/download/ — a browse folder of
+      // cover art is hundreds of KB per row at full size, so thumbnails take the
+      // degraded copy. The lightbox still opens the original.
+      src={smallCoverUrl(buildStreamUrl(path))}
       alt=""
       className="rounded object-cover"
       style={{ width: size, height: size }}
@@ -153,8 +159,9 @@ function urlToPath(pathname: string): string {
 }
 
 export default function ApiFilesView(): JSX.Element {
-  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, likedTrackIds, toggleLike, playlists, refreshPlaylists, setShowUserAuth } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'likedTrackIds', 'toggleLike', 'playlists', 'refreshPlaylists', 'setShowUserAuth')
+  const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, setPendingCompProposal, likedTrackIds, toggleLike, playlists, refreshPlaylists, setShowUserAuth } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'setPendingCompProposal', 'likedTrackIds', 'toggleLike', 'playlists', 'refreshPlaylists', 'setShowUserAuth')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
+  const canPropose = CONTRIBUTOR_ENABLED && !!(account?.is_contributor || account?.is_administrator)
   // Set lookup for the per-row liked check — .includes on the array made the
   // listing O(rows × likes).
   const likedSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds])
@@ -1089,7 +1096,7 @@ export default function ApiFilesView(): JSX.Element {
                         <Folder size={40} className={`transition-colors ${isSelected ? 'text-accent' : 'text-text-secondary group-hover:text-accent'}`} />
                       ) : mt === 'audio' ? (
                         <>
-                          <img src={buildCoverArtUrl(entry.path)} alt="" className="w-full h-full object-cover"
+                          <ProgressiveCover src={buildCoverArtUrl(entry.path)} className="w-full h-full object-cover"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                           {!selectMode && (
                             <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -1101,7 +1108,7 @@ export default function ApiFilesView(): JSX.Element {
                         </>
                       ) : mt === 'image' ? (
                         <>
-                          <img src={buildStreamUrl(entry.path)} alt={entry.name} className="w-full h-full object-cover"
+                          <ProgressiveCover src={buildStreamUrl(entry.path)} alt={entry.name} className="w-full h-full object-cover"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                           {!selectMode && (
                             <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -1187,6 +1194,26 @@ export default function ApiFilesView(): JSX.Element {
             >
               Clear
             </button>
+            {/* Deletion only: a replace swaps one file's body for another,
+                which has no meaning across a selection. Directories are
+                dropped — proposals target files. */}
+            {canPropose && (
+              <button
+                onClick={() => {
+                  const paths = filteredEntries
+                    .filter(e => e.type !== 'directory' && selectedPaths.has(e.path))
+                    .map(e => e.path)
+                  if (paths.length === 0) return
+                  setPendingCompProposal({ paths, changeType: 'delete' })
+                  exitSelectMode()
+                  setActiveView('contributor')
+                }}
+                disabled={selectedPaths.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] text-text-secondary hover:text-text-primary hover:border-accent/40 disabled:opacity-50 transition-colors"
+              >
+                <Trash2 size={13} /> Propose deletion
+              </button>
+            )}
             <button
               onClick={downloadZip}
               disabled={selectedPaths.size === 0 || zipStatus === 'starting' || zipStatus === 'zipping'}
@@ -1355,6 +1382,28 @@ export default function ApiFilesView(): JSX.Element {
               className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <Clipboard size={14} className="text-text-muted" /> Copy path
             </button>
+            {/* Contributor actions — proposals target a file, so directories
+                are excluded. Both land on the contributor page prefilled. */}
+            {canPropose && ctxMenu.entry.type !== 'directory' && (
+              <>
+                <div className="border-t border-[var(--border)] my-1" />
+                <button onClick={() => {
+                  setPendingCompProposal({ paths: [ctxMenu.entry.path], changeType: 'replace' })
+                  setCtxMenu(null)
+                  setActiveView('contributor')
+                }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  <Replace size={14} className="text-text-muted" /> Propose replacement
+                </button>
+                <button onClick={() => {
+                  setPendingCompProposal({ paths: [ctxMenu.entry.path], changeType: 'delete' })
+                  setCtxMenu(null)
+                  setActiveView('contributor')
+                }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  <Trash2 size={14} className="text-text-muted" /> Propose deletion
+                </button>
+                <div className="border-t border-[var(--border)] my-1" />
+              </>
+            )}
             {ctxMenu.entry.type === 'directory' ? (
               <button onClick={() => { downloadFolder(ctxMenu.entry); setCtxMenu(null) }}
                 disabled={zipStatus === 'starting' || zipStatus === 'zipping'}
