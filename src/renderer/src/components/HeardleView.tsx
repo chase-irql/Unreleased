@@ -22,14 +22,17 @@ import type {
 } from '../lib/heardle'
 import {
   HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize,
+  startPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
 } from '../lib/heardleApi'
-import type { LeaderboardBoard, LeaderboardEntry } from '../lib/heardleApi'
+import type { LeaderboardBoard, LeaderboardEntry, PuzzleResponse } from '../lib/heardleApi'
+import HeardleVersusPanel from './HeardleVersusPanel'
 
-type Mode = DailyMode | 'unlimited'
+type Mode = DailyMode | 'unlimited' | 'versus'
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
   { id: 'daily', label: 'Daily', hint: 'One song a day — the same one for everyone' },
   { id: 'personal', label: 'Personal', hint: 'One song a day, picked just for you' },
+  { id: 'versus', label: '1v1', hint: 'Real-time match against another player' },
   { id: 'unlimited', label: 'Unlimited', hint: 'Random songs, play as many as you like' },
 ]
 
@@ -498,11 +501,13 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
   const pending = useMemo(() => outboxSize(), [])
 
   useEffect(() => {
-    if (!HEARDLE_LEADERBOARD_ENABLED || !signedIn) return
+    if (!HEARDLE_LEADERBOARD_ENABLED) return
+    if (board !== 'versus' && !signedIn) return
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetchLeaderboard(board, mode, day)
+    const fetchMode = board === 'versus' ? 'versus' : mode
+    fetchLeaderboard(board, fetchMode, day)
       .then((res) => {
         if (cancelled) return
         setEntries(res.entries ?? [])
@@ -514,6 +519,7 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
   }, [board, mode, day, signedIn])
 
   const score = (e: LeaderboardEntry): string => {
+    if (board === 'versus') return `${e.won ?? 0}W · ${e.win_rate ?? 0}%`
     if (board === 'streak') return `${e.current_streak ?? 0}`
     if (e.won === false || e.guesses == null) return '—'
     return `${e.guesses}`
@@ -552,7 +558,7 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
 
         <div className="flex gap-2 mb-4">
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
-            {([['today', 'Today'], ['streak', 'Streaks']] as [LeaderboardBoard, string][]).map(([id, label]) => (
+            {([['today', 'Today'], ['streak', 'Streaks'], ['versus', '1v1']] as [LeaderboardBoard, string][]).map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setBoard(id)}
@@ -564,7 +570,7 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
               </button>
             ))}
           </div>
-          <div className="flex rounded-lg border border-[var(--border)] overflow-hidden ml-auto">
+          <div className={`flex rounded-lg border border-[var(--border)] overflow-hidden ml-auto ${board === 'versus' ? 'opacity-40 pointer-events-none' : ''}`}>
             {(['daily', 'personal'] as DailyMode[]).map((m) => (
               <button
                 key={m}
@@ -647,15 +653,22 @@ export default function HeardleView(): JSX.Element {
   const [countdown, setCountdown] = useState(() => msUntilNextPuzzle())
   const [copied, setCopied] = useState(false)
   const [startAt, setStartAt] = useState(0)
+  const [roundToken, setRoundToken] = useState<string | null>(null)
+  const [serverClipUrl, setServerClipUrl] = useState<string | null>(null)
+  const [waveSeed, setWaveSeed] = useState(1)
 
-  const isDaily = mode !== 'unlimited'
+  const isDaily = mode !== 'unlimited' && mode !== 'versus'
+  const useServerRound = isDaily && !!account
   const dailyMode: DailyMode = mode === 'personal' ? 'personal' : 'daily'
   const day = useMemo(() => todayKey(), [])
 
   // Which settings actually apply here — Daily ignores all of them, Personal
   // takes the difficulty half. Everything below reads `rules`, never
   // `settings`, so the mode rules live in exactly one place.
-  const rules = useMemo(() => settingsForMode(settings, mode), [settings, mode])
+  const rules = useMemo(
+    () => settingsForMode(settings, mode === 'personal' ? 'personal' : mode === 'unlimited' ? 'unlimited' : 'daily'),
+    [settings, mode],
+  )
   const ladder = useMemo(() => stageLadder(rules), [rules])
   const categories = rules.categories
 
@@ -714,8 +727,30 @@ export default function HeardleView(): JSX.Element {
   // ladder mid-round must not re-roll a once-a-day song. A tries cut that
   // strands a round over the new limit is settled below instead.
   const fullWindow = ladder[ladder.length - 1]
+
+  const applyServerPuzzle = useCallback((res: PuzzleResponse) => {
+    setRoundToken(res.round_token)
+    setServerClipUrl(absoluteClipUrl(res.clip_url))
+    setStartAt(res.clip_start ?? 0)
+    setGuesses(res.guesses ?? [])
+    setStatus(res.status)
+    setWaveSeed(res.round_token.split('').reduce((a, c) => a + c.charCodeAt(0), 0))
+    if (res.reveal) setAnswer(res.reveal)
+    else if (res.status !== 'playing') setAnswer(res.reveal ?? null)
+    else setAnswer(null)
+  }, [])
+
   useEffect(() => {
-    if (playablePool.length === 0) return
+    if (!useServerRound) return
+    let cancelled = false
+    startPuzzle(dailyMode, day)
+      .then((res) => { if (!cancelled) applyServerPuzzle(res) })
+      .catch((err: Error) => { if (!cancelled) setPoolError(err.message) })
+    return () => { cancelled = true }
+  }, [useServerRound, dailyMode, day, applyServerPuzzle])
+
+  useEffect(() => {
+    if (playablePool.length === 0 || useServerRound) return
     const seed = playerSeed()
     if (isDaily) {
       const song = dailyMode === 'personal'
@@ -751,29 +786,29 @@ export default function HeardleView(): JSX.Element {
 
   // Persist the round after every guess.
   useEffect(() => {
-    if (!isDaily || !answer) return
+    if (!isDaily || useServerRound || !answer) return
     saveRound(dailyMode, { day, answerId: answer.id, guesses, status })
-  }, [isDaily, dailyMode, answer, day, guesses, status])
+  }, [isDaily, useServerRound, dailyMode, answer, day, guesses, status])
 
   // Fold a finished round into that mode's stats (once — see recordResult's
   // lastDay guard) and hand it to the leaderboard. submitResult queues rather
   // than throwing while the endpoint is missing or the user is signed out, so
   // rounds played today still count once it's live.
   useEffect(() => {
-    if (!isDaily || status === 'playing' || !answer) return
-    recordResult(dailyMode, day, status === 'won', guesses.length)
-    submitResult({
-      day,
-      mode: dailyMode,
-      song_id: answer.id,
-      guesses: guesses.length,
-      won: status === 'won',
-      guess_song_ids: guesses.map((g) => g.songId),
-    })
-    // `guesses` is read whole but only its length can change here — a finished
-    // round's guesses are frozen.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDaily, dailyMode, status, day, guesses.length, answer])
+    if (!isDaily || status === 'playing') return
+    if (!useServerRound && !answer) return
+    if (!useServerRound) recordResult(dailyMode, day, status === 'won', guesses.length)
+    else if (answer) {
+      submitResult({
+        day,
+        mode: dailyMode,
+        song_id: answer.id,
+        guesses: guesses.length,
+        won: status === 'won',
+        guess_song_ids: guesses.map((g) => g.songId),
+      })
+    }
+  }, [isDaily, useServerRound, dailyMode, status, day, guesses.length, answer])
 
   // Deliver anything queued in an earlier session.
   useEffect(() => { flushResults() }, [account])
@@ -884,9 +919,10 @@ export default function HeardleView(): JSX.Element {
   useEffect(() => {
     stopPlayback()
     const audio = audioRef.current
-    if (audio && answer) audio.src = buildStreamUrl(answer.path)
+    if (audio && useServerRound && serverClipUrl) audio.src = serverClipUrl
+    else if (audio && answer) audio.src = buildStreamUrl(answer.path)
     setAudioError(false)
-  }, [answer, stopPlayback])
+  }, [answer, serverClipUrl, useServerRound, stopPlayback])
 
   // Teardown. The element is captured on mount rather than read from the ref
   // in the cleanup: React detaches refs before passive cleanups run, so
@@ -920,7 +956,17 @@ export default function HeardleView(): JSX.Element {
   }
 
   const submitGuess = (song: HeardleSong): void => {
-    if (!answer || finished) return
+    if (finished) return
+    if (useServerRound && roundToken) {
+      stopPlayback()
+      apiSubmitGuess(roundToken, song.id)
+        .then(applyServerPuzzle)
+        .catch((err: Error) => setPoolError(err.message))
+      setQuery('')
+      setDropdownOpen(false)
+      return
+    }
+    if (!answer) return
     if (isCorrectGuess(song, answer, versions)) {
       stopPlayback()
       setGuesses((prev) => [...prev, {
@@ -944,7 +990,13 @@ export default function HeardleView(): JSX.Element {
   }
 
   const skip = (): void => {
-    if (!answer || finished) return
+    if (finished) return
+    if (useServerRound && roundToken) {
+      stopPlayback()
+      apiSkipGuess(roundToken).then(applyServerPuzzle).catch((err: Error) => setPoolError(err.message))
+      return
+    }
+    if (!answer) return
     commitGuess({ songId: null, label: 'Skipped', era: null, sameEra: false })
   }
 
@@ -1105,8 +1157,8 @@ export default function HeardleView(): JSX.Element {
           <p className="text-center text-[10px] font-mono tracking-wider text-text-muted mb-3">
             {mode === 'daily' && `#${puzzleNumber(day)} · `}
             {MODES.find((m) => m.id === mode)?.hint.toLowerCase()}
-            {` · ${ladder.length} tries · up to ${formatSeconds(fullWindow)}`}
-            {rules.startPoint === 'timestamp' ? ' · from a timestamp' : ' · from the intro'}
+            {mode !== 'versus' && ` · ${ladder.length} tries · up to ${formatSeconds(fullWindow)}`}
+            {mode !== 'versus' && rules.startPoint === 'timestamp' ? ' · from a timestamp' : mode !== 'versus' ? ' · from the intro' : ''}
             {mode === 'unlimited' && rules.eras.length > 0 && ` · ${rules.eras.join(', ')}`}
           </p>
 
@@ -1129,7 +1181,9 @@ export default function HeardleView(): JSX.Element {
             )}
           </div>
 
-          {poolLoading ? (
+          {mode === 'versus' ? (
+            <HeardleVersusPanel embedded onClose={() => setMode('daily')} />
+          ) : poolLoading ? (
             <div className="flex flex-col items-center gap-3 py-24 text-text-muted">
               <Loader2 size={20} className="animate-spin" />
               <p className="text-sm">
@@ -1141,7 +1195,7 @@ export default function HeardleView(): JSX.Element {
               <AlertCircle size={22} className="text-red-400" />
               <p className="text-sm text-text-secondary">Couldn't load the catalogue — {poolError}</p>
             </div>
-          ) : !answer ? (
+          ) : !answer && !(useServerRound && serverClipUrl) ? (
             <div className="flex flex-col items-center gap-3 py-24 text-center">
               <p className="text-sm text-text-muted">
                 {rules.eras.length > 0
@@ -1164,7 +1218,7 @@ export default function HeardleView(): JSX.Element {
                 <SlotRow ladder={ladder} guesses={guesses} status={status} showEraHint={rules.eraHint} />
 
                 <Waveform
-                  seed={answer.id}
+                  seed={answer?.id ?? waveSeed}
                   unlocked={unlocked}
                   elapsed={elapsed}
                   ladder={ladder}
@@ -1299,7 +1353,7 @@ export default function HeardleView(): JSX.Element {
                 </div>
               )}
 
-              {finished && (
+              {finished && answer && (
                 <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-4">
                   <div className="flex gap-4">
                     {/* Art stays hidden until the round is over — era covers are

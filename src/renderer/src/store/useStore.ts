@@ -882,8 +882,17 @@ export const useStore = create<AppStore>((set, get, store) => ({
   appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
   navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
-  navControlOrder: ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER,
-  navControlVisibility: { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...(ls.get<Record<string, boolean>>('navControlVisibility') ?? {}) },
+  navControlOrder: (() => {
+    const saved = ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER
+    return saved.filter((id) => id !== 'download' && id !== 'return-api')
+  })(),
+  navControlVisibility: (() => {
+    const saved = ls.get<Record<string, boolean>>('navControlVisibility') ?? {}
+    const merged = { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...saved }
+    delete merged['download']
+    delete merged['return-api']
+    return merged
+  })(),
 
   setActiveView: (view) => {
     const paths: Partial<Record<ViewType, string>> = {
