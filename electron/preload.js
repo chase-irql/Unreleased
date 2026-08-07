@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   // Window controls
@@ -172,6 +172,15 @@ contextBridge.exposeInMainWorld('electron', {
   // | { canceled } | { error }; exportM3u resolves { ok, path } | { canceled } | { error }.
   importM3u: ()                   => ipcRenderer.invoke('import-m3u'),
   exportM3u: (payload)            => ipcRenderer.invoke('export-m3u', payload),
+  // Parse an .m3u dropped onto the window (path from getPathForFile), same
+  // shape as importM3u. importTextLines resolves { ok, name, lines } | … for a
+  // titles text file; the renderer resolves each line against the API.
+  readM3uPath: (filePath)         => ipcRenderer.invoke('read-m3u-path', filePath),
+  importTextLines: ()             => ipcRenderer.invoke('import-text-lines'),
+  readTextLinesPath: (filePath)   => ipcRenderer.invoke('read-text-lines-path', filePath),
+  // Electron 32+ removed File.path; this is the supported way to get the real
+  // filesystem path of a dragged-in File for the main process to read.
+  getPathForFile: (file)          => webUtils.getPathForFile(file),
 
   // Offline playlist sync
   offlineGetLibrary:    ()                        => ipcRenderer.invoke('offline-get-library'),

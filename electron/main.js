@@ -1215,6 +1215,54 @@ ipcMain.handle('export-m3u', async (event, { name, tracks }) => {
   }
 })
 
+// Parse an .m3u/.m3u8 at a known path (a file dropped onto the window), no
+// dialog. Same shape as import-m3u so the renderer can share matching logic.
+ipcMain.handle('read-m3u-path', async (_, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  if (!/\.m3u8?$/i.test(filePath)) return { error: 'Not an M3U file' }
+  try {
+    const text = fs.readFileSync(filePath, 'utf-8')
+    const entries = parseM3u(text, path.dirname(filePath))
+    const name = path.basename(filePath, path.extname(filePath)) || 'Imported Playlist'
+    return { ok: true, name, entries }
+  } catch (e) {
+    log('read-m3u-path error:', e.message)
+    return { error: e.message }
+  }
+})
+
+// Import a plain text file where each non-empty line is a song title to look
+// up in the API. Blank lines and #comments are skipped here; the actual
+// title→song resolution happens in the renderer (it owns the API client).
+ipcMain.handle('import-text-lines', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Import song titles',
+    properties: ['openFile'],
+    filters: [{ name: 'Text files', extensions: ['txt', 'csv', 'text'] }, { name: 'All files', extensions: ['*'] }],
+  })
+  if (result.canceled || !result.filePaths.length) return { canceled: true }
+  return readTextLines(result.filePaths[0])
+})
+
+// Same as import-text-lines but for a file dropped onto the window (no dialog).
+ipcMain.handle('read-text-lines-path', async (_, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No file path' }
+  return readTextLines(filePath)
+})
+
+function readTextLines(file) {
+  try {
+    const text = fs.readFileSync(file, 'utf-8').replace(/^﻿/, '')
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+    const name = path.basename(file, path.extname(file)) || 'Imported Playlist'
+    return { ok: true, name, lines }
+  } catch (e) {
+    log('readTextLines error:', e.message)
+    return { error: e.message }
+  }
+}
+
 // Deleting a song is the only thing the library does to a user's *own* files
 // that can't be undone from inside the app, so it goes through the OS trash
 // (recoverable) rather than a hard unlink, and never happens without a modal

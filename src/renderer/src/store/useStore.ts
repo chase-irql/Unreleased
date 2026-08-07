@@ -59,7 +59,9 @@ export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchPar
 export interface DownloadItem {
   id: string
   filename: string
-  type: 'file' | 'zip' | 'update' | 'playlist'
+  // 'upload' is the one that goes the other way — a comp file proposal's body
+  // on its way to the API (see lib/compUploads).
+  type: 'file' | 'zip' | 'update' | 'playlist' | 'upload'
   state: 'downloading' | 'done' | 'error' | 'cancelled'
   percent: number
   received?: number
@@ -603,7 +605,10 @@ interface AppActions {
   // Import an .m3u/.m3u8 into a new local playlist, matching its file paths to
   // scanned library tracks. Resolves a summary (matched/total + names of the
   // paths that weren't in the library) so the UI can report skips.
-  importM3uPlaylist: () => Promise<{ ok: true; playlistId: string; name: string; matched: number; total: number; unmatched: string[] } | { ok: false; canceled?: boolean; error?: string }>
+  // Commit already-parsed .m3u entries to a new local playlist, matching their
+  // file paths to the scanned library. The file is opened/parsed in the UI
+  // first so the user can choose local-vs-API import before anything is created.
+  importM3uEntriesLocal: (name: string, entries: { path: string; title: string | null; duration?: number | null }[]) => { ok: true; playlistId: string; name: string; matched: number; total: number; unmatched: string[] } | { ok: false; canceled?: boolean; error?: string }
   exportLocalPlaylistM3u: (id: string) => Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }>
   loadLibrary: (force?: boolean) => Promise<void>
 
@@ -769,6 +774,52 @@ function enqueueOfflineWork(key: string, fn: () => Promise<void>): Promise<void>
   return run
 }
 
+// ── M3U import helpers (shared by the file-picker and drag-drop paths) ──────
+// Match parsed .m3u entries against scanned library tracks by file path.
+// Library paths are the source of truth; the .m3u may use either slash style
+// or differ in case (Windows is case-insensitive), so normalise both sides.
+type M3uEntry = { path: string; title: string | null }
+function matchM3uEntries(
+  libraryTracks: LibraryTrack[],
+  entries: M3uEntry[],
+): { trackIds: string[]; unmatched: string[] } {
+  const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
+  const byPath = new Map<string, string>()
+  for (const t of libraryTracks) byPath.set(norm(t.filePath), t.id)
+  const trackIds: string[] = []
+  const unmatched: string[] = []
+  const seen = new Set<string>()
+  for (const e of entries) {
+    const id = byPath.get(norm(e.path))
+    if (id) { if (!seen.has(id)) { seen.add(id); trackIds.push(id) } }
+    else unmatched.push(e.title || e.path.split(/[\\/]/).pop() || e.path)
+  }
+  return { trackIds, unmatched }
+}
+
+type M3uImportResult =
+  | { ok: true; playlistId: string; name: string; matched: number; total: number; unmatched: string[] }
+  | { ok: false; canceled?: boolean; error?: string }
+
+// Shared tail for both import paths: takes whatever the main process returned
+// ({ ok, name, entries } | { canceled } | { error }), builds a local playlist,
+// persists it, and returns the summary the UI reports.
+function commitM3uImport(
+  get: () => AppStore,
+  set: (partial: Partial<AppStore>) => void,
+  res: { canceled?: boolean; error?: string; name?: string; entries?: M3uEntry[] } | null,
+): M3uImportResult {
+  if (!res || res.canceled) return { ok: false, canceled: true }
+  if (res.error || !Array.isArray(res.entries)) return { ok: false, error: res.error || 'Import failed' }
+  const entries = res.entries
+  const { trackIds, unmatched } = matchM3uEntries(get().libraryTracks, entries)
+  const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name: res.name || 'Imported Playlist', trackIds, createdAt: Date.now() }
+  const next = [...get().localPlaylists, playlist]
+  set({ localPlaylists: next, activeLocalPlaylistId: playlist.id })
+  ;(window as unknown as { electron?: { saveLocalPlaylists?: (p: LocalPlaylist[]) => void } }).electron?.saveLocalPlaylists?.(next)
+  return { ok: true, playlistId: playlist.id, name: playlist.name, matched: trackIds.length, total: entries.length, unmatched }
+}
+
 export const useStore = create<AppStore>((set, get, store) => ({
   // ── Queue slice (all queue + playback logic) ───────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -882,10 +933,22 @@ export const useStore = create<AppStore>((set, get, store) => ({
   appMenuPosition: ls.get<AppMenuPosition>('appMenuPosition') ?? 'sidebar',
   navOrder: ls.get<ViewType[]>('navOrder') ?? DEFAULT_NAV_ORDER,
   navVisibility: { ...DEFAULT_NAV_VISIBILITY, ...(ls.get<Record<string, boolean>>('navVisibility') ?? {}) },
-  navControlOrder: ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER,
-  navControlVisibility: { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...(ls.get<Record<string, boolean>>('navControlVisibility') ?? {}) },
+  navControlOrder: (() => {
+    const saved = ls.get<string[]>('navControlOrder') ?? DEFAULT_NAV_CONTROL_ORDER
+    return saved.filter((id) => id !== 'download' && id !== 'return-api')
+  })(),
+  navControlVisibility: (() => {
+    const saved = ls.get<Record<string, boolean>>('navControlVisibility') ?? {}
+    const merged = { ...DEFAULT_NAV_CONTROL_VISIBILITY, ...saved }
+    delete merged['download']
+    delete merged['return-api']
+    return merged
+  })(),
 
   setActiveView: (view) => {
+    // Already there: skip, so a repeat call can't stack duplicate history
+    // entries or churn subscribers that key off previousView.
+    if (get().activeView === view) return
     const paths: Partial<Record<ViewType, string>> = {
       'api-tracker': '/tracker',
       'api-files': '/files',
@@ -1974,33 +2037,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ localPlaylists: next })
     el?.saveLocalPlaylists(next)
   },
-  importM3uPlaylist: async () => {
-    const el = (window as any).electron
-    if (!el?.importM3u) return { ok: false as const, error: 'Not supported' }
-    const res = await el.importM3u()
-    if (!res || res.canceled) return { ok: false as const, canceled: true }
-    if (res.error || !Array.isArray(res.entries)) return { ok: false as const, error: res.error || 'Import failed' }
-    // Library paths are the source of truth; the .m3u may use either slash
-    // style or differ in case (Windows is case-insensitive), so normalise both
-    // sides before matching.
-    const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase()
-    const byPath = new Map<string, string>()
-    for (const t of get().libraryTracks) byPath.set(norm(t.filePath), t.id)
-    const entries = res.entries as { path: string; title: string | null }[]
-    const trackIds: string[] = []
-    const unmatched: string[] = []
-    const seen = new Set<string>()
-    for (const e of entries) {
-      const id = byPath.get(norm(e.path))
-      if (id) { if (!seen.has(id)) { seen.add(id); trackIds.push(id) } }
-      else unmatched.push(e.title || e.path.split(/[\\/]/).pop() || e.path)
-    }
-    const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name: res.name || 'Imported Playlist', trackIds, createdAt: Date.now() }
-    const next = [...get().localPlaylists, playlist]
-    set({ localPlaylists: next, activeLocalPlaylistId: playlist.id })
-    el.saveLocalPlaylists(next)
-    return { ok: true as const, playlistId: playlist.id, name: playlist.name, matched: trackIds.length, total: entries.length, unmatched }
-  },
+  importM3uEntriesLocal: (name, entries) => commitM3uImport(get, set, { name, entries }),
   exportLocalPlaylistM3u: async (id) => {
     const el = (window as any).electron
     if (!el?.exportM3u) return { ok: false as const, error: 'Not supported' }

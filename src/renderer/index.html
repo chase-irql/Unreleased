@@ -2,6 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Vite builds with base './' so the Electron build can find its assets
+         over file://. On the web that relative base is resolved against the
+         current path, which breaks every nested route: from
+         /auth/discord/callback the browser asks for
+         /auth/discord/assets/index-*.js, gets a 404, and renders nothing —
+         a blank page right after Discord login (same for /shared/<id>).
+         Over http(s) repoint the base at the origin root before the parser
+         reaches the injected module script; file:// keeps the relative base. -->
+    <base href="./" />
+    <script>if(/^https?:/.test(location.protocol))document.querySelector('base').href='/'</script>
     <!-- maximum-scale=1 stops iOS Safari's auto-zoom when focusing inputs
          under 16px (all our text-xs fields); deliberate pinch-zoom still
          works — iOS ignores the cap for user gestures. -->
