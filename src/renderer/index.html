@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <base href="./" />
+    <script>if(/^https?:/.test(location.protocol))document.querySelector('base').href='/'</script>
     <!-- maximum-scale=1 stops iOS Safari's auto-zoom when focusing inputs
          under 16px (all our text-xs fields); deliberate pinch-zoom still
          works — iOS ignores the cap for user gestures. -->

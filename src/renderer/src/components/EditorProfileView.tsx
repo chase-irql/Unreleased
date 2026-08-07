@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, CompFileProposal } from '../lib/userApi'
+import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, withdrawCompProposal, CompFileProposal } from '../lib/userApi'
 import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
@@ -339,12 +339,25 @@ export default function EditorProfileView(): JSX.Element {
   const [compProposals, setCompProposals] = useState<CompFileProposal[]>([])
   const [loadingComp, setLoadingComp] = useState(false)
   const [compFilter, setCompFilter] = useState<CompFilterTab>('all')
+  const [withdrawingCompId, setWithdrawingCompId] = useState<number | null>(null)
 
   useEffect(() => {
     if (profileTab !== 'comp' || !isContributor) return
     setLoadingComp(true)
     getMyCompProposals().then(setCompProposals).catch(() => {}).finally(() => setLoadingComp(false))
   }, [profileTab, isContributor, refreshKey])
+
+  const handleWithdrawComp = async (id: number): Promise<void> => {
+    setWithdrawingCompId(id)
+    try {
+      await withdrawCompProposal(id)
+      setCompProposals(prev => prev.filter(p => p.id !== id))
+    } catch {
+      setRefreshKey(k => k + 1)
+    } finally {
+      setWithdrawingCompId(null)
+    }
+  }
 
   useEffect(() => {
     if (profileTab !== 'reports' || !canReviewReports) return
@@ -557,6 +570,8 @@ export default function EditorProfileView(): JSX.Element {
             proposals={filterCompProposals(compProposals, compFilter)}
             loading={loadingComp}
             onSelect={() => setActiveView('contributor')}
+            onWithdraw={handleWithdrawComp}
+            withdrawingId={withdrawingCompId}
           />
         </div>
       ) : profileTab === 'reports' && canReviewReports ? (

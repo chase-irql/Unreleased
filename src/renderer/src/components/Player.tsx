@@ -28,7 +28,7 @@ import { registerPlayerCommandHandler } from '../lib/windowSync'
 import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
-import { trackIdToSongId } from '../lib/userApi'
+import { trackIdToSongId, showStaffProfile, staffProfileView } from '../lib/userApi'
 import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
@@ -1116,7 +1116,7 @@ export default function Player(): JSX.Element {
     'view-wrld':      () => setActiveView('wrld'),
     'view-admin':     () => {
       // Admin tools live in the editor profile page's Admin tab now.
-      if (account?.is_administrator || account?.is_editor) setActiveView('editor-profile')
+      if (showStaffProfile(account) && (account?.is_administrator || account?.is_editor || account?.is_manager)) setActiveView(staffProfileView(account))
     },
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),

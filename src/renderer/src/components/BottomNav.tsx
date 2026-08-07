@@ -2,23 +2,16 @@ import { SearchCode, Settings, ShieldCheck, ListMusic, Disc, Music4 } from 'luci
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { showStaffProfile, staffProfileView, staffProfileLabel } from '../lib/userApi'
 
 export default function BottomNav(): JSX.Element {
   const { activeView, setActiveView, toggleSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
-  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
-  const profileView = isContributor && !isEditor ? 'contributor-profile' : 'editor-profile'
-
-  // Album (albums-admin) and the Editor/Admin profile tab are editor/admin-only
-  // extras. They're hideable from Settings → Appearance → Menu items — the
-  // toggle is stored in the shared navVisibility map under the view id, so
-  // `?? true` keeps them on until the user turns them off. (These are the only
-  // mobile tabs wired to that toggle; the rest are the fixed core set.)
+  const profileView = staffProfileView(account)
   const navShown = (view: ViewType): boolean => navVisibility[view] ?? true
+  const profileTabVisible = showStaffProfile(account) && navShown(profileView)
   const showAlbums = (isAdmin || isEditor) && navShown('albums-admin')
-  const showEditorTab = (isAdmin || isEditor) && navShown('editor-profile')
 
   const items: { icon: React.ReactNode; label: string; view: ViewType }[] = [
     { icon: <img src={logo} alt="WRLD" className="w-8 h-8 object-contain" />, label: 'WRLD', view: 'wrld' },
@@ -62,9 +55,7 @@ export default function BottomNav(): JSX.Element {
       {/* Admin review tools live inside the editor profile page (Admin tab)
           now — one profile entry for both roles instead of a separate Admin
           view in the nav. Hideable via Settings (see showEditorTab). */}
-      {((isAdmin || isEditor || isContributor) && (
-        isContributor && !isEditor ? (navVisibility['contributor-profile'] ?? true) : showEditorTab
-      )) && (
+      {profileTabVisible && (
         <button
           onClick={() => setActiveView(profileView)}
           className={`flex-1 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors overflow-hidden relative ${activeView === profileView ? 'text-accent' : 'text-text-muted'}`}
@@ -74,7 +65,7 @@ export default function BottomNav(): JSX.Element {
           )}
           <ShieldCheck size={24} />
           <span className="text-[10px] font-semibold leading-none w-full text-center truncate px-0.5">
-            {isAdmin ? 'Admin' : isEditor && isContributor ? 'Staff' : isEditor ? 'Editor' : 'Contributor'}
+            {staffProfileLabel(account)}
           </span>
         </button>
       )}

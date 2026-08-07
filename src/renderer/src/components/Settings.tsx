@@ -13,7 +13,7 @@ import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
 import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
-import { getToken, CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { getToken, CONTRIBUTOR_ENABLED, staffProfileLabel } from '../lib/userApi'
 import { APP_VERSION } from '../lib/appVersion'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
@@ -1131,21 +1131,28 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     "Edit albums" button — so they get their own toggle here,
                     shown only to editors/admins on the web build where the
                     bottom bar exists. Reuses the shared navVisibility map. */}
-                {!isElectron && (account?.is_editor || account?.is_administrator) && (
+                {!isElectron && (account?.is_editor || account?.is_administrator || account?.is_manager) && (
                   <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                     <div className="flex items-center gap-2.5 mb-2.5">
                       <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
                         <ShieldCheck size={13} className="text-white" strokeWidth={2.25} />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <span className="text-text-primary text-sm">Editor tabs (mobile)</span>
-                        <p className="text-text-muted text-[11px]">Show or hide the editor-only tabs in the mobile bottom bar</p>
+                        <span className="text-text-primary text-sm">Staff tabs (mobile)</span>
+                        <p className="text-text-muted text-[11px]">Show or hide staff tabs in the mobile bottom bar</p>
                       </div>
                     </div>
                     <div className="pl-[34px] space-y-1.5">
                       {([
-                        { view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> },
-                        { view: 'editor-profile' as ViewType, label: account?.is_administrator ? 'Admin' : 'Editor', icon: <ShieldCheck size={18} /> },
+                        ...((account?.is_editor || account?.is_administrator)
+                          ? [
+                              { view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> },
+                              { view: 'editor-profile' as ViewType, label: staffProfileLabel(account), icon: <ShieldCheck size={18} /> },
+                            ]
+                          : []),
+                        ...(account?.is_manager && !account?.is_administrator && !account?.is_editor
+                          ? [{ view: 'admin' as ViewType, label: 'Manager', icon: <ShieldCheck size={18} /> }]
+                          : []),
                       ]).map((item) => {
                         const shown = navVisibility[item.view] ?? true
                         return (

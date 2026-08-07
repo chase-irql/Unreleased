@@ -1,4 +1,4 @@
-import { Track } from '../types'
+import { Track, ViewType } from '../types'
 import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from './juicewrldApi'
 import type { JWApiSong } from './juicewrldApi'
 import { peekSongPref } from './songPrefs'
@@ -20,6 +20,7 @@ export interface AccountUser {
   discord_avatar: string
   is_editor: boolean
   is_contributor: boolean
+  is_manager: boolean
   is_administrator: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
@@ -712,6 +713,34 @@ export async function confirmOtpSetup(otpToken: string): Promise<{ otp_enabled: 
 // — flip it to false and the contributor role disappears from the UI instead
 // of leading users to forms that fail on submit.
 export const CONTRIBUTOR_ENABLED = true
+
+export function showStaffProfile(account: AccountUser | null): boolean {
+  if (!account) return false
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  return !!(account.is_administrator || account.is_editor || account.is_manager || isContributor)
+}
+
+export function staffProfileView(account: AccountUser | null): ViewType {
+  if (!account) return 'api-tracker'
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  if (account.is_administrator || account.is_editor) {
+    return isContributor && !account.is_editor ? 'contributor-profile' : 'editor-profile'
+  }
+  if (account.is_manager) return 'admin'
+  if (isContributor) return 'contributor-profile'
+  return 'editor-profile'
+}
+
+export function staffProfileLabel(account: AccountUser | null): string {
+  if (!account) return 'Profile'
+  if (account.is_administrator) return 'Admin'
+  if (account.is_manager) return 'Manager'
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  if (account.is_editor && isContributor) return 'Staff'
+  if (account.is_editor) return 'Editor'
+  if (isContributor) return 'Contributor'
+  return 'Profile'
+}
 
 function assertContributorApi(): void {
   if (!CONTRIBUTOR_ENABLED) throw new Error('Comp file contributions are not available yet')

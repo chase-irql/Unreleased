@@ -174,7 +174,7 @@ export default function DiagnosticsModal(): JSX.Element {
           <Section title="Account">
             <R label="Logged in" value={account ? 'yes' : 'no'} />
             {account && <R label="User" value={account.display_name || account.discord_username} />}
-            {account && <R label="Role" value={account.is_administrator ? 'administrator' : account.is_editor ? 'editor' : 'standard'} />}
+            {account && <R label="Role" value={account.is_administrator ? 'administrator' : account.is_manager ? 'manager' : account.is_editor ? 'editor' : account.is_contributor ? 'contributor' : 'standard'} />}
             <R label="Playlists" value={String(playlists.length)} />
             <R label="Liked songs" value={String(likedTrackIds.length)} />
           </Section>
