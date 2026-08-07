@@ -32,7 +32,7 @@ export interface RadioLiveState {
   queue_preview: string[]
   dj_enabled?: boolean
   dj_line?: string
-  vote: RadioVote
+  vote?: RadioVote
   web_listeners?: number
   discord_listeners?: number
   total_listeners?: number

@@ -8,6 +8,8 @@ import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
 import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl, smallCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
+import { searchRadioLibrary } from '../lib/radioLibrary'
+import type { RadioLibraryTrack } from '../lib/radioLibrary'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
@@ -29,6 +31,7 @@ export default function WrldView(): JSX.Element {
     currentTrack, currentTrackFull, account, theme,
     radioFmActive, setRadioFmActive, radioFmIsLive, radioFmNowPlaying,
     radioFmVote, radioFmUpNext, radioFmQueuePreview,
+    radioFmVoteDismissed, setRadioFmVoteDismissed,
     radioFmMatchedSong,
     playlists,
     playTrack,
@@ -50,6 +53,8 @@ export default function WrldView(): JSX.Element {
     radioFmVote: s.radioFmVote,
     radioFmUpNext: s.radioFmUpNext,
     radioFmQueuePreview: s.radioFmQueuePreview,
+    radioFmVoteDismissed: s.radioFmVoteDismissed,
+    setRadioFmVoteDismissed: s.setRadioFmVoteDismissed,
     radioFmMatchedSong: s.radioFmMatchedSong,
     playlists: s.playlists,
     playTrack: s.playTrack,
@@ -189,10 +194,10 @@ export default function WrldView(): JSX.Element {
   }, [fullscreen, setWrldFullscreen])
 
   const [suggestQuery, setSuggestQuery]     = useState('')
-  const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
+  const [suggestResults, setSuggestResults] = useState<RadioLibraryTrack[]>([])
   const [suggestLoading, setSuggestLoading] = useState(false)
-  const [voteDismissed, setVoteDismissed]    = useState(false)
   const [myVote, setMyVote]                 = useState<'yes' | 'no' | null>(null)
+  const [voteError, setVoteError]           = useState(false)
   const [localSecondsLeft, setLocalSecondsLeft] = useState<number | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [proposed, setProposed]             = useState<string | null>(null)
@@ -236,21 +241,22 @@ export default function WrldView(): JSX.Element {
     if (!suggestQuery.trim()) { setSuggestResults([]); setSuggestLoading(false); return }
     setSuggestLoading(true)
     suggestTimer.current = setTimeout(async () => {
+      // Search the DJ's published library, not /songs/ — only these ids can be
+      // resolved back to a playable file by propose_queue.
       try {
-        const data = await apiFetch<{ results: JWApiSong[] }>('/songs/', { search: suggestQuery, page_size: 5 })
-        setSuggestResults(data.results ?? [])
+        setSuggestResults(await searchRadioLibrary(suggestQuery, 5))
       } catch { setSuggestResults([]) }
       setSuggestLoading(false)
     }, 400)
     return () => { if (suggestTimer.current) clearTimeout(suggestTimer.current) }
   }, [suggestQuery])
 
-  const handlePropose = (song: JWApiSong) => {
+  const handlePropose = (track: RadioLibraryTrack) => {
     // Only confirm if the proposal actually went out over the socket — a
     // closed/absent connection used to still flash "Proposed" while nothing
     // was ever sent.
-    const sent = getActiveRadioClient()?.proposeQueue(song.id) ?? false
-    const name = song.track_titles?.[0] || song.name
+    const sent = getActiveRadioClient()?.proposeQueue(track.id) ?? false
+    const name = track.title
     setSuggestQuery('')
     setSuggestResults([])
     if (proposeTimer.current) clearTimeout(proposeTimer.current)
@@ -260,7 +266,7 @@ export default function WrldView(): JSX.Element {
       proposeTimer.current = setTimeout(() => setProposed(null), 4000)
     } else {
       setProposed(null)
-      setProposeError('Not connected to 999 FM — try again in a moment')
+      setProposeError('Tune in to 999 FM first — proposals only count from listeners')
       proposeTimer.current = setTimeout(() => setProposeError(null), 4000)
     }
   }
@@ -383,11 +389,20 @@ export default function WrldView(): JSX.Element {
   useEffect(() => {
     const isActive = !!radioFmVote?.active
     if (isActive && !wasVoteActiveRef.current) {
-      setVoteDismissed(false)
       setMyVote(null)
+      setVoteError(false)
     }
     wasVoteActiveRef.current = isActive
   }, [radioFmVote?.active])
+
+  // Highlight a choice only once the socket accepted it — the server discards
+  // votes from a connection it hasn't seen listening:true on, which otherwise
+  // looks identical to a counted vote.
+  const castFmVote = useCallback((value: 'yes' | 'no'): void => {
+    const sent = getActiveRadioClient()?.castVote(value) ?? false
+    setMyVote(sent ? value : null)
+    setVoteError(!sent)
+  }, [])
 
   // Locally tick the countdown once per second, independent of how often
   // server metadata broadcasts arrive. The interval is created once per vote
@@ -462,7 +477,7 @@ export default function WrldView(): JSX.Element {
   const FmRadioPanel = () => (
     <div className="flex-1 overflow-y-auto pb-8 px-4 md:px-6 flex flex-col gap-4 md:gap-5" style={{ scrollbarWidth: 'none' }}>
       {/* Vote */}
-      {radioFmVote?.active && !voteDismissed ? (
+      {radioFmVote?.active && !radioFmVoteDismissed ? (
         <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <p className="text-white/50 text-[11px] font-semibold uppercase tracking-widest">
@@ -474,7 +489,7 @@ export default function WrldView(): JSX.Element {
                   {localSecondsLeft}s
                 </span>
               )}
-              <button onClick={() => setVoteDismissed(true)} className="text-white/20 hover:text-white/60 transition-colors">
+              <button onClick={() => setRadioFmVoteDismissed(true)} className="text-white/20 hover:text-white/60 transition-colors">
                 <X size={13} />
               </button>
             </div>
@@ -484,9 +499,12 @@ export default function WrldView(): JSX.Element {
             {radioFmVote.yes ?? 0} yes · {radioFmVote.no ?? 0} no
             {radioFmVote.votes_needed != null && <span> · need {radioFmVote.votes_needed}</span>}
           </p>
+          {voteError && (
+            <p className="text-red-400/80 text-xs">Vote didn't send — tune in to 999 FM and try again.</p>
+          )}
           <div className="flex gap-2">
             <button
-              onClick={() => { setMyVote('yes'); getActiveRadioClient()?.castVote('yes') }}
+              onClick={() => castFmVote('yes')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${
                 myVote === 'yes'
                   ? 'bg-green-600/40 text-green-300 ring-1 ring-green-500/50'
@@ -495,7 +513,7 @@ export default function WrldView(): JSX.Element {
               <ThumbsUp size={13} /> Yes
             </button>
             <button
-              onClick={() => { setMyVote('no'); getActiveRadioClient()?.castVote('no') }}
+              onClick={() => castFmVote('no')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${
                 myVote === 'no'
                   ? 'bg-red-600/40 text-red-300 ring-1 ring-red-500/50'
@@ -506,10 +524,16 @@ export default function WrldView(): JSX.Element {
           </div>
         </div>
       ) : (
-        <button onClick={() => { setVoteDismissed(false); getActiveRadioClient()?.proposeSkip() }}
+        <button onClick={() => {
+          setRadioFmVoteDismissed(false)
+          setVoteError(!(getActiveRadioClient()?.proposeSkip() ?? false))
+        }}
           className="flex items-center gap-2 text-sm text-white/30 hover:text-white/65 transition-colors self-start">
           <SkipForward size={14} /> Vote to skip
         </button>
+      )}
+      {voteError && !radioFmVote?.active && (
+        <p className="text-red-400/80 text-xs">Tune in to 999 FM to start a vote.</p>
       )}
 
       {/* Suggest */}
@@ -544,13 +568,13 @@ export default function WrldView(): JSX.Element {
             {suggestLoading && <p className="text-white/25 text-xs pl-1">Searching…</p>}
             {suggestResults.length > 0 && (
               <div className="flex flex-col -mx-1">
-                {suggestResults.map(song => (
-                  <button key={song.id} onClick={() => handlePropose(song)}
+                {suggestResults.map(track => (
+                  <button key={track.id} onClick={() => handlePropose(track)}
                     className="text-left px-3 py-2 rounded-xl hover:bg-white/10 transition-colors group">
-                    <p className="text-white/70 text-sm truncate group-hover:text-white/90 transition-colors" title={song.track_titles?.[0] || song.name}>
-                      {song.track_titles?.[0] || song.name}
+                    <p className="text-white/70 text-sm truncate group-hover:text-white/90 transition-colors" title={track.title}>
+                      {track.title}
                     </p>
-                    <p className="text-white/35 text-xs truncate">{song.credited_artists}</p>
+                    <p className="text-white/35 text-xs truncate">{track.artist || track.era}</p>
                   </button>
                 ))}
               </div>
@@ -1779,17 +1803,28 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
   const radioFmNowPlaying = useStore(s => s.radioFmNowPlaying)
   const [elapsedMs, setElapsedMs] = useState(0)
   const baseRef = useRef<{ elapsed: number; at: number }>({ elapsed: 0, at: 0 })
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const elapsed = radioFmNowPlaying?.elapsed_ms
 
+  // Keyed on elapsed_ms, not the whole now-playing object — that object changes
+  // on every metadata broadcast, so the interval was rebuilt before it could
+  // ever reach its own 500ms tick.
   useEffect(() => {
-    if (!radioFmNowPlaying?.elapsed_ms) { setElapsedMs(0); return }
-    baseRef.current = { elapsed: radioFmNowPlaying.elapsed_ms, at: Date.now() }
-    setElapsedMs(radioFmNowPlaying.elapsed_ms)
-    const t = setInterval(() => {
-      const { elapsed, at } = baseRef.current
-      setElapsedMs(elapsed + (Date.now() - at))
-    }, 500)
-    return () => clearInterval(t)
-  }, [radioFmNowPlaying])
+    if (!elapsed) {
+      if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null }
+      setElapsedMs(0)
+      return
+    }
+    baseRef.current = { elapsed, at: Date.now() }
+    setElapsedMs(elapsed)
+    if (!tickRef.current) {
+      tickRef.current = setInterval(() => {
+        const base = baseRef.current
+        setElapsedMs(base.elapsed + (Date.now() - base.at))
+      }, 500)
+    }
+  }, [elapsed])
+  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
 
   const durationMs = radioFmNowPlaying?.duration_ms ?? 0
   const pct = durationMs > 0 ? Math.min(100, (elapsedMs / durationMs) * 100) : 0

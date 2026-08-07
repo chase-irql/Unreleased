@@ -10,22 +10,24 @@ import { getActiveRadioClient } from '../lib/radioSocketService'
 export default function RadioVotePopup(): JSX.Element | null {
   const {
     radioFmActive, radioFmVote, activeView,
-  } = useStorePick('radioFmActive', 'radioFmVote', 'activeView')
+    radioFmVoteDismissed, setRadioFmVoteDismissed,
+  } = useStorePick('radioFmActive', 'radioFmVote', 'activeView', 'radioFmVoteDismissed', 'setRadioFmVoteDismissed')
 
-  const [dismissed, setDismissed] = useState(false)
   const [myVote, setMyVote] = useState<'yes' | 'no' | null>(null)
+  const [voteError, setVoteError] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wasActiveRef = useRef(false)
 
-  // Rising edge of `active` = a brand new vote just started. Reset dismissal and
-  // the local Yes/No selection then, but not on every repeated broadcast of the
-  // same ongoing vote (which would keep un-dismissing / un-highlighting it).
+  // Rising edge of `active` = a brand new vote just started. Clear the local
+  // Yes/No selection then, but not on every repeated broadcast of the same
+  // ongoing vote (which would keep un-highlighting it). Dismissal itself is
+  // reset centrally in RadioFmPlayer so it stays shared.
   useEffect(() => {
     const isActive = !!radioFmVote?.active
     if (isActive && !wasActiveRef.current) {
-      setDismissed(false)
       setMyVote(null)
+      setVoteError(false)
     }
     wasActiveRef.current = isActive
   }, [radioFmVote?.active])
@@ -50,12 +52,15 @@ export default function RadioVotePopup(): JSX.Element | null {
 
   // Only surface for tuned-in listeners, when a vote is live and undismissed,
   // and not on the WRLD view (its inline panel already covers this).
-  if (!radioFmActive || !radioFmVote?.active || dismissed || activeView === 'wrld') return null
+  if (!radioFmActive || !radioFmVote?.active || radioFmVoteDismissed || activeView === 'wrld') return null
 
   const isSkip = radioFmVote.kind === 'skip'
+  // The server silently drops votes from a socket it hasn't seen listening:true
+  // on, so only highlight a choice the socket actually accepted.
   const cast = (value: 'yes' | 'no'): void => {
-    setMyVote(value)
-    getActiveRadioClient()?.castVote(value)
+    const sent = getActiveRadioClient()?.castVote(value) ?? false
+    setMyVote(sent ? value : null)
+    setVoteError(!sent)
   }
 
   return (
@@ -82,7 +87,7 @@ export default function RadioVotePopup(): JSX.Element | null {
               {secondsLeft}s
             </span>
           )}
-          <button onClick={() => setDismissed(true)} className="text-white/25 hover:text-white/70 transition-colors" title="Dismiss">
+          <button onClick={() => setRadioFmVoteDismissed(true)} className="text-white/25 hover:text-white/70 transition-colors" title="Dismiss">
             <X size={14} />
           </button>
         </div>
@@ -94,6 +99,10 @@ export default function RadioVotePopup(): JSX.Element | null {
         {radioFmVote.yes ?? 0} yes · {radioFmVote.no ?? 0} no
         {radioFmVote.votes_needed != null && <span> · need {radioFmVote.votes_needed}</span>}
       </p>
+
+      {voteError && (
+        <p className="text-red-400 text-xs">Vote didn't send — tune in to 999 FM and try again.</p>
+      )}
 
       <div className="flex gap-2">
         <button

@@ -172,6 +172,10 @@ interface AppState {
   radioFmIsLive: boolean | null  // null = unknown (not yet checked)
   radioFmNowPlaying: import('../lib/radioLive').RadioTrack | null
   radioFmVote: import('../lib/radioLive').RadioVote | null
+  // Shared so dismissing a ballot sticks across the WRLD panel, the floating
+  // popup, and pop-out windows. Reset centrally on the rising edge of a new
+  // vote (see RadioFmPlayer's onMeta) rather than per component.
+  radioFmVoteDismissed: boolean
   radioFmUpNext: import('../lib/radioLive').RadioTrack | null
   radioFmQueuePreview: string[]
   radioFmMatchedSong: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null
@@ -394,6 +398,7 @@ interface AppActions {
   setRadioFmIsLive: (live: boolean | null) => void
   setRadioFmNowPlaying: (track: import('../lib/radioLive').RadioTrack | null) => void
   setRadioFmVote: (vote: import('../lib/radioLive').RadioVote | null) => void
+  setRadioFmVoteDismissed: (dismissed: boolean) => void
   setRadioFmUpNext: (track: import('../lib/radioLive').RadioTrack | null) => void
   setRadioFmQueuePreview: (preview: string[]) => void
   setRadioFmMatchedSong: (song: { songId: number | null; imageUrl: string | null; path: string | null; lyrics: string | null; syncedLyrics: string | null; era: string | null } | null) => void
@@ -921,6 +926,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   radioFmIsLive: null,
   radioFmNowPlaying: null,
   radioFmVote: null,
+  radioFmVoteDismissed: false,
   radioFmUpNext: null,
   radioFmQueuePreview: [],
   radioFmMatchedSong: null,
@@ -971,6 +977,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmIsLive: (radioFmIsLive) => set({ radioFmIsLive }),
   setRadioFmNowPlaying: (radioFmNowPlaying) => set({ radioFmNowPlaying }),
   setRadioFmVote: (radioFmVote) => set({ radioFmVote }),
+  setRadioFmVoteDismissed: (radioFmVoteDismissed) => set({ radioFmVoteDismissed }),
   setRadioFmUpNext: (radioFmUpNext) => set({ radioFmUpNext }),
   setRadioFmQueuePreview: (radioFmQueuePreview) => set({ radioFmQueuePreview }),
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),

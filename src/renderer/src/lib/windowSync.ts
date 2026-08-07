@@ -50,6 +50,9 @@ const SYNC_KEYS = [
   'queue', 'queueIndex', 'shuffle', 'repeat', 'volume',
   'radioMode', 'radioNext', 'queueLoadingMore',
   'radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong', 'radioFmUpNext', 'radioFmQueuePreview',
+  // Without these a pop-out mini-player never sees a ballot at all, and its FM
+  // badge can't tell "offline" from "not checked yet".
+  'radioFmIsLive', 'radioFmVote', 'radioFmVoteDismissed',
 ] as const satisfies readonly (keyof AppStore)[]
 
 type SyncKey = (typeof SYNC_KEYS)[number]
