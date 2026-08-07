@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, XCircle, Upload, Replace, Trash2,
-  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch,
+  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch, ArrowUpFromLine, X,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -10,6 +10,7 @@ import type { CompFileProposal, CompProposalChangeType, EditorApplication } from
 import type { ViewType } from '../types'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
 import FilePickerModal from './FilePickerModal'
+import { queueCompUploads, cancelCompUpload, COMP_UPLOADS_CHANGED } from '../lib/compUploads'
 
 /** Which field the browse modal is currently filling. Upload and a move's
  *  destination name a path that doesn't exist yet, so those browse for a
@@ -101,7 +102,8 @@ function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejec
 }
 
 export default function ContributorPage(): JSX.Element {
-  const { account, setActiveView, previousView, pendingCompProposal, setPendingCompProposal } = useStorePick('account', 'setActiveView', 'previousView', 'pendingCompProposal', 'setPendingCompProposal')
+  const { account, setActiveView, previousView, pendingCompProposal, setPendingCompProposal, downloads } = useStorePick('account', 'setActiveView', 'previousView', 'pendingCompProposal', 'setPendingCompProposal', 'downloads')
+  const activeUploads = downloads.filter((d) => d.type === 'upload' && d.state === 'downloading')
   const [application, setApplication] = useState<EditorApplication | null | undefined>(undefined)
   const [proposals, setProposals] = useState<CompFileProposal[]>([])
   const [loading, setLoading] = useState(true)
@@ -144,6 +146,17 @@ export default function ContributorPage(): JSX.Element {
     setLoading(true)
     userApi.getMyCompProposals().then(setProposals).catch(() => {}).finally(() => setLoading(false))
   }
+
+  // A background upload landing means there's a new proposal to show. The
+  // queue fires this on window rather than reaching into this page, so it
+  // stays a plain module with no knowledge of who's listening.
+  useEffect(() => {
+    if (!isContributor) return
+    const onChanged = (): void => reload()
+    window.addEventListener(COMP_UPLOADS_CHANGED, onChanged)
+    return () => window.removeEventListener(COMP_UPLOADS_CHANGED, onChanged)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isContributor])
 
   useEffect(() => {
     if (!account) {
@@ -226,11 +239,33 @@ export default function ContributorPage(): JSX.Element {
     // Sequential, not Promise.all: these carry file bodies, and a batch of
     // twenty firing at once is a good way to get rate-limited halfway through
     // with no idea which ones landed.
-    const jobs = isDelete
+    const jobs: { path: string; file: File | null }[] = isDelete
       ? deletePaths.map((path) => ({ path, file: null as File | null }))
       : isUpload && selectedFiles.length > 1
         ? selectedFiles.map((file, i) => ({ path: batchPaths[i], file: file as File | null }))
         : [{ path: filePath, file: selectedFiles[0] ?? null }]
+    // Anything carrying a file body goes to the background queue: a comp zip is
+    // routinely hundreds of megabytes, and awaiting it here meant the user had
+    // to sit on this page (and keep the window open) until it finished. The
+    // queue reports progress into the Downloads panel instead — see
+    // lib/compUploads. Delete and move proposals carry no body, so they stay
+    // inline below where their result can be reported immediately.
+    if (carriesFile) {
+      queueCompUploads(jobs.map((job) => ({
+        label: basename(job.path),
+        form: buildForm(job.path, job.file),
+        bytes: job.file?.size,
+      })))
+      setSubmitState('submitted')
+      setSelectedFiles([])
+      setNotes('')
+      setFileName('')
+      setDestFileName('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setTimeout(() => setSubmitState('idle'), 2000)
+      return
+    }
+
     const failed: string[] = []
     setBatchProgress(jobs.length > 1 ? { done: 0, total: jobs.length } : null)
     for (const [i, job] of jobs.entries()) {
@@ -501,6 +536,33 @@ export default function ContributorPage(): JSX.Element {
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Notes for reviewers (optional)"
               className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent resize-none" />
             {submitError && <p className="text-sm text-red-400 flex items-center gap-1.5"><AlertCircle size={14} />{submitError}</p>}
+
+            {/* Mirror of the Downloads panel's upload rows. The panel itself is
+                desktop-only (and easy to miss), so the page it was started from
+                shows the same progress — leaving the page no longer stops it. */}
+            {activeUploads.length > 0 && (
+              <div className="rounded-xl border border-[var(--border)] bg-surface-overlay/60 divide-y divide-[var(--border)]/40">
+                {activeUploads.map((u) => (
+                  <div key={u.id} className="px-3.5 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <ArrowUpFromLine size={12} className="text-accent shrink-0 animate-pulse" />
+                      <span className="flex-1 min-w-0 truncate text-xs text-text-primary">{u.filename}</span>
+                      <span className="text-[11px] text-text-muted tabular-nums shrink-0">{u.percent}%</span>
+                      <button onClick={() => cancelCompUpload(u.id)} title="Cancel upload"
+                        className="p-0.5 rounded text-text-muted hover:text-red-400 transition-colors shrink-0">
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="mt-1.5 h-1 bg-[var(--surface)] rounded-full overflow-hidden">
+                      <div className="h-full bg-accent rounded-full transition-all duration-200" style={{ width: `${u.percent}%` }} />
+                    </div>
+                  </div>
+                ))}
+                <p className="px-3.5 py-2 text-[11px] text-text-muted">
+                  Uploading in the background — you can leave this page.
+                </p>
+              </div>
+            )}
             <button onClick={submitProposal}
               disabled={submitState === 'submitting'
                 || (isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
@@ -508,7 +570,7 @@ export default function ContributorPage(): JSX.Element {
                 || (changeType === 'move' && !destFileName.trim())}
               className="px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold disabled:opacity-40 flex items-center gap-2">
               {submitState === 'submitting' ? <Loader2 size={15} className="animate-spin" /> : submitState === 'submitted' ? <Check size={15} /> : <FileUp size={15} />}
-              {submitState === 'submitted' ? 'Submitted'
+              {submitState === 'submitted' ? (carriesFile ? 'Queued' : 'Submitted')
                 : batchProgress ? `Submitting ${batchProgress.done}/${batchProgress.total}…`
                 : isBatch ? `Submit ${isDelete ? deletePaths.length : selectedFiles.length} proposals`
                 : 'Submit proposal'}

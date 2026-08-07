@@ -79,6 +79,11 @@ export interface HeardleSettings {
   eraHint: boolean
 }
 
+// Skip-silence is deliberately NOT here. A clip of dead air isn't a difficulty
+// setting, it's a broken round — nobody would choose it, and letting it be
+// switched off just leaves a way to make the game worse. It's always on; see
+// the silence detection in HeardleView.
+
 export const DEFAULT_SETTINGS: HeardleSettings = {
   v: SETTINGS_VERSION,
   tries: DEFAULT_TRIES,

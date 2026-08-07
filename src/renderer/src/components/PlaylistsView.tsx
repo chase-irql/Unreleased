@@ -5,7 +5,7 @@ import {
   X, Check, Heart, Shuffle, Music2, Clock, GripVertical,
   ListPlus, Download, Archive, Info, FolderInput, MoreHorizontal,
   Search, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Globe, Lock, Link, ListEnd, HardDrive, CircleArrowDown, Layers,
-  CheckSquare2, Square, FileUp, FileDown,
+  CheckSquare2, Square, FileUp, FileDown, FileText,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -13,7 +13,7 @@ import type { PlaylistDetail, PlaylistSummary } from '../lib/userApi'
 import { Track, LocalPlaylist, LibraryTrack } from '../types'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { ProgressiveCover } from './ProgressiveCover'
-import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl, smallCoverUrl } from '../lib/juicewrldApi'
+import { buildImageUrl, buildStreamUrl, JWAPI_BASE, apiFetch, JWApiSong, playlistCoverUrl, smallCoverUrl, resolveTitleToSong } from '../lib/juicewrldApi'
 import { toFileUrl, libraryTrackToTrack as libTrackToTrack } from '../lib/fileTypes'
 import { formatDuration, formatTotalDuration } from '../lib/format'
 import { fisherYates } from '../store/queueSlice'
@@ -30,6 +30,11 @@ import PlaylistCard from './PlaylistCard'
 import { allFolderedKeys, folderOfPlaylist, parsePlaylistKey } from '../lib/playlistFolders'
 import type { PlaylistFolder } from '../lib/playlistFolders'
 import { Folder, FolderPlus, FolderOpen, FolderMinus } from 'lucide-react'
+
+// One parsed line of an .m3u: a file path, plus the #EXTINF title/duration
+// when the exporter wrote them. Import can either match the path to a local
+// file, or use the name to find the song in the API.
+type M3uEntry = { path: string; title: string | null; duration?: number | null }
 
 // ── PlaylistMosaic ────────────────────────────────────────────────────────────
 
@@ -258,12 +263,12 @@ function LocalPlaylistMosaic({ trackIds, className = '' }: {
 
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, toggleLike, setActiveView, setPendingEditorSongId,
-    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, importM3uPlaylist, exportLocalPlaylistM3u,
+    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, importM3uEntriesLocal, exportLocalPlaylistM3u,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uPlaylist', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -345,27 +350,171 @@ export default function PlaylistsView(): JSX.Element {
   const [importState, setImportState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
 
   // M3U import: a busy flag for the toolbar button plus a dismissible summary
-  // banner reporting how many paths matched the local library (and which
-  // didn't). Electron-only — the IPC bridge doesn't exist in the browser build.
+  // banner. Opening the file only parses it — the user then chooses in a dialog
+  // (m3uChoice) whether to match their LOCAL files by path, or find the songs
+  // in the API by name, since an .m3u exported on another machine rarely points
+  // at files you actually have. Electron-only — no IPC bridge in the browser.
   const isElectron = !!(window as any).electron
   const [m3uImporting, setM3uImporting] = useState(false)
   const [m3uSummary, setM3uSummary] = useState<{ name: string; matched: number; total: number; unmatched: string[] } | null>(null)
+  const [m3uChoice, setM3uChoice] = useState<{ name: string; entries: M3uEntry[] } | null>(null)
 
   const handleImportM3u = useCallback(async () => {
-    if (m3uImporting) return
+    const el = (window as any).electron
+    if (!el?.importM3u || m3uImporting) return
     setM3uImporting(true)
     try {
-      const res = await importM3uPlaylist()
-      if (res.ok) {
-        setLocalSelectedId(res.playlistId)
-        setM3uSummary({ name: res.name, matched: res.matched, total: res.total, unmatched: res.unmatched })
-      } else if (!res.canceled && res.error) {
-        setM3uSummary({ name: '', matched: 0, total: 0, unmatched: [res.error] })
+      const res = await el.importM3u()
+      if (!res || res.canceled) return
+      if (res.error || !Array.isArray(res.entries)) {
+        setM3uSummary({ name: '', matched: 0, total: 0, unmatched: [res?.error || 'Import failed'] })
+        return
       }
+      setM3uChoice({ name: res.name, entries: res.entries })
     } finally {
       setM3uImporting(false)
     }
-  }, [m3uImporting, importM3uPlaylist, setLocalSelectedId])
+  }, [m3uImporting])
+
+  // Titles-list import: each line of a text file is a song title looked up in
+  // the API. Titles resolve to API songs, so the result is a synced playlist —
+  // which needs an account. Progress + a "not found" report live in this state.
+  const [titlesImport, setTitlesImport] = useState<
+    { state: 'loading' | 'done' | 'error'; name: string; total: number; done: number; matched: number; unmatched: string[] } | null
+  >(null)
+
+  // Shared by the "Import Titles" button and the drag-drop path: resolve each
+  // title against the API, then create a synced playlist. Guards on account +
+  // an in-flight import itself so either entry point is safe to call.
+  const runTitlesImport = useCallback(async (name: string, lines: string[]) => {
+    if (titlesImport?.state === 'loading') return
+    if (!account) {
+      setTitlesImport({ state: 'error', name: '', total: 0, done: 0, matched: 0, unmatched: ['Sign in first — a titles list becomes a synced playlist, which needs an account.'] })
+      return
+    }
+    if (!lines.length) {
+      setTitlesImport({ state: 'error', name, total: 0, done: 0, matched: 0, unmatched: ['That file has no song titles.'] })
+      return
+    }
+    setTitlesImport({ state: 'loading', name, total: lines.length, done: 0, matched: 0, unmatched: [] })
+    // Resolve titles with a small concurrency pool, preserving playlist order
+    // (results are written back by index; unmatched titles collected as we go).
+    const resolvedIds = new Array<number | null>(lines.length).fill(null)
+    const unmatched: string[] = []
+    let cursor = 0
+    let completed = 0
+    const CONCURRENCY = 5
+    const worker = async (): Promise<void> => {
+      while (cursor < lines.length) {
+        const i = cursor++
+        const song = await resolveTitleToSong(lines[i])
+        if (song) resolvedIds[i] = song.id
+        else unmatched.push(lines[i])
+        completed++
+        setTitlesImport(prev => (prev && prev.state === 'loading' ? { ...prev, done: completed } : prev))
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, lines.length) }, worker))
+    const uniqueIds = [...new Set(resolvedIds.filter((id): id is number => id != null))]
+    try {
+      const pl = await userApi.createPlaylist(name, { song_ids: uniqueIds })
+      await refreshPlaylists()
+      setSelectedId(pl.id)
+      setTitlesImport({ state: 'done', name, total: lines.length, done: lines.length, matched: uniqueIds.length, unmatched })
+    } catch {
+      setTitlesImport({ state: 'error', name, total: lines.length, done: lines.length, matched: uniqueIds.length, unmatched: ['Could not create the playlist. Try again.'] })
+    }
+  }, [account, titlesImport, refreshPlaylists, setSelectedId])
+
+  // Turn each .m3u line into a search query: prefer the file name (the last
+  // path segment — what mp3-player exports name after the song), falling back
+  // to the #EXTINF title. resolveTitleToSong strips the extension and any
+  // leading track number, so a raw "03 - Righteous.mp3" resolves fine.
+  const m3uEntryQuery = useCallback((e: M3uEntry): string =>
+    (e.path.split(/[\\/]/).pop() || '').trim() || e.title || '', [])
+
+  // The two branches of the M3U chooser.
+  const commitM3uLocal = useCallback((name: string, entries: M3uEntry[]) => {
+    setM3uChoice(null)
+    const r = importM3uEntriesLocal(name, entries)
+    if (r.ok) {
+      setLocalSelectedId(r.playlistId)
+      setM3uSummary({ name: r.name, matched: r.matched, total: r.total, unmatched: r.unmatched })
+    } else if (!r.canceled && r.error) {
+      setM3uSummary({ name: '', matched: 0, total: 0, unmatched: [r.error] })
+    }
+  }, [importM3uEntriesLocal, setLocalSelectedId])
+
+  const commitM3uApi = useCallback(async (name: string, entries: M3uEntry[]) => {
+    setM3uChoice(null)
+    await runTitlesImport(name, entries.map(m3uEntryQuery).filter(Boolean))
+  }, [runTitlesImport, m3uEntryQuery])
+
+  const handleImportTitles = useCallback(async () => {
+    const el = (window as any).electron
+    if (!el?.importTextLines || titlesImport?.state === 'loading') return
+    const res = await el.importTextLines()
+    if (!res || res.canceled) return
+    if (res.error || !Array.isArray(res.lines)) {
+      setTitlesImport({ state: 'error', name: res?.name || '', total: 0, done: 0, matched: 0, unmatched: [res?.error || 'Import failed'] })
+      return
+    }
+    await runTitlesImport(res.name, res.lines as string[])
+  }, [titlesImport, runTitlesImport])
+
+  // ── Drag-and-drop an .m3u/.m3u8 onto the window ───────────────────────────
+  const [dragActive, setDragActive] = useState(false)
+  useEffect(() => {
+    if (!isElectron) return
+    const el = (window as any).electron
+    const hasFiles = (e: DragEvent): boolean => Array.from(e.dataTransfer?.types ?? []).includes('Files')
+    let depth = 0
+    const onEnter = (e: DragEvent): void => { if (!hasFiles(e)) return; e.preventDefault(); depth++; setDragActive(true) }
+    const onOver = (e: DragEvent): void => { if (!hasFiles(e)) return; e.preventDefault() }
+    const onLeave = (e: DragEvent): void => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) setDragActive(false) }
+    const onDrop = async (e: DragEvent): Promise<void> => {
+      depth = 0; setDragActive(false)
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      const m3u = files.find(f => /\.m3u8?$/i.test(f.name))
+      const text = files.find(f => /\.(txt|csv|text)$/i.test(f.name))
+      if (!m3u && !text) return
+      // Only claim the drop once we recognise the file — otherwise let other
+      // drop zones (or the default) handle it. Claiming here also stops
+      // Chromium from navigating the window to the dropped file.
+      e.preventDefault()
+      // Surface the library view so the chooser dialog / progress banner is
+      // visible even if a playlist detail was open when the file was dropped.
+      setSelectedId(null); setLocalSelectedId(null); setShowLiked(false)
+      // Prefer the .m3u — it opens the local-vs-API chooser. Only one file is
+      // handled per drop: each import owns a single dialog/progress banner.
+      if (m3u) {
+        const p = el.getPathForFile?.(m3u)
+        if (!p) return
+        const res = await el.readM3uPath?.(p)
+        if (res?.ok && Array.isArray(res.entries)) setM3uChoice({ name: res.name, entries: res.entries })
+        else if (res?.error) setM3uSummary({ name: '', matched: 0, total: 0, unmatched: [res.error] })
+        return
+      }
+      // A .txt is treated as a titles list (one song name per line).
+      if (text) {
+        const p = el.getPathForFile?.(text)
+        if (!p) return
+        const res = await el.readTextLinesPath?.(p)
+        if (res?.ok && Array.isArray(res.lines)) await runTitlesImport(res.name, res.lines)
+        else if (res?.error) setTitlesImport({ state: 'error', name: res.name || '', total: 0, done: 0, matched: 0, unmatched: [res.error] })
+      }
+    }
+    window.addEventListener('dragenter', onEnter)
+    window.addEventListener('dragover', onOver)
+    window.addEventListener('dragleave', onLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onEnter)
+      window.removeEventListener('dragover', onOver)
+      window.removeEventListener('dragleave', onLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [isElectron, setSelectedId, setLocalSelectedId, runTitlesImport])
 
   // Song info modal
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
@@ -2489,10 +2638,60 @@ export default function PlaylistsView(): JSX.Element {
     )
   }
 
+  // A full-window drop hint, portaled to the body so it shows over whichever
+  // view is active. The actual drop is handled by the window listener above.
+  const dragOverlay = dragActive ? createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm pointer-events-none">
+      <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 border-dashed border-accent/60 bg-surface shadow-2xl">
+        <FileUp size={44} className="text-accent" />
+        <p className="text-text-primary font-semibold">Drop an .m3u playlist or a .txt titles list to import</p>
+      </div>
+    </div>,
+    document.body,
+  ) : null
+
+  // The local-vs-API chooser shown after an .m3u is parsed. "Local" matches
+  // each line's path to your library; "API" looks each song up by name online.
+  const choiceModal = m3uChoice ? createPortal(
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4" onClick={() => setM3uChoice(null)}>
+      <div className="bg-surface border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+        <h3 className="text-text-primary text-lg font-bold">Import “{m3uChoice.name}”</h3>
+        <p className="text-text-muted text-sm mt-1 mb-5">{m3uChoice.entries.length} track{m3uChoice.entries.length === 1 ? '' : 's'}. How should they be added?</p>
+        <div className="space-y-2.5">
+          <button
+            onClick={() => commitM3uLocal(m3uChoice.name, m3uChoice.entries)}
+            className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-[var(--border)] hover:bg-surface-overlay text-left transition-colors"
+          >
+            <HardDrive size={18} className="text-accent shrink-0 mt-0.5" />
+            <div>
+              <p className="text-text-primary text-sm font-semibold">Match my local files</p>
+              <p className="text-text-muted text-xs mt-0.5">Link each line to a song in your scanned library. Best when the .m3u points at files you have.</p>
+            </div>
+          </button>
+          <button
+            onClick={() => commitM3uApi(m3uChoice.name, m3uChoice.entries)}
+            disabled={!account}
+            className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-[var(--border)] hover:bg-surface-overlay text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Globe size={18} className="text-accent shrink-0 mt-0.5" />
+            <div>
+              <p className="text-text-primary text-sm font-semibold">Find the songs in the API</p>
+              <p className="text-text-muted text-xs mt-0.5">Use each track's name to look it up online and build a synced playlist.{account ? '' : ' Sign in to use this.'}</p>
+            </div>
+          </button>
+        </div>
+        <button onClick={() => setM3uChoice(null)} className="mt-4 w-full py-2 text-sm text-text-muted hover:text-text-primary transition-colors">Cancel</button>
+      </div>
+    </div>,
+    document.body,
+  ) : null
+
   // ── Playlist library ───────────────────────────────────────────────────────
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]" onClick={() => { setCardMenu(null); setFolderMenu(null) }}>
+      {dragOverlay}
+      {choiceModal}
       <div className="px-6 pt-6 pb-10">
         <div className="flex items-center justify-between mb-7">
           <div>
@@ -2502,9 +2701,14 @@ export default function PlaylistsView(): JSX.Element {
           {!creating && !creatingFolder && (
             <div className="flex items-center gap-2">
               {isElectron && (
-                <button onClick={handleImportM3u} disabled={m3uImporting} title="Import an .m3u/.m3u8 playlist into your library" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all disabled:opacity-50">
-                  {m3uImporting ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} strokeWidth={2.2} />} Import M3U
-                </button>
+                <>
+                  <button onClick={handleImportM3u} disabled={m3uImporting} title="Import an .m3u/.m3u8 playlist into your library" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all disabled:opacity-50">
+                    {m3uImporting ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} strokeWidth={2.2} />} Import M3U
+                  </button>
+                  <button onClick={handleImportTitles} disabled={titlesImport?.state === 'loading'} title="Import a text file of song titles as a synced playlist" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all disabled:opacity-50">
+                    {titlesImport?.state === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} strokeWidth={2.2} />} Import Titles
+                  </button>
+                </>
               )}
               <button onClick={() => { setCreatingFolder(true); setNewFolderName('') }} title="New folder" className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-surface-overlay text-text-primary text-sm font-semibold border border-[var(--border)] hover:bg-surface-raised active:scale-[0.97] transition-all">
                 <FolderPlus size={16} strokeWidth={2.2} /> New Folder
@@ -2536,6 +2740,35 @@ export default function PlaylistsView(): JSX.Element {
               )}
             </div>
             <button onClick={() => setM3uSummary(null)} className="p-1 rounded-lg text-text-muted hover:text-text-primary shrink-0"><X size={15} /></button>
+          </div>
+        )}
+
+        {titlesImport && (
+          <div className="flex items-start gap-3 mb-6 px-4 py-3 rounded-xl bg-surface-overlay border border-[var(--border)]">
+            {titlesImport.state === 'loading'
+              ? <Loader2 size={16} className="text-accent shrink-0 mt-0.5 animate-spin" />
+              : <FileText size={16} className={`shrink-0 mt-0.5 ${titlesImport.state === 'error' ? 'text-red-400' : 'text-accent'}`} />}
+            <div className="min-w-0 flex-1 text-sm">
+              {titlesImport.state === 'loading' ? (
+                <p className="text-text-primary font-medium">Matching titles against the API… {titlesImport.done}/{titlesImport.total}</p>
+              ) : titlesImport.state === 'error' ? (
+                <p className="text-red-400">{titlesImport.unmatched[0]}</p>
+              ) : (
+                <>
+                  <p className="text-text-primary font-medium">
+                    Created “{titlesImport.name}” — {titlesImport.matched} of {titlesImport.total} title{titlesImport.total === 1 ? '' : 's'} found in the API.
+                  </p>
+                  {titlesImport.unmatched.length > 0 && (
+                    <p className="text-text-muted text-xs mt-1">
+                      Not found: {titlesImport.unmatched.slice(0, 8).join(', ')}{titlesImport.unmatched.length > 8 ? `, +${titlesImport.unmatched.length - 8} more` : ''}.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+            {titlesImport.state !== 'loading' && (
+              <button onClick={() => setTitlesImport(null)} className="p-1 rounded-lg text-text-muted hover:text-text-primary shrink-0"><X size={15} /></button>
+            )}
           </div>
         )}
 

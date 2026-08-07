@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Info } from 'lucide-react'
+import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, ArrowLeft, Info } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
@@ -66,7 +66,7 @@ export default function Sidebar(): JSX.Element {
     }
   }
 
-  // Foot-of-menu controls (Profile, Log out, Diagnostics, Download, Settings) —
+  // Foot-of-menu controls (Profile, Log out, Diagnostics, Settings) —
   // ordered and filtered to what's both available and toggled on in Settings.
   // Log in and the collapse toggle are rendered separately (never hideable).
   const controlCtx = { account: !!account, isElectron, developerMode }
@@ -75,6 +75,34 @@ export default function Sidebar(): JSX.Element {
   const rowCls = 'flex items-center w-full py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors gap-3 px-3'
   const iconWrap = 'w-6 h-6 flex items-center justify-center shrink-0'
   const labelCls = `truncate transition-opacity duration-200 ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}`
+
+  const returnToApiVertical = !isElectron ? (
+    <a
+      key="return-api"
+      href="https://juicewrldapi.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      title={collapsed ? 'Return to API' : undefined}
+      className={rowCls}
+    >
+      <span className={iconWrap}><ArrowLeft size={18} /></span>
+      <span aria-hidden={collapsed} className={labelCls}>Return to API</span>
+    </a>
+  ) : null
+
+  const returnToApiHorizontal = !isElectron ? (
+    <a
+      key="return-api"
+      href="https://juicewrldapi.com"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Return to API"
+      className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded text-sm font-medium whitespace-nowrap text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+    >
+      <span className="w-6 h-6 shrink-0 flex items-center justify-center"><ArrowLeft size={18} /></span>
+      <span>Return to API</span>
+    </a>
+  ) : null
 
   // Full-width control row for the vertical (left/right) side menu.
   const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
@@ -110,13 +138,6 @@ export default function Sidebar(): JSX.Element {
             <span aria-hidden={collapsed} className={labelCls}>Diagnostics</span>
           </button>
         )
-      case 'download':
-        return (
-          <button key="download" onClick={() => setActiveView('download')} title={collapsed ? 'Download desktop app' : undefined} className={rowCls}>
-            <span className={iconWrap}><Download size={18} /></span>
-            <span aria-hidden={collapsed} className={labelCls}>Download app</span>
-          </button>
-        )
       case 'settings':
         return (
           <button key="settings" onClick={() => toggleSettings()} title={collapsed ? 'Settings' : undefined} className={rowCls}>
@@ -145,8 +166,6 @@ export default function Sidebar(): JSX.Element {
         return <button key="logout" onClick={() => logoutAccount()} title="Log out" className={barIconBtn}><LogOut size={16} /></button>
       case 'diagnostics':
         return <button key="diagnostics" onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={barIconBtn}><Info size={18} /></button>
-      case 'download':
-        return <button key="download" onClick={() => setActiveView('download')} title="Download desktop app" className={barIconBtn}><Download size={18} /></button>
       case 'settings':
         return <button key="settings" onClick={() => toggleSettings()} title="Settings" className={barIconBtn}><Settings size={18} /></button>
     }
@@ -174,6 +193,7 @@ export default function Sidebar(): JSX.Element {
             <div className="shrink-0 mr-0.5"><AppMenu variant="sidebar-icon" /></div>
           )}
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+            {returnToApiHorizontal}
             {items.map(({ icon, label, view }) => (
               <button
                 key={view}
@@ -248,6 +268,7 @@ export default function Sidebar(): JSX.Element {
 
       {/* Nav items */}
       <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto px-3">
+        {returnToApiVertical}
         {items.map(({ icon, label, view }) => (
           <div key={view}>
             <div
