@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { X, ScrollText, ShieldCheck } from 'lucide-react'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 export type LegalDoc = 'terms' | 'privacy'
 
@@ -276,6 +277,7 @@ function PrivacyContent(): JSX.Element {
 // ─── Modal shell ──────────────────────────────────────────────────────────────
 
 export default function LegalModal({ initialDoc = 'terms', onClose }: { initialDoc?: LegalDoc; onClose: () => void }): JSX.Element {
+  useBackToClose(onClose)
   const overlayRef = useRef<HTMLDivElement>(null)
   const [doc, setDoc] = useState<LegalDoc>(initialDoc)
 
@@ -296,10 +298,13 @@ export default function LegalModal({ initialDoc = 'terms', onClose }: { initialD
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      className="fixed inset-0 z-[70] flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm px-0 md:px-4"
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[520px] h-[640px] max-h-[85vh] flex flex-col overflow-hidden">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-3xl shadow-2xl w-full md:max-w-[520px] h-[88svh] md:h-[640px] md:max-h-[85vh] flex flex-col overflow-hidden"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-2">
             {doc === 'terms' ? <ScrollText size={16} className="text-accent" /> : <ShieldCheck size={16} className="text-accent" />}

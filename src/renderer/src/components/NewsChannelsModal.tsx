@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Plus, Check, Trash2, Pencil, Hash } from 'lucide-react'
 import { createChannel, updateChannel, deleteChannel, type NewsChannel } from '../lib/newsApi'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 interface Props {
   channels: NewsChannel[]
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function NewsChannelsModal({ channels, onClose, onChanged }: Props): JSX.Element {
+  useBackToClose(onClose)
   const [newLabel, setNewLabel] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editLabel, setEditLabel] = useState('')

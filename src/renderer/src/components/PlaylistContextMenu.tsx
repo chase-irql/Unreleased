@@ -9,6 +9,7 @@ import * as userApi from '../lib/userApi'
 import type { PlaylistSummary } from '../lib/userApi'
 import { JWAPI_BASE } from '../lib/juicewrldApi'
 import { Track } from '../types'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // Self-contained context menu for an API playlist — usable from anywhere
 // (the sidebar's playlist list, the Playlists grid, etc.) without needing
@@ -27,7 +28,7 @@ function MenuItem({ icon: Icon, label, onClick, destructive = false, disabled = 
     <button
       onClick={(e) => { e.stopPropagation(); onClick() }}
       disabled={disabled}
-      className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-sm transition-colors hover:bg-surface-overlay disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm transition-colors hover:bg-surface-overlay disabled:opacity-40 disabled:cursor-not-allowed ${
         destructive ? 'text-red-400 hover:text-red-300' : 'text-text-primary'
       }`}
     >
@@ -48,6 +49,15 @@ export default function PlaylistContextMenu({ state, onClose }: {
   state: PlaylistContextMenuState
   onClose: () => void
 }): JSX.Element {
+  useBackToClose(onClose)
+  // Bottom sheet below md — see the render for why a pointer-anchored popup
+  // doesn't translate to touch.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    const check = (): void => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
   const { playlists, playCollection, addToQueue, refreshPlaylists, setPendingPlaylistId, setActiveView, offlinePlaylists, offlineSync, downloadPlaylistOffline, removePlaylistOffline } = useStore(
     useShallow(s => ({
       playlists: s.playlists, playCollection: s.playCollection, addToQueue: s.addToQueue,
@@ -196,11 +206,23 @@ export default function PlaylistContextMenu({ state, onClose }: {
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[60]" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} />
+      {/* The scrim is also the dismiss target; it dims on mobile, where the
+          menu is a bottom sheet rather than a pointer-anchored popup. */}
+      <div
+        className={`fixed inset-0 z-[60] ${isMobile ? 'bg-black/40' : ''}`}
+        onClick={onClose}
+        onContextMenu={(e) => { e.preventDefault(); onClose() }}
+      />
       <div
         ref={ref}
-        className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px]"
-        style={{ left: pos.left, top: pos.top }}
+        className={`fixed z-[61] bg-surface border border-[var(--border)] shadow-2xl py-1 ${
+          isMobile
+            ? 'left-0 right-0 bottom-0 rounded-t-2xl border-x-0 border-b-0 max-h-[75svh] overflow-y-auto'
+            : 'rounded-xl min-w-[210px]'
+        }`}
+        style={isMobile
+          ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+          : { left: pos.left, top: pos.top }}
         onClick={e => e.stopPropagation()}
       >
         {renaming ? (

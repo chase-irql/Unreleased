@@ -114,7 +114,7 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows')
+    playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows, sidebarPosition } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows', 'sidebarPosition')
   const canEditSong = !!(account?.is_editor || account?.is_administrator)
 
   const [showContextMenu, setShowContextMenu] = useState(false)
@@ -1382,12 +1382,17 @@ export default function Player(): JSX.Element {
       {activeView !== 'wrld' && (
       <>
       {/* ── Mobile player ── */}
-      {/* No safe-area-inset-bottom padding here: the BottomNav sits directly
-          below this bar and already reserves the home-indicator space for the
-          whole stack. Adding it here too (it reads ~0 in Safari, where the URL
-          bar occupies the inset, but the real ~34px once installed as a
-          standalone PWA) injected a dead gap between the player and the nav. */}
-      <div className="app-player md:hidden bg-surface border-t border-[var(--border)] shrink-0" onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}>
+      {/* Safe-area padding belongs to whichever bar is actually last in the
+          stack. Normally that's the BottomNav sitting directly below this one,
+          which already reserves the home-indicator space for both — adding it
+          here too injected a dead gap. When the nav is parked at the top
+          (Settings → Appearance → Menu position) this bar IS the bottom edge,
+          so it takes the inset over. */}
+      <div
+        className="app-player md:hidden bg-surface border-t border-[var(--border)] shrink-0"
+        style={sidebarPosition === 'top' ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' } : undefined}
+        onContextMenu={(e) => { e.preventDefault(); if (currentTrack) setShowContextMenu(v => !v) }}
+      >
         {/* Thin progress bar */}
         {radioFmActive ? (
           <div className="h-[2px] bg-red-900/40 relative">
@@ -1442,7 +1447,8 @@ export default function Player(): JSX.Element {
         <div className="flex items-center px-3 py-2 gap-3 h-14">
           <button
             className="w-10 h-10 rounded bg-surface-overlay shrink-0 overflow-hidden"
-            onClick={() => setActiveView('wrld')}
+            onClick={() => setShowNowPlaying(true)}
+            aria-label="Open now playing"
           >
             {radioFmActive ? (
               radioFmMatchedSong?.imageUrl
@@ -1458,11 +1464,16 @@ export default function Player(): JSX.Element {
               </div>
             )}
           </button>
-          <div className="flex-1 min-w-0">
-            <p
-              className="text-sm font-medium text-text-primary truncate"
-              title={radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.title : (currentTrack?.title || undefined)}
-            >
+          {/* Cover + info both open Now Playing, the full-screen player on
+              mobile. (The cover used to jump to the WRLD page and this strip
+              was dead space entirely.) WRLD stays its own immersive view,
+              reachable from the nav. */}
+          <button
+            className="flex-1 min-w-0 text-left"
+            onClick={() => setShowNowPlaying(true)}
+            aria-label="Open now playing"
+          >
+            <p className="text-sm font-medium text-text-primary truncate">
               {radioFmActive && radioFmNowPlaying
                 ? radioFmNowPlaying.title
                 : (currentTrack?.title || 'Not playing')}
@@ -1472,33 +1483,37 @@ export default function Player(): JSX.Element {
                 ? radioFmNowPlaying.artist
                 : (currentTrack?.artist || '')}
             </p>
-          </div>
-          <div className="flex items-center gap-0.5 shrink-0">
-            {!radioFmActive && (
-              <button onClick={toggleShuffle} className={`p-1.5 transition-colors ${shuffle ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-                <Shuffle size={15} />
-              </button>
-            )}
-            <button onClick={handlePrev} disabled={radioFmActive} className="p-2 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <SkipBack size={18} fill="currentColor" />
+          </button>
+          {/* Shuffle and repeat moved to Now Playing's transport row — five
+              controls in this strip meant ~27px targets and left the title
+              almost no room. What's left gets proper 44px touch targets. */}
+          <div className="flex items-center shrink-0 -mr-1">
+            <button
+              onClick={handlePrev}
+              disabled={radioFmActive}
+              aria-label="Previous track"
+              className="w-11 h-11 flex items-center justify-center text-text-secondary active:text-text-primary transition-colors disabled:opacity-30"
+            >
+              <SkipBack size={20} fill="currentColor" />
             </button>
             <button
               onClick={() => setIsPlaying(!isPlaying)}
               disabled={!currentTrack || radioFmActive}
-              className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:scale-105 active:scale-95 transition-transform disabled:opacity-30"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              className="w-11 h-11 rounded-full bg-white flex items-center justify-center active:scale-95 transition-transform disabled:opacity-30"
             >
               {isPlaying
-                ? <Pause size={16} fill="#000" className="text-black" />
-                : <Play  size={16} fill="#000" className="text-black ml-0.5" />}
+                ? <Pause size={18} fill="#000" className="text-black" />
+                : <Play  size={18} fill="#000" className="text-black ml-0.5" />}
             </button>
-            <button onClick={handleNext} disabled={radioFmActive} className="p-2 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              <SkipForward size={18} fill="currentColor" />
+            <button
+              onClick={handleNext}
+              disabled={radioFmActive}
+              aria-label="Next track"
+              className="w-11 h-11 flex items-center justify-center text-text-secondary active:text-text-primary transition-colors disabled:opacity-30"
+            >
+              <SkipForward size={20} fill="currentColor" />
             </button>
-            {!radioFmActive && (
-              <button onClick={toggleRepeat} className={`p-1.5 transition-colors ${repeat !== 'none' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-                {repeat === 'one' ? <Repeat1 size={15} /> : <Repeat size={15} />}
-              </button>
-            )}
           </div>
         </div>
       </div>

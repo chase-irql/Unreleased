@@ -6,6 +6,7 @@ import {
   JWApiFileEntry, JWApiBrowseResponse,
 } from '../lib/juicewrldApi'
 import { getMediaType } from '../lib/fileTypes'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 function breadcrumbs(path: string): { label: string; path: string }[] {
   if (!path) return []
@@ -80,6 +81,7 @@ interface Props {
 // storage path ("Compilation/1. Released Discography/…mp3") and the app builds
 // stream URLs from it, so handing back an absolute URL there would double-wrap.
 export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title, multiple = false, onSelectMany }: Props): JSX.Element {
+  useBackToClose(onClose)
   const isAudio = kind === 'audio'
   // Image mode is the only one that earns a thumbnail grid; audio and 'any'
   // both render the compact list.

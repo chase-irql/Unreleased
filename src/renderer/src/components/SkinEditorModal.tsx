@@ -6,6 +6,7 @@ import {
   SKIN_VAR_META, SKIN_OPTIONAL_VAR_META, createCustomSkin, skinToFileText, skinFileName,
   type Skin, type SkinVars,
 } from '../lib/skins'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // Downloads `text` as a file named `name` (renderer-side blob download — the
 // user's own generated skin, no server round-trip).
@@ -49,6 +50,7 @@ export default function SkinEditorModal({
   // caller so the open/edit state stays local to its window.
   onEditSkin: (id: string) => void
 }): JSX.Element | null {
+  useBackToClose(onClose)
   const { customSkins, saveCustomSkin, deleteCustomSkin, setTheme } = useStorePick(
     'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'setTheme',
   )
@@ -91,9 +93,12 @@ export default function SkinEditorModal({
     <div
       ref={overlayRef}
       onMouseDown={(e) => { if (e.target === overlayRef.current) onClose() }}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm p-0 md:p-4"
     >
-      <div className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl overflow-hidden">
+      <div
+        className="w-full md:max-w-lg max-h-[88svh] md:max-h-[85vh] flex flex-col rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl overflow-hidden"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)] bg-[var(--surface-raised)]">
           <input

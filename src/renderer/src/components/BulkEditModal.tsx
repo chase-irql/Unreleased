@@ -15,6 +15,7 @@ import { getVersionMetaForSongs, getOwnVersionMeta, setGroupVersionTitle, setSon
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { invalidateCompactGroupsCache } from '../lib/compactGroups'
 import { cleanDate } from './EditorPage'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // Bulk editor — one dialog, two sources:
 //
@@ -276,6 +277,8 @@ export default function BulkEditModal(): JSX.Element | null {
       updateLibraryTrack: s.updateLibraryTrack,
     }))
   )
+  // Stays mounted and renders null when closed, so gate on the target.
+  useBackToClose(close, !!target)
 
   const [eras, setEras] = useState<JWApiEra[]>([])
   // Which version group each selected song sits in, and that group's shared

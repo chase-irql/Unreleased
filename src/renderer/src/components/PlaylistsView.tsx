@@ -614,6 +614,18 @@ export default function PlaylistsView(): JSX.Element {
   const { start: rowStart, end: rowEnd, totalHeight: rowsTotalHeight } =
     useVirtualWindowEl(listScrollEl, listContentEl, displayTracks.length, TRACK_ROW_H)
 
+  // The track list is built around mouse affordances — a hover-revealed play
+  // button, a hover-only drag grip, a desktop-only "more" button — none of
+  // which exist on touch. Below md the row drops those columns and becomes
+  // tap-to-play instead. Kept as state (not a click-time check) because it
+  // drives the grid template, which has to match between header and rows.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    const check = (): void => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
   // groupItemsByVersion doesn't know about the search box, so without this
   // typing a query while compact view is active would just do nothing.
   const filteredCompactGroups = useMemo(
@@ -1720,18 +1732,23 @@ export default function PlaylistsView(): JSX.Element {
           </div>
           <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
           <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}>
-              <span className="text-center">#</span><span /><span>Title</span><div className="flex justify-center"><Clock size={12} /></div>
+            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}>
+              {!isMobile && <span className="text-center">#</span>}<span /><span>Title</span><div className="flex justify-center"><Clock size={12} /></div>
             </div>
             {localTracks.map((lt, i) => {
               const qt = libTrackToTrack(lt)
               return (
-                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}
+                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default select-none"
+                  style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}
+                  onClick={() => { if (isMobile) playTrack(qt, localQTracks) }}
                   onDoubleClick={() => playTrack(qt, localQTracks)}
                 >
-                  <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
-                  <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}><Play size={14} fill="currentColor" /></button>
+                  {!isMobile && (
+                    <>
+                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
+                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}><Play size={14} fill="currentColor" /></button>
+                    </>
+                  )}
                   <div className="w-10 h-10 rounded-md overflow-hidden shrink-0">
                     <AlbumArtThumb track={lt} size={40} />
                   </div>
@@ -1899,7 +1916,11 @@ export default function PlaylistsView(): JSX.Element {
     // Extra leading checkbox column while selecting. rem, not px, so the fixed
     // columns (notably the album-art column) scale with the app text-size
     // setting alongside the rem-sized covers and text — identical at scale 1.
-    const gridCols = selectMode ? '1.25rem 1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' : '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem'
+    // Mobile drops the grip, index/play and duration columns (see isMobile
+    // above) and widens the trailing one to hold a 44px "more" button.
+    const gridCols = isMobile
+      ? (selectMode ? '1.25rem 2.5rem 1fr 2.75rem' : '2.5rem 1fr 2.75rem')
+      : (selectMode ? '1.25rem 1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' : '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem')
 
     const playShuffle = () => {
       if (!tracks.length) return
@@ -2256,13 +2277,15 @@ export default function PlaylistsView(): JSX.Element {
                         : <Square size={15} className="opacity-50" />}
                     </button>
                   )}
-                  <span />
-                  <span className="text-center">#</span>
+                  {!isMobile && <span />}
+                  {!isMobile && <span className="text-center">#</span>}
                   <span />
                   <SortHeader label="Title" field="title" sort={sort} onSort={handleSort} />
-                  <div className="flex justify-center">
-                    <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
-                  </div>
+                  {!isMobile && (
+                    <div className="flex justify-center">
+                      <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
+                    </div>
+                  )}
                   <span />
                 </div>
               )}
@@ -2300,7 +2323,8 @@ export default function PlaylistsView(): JSX.Element {
                               <div
                                 key={track.id}
                                 onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                                className="group flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-surface-raised transition-colors cursor-default"
+                                className="group flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default"
+                                onClick={() => { if (isMobile) playTrack(track, group.members.map(m => m.item)) }}
                                 onDoubleClick={() => playTrack(track, group.members.map(m => m.item))}
                               >
                                 <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} eager />
@@ -2313,10 +2337,12 @@ export default function PlaylistsView(): JSX.Element {
                                 </div>
                                 <button
                                   onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                                  className="p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors shrink-0"
-                                  title="More options"
+                                  className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors shrink-0 ${
+                                    isMobile ? 'w-11 h-11 flex items-center justify-center -mr-1' : 'p-1.5'
+                                  }`}
+                                  aria-label="More options"
                                 >
-                                  <MoreHorizontal size={13} />
+                                  <MoreHorizontal size={isMobile ? 18 : 13} />
                                 </button>
                               </div>
                             )
@@ -2353,7 +2379,11 @@ export default function PlaylistsView(): JSX.Element {
                   onDragOver={e => { if (!dragEnabled || selectMode) return; e.preventDefault(); setDropIdx(displayIdx) }}
                   onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
                   onDrop={() => dragEnabled && !selectMode && handleDrop(displayIdx)}
-                  onClick={e => { if (e.ctrlKey || e.metaKey || selectMode) toggleTrackSelect(track) }}
+                  onClick={e => {
+                    if (e.ctrlKey || e.metaKey || selectMode) { toggleTrackSelect(track); return }
+                    // Touch has no hover play button — the row is the target.
+                    if (isMobile) playTrack(track, displayTracks)
+                  }}
                   onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
                   className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
                     isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
@@ -2365,13 +2395,19 @@ export default function PlaylistsView(): JSX.Element {
                       {isSelected ? <CheckSquare2 size={16} className="text-accent" /> : <Square size={16} className="text-text-muted opacity-50" />}
                     </span>
                   )}
-                  <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled && !selectMode ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
-                    <GripVertical size={14} />
-                  </span>
-                  <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{displayIdx + 1}</span>
-                  <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
-                    <Play size={14} fill="currentColor" />
-                  </button>
+                  {!isMobile && (
+                    <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled && !selectMode ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
+                      <GripVertical size={14} />
+                    </span>
+                  )}
+                  {!isMobile && (
+                    <>
+                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{displayIdx + 1}</span>
+                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                    </>
+                  )}
                   <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} eager />
                   <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
                     <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
@@ -2381,16 +2417,30 @@ export default function PlaylistsView(): JSX.Element {
                           <CircleArrowDown size={11} fill="currentColor" />
                         </span>
                       )}
-                      <span className="truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</span>
+                      {/* Duration has no column of its own on mobile — it
+                          rides along here rather than being dropped. */}
+                      <span className="truncate">
+                        {track.artist}{track.album ? ` · ${track.album}` : ''}
+                        {isMobile ? ` · ${formatDuration(track.duration, '--:--')}` : ''}
+                      </span>
                     </p>
                   </div>
-                  <span className="text-text-muted text-xs tabular-nums text-center">
-                    {formatDuration(track.duration, '--:--')}
-                  </span>
-                  <div className={`flex items-center justify-end transition-opacity ${selectMode ? 'opacity-0 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
+                  {!isMobile && (
+                    <span className="text-text-muted text-xs tabular-nums text-center">
+                      {formatDuration(track.duration, '--:--')}
+                    </span>
+                  )}
+                  {/* Was hover-reveal + `hidden md:flex`, i.e. unreachable on
+                      touch — the context menu had no entry point at all. */}
+                  <div className={`flex items-center justify-end transition-opacity ${
+                    selectMode ? 'opacity-0 pointer-events-none' : isMobile ? '' : 'opacity-0 group-hover:opacity-100'
+                  }`}>
                     <button onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                      className="p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors hidden md:flex" title="More options">
-                      <MoreHorizontal size={13} />
+                      className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors ${
+                        isMobile ? 'w-11 h-11 flex items-center justify-center -mr-2' : 'p-1.5 hidden md:flex'
+                      }`}
+                      aria-label="More options">
+                      <MoreHorizontal size={isMobile ? 18 : 13} />
                     </button>
                   </div>
                 </div>
@@ -2602,8 +2652,8 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         ) : (
           <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}>
-              <span>#</span>
+            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}>
+              {!isMobile && <span>#</span>}
               <span />
               <span>Title</span>
               <div className="flex justify-center"><Clock size={12} /></div>
@@ -2611,14 +2661,19 @@ export default function PlaylistsView(): JSX.Element {
             {localTracks.map((lt, i) => {
               const qt = libTrackToTrack(lt)
               return (
-                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: '1.75rem 2.5rem 1fr 3.5rem' }}
+                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default select-none"
+                  style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}
+                  onClick={() => { if (isMobile) playTrack(qt, localQTracks) }}
                   onDoubleClick={() => playTrack(qt, localQTracks)}
                 >
-                  <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
-                  <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}>
-                    <Play size={14} fill="currentColor" />
-                  </button>
+                  {!isMobile && (
+                    <>
+                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
+                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}>
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                    </>
+                  )}
                   <div className="w-10 h-10 rounded-md overflow-hidden shrink-0">
                     <AlbumArtThumb track={lt} size={40} />
                   </div>

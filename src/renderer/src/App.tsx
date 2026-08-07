@@ -2,7 +2,9 @@ import React, { useEffect, Suspense, lazy } from 'react'
 import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
 import { useThemeEffects } from './lib/themeEffects'
+import { useAndroidBackButton } from './hooks/useAndroidBackButton'
 import { runWhenIdle } from './lib/platform'
+import { applySeo } from './lib/seo'
 import { ViewType } from './types'
 
 function getViewFromPath(pathname: string): ViewType {
@@ -105,6 +107,9 @@ export default function App(): JSX.Element {
   const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, appMenuPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, loadLibrary, wrldFullscreen, loadOfflineLibrary, syncOfflinePlaylists, libraryAutoRefresh, libraryFolders, scanLibrary, prefetchApiData } = useStorePick(
     'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'appMenuPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'loadLibrary', 'wrldFullscreen', 'loadOfflineLibrary', 'syncOfflinePlaylists', 'libraryAutoRefresh', 'libraryFolders', 'scanLibrary', 'prefetchApiData')
   useThemeEffects()
+  // Android hardware back → close the topmost overlay / step back a view.
+  // No-op off native.
+  useAndroidBackButton()
   // Seed auth token from env in local dev only — import.meta.env.DEV is false in production
   // builds, so this never runs for real users even if the token is baked into the bundle.
   useEffect(() => {
@@ -127,6 +132,9 @@ export default function App(): JSX.Element {
     window.addEventListener('popstate', syncFromPath)
     return () => window.removeEventListener('popstate', syncFromPath)
   }, [])
+
+  // Give each route its own title/description/canonical. No-op in Electron.
+  useEffect(() => { applySeo(activeView) }, [activeView])
 
   // Complete Discord OAuth redirect, then load the public account
   useEffect(() => {
@@ -222,6 +230,10 @@ export default function App(): JSX.Element {
           <AppMenu variant="titlebar" />
         </div>
       )}
+      {/* Mobile nav parked above the content when Menu position = Top. It's
+          md:hidden either way, so this branch is invisible on desktop (where
+          the same setting moves the Sidebar instead). */}
+      {sidebarPosition === 'top' && <ErrorBoundary fallback={null}><BottomNav /></ErrorBoundary>}
       {/* Sidebar stays first in the DOM; reverse variants place it visually
           on the right/bottom without reordering focus/tab order. */}
       <div className={`flex flex-1 overflow-hidden ${
@@ -288,7 +300,7 @@ export default function App(): JSX.Element {
       <ErrorBoundary fallback={null}><DiscordRpcSync /></ErrorBoundary>
       <ErrorBoundary fallback={null}><LastfmScrobbler /></ErrorBoundary>
       <ErrorBoundary fallback={null}><NewsNotifier /></ErrorBoundary>
-      <ErrorBoundary fallback={null}><BottomNav /></ErrorBoundary>
+      {sidebarPosition !== 'top' && <ErrorBoundary fallback={null}><BottomNav /></ErrorBoundary>}
       {showSettings && (
         <ErrorBoundary variant="overlay" onDismiss={() => setShowSettings(false)}>
           <Suspense fallback={null}><Settings /></Suspense>

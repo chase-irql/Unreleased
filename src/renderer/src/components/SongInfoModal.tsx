@@ -13,6 +13,7 @@ import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versio
 import { formatDuration } from '../lib/format'
 import SongPrefsSection from './SongPrefsSection'
 import { ProgressiveCover } from './ProgressiveCover'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 const CATEGORY_COLORS: Record<string, string> = {
   released:          'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
@@ -79,6 +80,7 @@ interface Props {
 }
 
 export default function SongInfoModal({ song, onClose, onEdit, floating = false, docked = false }: Props): JSX.Element | null {
+  useBackToClose(onClose, !floating && !docked)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // Desktop: song info lives in its own pop-out window — every existing

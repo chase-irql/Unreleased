@@ -57,10 +57,13 @@ export default function PlaylistCard({
 
       {!selectMode && (
         <button
-          className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
+          // Always visible on touch (there's no hover to reveal it), and sized
+          // for a finger there rather than the 21px desktop hit area.
+          className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 w-9 h-9 md:w-auto md:h-auto flex items-center justify-center md:p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
           onClick={(e) => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onMenuButton(e) }}
+          aria-label={`More options for ${name}`}
         >
-          <MoreHorizontal size={13} />
+          <MoreHorizontal size={16} className="md:w-[13px] md:h-[13px]" />
         </button>
       )}
 

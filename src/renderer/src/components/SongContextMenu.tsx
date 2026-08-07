@@ -12,6 +12,7 @@ import { Track } from '../types'
 import ChangeVersionMenuItem from './ChangeVersionMenuItem'
 import { placeFlyout } from '../lib/menuFlyout'
 import { versionsEnabled } from '../lib/versionsApi'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // The one context menu used everywhere a song can be right-clicked (Tracker,
 // Liked Songs, Playlists, the bottom Player bar, WRLD). Built around `Track`
@@ -75,7 +76,8 @@ function MenuItem({ icon, label, onClick, destructive, trailing, innerRef }: {
     <button
       ref={innerRef}
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors hover:bg-surface-raised ${
+      // py-3 below md: a 32px row is a mouse target, not a finger one.
+      className={`w-full flex items-center gap-2.5 px-3 py-3 md:py-2 text-sm text-left transition-colors hover:bg-surface-raised ${
         destructive ? 'text-red-400' : 'text-text-secondary hover:text-text-primary'
       }`}
     >
@@ -118,6 +120,7 @@ export default function SongContextMenu({
   onPlay, onPlayNext, onAddToQueue, onShowInFiles, onSelect, onEditLocalMetadata,
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
+  useBackToClose(onClose)
   const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline, addLibraryTrack } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
@@ -264,6 +267,26 @@ export default function SongContextMenu({
     left: Math.max(8, Math.min(state.x, window.innerWidth - menuWidth - 8)),
   }))
 
+  // Below md this stops being a pointer-anchored popup and becomes a bottom
+  // sheet: a 208px panel pinned to a tap coordinate is a mouse idiom, and its
+  // side-flyout submenus have nowhere to go on a phone (see sheetStyle, which
+  // the submenus reuse so they stack over the sheet instead of beside it).
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    const check = (): void => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+  const sheetStyle: React.CSSProperties = {
+    position: 'fixed',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    top: 'auto',
+    maxHeight: '75svh',
+    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+  }
+
   useLayoutEffect(() => {
     const el = menuRef.current
     if (!el) return
@@ -299,8 +322,12 @@ export default function SongContextMenu({
       // playlist/version/file rows + Download/Remove) is taller than a short
       // phone screen, and the position clamp alone would leave the bottom
       // items clipped and unreachable — scroll instead.
-      style={{ position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left, maxHeight: window.innerHeight - 16 }}
-      className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-x-hidden overflow-y-auto py-1"
+      style={isMobile
+        ? { zIndex: 9999, ...sheetStyle }
+        : { position: 'fixed', zIndex: 9999, top: pos.top, left: pos.left, maxHeight: window.innerHeight - 16 }}
+      className={`bg-surface border border-[var(--border)] shadow-2xl overflow-x-hidden overflow-y-auto py-1 ${
+        isMobile ? 'w-full rounded-t-2xl border-x-0 border-b-0' : 'w-52 rounded-xl'
+      }`}
     >
       <div className="px-3 py-2 border-b border-[var(--border)] mb-1">
         <p className="text-text-primary text-xs font-semibold truncate">{track.title}</p>
@@ -313,8 +340,12 @@ export default function SongContextMenu({
         <div
           ref={submenuRef}
           onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', zIndex: 10000, top: subPos.top, left: subPos.left }}
-          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+          style={isMobile
+            ? { zIndex: 10000, ...sheetStyle }
+            : { position: 'fixed', zIndex: 10000, top: subPos.top, left: subPos.left }}
+          className={`bg-surface border border-[var(--border)] shadow-2xl overflow-hidden py-1 ${
+            isMobile ? 'w-full rounded-t-2xl border-x-0 border-b-0' : 'w-52 rounded-xl'
+          }`}
         >
           {isLocalOnly ? (
             <div className="max-h-44 overflow-y-auto">
@@ -407,8 +438,12 @@ export default function SongContextMenu({
         <div
           ref={fileSubmenuRef}
           onClick={(e) => e.stopPropagation()}
-          style={{ position: 'fixed', zIndex: 10000, top: fileSubPos.top, left: fileSubPos.left }}
-          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+          style={isMobile
+            ? { zIndex: 10000, ...sheetStyle }
+            : { position: 'fixed', zIndex: 10000, top: fileSubPos.top, left: fileSubPos.left }}
+          className={`bg-surface border border-[var(--border)] shadow-2xl overflow-hidden py-1 ${
+            isMobile ? 'w-full rounded-t-2xl border-x-0 border-b-0' : 'w-52 rounded-xl'
+          }`}
         >
           {/* Actions on the local file itself. Copy/move prompt for a
               destination in the main process; delete goes to the OS trash. */}
@@ -489,7 +524,9 @@ export default function SongContextMenu({
               icon={<Plus size={14} />}
               label="Add to playlist"
               trailing={<ChevronRight size={13} className="text-text-muted" />}
-              onClick={() => setPlaylistsOpen(o => !o)}
+              // Open-only, not a toggle: the row is already hovered when it's
+              // clicked, so toggling would close the flyout the hover reopens.
+              onClick={() => setPlaylistsOpen(true)}
             />
           )}
           {onShowInFiles && track.path && (
@@ -509,7 +546,7 @@ export default function SongContextMenu({
               icon={<FileCog size={14} />}
               label="File actions"
               trailing={<ChevronRight size={13} className="text-text-muted" />}
-              onClick={() => setFileOpen(o => !o)}
+              onClick={() => setFileOpen(true)}
             />
           )}
           {onToggleLike && (

@@ -7,6 +7,7 @@ import {
   createNewsItem, updateNewsItem, uploadAttachment, isImageAttachment, MAX_ATTACHMENT_BYTES,
   type NewsItem, type NewsChannel, type NewsAttachment,
 } from '../lib/newsApi'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // An attachment row in the composer: either one already hosted on the post
 // (kept as-is) or a freshly-picked local file (uploaded on publish).
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export default function NewsComposeModal({ channels, initialChannel, editing, onClose, onSaved }: Props): JSX.Element {
+  useBackToClose(onClose)
   const [title, setTitle] = useState(editing?.title ?? '')
   const [channel, setChannel] = useState(editing?.channel ?? initialChannel ?? channels[0]?.id ?? '')
   const [category, setCategory] = useState(editing?.category ?? '')

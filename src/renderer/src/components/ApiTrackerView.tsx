@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, memo } from 'react'
 import {
   Search, Play, Loader2, Music2, X, Check,
   LayoutList, Rows3, Info, ListPlus, PanelLeft,
@@ -25,6 +25,7 @@ import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCach
 import type { CompactGroup } from '../lib/compactGroups'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
+import { placeFlyout } from '../lib/menuFlyout'
 import { formatDuration } from '../lib/format'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
@@ -360,11 +361,15 @@ interface BulkContextMenuState {
 // would give it a new function identity every render, causing React to
 // unmount/remount every menu item button (and flicker any :hover state) on
 // each re-render rather than just updating it.
-function MenuItem({ icon, label, onClick, disabled, title }: {
+function MenuItem({ icon, label, onClick, disabled, title, trailing, innerRef }: {
   icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; title?: string
+  /** Right-aligned adornment — the submenu chevron. */
+  trailing?: React.ReactNode
+  innerRef?: React.Ref<HTMLButtonElement>
 }): JSX.Element {
   return (
     <button
+      ref={innerRef}
       onClick={(e) => { e.stopPropagation(); onClick() }}
       disabled={disabled}
       title={title}
@@ -372,6 +377,7 @@ function MenuItem({ icon, label, onClick, disabled, title }: {
     >
       {icon}
       {label}
+      {trailing && <span className="ml-auto flex items-center">{trailing}</span>}
     </button>
   )
 }
@@ -420,6 +426,9 @@ function BulkContextMenu({
   contained: Set<number>
 }): JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
+  const addItemRef = useRef<HTMLButtonElement>(null)
+  const submenuRef = useRef<HTMLDivElement>(null)
+  const [subPos, setSubPos] = useState({ top: 0, left: 0 })
 
   useEffect(() => {
     const handle = (e: MouseEvent): void => {
@@ -435,9 +444,20 @@ function BulkContextMenu({
   }, [onClose])
 
   const menuWidth = 208
-  const menuHeight = state.showPlaylists ? 320 : 160
+  // The submenu doesn't factor in — it's a flyout positioned separately.
+  const menuHeight = 160
   const top = Math.max(8, Math.min(state.y, window.innerHeight - menuHeight - 8))
   const left = Math.max(8, Math.min(state.x, window.innerWidth - menuWidth - 8))
+
+  // Same flyout treatment as SongContextMenu's "Add to playlist": beside the
+  // menu rather than replacing it, re-placed once the list has rendered.
+  useLayoutEffect(() => {
+    if (!state.showPlaylists) return
+    const item = addItemRef.current, menu = menuRef.current, sub = submenuRef.current
+    if (!item || !menu || !sub) return
+    const p = placeFlyout(item, menu, sub)
+    setSubPos(prev => (prev.top === p.top && prev.left === p.left ? prev : p))
+  }, [state.showPlaylists, top, left, playlists.length, contained, account])
 
   return (
     <div
@@ -449,14 +469,15 @@ function BulkContextMenu({
         <p className="text-text-primary text-xs font-semibold truncate">{count} {count === 1 ? 'song' : 'songs'} selected</p>
       </div>
 
-      {state.showPlaylists ? (
-        <>
-          <button
-            onClick={(e) => { e.stopPropagation(); onTogglePlaylists() }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
-          >
-            <ChevronDown size={12} className="rotate-90" /> Back
-          </button>
+      {state.showPlaylists && (
+        // Inside the menu element so the outside-click handler still counts it
+        // as "inside", but fixed-positioned so the menu's overflow can't clip it.
+        <div
+          ref={submenuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', zIndex: 10000, top: subPos.top, left: subPos.left }}
+          className="w-52 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden py-1"
+        >
           {!account ? (
             <div className="px-3 pb-2">
               <p className="text-xs text-text-muted mb-2">Log in to save to playlists.</p>
@@ -488,31 +509,54 @@ function BulkContextMenu({
               })}
             </div>
           )}
-        </>
-      ) : (
-        <>
-          <MenuItem
-            icon={<ListPlus size={14} />}
-            label="Add to queue"
-            onClick={onAddToQueue}
-            disabled={!canAddToQueue}
-            title={!canAddToQueue ? "Sessions/unsurfaced songs can't be queued" : undefined}
-          />
-          {canAddToPlaylist && (
-            <MenuItem icon={<Plus size={14} />} label="Add to playlist" onClick={onTogglePlaylists} />
-          )}
-          {canLinkVersions && (
-            <MenuItem icon={<Link2 size={14} />} label="Link versions" onClick={onLinkVersions} />
-          )}
-          {canBulkEdit && (
-            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={onBulkEdit} />
-          )}
-          <div className="my-1 border-t border-[var(--border)]" />
-          <MenuItem icon={<PackageOpen size={14} />} label="Download ZIP" onClick={onDownloadZip} />
-        </>
+        </div>
       )}
+
+      {/* Hovering "Add to playlist" opens its flyout; hovering any other row
+          closes it again, the way a native submenu behaves. */}
+      <div
+        onMouseOver={(e) => {
+          const over = addItemRef.current?.contains(e.target as Node) ?? false
+          if (over !== state.showPlaylists) onTogglePlaylists()
+        }}
+      >
+        <MenuItem
+          icon={<ListPlus size={14} />}
+          label="Add to queue"
+          onClick={onAddToQueue}
+          disabled={!canAddToQueue}
+          title={!canAddToQueue ? "Sessions/unsurfaced songs can't be queued" : undefined}
+        />
+        {canAddToPlaylist && (
+          <MenuItem
+            innerRef={addItemRef}
+            icon={<Plus size={14} />}
+            label="Add to playlist"
+            trailing={<ChevronRight size={13} className="text-text-muted" />}
+            // Open-only, not a toggle: the row is already hovered when it's
+            // clicked, so toggling would close the flyout the hover reopens.
+            onClick={() => { if (!state.showPlaylists) onTogglePlaylists() }}
+          />
+        )}
+        {canLinkVersions && (
+          <MenuItem icon={<Link2 size={14} />} label="Link versions" onClick={onLinkVersions} />
+        )}
+        {canBulkEdit && (
+          <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={onBulkEdit} />
+        )}
+        <div className="my-1 border-t border-[var(--border)]" />
+        <MenuItem icon={<PackageOpen size={14} />} label="Download ZIP" onClick={onDownloadZip} />
+      </div>
     </div>
   )
+}
+
+// Below md there's no hover overlay and no room for a comfortable play button,
+// so the row/card itself is the play target — the universal mobile music-app
+// gesture. Read at click time rather than through a hook so a virtualized list
+// doesn't register a media-query listener per rendered row.
+function isTouchLayout(): boolean {
+  return !window.matchMedia('(min-width: 768px)').matches
 }
 
 // ─── Action buttons (shared) ──────────────────────────────────────────────────
@@ -580,7 +624,10 @@ const SongRow = memo(function SongRow({
   return (
     <div
       className={`group flex items-center gap-3 px-3 py-2.5 md:py-2 hover:bg-surface-overlay active:bg-surface-overlay rounded-lg transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || selectMode) { onToggleSelect(song); return }
+        if (isTouchLayout() && canPlay) onPlay(song)
+      }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -665,26 +712,18 @@ const SongRow = memo(function SongRow({
         </div>
       )}
 
-      {/* Mobile: more + play */}
+      {/* Mobile: just "more" — the row itself plays now, so the trailing play
+          button was a redundant 32px target for the primary action. */}
       {!selectMode && (
-        <div className="md:hidden flex items-center shrink-0">
+        <div className="md:hidden flex items-center shrink-0 -mr-1">
           <button
-            className="p-2 text-text-muted active:text-accent transition-colors"
+            className="w-11 h-11 flex items-center justify-center text-text-muted active:text-accent transition-colors"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
-            title="More options"
+            aria-label="More options"
           >
-            <MoreHorizontal size={16} />
+            <MoreHorizontal size={18} />
           </button>
-          {canPlay && (
-            <button
-              className="p-2 text-text-muted active:text-accent transition-colors"
-              onClick={() => onPlay(song)}
-              title="Play"
-            >
-              <Play size={17} />
-            </button>
-          )}
         </div>
       )}
     </div>
@@ -749,7 +788,10 @@ const DetailedSongRow = memo(function DetailedSongRow({
   return (
     <div
       className={`group flex gap-3 px-3 py-2 h-full overflow-hidden rounded-lg border border-[var(--border)] hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || selectMode) { onToggleSelect(song); return }
+        if (isTouchLayout() && canPlay) onPlay(song)
+      }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -805,24 +847,16 @@ const DetailedSongRow = memo(function DetailedSongRow({
             </div>
           )}
           {!selectMode && (
-            <div className="md:hidden flex items-center shrink-0">
+            <div className="md:hidden flex items-center shrink-0 -mr-1.5">
+              {/* Row taps play; this stays as the only trailing control. */}
               <button
-                className="p-1 text-text-muted active:text-accent transition-colors"
+                className="w-11 h-11 flex items-center justify-center text-text-muted active:text-accent transition-colors"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
-                title="More options"
+                aria-label="More options"
               >
-                <MoreHorizontal size={16} />
+                <MoreHorizontal size={18} />
               </button>
-              {canPlay && (
-                <button
-                  className="p-1 text-text-muted active:text-accent transition-colors"
-                  onClick={(e) => { e.stopPropagation(); onPlay(song) }}
-                  title="Play"
-                >
-                  <Play size={16} />
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -1199,7 +1233,10 @@ const SongCard = memo(function SongCard({
     // disappearing under the cursor.
     <div
       className={`group flex flex-col h-full overflow-hidden rounded-xl border bg-surface transition-colors ${selected ? 'border-accent bg-accent/10' : 'border-[var(--border)] hover:border-accent/40'}`}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || selectMode) { onToggleSelect(song); return }
+        if (isTouchLayout() && canPlay) onPlay(song)
+      }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -1588,7 +1625,10 @@ const LyricResultRow = memo(function LyricResultRow({
   return (
     <div
       className={`group flex items-start gap-3 px-3 py-3 hover:bg-surface-overlay active:bg-surface-overlay rounded-lg transition-colors cursor-default ${selected ? 'bg-accent/10' : ''}`}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || selectMode) onToggleSelect(song) }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || selectMode) { onToggleSelect(song); return }
+        if (isTouchLayout() && canPlay) onPlay(song)
+      }}
       onDoubleClick={() => { if (!selectMode) onInfo(song) }}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu(song, e) }}
     >
@@ -1665,26 +1705,18 @@ const LyricResultRow = memo(function LyricResultRow({
         </div>
       )}
 
-      {/* Mobile: more + play */}
+      {/* Mobile: just "more" — the row itself plays now, so the trailing play
+          button was a redundant 32px target for the primary action. */}
       {!selectMode && (
-        <div className="md:hidden flex items-center shrink-0">
+        <div className="md:hidden flex items-center shrink-0 -mr-1">
           <button
-            className="p-2 text-text-muted active:text-accent transition-colors"
+            className="w-11 h-11 flex items-center justify-center text-text-muted active:text-accent transition-colors"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onContextMenu(song, e) }}
-            title="More options"
+            aria-label="More options"
           >
-            <MoreHorizontal size={16} />
+            <MoreHorizontal size={18} />
           </button>
-          {canPlay && (
-            <button
-              className="p-2 text-text-muted active:text-accent transition-colors"
-              onClick={() => onPlay(song)}
-              title="Play"
-            >
-              <Play size={17} />
-            </button>
-          )}
         </div>
       )}
     </div>

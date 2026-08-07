@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useState } from 'react'
 import { X, ChevronLeft, ChevronRight, AlertCircle, Download } from 'lucide-react'
 import { smallCoverUrl } from '../lib/juicewrldApi'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 export interface LightboxItem {
   url: string
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function MediaLightbox({ items, index, onClose, onNav }: Props): JSX.Element | null {
+  useBackToClose(onClose)
   const [videoError, setVideoError] = useState(false)
   const item = items[index]
 

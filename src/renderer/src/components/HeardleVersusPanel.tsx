@@ -20,6 +20,7 @@ import {
 import type { PuzzleResponse } from '../lib/heardleApi'
 import type { Guess, GameStatus, HeardleSong } from '../lib/heardle'
 import { loadPools, searchPool, unlockedSeconds } from '../lib/heardle'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 interface Props {
   embedded?: boolean
@@ -111,6 +112,8 @@ function GuessRow({ guess, correct }: { guess: Guess; correct: boolean }) {
 }
 
 export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.Element {
+  // Embedded in a page it isn't a dismissable layer, so back shouldn't eat it.
+  useBackToClose(onClose, !embedded)
   const { account, volume, setVolume, isPlaying, setIsPlaying } = useStorePick('account', 'volume', 'setVolume', 'isPlaying', 'setIsPlaying')
   const [phase, setPhase] = useState<MatchPhase>('idle')
   const [matchId, setMatchId] = useState<string | null>(null)

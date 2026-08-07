@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } from 'react'
 import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
-  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, KeyRound, Globe, RefreshCw, DownloadCloud,
+  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
   ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
@@ -21,6 +21,7 @@ import {
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
 import { navigateMainWindow, attachToMainWindow } from '../lib/windowSync'
+import { registerBackHandler } from '../lib/backHandlers'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
@@ -406,27 +407,66 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   }, [recordingId, setHotkeyBinding])
 
   const [tab, setTab] = useState<Tab>((settingsTab as Tab) ?? 'appearance')
-  const tabs: { id: Tab; label: string; icon: ElementType }[] = [
-    { id: 'appearance', label: 'Appearance', icon: Palette },
-    { id: 'playback', label: 'Playback', icon: Volume2 },
-    { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
-    ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen }] : []),
-    ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor }] : []),
-    ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench }] : []),
-    { id: 'feedback', label: 'Feedback', icon: MessageCircle },
-    { id: 'about', label: 'About', icon: Info },
+
+  // Below md the panel stops being a dialog and becomes a full-screen page with
+  // a two-level drill-down (category list → section), the platform-native
+  // settings idiom — the old horizontal pill scroller crammed 8 categories into
+  // one row and left the content in a boxed card floating over a backdrop.
+  // `mobileDetail` = a section is open; false = showing the category list.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  const [mobileDetail, setMobileDetail] = useState(!!settingsTab)
+  useEffect(() => {
+    const check = (): void => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // `sub` shows under the label in the mobile category list; `color` is the
+  // badge tint, matching the iOS-Settings idiom the Row primitive already uses.
+  const tabs: { id: Tab; label: string; icon: ElementType; color: string; sub: string }[] = [
+    { id: 'appearance', label: 'Appearance', icon: Palette, color: '#7c3aed', sub: 'Skin, accent, fonts, layout' },
+    { id: 'playback', label: 'Playback', icon: Volume2, color: '#2563eb', sub: 'Output, crossfade, lyrics' },
+    // Touch devices have no keyboard to bind, so the whole section is dropped
+    // there (the bindings themselves stay live — a paired Bluetooth keyboard
+    // still works off the defaults).
+    ...(isMobile ? [] : [{ id: 'shortcuts' as Tab, label: 'Shortcuts', icon: Keyboard, color: '#4b5563', sub: 'Keyboard bindings' }]),
+    ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen, color: '#ea580c', sub: 'Folders and scanning' }] : []),
+    ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor, color: '#059669', sub: 'Downloads, tray, windows' }] : []),
+    ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench, color: '#dc2626', sub: 'Diagnostics and caches' }] : []),
+    { id: 'feedback', label: 'Feedback', icon: MessageCircle, color: '#db2777', sub: 'Report a problem or idea' },
+    { id: 'about', label: 'About', icon: Info, color: '#6b7280', sub: 'Version, links, legal' },
   ]
+
+  const openSection = (id: Tab): void => {
+    setTab(id)
+    setMobileDetail(true)
+  }
+
+  // Android back inside a section returns to the category list; only once
+  // we're on the list does back fall through to closing Settings entirely.
+  useEffect(() => {
+    if (!isMobile || !mobileDetail) return
+    return registerBackHandler(() => { setMobileDetail(false); return true })
+  }, [isMobile, mobileDetail])
 
   useEffect(() => {
     if (tab === 'developer' && !developerMode) setTab('app')
   }, [tab, developerMode])
 
+  // Shrinking a desktop window past the breakpoint (or a deep link) can leave
+  // `tab` pointing at a category that no longer exists on mobile.
+  useEffect(() => {
+    if (isMobile && tab === 'shortcuts') setTab('appearance')
+  }, [isMobile, tab])
+
   // A deep-linked open (app menu → "Keyboard shortcuts"/"Version") sets
   // settingsTab; jump to it, then clear so a later plain open lands wherever
-  // the user last was rather than snapping back here.
+  // the user last was rather than snapping back here. On mobile this must land
+  // in the section itself, not the category list.
   useEffect(() => {
     if (!settingsTab) return
     setTab(settingsTab as Tab)
+    setMobileDetail(true)
     setSettingsTab(null)
   }, [settingsTab, setSettingsTab])
 
@@ -546,8 +586,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   return (
     <div
       ref={overlayRef}
-      className={`fixed inset-0 z-50 flex items-center justify-center ${floating ? '' : 'bg-black/60 backdrop-blur-sm'}`}
-      onClick={(e) => { if (e.target === overlayRef.current) closeSettings() }}
+      className={`fixed inset-0 z-50 flex items-center justify-center ${floating || isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
+      // Click-outside-to-close only exists where there IS an outside; the
+      // mobile page fills the viewport, so the header's X/back is the only exit.
+      onClick={(e) => { if (!isMobile && e.target === overlayRef.current) closeSettings() }}
     >
       {/* Custom-skin editor (portals to <body>, so placement here is fine) */}
       {editingSkinId && (
@@ -557,17 +599,32 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
           onEditSkin={setEditingSkinId}
         />
       )}
-      <div className={`bg-surface flex flex-col overflow-hidden ${floating
+      <div className={`bg-surface flex flex-col overflow-hidden ${floating || isMobile
         ? 'w-full h-full'
         : 'border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh]'}`}
       >
         {/* Header — in a pop-out it doubles as the frameless window's drag strip */}
         <div
           className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0 select-none"
-          style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
+          style={{
+            ...(floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : {}),
+            // Clear the status bar / notch — the mobile page runs edge to edge.
+            ...(isMobile ? { paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' } : {}),
+          }}
         >
-          <div className="flex items-center gap-2" style={noDrag}>
-            <h2 className="text-text-primary font-black text-xl tracking-tight">Settings</h2>
+          <div className="flex items-center gap-2 min-w-0" style={noDrag}>
+            {isMobile && mobileDetail && (
+              <button
+                onClick={() => setMobileDetail(false)}
+                aria-label="Back"
+                className="-ml-2 p-2 text-text-secondary hover:text-text-primary transition-colors"
+              >
+                <ArrowLeft size={20} />
+              </button>
+            )}
+            <h2 className="text-text-primary font-black text-xl tracking-tight truncate">
+              {isMobile && mobileDetail ? (tabs.find((t) => t.id === tab)?.label ?? 'Settings') : 'Settings'}
+            </h2>
             {isElectron && (
               <button
                 disabled={updateState === 'checking' || updateState === 'downloading'}
@@ -646,27 +703,38 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
           </div>
         </div>
 
-        {/* Mobile tab bar — the sidebar collapses below sm, so categories
-            move into a horizontal scroller instead. */}
-        <div className="sm:hidden shrink-0 flex gap-1.5 px-4 py-2.5 border-b border-[var(--border)] overflow-x-auto">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
-                tab === t.id ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary bg-[var(--surface-overlay)]'
-              }`}
-            >
-              <t.icon size={13} />
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {/* Mobile root — the category list. Tapping a row drills into that
+            section (the header grows a back arrow), so each pane gets the whole
+            screen instead of sharing it with a pill scroller. */}
+        {isMobile && !mobileDetail && (
+          <div
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
+            style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+          >
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => openSection(t.id)}
+                className="w-full flex items-center gap-3 px-2 py-3.5 border-b border-[var(--border)] last:border-b-0 text-left active:bg-[var(--surface-overlay)] transition-colors"
+              >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: t.color }}>
+                  <t.icon size={17} className="text-white" strokeWidth={2.25} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-text-primary text-[15px] truncate">{t.label}</p>
+                  <p className="text-text-muted text-xs truncate">{t.sub}</p>
+                </div>
+                <ChevronRight size={18} className="text-text-muted shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Body — sidebar category list + flat content pane, mirroring
-            macOS System Settings / Apple Music's own preferences window. */}
-        <div className="flex flex-1 min-h-0">
-          <div className="w-[180px] shrink-0 border-r border-[var(--border)] py-3 px-2 overflow-y-auto hidden sm:block">
+            macOS System Settings / Apple Music's own preferences window. On
+            mobile the sidebar is gone and this is the drilled-into section. */}
+        <div className={`flex flex-1 min-h-0 ${isMobile && !mobileDetail ? 'hidden' : ''}`}>
+          <div className="w-[180px] shrink-0 border-r border-[var(--border)] py-3 px-2 overflow-y-auto hidden md:block">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -681,12 +749,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             ))}
           </div>
 
-          <div className="flex-1 min-w-0 overflow-y-auto px-6 py-5">
+          <div
+            className="flex-1 min-w-0 overflow-y-auto px-6 py-5"
+            style={isMobile ? { paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' } : undefined}
+          >
 
             {/* ── Appearance ── */}
             {tab === 'appearance' && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-4">Appearance</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Appearance</h3>
                 <div className="py-3 border-b border-[var(--border)]">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#4b5563' }}>
@@ -1016,12 +1087,21 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">Navigation position</span>
-                      <p className="text-text-muted text-[11px]">Where the nav menu sits on desktop — phones keep the bottom tabs</p>
+                      <p className="text-text-muted text-[11px]">
+                        {isMobile ? 'Which edge the nav tabs sit on' : 'Where the nav menu sits'}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap pl-[34px]">
-                    {NAV_POSITIONS.map(({ id, label, icon: PosIcon }) => {
-                      const active = sidebarPosition === id
+                    {/* A vertical rail doesn't fit a phone, so mobile only
+                        offers the two edges its tab bar can actually take. */}
+                    {NAV_POSITIONS.filter(({ id }) => !isMobile || id === 'top' || id === 'bottom').map(({ id, label, icon: PosIcon }) => {
+                      // A left/right value saved on desktop renders as bottom
+                      // tabs here, so Bottom is what's really selected — without
+                      // this, mobile would show no option highlighted at all.
+                      const active = isMobile
+                        ? (id === 'top' ? sidebarPosition === 'top' : sidebarPosition !== 'top')
+                        : sidebarPosition === id
                       return (
                         <button
                           key={id}
@@ -1078,7 +1158,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-text-primary text-sm">Menu items</span>
-                      <p className="text-text-muted text-[11px]">Drag to reorder · tap the eye to show or hide a tab</p>
+                      <p className="text-text-muted text-[11px]">
+                        {isMobile
+                          ? 'Reorder with the arrows · tap the eye to show or hide a tab'
+                          : 'Drag to reorder · tap the eye to show or hide a tab'}
+                      </p>
                     </div>
                     {!navIsDefault && (
                       <button
@@ -1096,12 +1180,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       return (
                         <div
                           key={item.view}
-                          draggable
+                          // HTML5 drag events never fire for touch, so the grip
+                          // is swapped for arrow buttons on mobile rather than
+                          // leaving a handle that looks draggable and isn't.
+                          draggable={!isMobile}
                           onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
                           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
                           onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
                           onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
-                          className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
+                          className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border transition-colors ${isMobile ? '' : 'cursor-grab active:cursor-grabbing'} ${
                             navDragIdx === idx
                               ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
                               : navOverIdx === idx
@@ -1109,7 +1196,28 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                                 : 'border-[var(--border)] bg-[var(--surface-overlay)]'
                           }`}
                         >
-                          <GripVertical size={14} className="text-text-muted shrink-0" />
+                          {isMobile ? (
+                            <div className="flex flex-col shrink-0 -my-1">
+                              <button
+                                onClick={() => { if (idx > 0) moveNavItem(idx, idx - 1) }}
+                                disabled={idx === 0}
+                                aria-label={`Move ${item.label} up`}
+                                className="p-0.5 text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                              >
+                                <ChevronUp size={14} />
+                              </button>
+                              <button
+                                onClick={() => { if (idx < navRows.length - 1) moveNavItem(idx, idx + 1) }}
+                                disabled={idx === navRows.length - 1}
+                                aria-label={`Move ${item.label} down`}
+                                className="p-0.5 text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                              >
+                                <ChevronDown size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <GripVertical size={14} className="text-text-muted shrink-0" />
+                          )}
                           <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
                           <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
                           <button
@@ -1165,7 +1273,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                   </div>
                 )}
-                {ctrlRows.length > 0 && (
+                {/* Foot-of-menu controls belong to the desktop side menu; the
+                    mobile bar has no equivalent row (Settings is pinned there,
+                    profile is role-gated above), so hiding them on mobile keeps
+                    the list to switches that actually do something. */}
+                {ctrlRows.length > 0 && !isMobile && (
                   <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                     <div className="flex items-center gap-2.5 mb-2.5">
                       <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#8b5cf6' }}>
@@ -1226,7 +1338,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── Playback ── */}
             {tab === 'playback' && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-4">Playback</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Playback</h3>
                 {devices.length > 0 && (
                   <Row icon={Volume2} iconColor="#2563eb" label="Audio output">
                     <select
@@ -1378,7 +1490,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {tab === 'shortcuts' && (
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-text-primary text-lg font-bold">Keyboard Shortcuts</h3>
+                  <h3 className="hidden md:block text-text-primary text-lg font-bold">Keyboard Shortcuts</h3>
                   <button
                     onClick={() => { setRecordingId(null); resetHotkeyBindings() }}
                     className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-2.5 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
@@ -1465,7 +1577,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── Library ── */}
             {tab === 'library' && isElectron && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-4">Library Folders</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Library Folders</h3>
                 <div className="space-y-2 mb-3">
                   {libraryFolders.length === 0 && (
                     <p className="text-text-muted text-xs">No folders added yet.</p>
@@ -1517,7 +1629,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── App ── */}
             {tab === 'app' && isElectron && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-4">App</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">App</h3>
                 <div className="py-3 border-b border-[var(--border)]">
                   <div className="flex items-center gap-2.5 mb-2">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0891b2' }}>
@@ -1719,7 +1831,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── Developer ── */}
             {tab === 'developer' && isElectron && developerMode && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-4">Developer</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Developer</h3>
                 <Row icon={FileText} iconColor="#6b7280" label="Diagnostic logs" sub="Opens the folder with current-run.log & previous-run.log">
                   <button
                     onClick={() => el?.openLogsFolder?.()}
@@ -1758,7 +1870,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── Feedback ── */}
             {tab === 'feedback' && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-1">Feedback</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-1">Feedback</h3>
                 <p className="text-text-muted text-xs mb-4 leading-relaxed max-w-md">
                   Found a bug or have an idea? Let us know. To report a problem with a
                   specific song's info or lyrics, open that song and choose “Report”.
@@ -1772,7 +1884,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {/* ── About ── */}
             {tab === 'about' && (
               <div>
-                <h3 className="text-text-primary text-lg font-bold mb-3">About</h3>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-3">About</h3>
                 <p className="text-text-muted text-xs mb-3">
                   unreleased v{APP_VERSION} &mdash; powered by{' '}
                   <a href="https://juicewrldapi.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
