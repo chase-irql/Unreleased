@@ -426,6 +426,34 @@ export async function matchLocalSongCover(title: string | null | undefined): Pro
   return result
 }
 
+/** Resolves a free-text song title (e.g. a line from an imported list) to the
+ *  API song it names, or null when the API has nothing that matches. Uses the
+ *  same strict exact→loose comparison as matchLocalSongCover: the API's
+ *  `search` is a loose substring match, so its top hit is not proof of
+ *  anything — a candidate only counts when its name or one of its
+ *  `track_titles` aliases normalizes to the same string. Returning null (rather
+ *  than a wrong guess) is what lets the importer report "not in the API". */
+export async function resolveTitleToSong(title: string): Promise<JWApiSong | null> {
+  const raw = (title ?? '').trim()
+  const wanted = normalizeSongTitle(raw)
+  if (!wanted) return null
+  const search = cleanTitleForSearch(stripFileTitleCruft(raw))
+  if (!search) return null
+  try {
+    const data = await apiFetch<JWApiPaginatedResponse>('/songs/', { search, page_size: 10 })
+    const results = data.results ?? []
+    const namesOf = (s: JWApiSong): string[] => [s.name, ...(s.track_titles ?? [])]
+    const wantedLoose = normalizeSongTitleLoose(raw)
+    return (
+      results.find((s) => namesOf(s).some((n) => normalizeSongTitle(n) === wanted)) ??
+      results.find((s) => namesOf(s).some((n) => normalizeSongTitleLoose(n) === wantedLoose)) ??
+      null
+    )
+  } catch {
+    return null
+  }
+}
+
 /** Picks the best cover URL from a playlist summary or detail object.
  *  cover_image may contain a base64 data URI; cover_image_url may be a relative path. */
 export function playlistCoverUrl(p: { cover_image_url?: string | null; cover_image?: string | null }): string | undefined {

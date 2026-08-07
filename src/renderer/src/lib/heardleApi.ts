@@ -1,3 +1,21 @@
+// Heardle leaderboard + server-graded round data layer.
+//
+// ── Where the trust sits ─────────────────────────────────────────────────────
+//
+// The server owns the answer on the signed-in daily path: startPuzzle hands
+// back a round token and a clip, and every guess goes through submitGuess /
+// skipGuess to be graded there. That is what makes a posted score evidence
+// rather than a claim, and it is why the client must take the server's
+// `ladder`, `status` and `guesses` as authoritative instead of recomputing
+// them — the whole pool is still in the browser and localStorage is still
+// plain text, so anything derived locally is only a display convenience.
+//
+// submitResult below is the *legacy* path and still self-reports. It stays
+// because signed-out rounds queue through it, and because the server may want
+// the guess ids for verification (`guess_song_ids` exists for exactly that).
+// It must never be the only thing a ranking is built from: on the server path
+// the round the server graded is the record, and a POST to /results/ that
+// disagrees with it should be rejected there, not trusted here.
 import { JWAPI_BASE } from './juicewrldApi'
 import { apiRequest } from './apiClient'
 import { getToken } from './userApi'
@@ -15,14 +33,30 @@ export interface LeaderboardEntry {
   user_id: number
   display_name: string
   discord_avatar?: string | null
+  /** today: guesses used; null when the day was lost. */
   guesses?: number | null
+  /** today: whether the day was won. A flag, never a tally — the versus
+   *  boards count with `wins`, so that the two can't be confused into
+   *  rendering a boolean where a number belongs. */
   won?: boolean
+  /** streak: the running counters. */
   current_streak?: number
   max_streak?: number
+  /** versus: match tallies. */
   played?: number
+  wins?: number
   lost?: number
   drawn?: number
+  /** 0–100. */
   win_rate?: number
+}
+
+/** Wins for a versus row, tolerating a server that still reuses `won` as a
+ *  count. Anything non-numeric (including a boolean) reads as zero rather
+ *  than rendering "trueW". */
+export function versusWins(entry: LeaderboardEntry): number {
+  const raw: unknown = entry.wins ?? entry.won
+  return typeof raw === 'number' ? raw : 0
 }
 
 export interface LeaderboardResponse {

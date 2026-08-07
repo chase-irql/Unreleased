@@ -5,6 +5,8 @@ import { smallCoverUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import {
   connectMatchSocket,
   pollMatchQueue,
+  leaveMatchQueueRest,
+  isMatchSocketOpen,
   sendMatchGuess,
   sendQueueJoin,
   sendQueueLeave,
@@ -86,7 +88,7 @@ function SlotRow({ ladder, guesses, status }: { ladder: number[]; guesses: Guess
   )
 }
 
-function GuessRow({ guess, index, correct }: { guess: Guess; index: number; correct: boolean }) {
+function GuessRow({ guess, correct }: { guess: Guess; correct: boolean }) {
   const skipped = guess.songId === null
   return (
     <div
@@ -131,6 +133,7 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
   const [endSummary, setEndSummary] = useState<EndSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [queueHint, setQueueHint] = useState<string | null>(null)
+  const [connected, setConnected] = useState(true)
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const rafRef = useRef<number | null>(null)
@@ -178,7 +181,13 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
   }, [])
 
   const handleMatched = useCallback((id: string, round?: PuzzleResponse) => {
-    if (phaseRef.current !== 'queue') return
+    // Both transports can deliver this, so ignore the second one — but only
+    // when it's the *same* match. Dropping it on phase alone stranded the
+    // player in a match they'd been placed in from a stale queue entry: the
+    // server considered them playing, the UI showed the idle screen, and the
+    // match ran down to a forfeit nobody saw.
+    if (matchIdRef.current === id && phaseRef.current === 'playing') return
+    if (phaseRef.current === 'ended') return
     matchIdRef.current = id
     setMatchId(id)
     setPhase('playing')
@@ -300,21 +309,28 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
       onOpponent: (p) => setOpponent(p),
       onEnd: (payload) => callbacksRef.current.onEnd(payload),
       onError: (msg) => setError(msg),
+      onDisconnected: () => setConnected(false),
+      onReconnected: () => { setConnected(true); setError(null) },
     }, account.id)
     return () => {
-      if (phaseRef.current === 'playing' || phaseRef.current === 'matched') {
+      if (phaseRef.current === 'playing') {
         sendLeaveMatch()
       } else if (phaseRef.current === 'queue') {
         sendQueueLeave()
+        void leaveMatchQueueRest()
       }
       disconnect()
     }
   }, [account?.id])
 
+  // REST polling is a *fallback*, not a parallel channel. Running it while the
+  // socket is open would enqueue the same player twice — once over each
+  // transport — so it only fires when the socket can't do the job.
   useEffect(() => {
     if (phase !== 'queue') return
     let cancelled = false
     const poll = (): void => {
+      if (isMatchSocketOpen()) return
       pollMatchQueue()
         .then((result) => {
           if (cancelled || result.queued || !result.matchId) return
@@ -340,20 +356,34 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
 
   const leaveQueue = (): void => {
     sendQueueLeave()
+    // Also drop any entry the REST fallback created, or cancelling leaves a
+    // ghost in the queue that can still be matched.
+    void leaveMatchQueueRest()
     setPhase('idle')
     phaseRef.current = 'idle'
   }
 
+  // Both guess paths have to check the send actually left: a closed socket
+  // used to swallow it, and clearing the box on the way out made a dropped
+  // connection look like the game had simply ignored the answer.
   const skip = (): void => {
     if (status !== 'playing' || !matchId) return
+    if (!sendMatchGuess(null, true, matchId)) {
+      setConnected(false)
+      setError("Connection lost — that skip didn't send. Reconnecting…")
+      return
+    }
     stopPlayback()
-    sendMatchGuess(null, true, matchId)
   }
 
   const submitGuess = (song: HeardleSong): void => {
     if (finished || !matchId) return
+    if (!sendMatchGuess(song.id, false, matchId)) {
+      setConnected(false)
+      setError("Connection lost — that guess didn't send. Reconnecting…")
+      return
+    }
     stopPlayback()
-    sendMatchGuess(song.id, false, matchId)
     setQuery('')
     setDropdownOpen(false)
   }
@@ -502,6 +532,14 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
         <>
           {header}
           {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
+          {!connected && (
+            <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 flex items-center gap-2">
+              <Loader2 size={13} className="animate-spin shrink-0 text-amber-400" />
+              <p className="text-xs text-amber-200">
+                Reconnecting… guesses won&apos;t send until this clears.
+              </p>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3 mb-4 text-xs">
             <span className="text-text-muted font-mono">Match {matchId?.slice(0, 8)}</span>
             <span className="text-text-secondary">
@@ -597,7 +635,6 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
                 <GuessRow
                   key={i}
                   guess={guess}
-                  index={i}
                   correct={status === 'won' && i === guesses.length - 1}
                 />
               ))}

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen, ArrowDownToLine } from 'lucide-react'
+import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 import { useStore, useStorePick, DownloadItem } from '../store/useStore'
 import { formatBytes } from '../lib/format'
+import { cancelCompUpload } from '../lib/compUploads'
 
 export default function DownloadManager(): JSX.Element | null {
   const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus', 'wrldFullscreen')
@@ -144,6 +145,7 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
   const isDone = item.state === 'done'
   const isError = item.state === 'error' || item.state === 'cancelled'
   const isActive = item.state === 'downloading'
+  const isUpload = item.type === 'upload'
 
   const sizeLabel = item.type === 'playlist'
     ? [
@@ -163,6 +165,7 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
           {isDone ? <CheckCircle2 size={13} className="text-emerald-400" />
             : isError ? <AlertCircle size={13} className="text-red-400" />
             : item.type === 'update' ? <RefreshCw size={13} className="text-[var(--accent)] animate-spin" />
+            : isUpload ? <ArrowUpFromLine size={13} className="text-[var(--accent)] animate-pulse" />
             : <Loader2 size={13} className="text-[var(--accent)] animate-spin" />}
         </div>
         <div className="flex-1 min-w-0">
@@ -182,6 +185,12 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {isActive && <span className="text-[var(--text-muted)] text-[10px]">{item.percent}%</span>}
+          {isActive && isUpload && (
+            <button onClick={() => cancelCompUpload(item.id)} title="Cancel upload"
+              className="p-1 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-red-400 transition-colors">
+              <X size={12} />
+            </button>
+          )}
           {isDone && item.savePath && el?.openPath && (
             <button onClick={() => el.openPath(item.savePath!)} title="Show in folder" className="p-1 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
               <FolderOpen size={12} />

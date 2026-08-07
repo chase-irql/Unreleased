@@ -1,13 +1,14 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen, Copy } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, withdrawCompProposal, CompFileProposal } from '../lib/userApi'
-import { apiFetch, JWApiEra } from '../lib/juicewrldApi'
+import { apiFetch, JWApiEra, JWApiSong } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import ReportsTab from './ReportsTab'
 import FilePickerModal from './FilePickerModal'
+import { BasicRow, BasicSelect, SyncedLyricsTable, cleanDate } from './EditorPage'
 import AdminPage from './AdminPage'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
@@ -18,34 +19,78 @@ const CATEGORIES = [
   { value: 'unsurfaced', label: 'Unsurfaced' },
   { value: 'recording_session', label: 'Session' },
 ]
-const CAT_PILL: Record<string, string> = {
-  released: 'bg-emerald-500 text-white',
-  unreleased: 'bg-accent text-white',
-  unsurfaced: 'bg-yellow-500 text-black',
-  recording_session: 'bg-zinc-500 text-white',
-}
-
-// Defined outside AddSongModal so its reference is stable across re-renders.
-// If defined inside, React sees a new component type every render and unmounts/remounts
-// the input DOM nodes, destroying focus.
-function Field({ label, value, onChange, placeholder, mono = false, onBrowse }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; mono?: boolean
-  /** Shows a folder button next to the field that opens a file picker. */
-  onBrowse?: () => void
+/* ── Copy-from-song search ─────────────────────────────────────────────────── */
+/* Most new entries are another version of a song that already exists, so the
+   fast path is "start from that one and change what differs" rather than
+   retyping every credit and date. */
+function CopyFromSong({ onCopy, copiedFrom, onClear }: {
+  onCopy: (song: JWApiSong) => void
+  copiedFrom: string | null
+  onClear: () => void
 }): JSX.Element {
+  const [query, setQuery] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [results, setResults] = useState<JWApiSong[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadingId, setLoadingId] = useState<number | null>(null)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 300)
+    return () => clearTimeout(t)
+  }, [query])
+
+  useEffect(() => {
+    if (debounced.length < 2) { setResults([]); return }
+    let cancelled = false
+    setLoading(true)
+    apiFetch<{ results: JWApiSong[] }>('/songs/', { search: debounced, page_size: 8 })
+      .then(d => { if (!cancelled) setResults(d.results ?? []) })
+      .catch(() => { if (!cancelled) setResults([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [debounced])
+
+  // The list endpoint returns trimmed rows (no lyrics/credits), so the pick
+  // has to be re-fetched in full before its fields can be copied across.
+  const pick = async (row: JWApiSong): Promise<void> => {
+    setLoadingId(row.id)
+    try { onCopy(await apiFetch<JWApiSong>(`/songs/${row.id}/`)) }
+    catch { onCopy(row) }
+    finally { setLoadingId(null); setQuery(''); setDebounced(''); setResults([]) }
+  }
+
+  if (copiedFrom) return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20">
+      <Copy size={12} className="text-accent shrink-0" />
+      <span className="text-[11px] text-accent font-medium flex-1 min-w-0 truncate">Copied from "{copiedFrom}"</span>
+      <button onClick={onClear} className="text-accent opacity-60 hover:opacity-100 text-[11px] transition-opacity shrink-0">Clear</button>
+    </div>
+  )
+
   return (
-    <div className="grid grid-cols-[80px_1fr] gap-x-3 items-baseline px-4 py-[7px] border-l-2 transition-all border-transparent hover:bg-white/[0.04]">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 select-none truncate pt-px">{label}</span>
-      <div className="flex items-baseline gap-1.5 min-w-0">
-        <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder || '—'}
-          className={`flex-1 bg-transparent text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-25 min-w-0 border-b border-[var(--border)] pb-px focus:border-accent transition-colors ${mono ? 'font-mono' : ''}`} />
-        {onBrowse && (
-          <button onClick={onBrowse} title="Browse API files"
-            className="shrink-0 p-1 rounded text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors">
-            <FolderOpen size={13} />
-          </button>
-        )}
-      </div>
+    <div className="relative">
+      <Search size={13} className="absolute left-2.5 top-[9px] text-text-muted pointer-events-none" />
+      <input
+        value={query} onChange={e => setQuery(e.target.value)}
+        placeholder="Copy fields from an existing song…"
+        className="w-full bg-[var(--surface-overlay)] border border-[var(--border)] rounded-lg pl-8 pr-8 py-1.5 text-xs text-text-primary placeholder:text-text-muted placeholder:opacity-40 focus:outline-none focus:border-accent/40 transition-colors"
+      />
+      {loading && <Loader2 size={12} className="absolute right-2.5 top-2.5 animate-spin text-text-muted" />}
+      {results.length > 0 && (
+        <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] shadow-2xl py-1">
+          {results.map(r => (
+            <button
+              key={r.id}
+              onClick={() => pick(r)}
+              className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-[var(--surface-overlay)] hover:text-text-primary transition-colors"
+            >
+              <span className="flex-1 min-w-0 truncate">{r.track_titles?.[0] || r.name}</span>
+              {r.era?.name && <span className="text-[10px] text-text-muted opacity-60 shrink-0">{r.era.name}</span>}
+              {loadingId === r.id && <Loader2 size={11} className="animate-spin shrink-0" />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -72,8 +117,16 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   const [instrumentalNames, setInstrumentalNames] = useState('')
   const [addInfo,  setAddInfo]  = useState('')
   const [notes,    setNotes]    = useState('')
+  const [dateLeaked, setDateLeaked] = useState('')
+  const [fileNames,  setFileNames]  = useState('')
+  const [songLength, setSongLength] = useState('')
+  const [bitrate,    setBitrate]    = useState('')
   const [edNotes, setEdNotes] = useState('')
   const [showMore, setShowMore] = useState(false)
+  // Title of the song this draft was copied from, if any — shown as a banner
+  // so it's obvious why the form arrived pre-filled.
+  const [copiedFrom, setCopiedFrom] = useState<string | null>(null)
+  const [syncedTable, setSyncedTable] = useState(() => localStorage.getItem('editor:syncedFormat') !== 'raw')
   // File picker for the audio path field
   const [pickingFile, setPickingFile] = useState(false)
   const [eras, setEras] = useState<JWApiEra[]>([])
@@ -86,6 +139,36 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
       .then(d => setEras(Array.isArray(d) ? d : (d as { results: JWApiEra[] }).results ?? []))
       .catch(() => undefined)
   }, [])
+
+  // Everything the source song knows, minus the three fields that describe its
+  // specific audio file — a new version has its own file, length and bitrate,
+  // and silently inheriting those would submit wrong data for the common case.
+  const copyFrom = (s: JWApiSong): void => {
+    setName(s.track_titles?.[0] || s.name || '')
+    setArtists(s.credited_artists || '')
+    setAlbum(s.album ?? s.era?.name ?? '')
+    setCat(s.category || '')
+    setEraId(s.era?.id ? String(s.era.id) : '')
+    setImageUrl(s.image_url || '')
+    setAltNames((s.track_titles || []).join('\n'))
+    setLyrics(s.lyrics || '')
+    setSyncedLyrics(s.synced_lyrics || '')
+    setProd(s.producers || '')
+    setEngineer(s.engineers || '')
+    setLocation(s.recording_locations || '')
+    setRecDate(s.record_dates || '')
+    setRelDate(cleanDate(s.release_date))
+    setPreviewDate(cleanDate(s.preview_date))
+    setLeakType(s.leak_type || '')
+    setDateLeaked(cleanDate(s.date_leaked))
+    setInstrumentals(s.instrumentals || '')
+    setInstrumentalNames(s.instrumental_names || '')
+    setFileNames(s.file_names || '')
+    setAddInfo(s.additional_information || '')
+    setNotes(s.notes || '')
+    setCopiedFrom(s.track_titles?.[0] || s.name || null)
+    setShowMore(true)
+  }
 
   const proposed: Record<string, unknown> = {}
   if (name)    proposed.name                = name
@@ -111,6 +194,10 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   // which previously had this textarea's value submitted under the wrong key.
   if (addInfo) proposed.additional_information = addInfo
   if (notes)   proposed.notes                  = notes
+  if (dateLeaked) proposed.date_leaked = dateLeaked
+  if (fileNames)  proposed.file_names  = fileNames
+  if (songLength) proposed.length      = songLength
+  if (bitrate)    proposed.bitrate     = bitrate
 
   const handleSubmit = async (): Promise<void> => {
     if (!name.trim() || submitState === 'submitting') return
@@ -129,7 +216,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   return (
     <div ref={overlayRef} className="fixed inset-0 z-50 flex items-end justify-center" onClick={e => { if (e.target === overlayRef.current) onClose() }}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-lg bg-[var(--surface)] rounded-t-2xl shadow-2xl border border-[var(--border)] border-b-0 animate-slide-up flex flex-col max-h-[88dvh]">
+      <div className="relative w-full max-w-2xl bg-[var(--surface)] rounded-t-2xl shadow-2xl border border-[var(--border)] border-b-0 animate-slide-up flex flex-col max-h-[88dvh]">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-[var(--border)] shrink-0">
           <div className="w-8 h-8 rounded-xl bg-accent/15 border border-accent/20 flex items-center justify-center shrink-0">
@@ -144,87 +231,83 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
           </button>
         </div>
 
-        {/* Scrollable fields */}
-        <div className="flex-1 overflow-y-auto min-h-0 py-2">
-          <Field label="Title *" value={name} onChange={setName} placeholder="Song title" />
-          <Field label="Artists" value={artists} onChange={setArtists} placeholder="Juice WRLD ft. …" />
-          <Field label="Album" value={album} onChange={setAlbum} placeholder="Album name" />
-          <Field label="Cover URL" value={imageUrl} onChange={setImageUrl} placeholder="https://…" mono />
-          <div className="px-4 py-2 border-l-2 border-transparent">
-            <div className="grid grid-cols-[80px_1fr] gap-x-3 items-start">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 select-none pt-1.5">Alt names</span>
-              <textarea rows={2} value={altNames} onChange={e => setAltNames(e.target.value)} placeholder="One name per line"
-                className="w-full bg-transparent text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-25 min-w-0 border-b border-[var(--border)] pb-px focus:border-accent transition-colors resize-none" />
-            </div>
-          </div>
+        {/* Scrollable fields — same flat layout as the editor's Basic view, so
+            creating a song and editing one look and behave alike. */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 flex flex-col gap-1.5">
+          <CopyFromSong onCopy={copyFrom} copiedFrom={copiedFrom} onClear={() => setCopiedFrom(null)} />
 
-          {/* Category pills */}
-          <div className="px-4 py-2 border-l-2 border-transparent">
-            <div className="grid grid-cols-[80px_1fr] gap-x-3 items-start">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 select-none pt-1.5">Category</span>
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {CATEGORIES.map(c => (
-                  <button key={c.value} onClick={() => setCat(prev => prev === c.value ? '' : c.value)}
-                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-all ${
-                      cat === c.value ? CAT_PILL[c.value] : 'bg-[var(--surface-overlay)] text-text-muted hover:text-text-primary border border-[var(--border)]'
-                    }`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <BasicRow label="Name *" value={name} onChange={setName} placeholder="Song title" />
+          <div className="grid grid-cols-2 gap-1.5">
+            <BasicSelect
+              label="Era" value={eraId} original="" onChange={setEraId}
+              options={eras.map(e => ({ value: String(e.id), label: e.name }))}
+            />
+            <BasicSelect label="Category" value={cat} original="" onChange={setCat} options={CATEGORIES} />
           </div>
-
-          {/* Era select */}
-          {eras.length > 0 && (
-            <div className="grid grid-cols-[80px_1fr] gap-x-3 items-baseline px-4 py-[7px] border-l-2 border-transparent">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 select-none truncate pt-px">Era</span>
-              <select value={eraId} onChange={e => setEraId(e.target.value)}
-                className="flex-1 text-sm focus:outline-none appearance-none cursor-pointer min-w-0 border-b border-[var(--border)] pb-px"
-                style={{ background: 'var(--surface)', color: 'var(--text-primary)' }}>
-                <option value="" style={{ background: 'var(--surface)', color: 'var(--text-primary)' }}>—</option>
-                {eras.map(e => <option key={e.id} value={String(e.id)} style={{ background: 'var(--surface)', color: 'var(--text-primary)' }}>{e.name}</option>)}
-              </select>
-            </div>
-          )}
+          <BasicRow label="Album" value={album} onChange={setAlbum} placeholder="Album name" />
+          <BasicRow label="Alternate titles (one per line)" value={altNames} onChange={setAltNames} rows={3} />
+          <BasicRow label="Credited artists" value={artists} onChange={setArtists} placeholder="Juice WRLD ft. …" />
 
           <button onClick={() => setShowMore(v => !v)}
-            className="flex items-center gap-1.5 w-full px-4 pt-3 pb-1 text-[11px] text-text-muted opacity-60 hover:opacity-80 transition-colors select-none">
+            className="flex items-center gap-1.5 self-start px-1 py-1 text-[11px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity select-none">
             {showMore ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
             {showMore ? 'Fewer fields' : 'More fields'}
           </button>
 
           {showMore && (
             <>
-              <Field label="Producers" value={prod}     onChange={setProd}     placeholder="Producer names" />
-              <Field label="Engineer"  value={engineer} onChange={setEngineer} placeholder="Engineer name" />
-              <Field label="Location"  value={location} onChange={setLocation} placeholder="Recording location" />
-              <Field label="File URL"  value={filePath} onChange={setFilePath} placeholder="Path/URL to the audio file" mono onBrowse={() => setPickingFile(true)} />
-              <Field label="Leak type" value={leakType} onChange={setLeakType} placeholder="e.g. Stem, Master, Video…" />
-              <Field label="Recorded"  value={recDate}  onChange={setRecDate}  placeholder="YYYY-MM-DD" mono />
-              <Field label="Released"  value={relDate}  onChange={setRelDate}  placeholder="YYYY-MM-DD" mono />
-              <Field label="Preview"   value={previewDate} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
-              <Field label="Instrumentals" value={instrumentals} onChange={setInstrumentals} placeholder="Instrumental versions available" />
-              <Field label="Inst. names" value={instrumentalNames} onChange={setInstrumentalNames} placeholder="Instrumental file names" />
-              <div className="px-4 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 mb-1.5">Lyrics</p>
-                <textarea rows={4} value={lyrics} onChange={e => setLyrics(e.target.value)} placeholder="Plain lyrics…"
-                  className="w-full bg-[var(--surface-overlay)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 font-mono" />
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Producers" value={prod} onChange={setProd} placeholder="Producer names" />
+                <BasicRow label="Engineers" value={engineer} onChange={setEngineer} placeholder="Engineer name" />
               </div>
-              <div className="px-4 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 mb-1.5">Synced lyrics</p>
-                <textarea rows={4} value={syncedLyrics} onChange={e => setSyncedLyrics(e.target.value)} placeholder="[mm:ss.xx] line…"
-                  className="w-full bg-[var(--surface-overlay)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 font-mono" />
+              <BasicRow label="Recording locations" value={location} onChange={setLocation} rows={2} placeholder="Studio / city" />
+              <BasicRow label="Record dates" value={recDate} onChange={setRecDate} rows={2} placeholder="YYYY-MM-DD" mono />
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Length" value={songLength} onChange={setSongLength} placeholder="3:59" mono />
+                <BasicRow label="Bitrate" value={bitrate} onChange={setBitrate} placeholder="320 kbps" mono />
               </div>
-              <div className="px-4 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 mb-1.5">Additional info</p>
-                <textarea rows={3} value={addInfo} onChange={e => setAddInfo(e.target.value)} placeholder="Any other info…"
-                  className="w-full bg-[var(--surface-overlay)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25" />
+              <BasicRow label="Additional information" value={addInfo} onChange={setAddInfo} rows={3} placeholder="Any other info…" />
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="File names" value={fileNames} onChange={setFileNames} rows={2} />
+                <BasicRow label="Instrumentals" value={instrumentals} onChange={setInstrumentals} rows={2} placeholder="Instrumental versions available" />
               </div>
-              <div className="px-4 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-60 mb-1.5">Notes</p>
-                <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Internal notes…"
-                  className="w-full bg-[var(--surface-overlay)] border border-[var(--border)] rounded-xl px-3 py-2 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25" />
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Preview date" value={previewDate} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
+                <BasicRow label="Release date" value={relDate} onChange={setRelDate} placeholder="YYYY-MM-DD" mono />
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Instrumental names" value={instrumentalNames} onChange={setInstrumentalNames} rows={2} />
+                <BasicRow label="Notes" value={notes} onChange={setNotes} rows={2} placeholder="Internal notes…" />
+              </div>
+              <BasicRow label="Lyrics" value={lyrics} onChange={setLyrics} rows={8} placeholder="Plain lyrics…" />
+
+              {/* Synced lyrics get the editor's line table, with the same raw
+                  escape hatch for pasting a whole LRC at once. */}
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-overlay)]/60 px-2.5 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold tracking-wide text-text-muted leading-tight">Synced lyrics</span>
+                  <span className="flex-1" />
+                  <button
+                    onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
+                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity">
+                    {syncedTable ? 'Raw' : 'Lines'}
+                  </button>
+                </div>
+                {syncedTable ? (
+                  <SyncedLyricsTable value={syncedLyrics} onChange={setSyncedLyrics} />
+                ) : (
+                  <textarea rows={6} value={syncedLyrics} onChange={e => setSyncedLyrics(e.target.value)} placeholder="[mm:ss.xx] line…"
+                    className="w-full bg-transparent border-0 p-0 mt-1 text-xs font-mono leading-snug text-text-primary focus:outline-none resize-y placeholder:text-text-muted placeholder:opacity-40" />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Date leaked" value={dateLeaked} onChange={setDateLeaked} placeholder="YYYY-MM-DD" mono />
+                <BasicRow label="Leak type" value={leakType} onChange={setLeakType} placeholder="e.g. Stem, Master, Video…" />
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <BasicRow label="Image URL" value={imageUrl} onChange={setImageUrl} placeholder="https://…" mono />
+                <BasicRow label="File path" value={filePath} onChange={setFilePath} placeholder="Path to the audio file" mono onBrowse={() => setPickingFile(true)} />
               </div>
             </>
           )}
@@ -472,6 +555,15 @@ export default function EditorProfileView(): JSX.Element {
                 </button>
               </>
             )}
+            {profileTab === 'comp' && isContributor && (
+              <button
+                onClick={() => setActiveView('contributor')}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent text-xs font-semibold transition-colors"
+                title="Propose a comp file change"
+              >
+                <Plus size={12} /> New comp proposal
+              </button>
+            )}
             <button
               onClick={() => setRefreshKey(k => k + 1)}
               disabled={refreshing}
@@ -540,15 +632,6 @@ export default function EditorProfileView(): JSX.Element {
               {t.label}
             </button>
           ))}
-          {/* Page-level action, so it lives on the tab row pinned to the far
-              right. Inside the content column it landed mid-viewport, since
-              that column is capped at max-w-2xl. */}
-          {profileTab === 'comp' && (
-            <button onClick={() => setActiveView('contributor')}
-              className="ml-auto mb-2 shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent text-white flex items-center gap-1.5 hover:opacity-90 transition-opacity">
-              <Plus size={12} /> New comp proposal
-            </button>
-          )}
         </div>
       )}
 

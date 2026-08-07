@@ -21,7 +21,7 @@ import type {
   HeardleSong, Guess, GameStatus, PoolId, Stats, DailyMode, VersionMap, HeardleSettings,
 } from '../lib/heardle'
 import {
-  HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize,
+  HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize, versusWins,
   startPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
 } from '../lib/heardleApi'
 import type { LeaderboardBoard, LeaderboardEntry, PuzzleResponse } from '../lib/heardleApi'
@@ -500,9 +500,14 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
   const day = useMemo(() => todayKey(), [])
   const pending = useMemo(() => outboxSize(), [])
 
+  // The 1v1 table is a public ranking — readable signed out, unlike the daily
+  // boards which are scoped to the caller. One definition, used by both the
+  // fetch and the render: when these drifted apart the versus board fetched
+  // fine and then rendered the sign-in prompt over it.
+  const needsSignIn = board !== 'versus' && !signedIn
+
   useEffect(() => {
-    if (!HEARDLE_LEADERBOARD_ENABLED) return
-    if (board !== 'versus' && !signedIn) return
+    if (!HEARDLE_LEADERBOARD_ENABLED || needsSignIn) return
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -516,14 +521,20 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [board, mode, day, signedIn])
+  }, [board, mode, day, needsSignIn])
 
   const score = (e: LeaderboardEntry): string => {
-    if (board === 'versus') return `${e.won ?? 0}W · ${e.win_rate ?? 0}%`
+    if (board === 'versus') return `${versusWins(e)}W · ${e.win_rate ?? 0}%`
     if (board === 'streak') return `${e.current_streak ?? 0}`
     if (e.won === false || e.guesses == null) return '—'
     return `${e.guesses}`
   }
+
+  const emptyMessage = board === 'versus'
+    ? 'No matches played yet.'
+    : board === 'today'
+      ? "Nobody's finished today's round yet."
+      : 'No streaks going yet.'
 
   const row = (e: LeaderboardEntry, isMe: boolean): JSX.Element => (
     <div
@@ -585,26 +596,22 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
           </div>
         </div>
 
-        {!HEARDLE_LEADERBOARD_ENABLED ? (
+        {needsSignIn ? (
           <div className="py-8 text-center">
-            <Trophy size={24} className="mx-auto text-text-muted mb-3" />
-            <p className="text-sm text-text-secondary">Leaderboards aren't live yet.</p>
-            <p className="text-xs text-text-muted mt-2 leading-relaxed">
-              The API has no endpoint for them — nothing to rank against until it does. Your finished
-              Daily and Personal rounds are being saved{pending > 0 ? ` (${pending} waiting)` : ''} and
-              will be sent the moment it ships, so you won't start from zero.
-            </p>
+            <p className="text-sm text-text-muted">Sign in to appear on the leaderboard.</p>
+            {pending > 0 && (
+              <p className="text-xs text-text-muted mt-2 leading-relaxed">
+                {pending} finished {pending === 1 ? 'round is' : 'rounds are'} saved on this device and
+                will be sent when you do, so you won&apos;t start from zero.
+              </p>
+            )}
           </div>
-        ) : !signedIn ? (
-          <p className="py-8 text-center text-sm text-text-muted">Sign in to appear on the leaderboard.</p>
         ) : loading ? (
           <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
         ) : error ? (
           <p className="py-8 text-center text-sm text-red-400">{error}</p>
         ) : entries.length === 0 ? (
-          <p className="py-8 text-center text-sm text-text-muted">
-            {board === 'today' ? "Nobody's finished today's round yet." : 'No streaks going yet.'}
-          </p>
+          <p className="py-8 text-center text-sm text-text-muted">{emptyMessage}</p>
         ) : (
           <>
             <div className="space-y-0.5">
@@ -656,6 +663,7 @@ export default function HeardleView(): JSX.Element {
   const [roundToken, setRoundToken] = useState<string | null>(null)
   const [serverClipUrl, setServerClipUrl] = useState<string | null>(null)
   const [waveSeed, setWaveSeed] = useState(1)
+  const [serverLadder, setServerLadder] = useState<number[] | null>(null)
 
   const isDaily = mode !== 'unlimited' && mode !== 'versus'
   const useServerRound = isDaily && !!account
@@ -669,7 +677,15 @@ export default function HeardleView(): JSX.Element {
     () => settingsForMode(settings, mode === 'personal' ? 'personal' : mode === 'unlimited' ? 'unlimited' : 'daily'),
     [settings, mode],
   )
-  const ladder = useMemo(() => stageLadder(rules), [rules])
+  // On the signed-in daily path the server owns the round and grades against
+  // its own ladder, so that ladder — not the local settings — has to drive the
+  // slot count, the unlocked window and the playback cutoff. Deriving them
+  // locally would show a different number of tries than the server allows and
+  // cut the clip at a different second than it intends.
+  const localLadder = useMemo(() => stageLadder(rules), [rules])
+  const ladder = useServerRound && serverLadder && serverLadder.length > 0
+    ? serverLadder
+    : localLadder
   const categories = rules.categories
 
   const finished = status !== 'playing'
@@ -730,6 +746,9 @@ export default function HeardleView(): JSX.Element {
 
   const applyServerPuzzle = useCallback((res: PuzzleResponse) => {
     setRoundToken(res.round_token)
+    // Fall back to the local ladder only when the server didn't send one —
+    // a short/absent ladder must not silently shrink the round.
+    setServerLadder(Array.isArray(res.ladder) && res.ladder.length > 0 ? res.ladder : null)
     setServerClipUrl(absoluteClipUrl(res.clip_url))
     setStartAt(res.clip_start ?? 0)
     setGuesses(res.guesses ?? [])
@@ -780,9 +799,14 @@ export default function HeardleView(): JSX.Element {
 
   // A tries cut can leave a saved round already at or past the new limit.
   // Settle it as a loss rather than showing a round that can't be played on.
+  //
+  // Never on the server path: there the round's status is the server's to
+  // decide, and forcing a loss locally because a stale ladder looked full
+  // would report a defeat for a round the server still has open.
   useEffect(() => {
+    if (useServerRound) return
     if (status === 'playing' && guesses.length >= ladder.length) setStatus('lost')
-  }, [status, guesses.length, ladder.length])
+  }, [useServerRound, status, guesses.length, ladder.length])
 
   // Persist the round after every guess.
   useEffect(() => {
@@ -797,8 +821,13 @@ export default function HeardleView(): JSX.Element {
   useEffect(() => {
     if (!isDaily || status === 'playing') return
     if (!useServerRound && !answer) return
-    if (!useServerRound) recordResult(dailyMode, day, status === 'won', guesses.length)
-    else if (answer) {
+    // Both paths, always. The Stats panel reads localStorage and nothing else,
+    // so a server-graded round has to be folded in here too — gating this on
+    // the local path would freeze the streak, distribution and played count
+    // for exactly the signed-in players the leaderboard is for. recordResult
+    // is idempotent per day, so the server path re-running it is harmless.
+    recordResult(dailyMode, day, status === 'won', guesses.length)
+    if (useServerRound && answer) {
       submitResult({
         day,
         mode: dailyMode,
@@ -827,6 +856,70 @@ export default function HeardleView(): JSX.Element {
   //
   // Positions are tracked relative to `startAt`, since a "random" clip start
   // means the element's currentTime is offset from what the player sees.
+  // ── Silence detection ──────────────────────────────────────────────────────
+  // A timestamp start can easily land in a gap — an intro pad, the beat of air
+  // between verses — and a one-second clip of nothing is unguessable. So the
+  // budget is spent in *audible* seconds: quiet is hopped over and doesn't
+  // count against the unlock.
+  //
+  // This needs a private Web Audio graph on the game's element. Deliberately
+  // not the shared effects chain (lib/audioEffects) — the EQ must never colour
+  // the clue — but it carries the same CORS requirement: without
+  // crossOrigin="anonymous" on the element, createMediaElementSource emits
+  // pure silence. The API sends Access-Control-Allow-Origin, same as it does
+  // for the main player.
+  //
+  // If any of it throws, analysis is simply off and the clip plays straight
+  // through. A missing skip is a worse round; a broken graph is no audio.
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  // Typed as the ArrayBuffer-backed variant getFloatTimeDomainData expects —
+  // a bare Float32Array widens to ArrayBufferLike and won't assign.
+  const analyserBufRef = useRef<Float32Array<ArrayBuffer> | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const graphFailedRef = useRef(false)
+
+  const ensureAnalyser = useCallback((audio: HTMLAudioElement): boolean => {
+    if (analyserRef.current) return true
+    if (graphFailedRef.current) return false
+    try {
+      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const ctx = new Ctor()
+      const source = ctx.createMediaElementSource(audio)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 2048
+      source.connect(analyser)
+      source.connect(ctx.destination)
+      audioCtxRef.current = ctx
+      analyserRef.current = analyser
+      analyserBufRef.current = new Float32Array(analyser.fftSize)
+      return true
+    } catch {
+      graphFailedRef.current = true
+      return false
+    }
+  }, [])
+
+  /** Peak amplitude of what's coming out right now (0..1). The signal is
+   *  scaled by the element's volume, so the caller's threshold must be too. */
+  const currentPeak = useCallback((): number => {
+    const analyser = analyserRef.current
+    const buf = analyserBufRef.current
+    if (!analyser || !buf) return 1
+    analyser.getFloatTimeDomainData(buf)
+    let peak = 0
+    for (let i = 0; i < buf.length; i++) {
+      const v = Math.abs(buf[i])
+      if (v > peak) peak = v
+    }
+    return peak
+  }, [])
+
+  // Audible seconds heard so far this play — this, not wall-clock position, is
+  // what the unlock is measured in.
+  const audibleRef = useRef(0)
+  const lastTickRef = useRef(0)
+  const silentSinceRef = useRef<number | null>(null)
+
   // Every start claims a token. Anything that ends playback bumps it, so the
   // async continuations below (waiting on metadata, on a seek, on play()) can
   // tell they've been superseded — a start that was still loading when the
@@ -839,28 +932,71 @@ export default function HeardleView(): JSX.Element {
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     const audio = audioRef.current
     if (audio) { audio.pause(); audio.currentTime = startRef.current }
+    audibleRef.current = 0
+    lastTickRef.current = 0
+    silentSinceRef.current = null
     setPlaying(false)
     setPreparing(false)
     setElapsed(0)
   }, [])
 
+  // Silence has to be quiet for a moment before it counts — inter-word gaps
+  // and drum rests are part of a song, not dead air. Hops are short so the
+  // onset of the next sound is never far past the landing point.
+  const SILENCE_FLOOR = 0.005
+  const SILENCE_HOLD_MS = 250
+  const SILENCE_HOP_S = 0.4
+
   const tick = useCallback((): void => {
     const audio = audioRef.current
     if (!audio) return
-    const played = audio.currentTime - startRef.current
-    if (played >= limitRef.current) { stopPlayback(); return }
-    setElapsed(played)
-    rafRef.current = requestAnimationFrame(tick)
-  }, [stopPlayback])
+    const now = performance.now()
+    const dt = lastTickRef.current ? Math.min((now - lastTickRef.current) / 1000, 0.25) : 0
+    lastTickRef.current = now
 
-  /** The authoritative cutoff. requestAnimationFrame drives the readout, but
-   *  it stops firing while the page is hidden, so it cannot be what enforces
-   *  the limit — this rides the media element's own timeupdate, which keeps
-   *  firing as long as audio is being decoded. */
+    // A stalled or seeking element outputs silence that isn't in the song —
+    // don't bank it as audible and don't hop over it either.
+    const settled = !audio.seeking && audio.readyState >= 2
+    // Under a muted element, real silence and real audio look identical. The
+    // only other reason to stand down is the graph having failed to build.
+    const canDetect = !graphFailedRef.current
+      && analyserRef.current !== null && audio.volume > 0.01
+    const quiet = canDetect && settled && currentPeak() < SILENCE_FLOOR * audio.volume
+
+    if (quiet) {
+      if (silentSinceRef.current == null) silentSinceRef.current = now
+      else if (now - silentSinceRef.current >= SILENCE_HOLD_MS) {
+        const duration = isFinite(audio.duration) ? audio.duration : 0
+        const cap = duration > 0 ? duration - 0.25 : audio.currentTime + SILENCE_HOP_S
+        const next = Math.min(audio.currentTime + SILENCE_HOP_S, cap)
+        // Out of song to skip into — end the clip rather than idle at the tail.
+        if (next <= audio.currentTime) { stopPlayback(); return }
+        audio.currentTime = next
+      }
+    } else {
+      silentSinceRef.current = null
+      if (settled) audibleRef.current += dt
+    }
+
+    if (audibleRef.current >= limitRef.current) { stopPlayback(); return }
+    setElapsed(audibleRef.current)
+    rafRef.current = requestAnimationFrame(tick)
+  }, [stopPlayback, currentPeak])
+
+  /** Backstop cutoff. requestAnimationFrame drives the audible-time accounting
+   *  above, but it stops firing while the page is hidden, so it cannot be the
+   *  only thing ending a clip — this rides the element's own timeupdate, which
+   *  keeps firing as long as audio is being decoded.
+   *
+   *  It measures wall-clock position, not audible time, so it has to allow for
+   *  whatever silence the round is legitimately skipping past; the rAF path is
+   *  what stops a normal clip on time. */
+  const SILENCE_ALLOWANCE_S = 20
   const enforceLimit = useCallback((): void => {
     const audio = audioRef.current
     if (!audio || audio.paused) return
-    if (audio.currentTime - startRef.current >= limitRef.current) stopPlayback()
+    const played = audio.currentTime - startRef.current
+    if (played >= limitRef.current + SILENCE_ALLOWANCE_S) stopPlayback()
   }, [stopPlayback])
 
   const startPlayback = useCallback((): void => {
@@ -874,6 +1010,14 @@ export default function HeardleView(): JSX.Element {
 
     const token = ++playTokenRef.current
     const live = (): boolean => playTokenRef.current === token && !!audioRef.current
+
+    // Built on first play (a user gesture), so the context isn't born
+    // suspended. Autoplay policy can still suspend it later.
+    ensureAnalyser(audio)
+    if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume().catch(() => {})
+    audibleRef.current = 0
+    lastTickRef.current = 0
+    silentSinceRef.current = null
 
     // Seeking before the element knows the song's duration is silently
     // dropped, which put the clip back at 0:00 for every timestamp start —
@@ -902,7 +1046,7 @@ export default function HeardleView(): JSX.Element {
     }
     if (audio.readyState >= 1 /* HAVE_METADATA */) seekThenPlay()
     else audio.addEventListener('loadedmetadata', seekThenPlay, { once: true })
-  }, [isPlaying, setIsPlaying, volume, tick])
+  }, [isPlaying, setIsPlaying, volume, tick, ensureAnalyser])
 
   // Leaving the page stops the clip. Without this you could start a snippet,
   // switch away, and let the song run on underneath — the whole track for
@@ -934,6 +1078,8 @@ export default function HeardleView(): JSX.Element {
       playTokenRef.current++
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       audio?.pause()
+      // Contexts are a limited resource and this one is single-use.
+      audioCtxRef.current?.close().catch(() => {})
     }
   }, [])
 
@@ -1065,9 +1211,14 @@ export default function HeardleView(): JSX.Element {
         className="absolute inset-x-0 top-0 h-80 pointer-events-none"
         style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent)' }}
       />
+      {/* crossOrigin is load-bearing: the silence analyser routes this element
+          through a MediaElementSource, which emits pure silence for media
+          fetched without CORS clearance. Must be set before src (it is — this
+          attribute is on the element, src is assigned in an effect). */}
       <audio
         ref={audioRef}
         preload="auto"
+        crossOrigin="anonymous"
         onTimeUpdate={enforceLimit}
         onError={() => setAudioError(true)}
       />

@@ -16,7 +16,10 @@ export interface MatchEndReveal {
   length?: string
 }
 
-export type MatchPhase = 'idle' | 'queue' | 'matched' | 'playing' | 'ended'
+/** No 'matched' step: the server hands over the first round together with the
+ *  pairing, so being matched *is* being in play. A separate state was never
+ *  set by anything and had no UI behind it. */
+export type MatchPhase = 'idle' | 'queue' | 'playing' | 'ended'
 
 export interface MatchEndPayload {
   type: 'match_end'
@@ -52,11 +55,23 @@ export interface HeardleMatchCallbacks {
   onOpponent: (progress: OpponentProgress) => void
   onEnd: (payload: MatchEndPayload) => void
   onError: (message: string) => void
+  /** The socket dropped. Fired on every unexpected close, not on teardown —
+   *  the UI has to say so, because a match can't be played without it. */
+  onDisconnected?: () => void
+  /** Back up after a drop, with the match re-bound. */
+  onReconnected?: () => void
 }
 
 let socket: WebSocket | null = null
 let pendingQueueJoin = false
 let pendingMatchAck: string | null = null
+// Survives a drop so a reconnect can re-bind to the match in progress —
+// unlike pendingMatchAck, which is consumed the moment it's delivered.
+let lastMatchId: string | null = null
+
+// Backoff for an unexpected drop. Capped rather than unbounded: a match is
+// live, so giving up on it is worse than a slow retry.
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 10000]
 
 function wsUrl(): string {
   const token = getToken()
@@ -66,8 +81,12 @@ function wsUrl(): string {
 
 function flushPending(): void {
   if (socket?.readyState !== WebSocket.OPEN) return
-  if (pendingMatchAck) {
-    socket.send(JSON.stringify({ type: 'match_ack', match_id: pendingMatchAck }))
+  // Re-ack the live match on every open, so a reconnect lands back in it
+  // rather than leaving the player staring at a match the server no longer
+  // associates with this socket.
+  const ack = pendingMatchAck ?? lastMatchId
+  if (ack) {
+    socket.send(JSON.stringify({ type: 'match_ack', match_id: ack }))
     pendingMatchAck = null
   }
   if (pendingQueueJoin) {
@@ -81,14 +100,41 @@ export function connectMatchSocket(callbacks: HeardleMatchCallbacks, userId?: nu
     try { socket.close() } catch {}
     socket = null
   }
+  // A fresh connect is a fresh session — nothing queued against the previous
+  // socket should be replayed onto this one.
   pendingQueueJoin = false
-  const ws = new WebSocket(wsUrl())
-  socket = ws
-  ws.onopen = () => {
-    callbacks.onConnected?.()
-    flushPending()
+  pendingMatchAck = null
+  lastMatchId = null
+  let disposed = false
+  let attempt = 0
+  let retryTimer: number | null = null
+
+  const open = (): void => {
+    if (disposed) return
+    const ws = new WebSocket(wsUrl())
+    socket = ws
+    ws.onopen = () => {
+      // A disposer that fired while this socket was still connecting.
+      if (disposed) { try { ws.close() } catch {} ; return }
+      const recovered = attempt > 0
+      attempt = 0
+      callbacks.onConnected?.()
+      flushPending()
+      if (recovered) callbacks.onReconnected?.()
+    }
+    ws.onmessage = handleMessage
+    ws.onerror = () => callbacks.onError('Connection error')
+    ws.onclose = () => {
+      if (socket === ws) socket = null
+      if (disposed) return
+      callbacks.onDisconnected?.()
+      const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]
+      attempt++
+      retryTimer = window.setTimeout(open, delay)
+    }
   }
-  ws.onmessage = (ev) => {
+
+  const handleMessage = (ev: MessageEvent): void => {
     try {
       const data = JSON.parse(ev.data as string) as Record<string, unknown>
       const type = data.type as string
@@ -116,6 +162,9 @@ export function connectMatchSocket(callbacks: HeardleMatchCallbacks, userId?: nu
           status: data.status as GameStatus,
         }
         if (userId && progress.user_id === userId) {
+          // The round is how your own guess list advances — there's no other
+          // message carrying it, so a self update without one leaves the board
+          // frozen. The server is expected to always attach it here.
           if (data.round) callbacks.onRound(data.round as PuzzleResponse)
         } else {
           callbacks.onOpponent(progress)
@@ -123,6 +172,8 @@ export function connectMatchSocket(callbacks: HeardleMatchCallbacks, userId?: nu
         return
       }
       if (type === 'match_end') {
+        // The match is over — a later reconnect must not re-ack it.
+        lastMatchId = null
         callbacks.onEnd(data as unknown as MatchEndPayload)
         return
       }
@@ -130,18 +181,29 @@ export function connectMatchSocket(callbacks: HeardleMatchCallbacks, userId?: nu
       callbacks.onError('Invalid match message')
     }
   }
-  ws.onerror = () => callbacks.onError('Connection error')
-  ws.onclose = () => {
-    if (socket === ws) socket = null
-  }
+
+  open()
+
   return () => {
+    disposed = true
     pendingQueueJoin = false
     pendingMatchAck = null
-    if (socket === ws) {
-      try { ws.close() } catch {}
+    lastMatchId = null
+    if (retryTimer !== null) {
+      window.clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    if (socket) {
+      try { socket.close() } catch {}
       socket = null
     }
   }
+}
+
+/** Whether a message can actually be delivered right now. The REST queue is
+ *  a fallback for exactly the times this is false. */
+export function isMatchSocketOpen(): boolean {
+  return socket?.readyState === WebSocket.OPEN
 }
 
 export function sendQueueJoin(): void {
@@ -161,19 +223,29 @@ export function sendQueueLeave(): void {
 
 export function sendLeaveMatch(): void {
   pendingMatchAck = null
+  lastMatchId = null
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'leave_match' }))
   }
 }
 
-export function sendMatchGuess(songId: number | null, skip = false, matchId?: string | null): void {
-  if (socket?.readyState !== WebSocket.OPEN) return
+/** Returns false when the socket wasn't open, so the caller can tell the
+ *  player their guess didn't go anywhere instead of clearing the input and
+ *  leaving them to think it was accepted. */
+export function sendMatchGuess(songId: number | null, skip = false, matchId?: string | null): boolean {
+  if (socket?.readyState !== WebSocket.OPEN) return false
   const payload: Record<string, unknown> = { type: 'guess', song_id: songId, skip }
   if (matchId) payload.match_id = matchId
-  socket.send(JSON.stringify(payload))
+  try {
+    socket.send(JSON.stringify(payload))
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function ackMatchSocket(matchId: string): void {
+  lastMatchId = matchId
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'match_ack', match_id: matchId }))
     pendingMatchAck = null
@@ -205,13 +277,21 @@ export async function pollMatchQueue(): Promise<MatchQueuePollResult> {
   }
 }
 
+/** Drops the REST-side queue entry. Idempotent and best-effort: it runs on
+ *  every cancel because pollMatchQueue may have enqueued the player over HTTP
+ *  while the socket was down, and an entry nobody is watching can still be
+ *  matched into a match that then forfeits. */
 export async function leaveMatchQueueRest(): Promise<void> {
   const token = getToken()
   if (!token) return
-  await apiRequest(MATCH_QUEUE_URL, {
-    method: 'DELETE',
-    headers: { Authorization: `Token ${token}` },
-  })
+  try {
+    await apiRequest(MATCH_QUEUE_URL, {
+      method: 'DELETE',
+      headers: { Authorization: `Token ${token}` },
+    })
+  } catch {
+    // A queue entry that was never created 404s; nothing to recover from.
+  }
 }
 
 export function puzzleFromMatchRound(round: PuzzleResponse): {

@@ -190,7 +190,7 @@ const basicShellClass = (changed: boolean): string =>
 const basicLabelClass =
   'block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight'
 
-function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false, onBrowse }: {
+export function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false, onBrowse }: {
   label: string; value: string; original?: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
   /** Shows a folder button inside the field that opens a file picker. */
@@ -226,7 +226,7 @@ function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mon
 
 /* A themed replacement for <select>: the native popup is drawn by the OS in its
    own light-mode chrome, which looks nothing like the rest of the editor. */
-function BasicSelect({ label, value, original, onChange, options, placeholder }: {
+export function BasicSelect({ label, value, original, onChange, options, placeholder }: {
   label: string; value: string; original: string
   onChange: (v: string) => void
   options: { value: string; label: string }[]; placeholder?: string
@@ -307,7 +307,7 @@ function serializeSynced(rows: SyncedLine[]): string {
   return rows.map(r => (r.time.trim() ? `[${r.time.trim()}] ${r.text}`.trimEnd() : r.text)).join('\n')
 }
 
-function SyncedLyricsTable({ value, onChange }: {
+export function SyncedLyricsTable({ value, onChange }: {
   value: string; onChange: (v: string) => void
 }): JSX.Element {
   const rows = parseSynced(value)
@@ -414,6 +414,11 @@ export default function EditorPage({ initialSongId = null }: {
   // before landing here, falling back to the editor dashboard when that's
   // unknown (e.g. a deep link straight into the editor).
   const backView = previousView && previousView !== 'editor' ? previousView : 'editor-profile'
+  // Mirrored into a ref so the redirect effect below can read the latest value
+  // without listing it as a dependency — setActiveView rewrites previousView,
+  // which would otherwise re-run that effect and make it call itself forever.
+  const backViewRef = useRef(backView)
+  backViewRef.current = backView
   const isEditor = !!account?.is_editor
   const isAdmin  = !!account?.is_administrator
   // Admins can edit songs too (SongContextMenu's canEdit check already grants
@@ -713,9 +718,18 @@ export default function EditorPage({ initialSongId = null }: {
     // the user to My Proposals the instant they clicked Edit. The ref is set
     // synchronously before that window opens and cleared once loadSong settles
     // (by which point `song`/`loadError` block this effect on their own).
+    //
+    // A pop-out editor window is exempt: it renders whatever its URL names, so
+    // activeView means nothing there and it never unmounts this page. It used
+    // to spin here — setActiveView changes previousView, previousView changes
+    // backView, backView re-ran this effect — until React gave up with
+    // "maximum update depth exceeded". It shows "No song selected" instead.
+    // backView is read from a ref for the same reason: it must not be able to
+    // re-trigger the very effect that changes it.
+    if (IS_FLOAT_WINDOW) return
     if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError || manualLoadRef.current) return
-    setActiveView(wasEditingRef.current ? backView : 'editor-profile')
-  }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView, backView])
+    setActiveView(wasEditingRef.current ? backViewRef.current : 'editor-profile')
+  }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
 
   useEffect(() => {
     if (song || isNewSongDraft) wasEditingRef.current = true

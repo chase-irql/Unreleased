@@ -579,8 +579,16 @@ export async function submitApplication(payload: {
   })
 }
 
+function myProposalsUrl(): string {
+  return `${ACCOUNT_BASE}/editor/proposals/`
+}
+
+// Cached (offline-fallback) like the other "list my stuff" reads — this is
+// the tab a signed-in editor lands on, and it shouldn't go blank just because
+// the request raced a flaky connection.
 export async function getMyProposals(): Promise<SongEditProposal[]> {
-  return request(`${ACCOUNT_BASE}/editor/proposals/`, { method: 'GET' })
+  const url = myProposalsUrl()
+  return request(url, { method: 'GET' }, true, url)
 }
 
 export async function createProposal(payload: {
@@ -608,7 +616,10 @@ export async function updateProposal(id: number, payload: {
 }
 
 export async function withdrawProposal(id: number): Promise<void> {
-  return request(`${ACCOUNT_BASE}/editor/proposals/${id}/`, { method: 'DELETE' })
+  await request(`${ACCOUNT_BASE}/editor/proposals/${id}/`, { method: 'DELETE' })
+  // Otherwise a withdrawn proposal reappears if the list is next read while
+  // offline (the cache still holds the pre-withdrawal response).
+  cacheDelete(myProposalsUrl())
 }
 
 // Withdraws a proposal and immediately re-creates it with the same data —
@@ -637,10 +648,16 @@ export async function getLeaderboard(): Promise<Array<{
 }
 
 
+// Cached per status filter (each filter value is its own URL, so its own
+// cache entry) — offline fallback only. Not actively invalidated by
+// adminReviewProposal/adminReverseProposal: those change which filtered list
+// an item belongs to, and a review queue is re-fetched right after acting on
+// it anyway (see AdminPage), so the tiny staleness window only ever shows up
+// if the connection drops between an action and that refetch.
 export async function adminListProposals(statusFilter?: ProposalStatus): Promise<SongEditProposal[]> {
   const url = new URL(`${ACCOUNT_BASE}/admin/proposals/`)
   if (statusFilter) url.searchParams.set('status', statusFilter)
-  return request(url.toString(), { method: 'GET' })
+  return request(url.toString(), { method: 'GET' }, true, url.toString())
 }
 
 export async function adminReviewProposal(id: number, payload: {
@@ -753,14 +770,58 @@ async function multipartRequest<T>(url: string, form: FormData, method = 'POST')
   return apiRequest<T>(url, { method, headers, body: form })
 }
 
+function myCompProposalsUrl(): string {
+  return `${ACCOUNT_BASE}/contributor/proposals/`
+}
+
 export async function getMyCompProposals(): Promise<CompFileProposal[]> {
   assertContributorApi()
-  return request(`${ACCOUNT_BASE}/contributor/proposals/`, { method: 'GET' })
+  const url = myCompProposalsUrl()
+  return request(url, { method: 'GET' }, true, url)
 }
 
 export async function createCompProposal(form: FormData): Promise<CompFileProposal> {
   assertContributorApi()
   return multipartRequest(`${ACCOUNT_BASE}/contributor/proposals/`, form)
+}
+
+/** Same call as createCompProposal, but over XHR so the upload body's progress
+ *  is observable — fetch() reports nothing until the whole request has been
+ *  sent, which is useless for the multi-hundred-megabyte zips this endpoint
+ *  takes. Returns an abort handle so a queued upload can be cancelled. */
+export function createCompProposalUpload(form: FormData, opts: {
+  onProgress?: (sent: number, total: number) => void
+} = {}): { promise: Promise<CompFileProposal>; abort: () => void } {
+  assertContributorApi()
+  const xhr = new XMLHttpRequest()
+  const promise = new Promise<CompFileProposal>((resolve, reject) => {
+    xhr.open('POST', `${ACCOUNT_BASE}/contributor/proposals/`)
+    const token = getToken()
+    if (token) xhr.setRequestHeader('Authorization', `Token ${token}`)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText) as CompFileProposal) }
+        catch { reject(new Error('Upload succeeded but the response was unreadable')) }
+        return
+      }
+      // DRF answers with {"detail": …} or {"field": ["…"]} — surface whichever
+      // is there rather than a bare status code.
+      let msg = `Upload failed (HTTP ${xhr.status})`
+      try {
+        const body = JSON.parse(xhr.responseText)
+        const first = body?.detail ?? Object.values(body ?? {})[0]
+        if (first) msg = Array.isArray(first) ? String(first[0]) : String(first)
+      } catch { /* keep the status-code message */ }
+      reject(new Error(msg))
+    }
+    xhr.onerror = () => reject(new Error('Network error during upload'))
+    xhr.onabort  = () => reject(new Error('cancelled'))
+    xhr.send(form)
+  })
+  return { promise, abort: () => xhr.abort() }
 }
 
 export async function updateCompProposal(id: number, form: FormData): Promise<CompFileProposal> {
@@ -771,13 +832,15 @@ export async function updateCompProposal(id: number, form: FormData): Promise<Co
 export async function withdrawCompProposal(id: number): Promise<void> {
   assertContributorApi()
   await request(`${ACCOUNT_BASE}/contributor/proposals/${id}/`, { method: 'DELETE' })
+  cacheDelete(myCompProposalsUrl())
 }
 
+// Same offline-fallback-only caching as adminListProposals above.
 export async function adminListCompProposals(statusFilter?: ProposalStatus): Promise<CompFileProposal[]> {
   if (!CONTRIBUTOR_ENABLED) return []
   const url = new URL(`${ACCOUNT_BASE}/admin/comp-proposals/`)
   if (statusFilter) url.searchParams.set('status', statusFilter)
-  return request(url.toString(), { method: 'GET' })
+  return request(url.toString(), { method: 'GET' }, true, url.toString())
 }
 
 export async function adminReviewCompProposal(id: number, payload: {
