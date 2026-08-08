@@ -51,6 +51,7 @@ ANDROID_BRANCH = "android"
 API_BASE       = "https://api.github.com"
 UPLOAD_BASE    = "https://uploads.github.com"
 APK_PATH       = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+ANDROID_PACKAGE = "com.juicewrldapi.player"
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 RST  = "\033[0m"
@@ -123,6 +124,22 @@ def run(cmd, check=True, cwd=None):
 def capture(cmd, cwd=None):
     r = subprocess.run(cmd, shell=True, cwd=cwd or ROOT, capture_output=True, text=True)
     return r.stdout.strip()
+
+def find_adb():
+    """adb is frequently not on PATH even when the Android SDK is installed —
+    fall back to the standard platform-tools location (mirrors the same
+    fallback in scripts/android-deploy.sh, for whoever runs that directly)."""
+    from shutil import which
+    found = which("adb")
+    if found:
+        return found
+    local = os.environ.get("LOCALAPPDATA", "")
+    fallback = Path(local) / "Android" / "Sdk" / "platform-tools" / "adb.exe"
+    if fallback.exists():
+        return str(fallback)
+    die("adb not found (checked PATH and the default Android SDK location).\n"
+        "     Install the Android SDK platform-tools, or pass --skip-install.")
+
 
 def is_dirty():
     return bool(capture("git status --porcelain"))
@@ -354,15 +371,28 @@ def step_commit(version, msg, state):
 
 
 def step_build(skip_install):
-    """Delegates to `npm run android:deploy` (scripts/android-deploy.sh) rather
-    than re-implementing build + cap sync + gradlew here — one recipe instead
-    of two that could quietly drift apart. That script also `adb install -r`s
-    and launches the APK on whatever device/emulator adb sees by default,
-    which means a device/emulator connection is normally required — pass
-    --skip-install (this script's own flag) to stop after the APK is
-    compiled instead. Without either the flag or a connected device, this
-    step fails loudly (the script runs with `set -euo pipefail`) rather than
-    silently skipping the on-device check.
+    """Runs each build step directly via subprocess rather than delegating to
+    `npm run android:deploy` (scripts/android-deploy.sh, which real Git Bash
+    usage should still reach for). That delegation used to be the whole
+    point — one recipe instead of two that could quietly drift apart — but
+    it depends on a bare `bash` resolving to Git's, and that assumption
+    breaks specifically for THIS caller: `subprocess.run(shell=True)` on
+    Windows always goes through cmd.exe regardless of what shell this script
+    itself runs under, and cmd.exe's own PATH doesn't include Git's usr/bin
+    at all (only an interactive Git Bash session adds that via its own
+    startup profile). What `bash` resolves to *instead* isn't even stable —
+    it's been observed as WSL's launcher shim (tries to execute gradlew.bat's
+    literal content as a shell script, fails on `@rem`) and some dash-like sh
+    lacking bash's `pipefail` (fails on this script's own `set -euo
+    pipefail`), depending on what else was on PATH at the time. Rather than
+    chase a moving target, this step just doesn't depend on `bash`
+    resolution at all: every command below runs through this same function's
+    `shell=True`, which is unambiguous.
+
+    Not just a build — also `adb install -r`s and launches the APK on
+    whatever device/emulator adb sees by default, so a connection is
+    normally required. Pass --skip-install (this script's own flag) to stop
+    after the APK is compiled instead.
 
     Still produces a debug-signed APK (assembleDebug) — there's no
     release-signing keystore for this app yet. Fine for sideloading (what
@@ -380,16 +410,42 @@ def step_build(skip_install):
     if APK_PATH.exists():
         APK_PATH.unlink()
 
-    cmd = "npm run android:deploy" + (" -- --skip-install" if skip_install else "")
-    deploy = subprocess.run(cmd, shell=True, cwd=ROOT)
-    print()
-    if deploy.returncode != 0:
-        raise RuntimeError("android:deploy failed. See output above — "
-                            "if there's no device/emulator connected, connect one, "
-                            "or re-run with --skip-install.")
+    detail("> npm run build")
+    if subprocess.run("npm run build", shell=True, cwd=ROOT).returncode != 0:
+        raise RuntimeError("npm run build failed. See output above.")
+
+    detail("> npx cap sync android")
+    if subprocess.run("npx cap sync android", shell=True, cwd=ROOT).returncode != 0:
+        raise RuntimeError("cap sync failed. See output above.")
+
+    # Full path, not a bare `gradlew.bat` — this machine has
+    # NoDefaultCurrentDirectoryInExePath set, a Windows security setting that
+    # disables the implicit "search cwd" fallback cmd.exe normally uses to
+    # resolve an executable name. A bare name silently fails to resolve even
+    # though cwd is set correctly (dir/cmd builtins are unaffected, which is
+    # what made this confusing to track down — only the exe-search path is
+    # blocked). An explicit path bypasses that resolution step entirely.
+    gradlew = ROOT / "android" / "gradlew.bat"
+    detail(f"> {gradlew.name} assembleDebug")
+    if subprocess.run([str(gradlew), "assembleDebug"], shell=True, cwd=ROOT / "android").returncode != 0:
+        raise RuntimeError("Gradle build failed. See output above.")
 
     if not APK_PATH.exists():
         raise RuntimeError(f"Build reported success but no APK at {APK_PATH}")
+
+    if skip_install:
+        ok(f"Build complete → {APK_PATH.relative_to(ROOT)}")
+        return
+
+    adb = find_adb()
+    detail(f"> {adb} install -r {APK_PATH.relative_to(ROOT)}")
+    if subprocess.run([adb, "install", "-r", str(APK_PATH)], cwd=ROOT).returncode != 0:
+        raise RuntimeError("adb install failed — if there's no device/emulator connected, "
+                            "connect one, or re-run with --skip-install.")
+
+    detail(f"> {adb} shell am start -n {ANDROID_PACKAGE}/.MainActivity")
+    subprocess.run([adb, "shell", "am", "start", "-n", f"{ANDROID_PACKAGE}/.MainActivity"], cwd=ROOT)
+
     ok(f"Build complete, installed & launched → {APK_PATH.relative_to(ROOT)}")
 
 
