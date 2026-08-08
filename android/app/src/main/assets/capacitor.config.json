@@ -1,0 +1,8 @@
+{
+	"appId": "com.juicewrldapi.player",
+	"appName": "Unreleased",
+	"webDir": "dist",
+	"android": {
+		"allowMixedContent": false
+	}
+}
