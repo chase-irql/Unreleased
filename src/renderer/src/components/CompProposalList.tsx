@@ -1,5 +1,6 @@
 import { Loader2, X } from 'lucide-react'
 import type { CompFileProposal } from '../lib/userApi'
+import { compChangeTypeLabel } from '../lib/userApi'
 import { StatusChip, relativeTime } from './adminShared'
 
 // A contributor's own comp proposals, with the status filter above them.
@@ -51,7 +52,7 @@ export default function CompProposalList({ proposals, loading, onSelect, onWithd
           <>
             <div className="flex items-center gap-2 flex-wrap mb-1">
               <StatusChip status={p.status} />
-              <span className="text-[10px] uppercase font-bold text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded">{p.change_type}</span>
+              <span className="text-[10px] uppercase font-bold text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded">{compChangeTypeLabel(p.change_type)}</span>
             </div>
             <p className="text-sm font-mono text-text-primary truncate">{p.file_path}</p>
             {p.change_type === 'move' && p.destination_path && (

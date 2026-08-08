@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useStore, useStorePick } from '../store/useStore'
 import { RadioStreamClient, setActiveRadioClient } from '../lib/radioSocketService'
 import { fetchRadioLive } from '../lib/radioLive'
+import type { RadioVote } from '../lib/radioLive'
 import { apiFetch, buildImageUrl } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { attachAudioElement, resumeEffectsContext } from '../lib/audioEffects'
@@ -10,15 +11,28 @@ export default function RadioFmPlayer(): JSX.Element {
   const {
     radioFmActive, setRadioFmActive,
     setRadioFmIsLive, setRadioFmNowPlaying,
-    setRadioFmVote, setRadioFmUpNext, setRadioFmQueuePreview,
+    setRadioFmUpNext, setRadioFmQueuePreview,
     setRadioFmMatchedSong,
     radioFmNowPlaying,
     setIsPlaying,
     volume,
-  } = useStorePick('radioFmActive', 'setRadioFmActive', 'setRadioFmIsLive', 'setRadioFmNowPlaying', 'setRadioFmVote', 'setRadioFmUpNext', 'setRadioFmQueuePreview', 'setRadioFmMatchedSong', 'radioFmNowPlaying', 'setIsPlaying', 'volume')
+  } = useStorePick('radioFmActive', 'setRadioFmActive', 'setRadioFmIsLive', 'setRadioFmNowPlaying', 'setRadioFmUpNext', 'setRadioFmQueuePreview', 'setRadioFmMatchedSong', 'radioFmNowPlaying', 'setIsPlaying', 'volume')
 
   const audioRef  = useRef<HTMLAudioElement | null>(null)
   const clientRef = useRef<RadioStreamClient | null>(null)
+  const voteWasActiveRef = useRef(false)
+
+  // A brand new ballot clears any previous dismissal, exactly once. Doing it
+  // here — the single place metadata lands — keeps the WRLD panel, the floating
+  // popup, and pop-out windows from each keeping their own copy.
+  const applyVote = useCallback((vote: RadioVote | null): void => {
+    const isActive = !!vote?.active
+    if (isActive && !voteWasActiveRef.current) {
+      useStore.getState().setRadioFmVoteDismissed(false)
+    }
+    voteWasActiveRef.current = isActive
+    useStore.getState().setRadioFmVote(vote)
+  }, [])
 
   const wireAudio = useCallback((el: HTMLAudioElement | null): void => {
     audioRef.current = el
@@ -34,7 +48,7 @@ export default function RadioFmPlayer(): JSX.Element {
       onMeta: (data) => {
         setRadioFmIsLive(data.is_live)
         setRadioFmNowPlaying(data.now_playing)
-        setRadioFmVote(data.vote ?? null)
+        applyVote(data.vote ?? null)
         setRadioFmUpNext(data.up_next)
         setRadioFmQueuePreview(data.queue_preview ?? [])
       },
@@ -48,11 +62,13 @@ export default function RadioFmPlayer(): JSX.Element {
       .then((data) => {
         setRadioFmIsLive(data.is_live)
         setRadioFmNowPlaying(data.now_playing)
-        setRadioFmVote(data.vote ?? null)
+        applyVote(data.vote ?? null)
         setRadioFmUpNext(data.up_next)
         setRadioFmQueuePreview(data.queue_preview ?? [])
       })
-      .catch(() => setRadioFmIsLive(false))
+      // A failed REST probe means "unknown", not "offline" — leaving isLive null
+      // keeps the FM toggle usable while the socket is streaming fine.
+      .catch((error) => console.warn('[radio] live probe failed', error))
 
     return () => {
       client.disconnect()

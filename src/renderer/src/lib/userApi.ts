@@ -1,4 +1,4 @@
-import { Track } from '../types'
+import { Track, ViewType } from '../types'
 import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from './juicewrldApi'
 import type { JWApiSong } from './juicewrldApi'
 import { peekSongPref } from './songPrefs'
@@ -20,6 +20,9 @@ export interface AccountUser {
   discord_avatar: string
   is_editor: boolean
   is_contributor: boolean
+  // Optional: the API only started returning this with the manager role, so
+  // older responses and anything replayed from cache simply omit it.
+  is_manager?: boolean
   is_administrator: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
@@ -418,7 +421,18 @@ export async function removeFromPlaylist(id: number, songId: number): Promise<vo
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
-export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete'
+export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete' | 'create_folder'
+
+// Only the underscored ones need spelling out; everything else reads fine as
+// the raw enum. Lives here rather than in one of the review components because
+// four separate places render this badge.
+const COMP_CHANGE_LABELS: Record<string, string> = {
+  create_folder: 'new folder',
+}
+
+export function compChangeTypeLabel(type: string): string {
+  return COMP_CHANGE_LABELS[type] ?? type
+}
 
 export interface CompFileProposal {
   id: number
@@ -729,6 +743,37 @@ export async function confirmOtpSetup(otpToken: string): Promise<{ otp_enabled: 
 // — flip it to false and the contributor role disappears from the UI instead
 // of leading users to forms that fail on submit.
 export const CONTRIBUTOR_ENABLED = true
+
+export function showStaffProfile(account: AccountUser | null): boolean {
+  if (!account) return false
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  return !!(account.is_administrator || account.is_editor || account.is_manager || isContributor)
+}
+
+export function staffProfileView(account: AccountUser | null): ViewType {
+  if (!account) return 'api-tracker'
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  // Everyone with review duties lands on the editor profile — it's the personal
+  // page (your own song edits, your own comp files) and it embeds the review
+  // queue as a tab. Pointing managers straight at the review panel instead cost
+  // them any way to reach their own proposals, since this is the single profile
+  // entry in the sidebar and bottom bar. It also carries a Comp tab of its own,
+  // so contributors who also hold one of these roles lose nothing here.
+  if (account.is_administrator || account.is_editor || account.is_manager) return 'editor-profile'
+  if (isContributor) return 'contributor-profile'
+  return 'editor-profile'
+}
+
+export function staffProfileLabel(account: AccountUser | null): string {
+  if (!account) return 'Profile'
+  if (account.is_administrator) return 'Admin'
+  if (account.is_manager) return 'Manager'
+  const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
+  if (account.is_editor && isContributor) return 'Staff'
+  if (account.is_editor) return 'Editor'
+  if (isContributor) return 'Contributor'
+  return 'Profile'
+}
 
 function assertContributorApi(): void {
   if (!CONTRIBUTOR_ENABLED) throw new Error('Comp file contributions are not available yet')
