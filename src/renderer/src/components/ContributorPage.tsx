@@ -130,6 +130,11 @@ export default function ContributorPage(): JSX.Element {
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
   const [picker, setPicker] = useState<PickerTarget | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // React state lags a render behind, so `submitState` alone can't stop a
+  // second call fired in the same tick or during the post-submit cooldown.
+  // A ref flips synchronously the moment a submit is accepted and only clears
+  // once the form is ready for another, guaranteeing one queue per click.
+  const submitLatch = useRef(false)
 
   const isContributor = !!(account?.is_contributor || account?.is_administrator)
 
@@ -218,7 +223,7 @@ export default function ContributorPage(): JSX.Element {
   }
 
   const submitProposal = async (): Promise<void> => {
-    if (submitState === 'submitting') return
+    if (submitLatch.current || submitState === 'submitting') return
     if (isDelete && deletePaths.length === 0) {
       setSubmitError('Pick at least one file to delete.')
       return
@@ -239,6 +244,7 @@ export default function ContributorPage(): JSX.Element {
       setSubmitError('Select a file for upload or replace proposals.')
       return
     }
+    submitLatch.current = true
     setSubmitState('submitting')
     setSubmitError(null)
 
@@ -268,7 +274,7 @@ export default function ContributorPage(): JSX.Element {
       setFileName('')
       setDestFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
-      setTimeout(() => setSubmitState('idle'), 2000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 2000)
       return
     }
 
@@ -290,14 +296,14 @@ export default function ContributorPage(): JSX.Element {
     if (failed.length === jobs.length) {
       setSubmitState('error')
       setSubmitError(jobs.length > 1 ? 'None of the files could be submitted.' : 'Submission failed')
-      setTimeout(() => setSubmitState('idle'), 4000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
       reload()
       return
     }
     if (failed.length > 0) {
       setSubmitState('error')
       setSubmitError(`${jobs.length - failed.length} of ${jobs.length} submitted. Failed: ${failed.join(', ')}`)
-      setTimeout(() => setSubmitState('idle'), 6000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 6000)
       reload()
       return
     }
@@ -311,11 +317,11 @@ export default function ContributorPage(): JSX.Element {
       setDestFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
       reload()
-      setTimeout(() => setSubmitState('idle'), 2000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 2000)
     } catch (e) {
       setSubmitState('error')
       setSubmitError(e instanceof Error ? e.message : 'Submission failed')
-      setTimeout(() => setSubmitState('idle'), 4000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
     }
   }
 
