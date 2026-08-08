@@ -13,7 +13,7 @@ import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
 import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
-import { getToken, CONTRIBUTOR_ENABLED, staffProfileLabel } from '../lib/userApi'
+import { getToken, CONTRIBUTOR_ENABLED, staffProfileLabel, staffProfileView, showStaffProfile } from '../lib/userApi'
 import { APP_VERSION } from '../lib/appVersion'
 import {
   lastfmConfigured, lastfmGetAuthToken, lastfmAuthUrl, lastfmTryGetSession, lastfmDisconnect,
@@ -1131,7 +1131,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     "Edit albums" button — so they get their own toggle here,
                     shown only to editors/admins on the web build where the
                     bottom bar exists. Reuses the shared navVisibility map. */}
-                {!isElectron && (account?.is_editor || account?.is_administrator || account?.is_manager) && (
+                {!isElectron && showStaffProfile(account) && (
                   <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                     <div className="flex items-center gap-2.5 mb-2.5">
                       <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
@@ -1144,15 +1144,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="pl-[34px] space-y-1.5">
                       {([
+                        // Albums stays editor/admin-only; the profile tab keys
+                        // off the same helpers BottomNav routes with, so the
+                        // toggle can't end up pointing at a different view than
+                        // the tab it's meant to hide.
                         ...((account?.is_editor || account?.is_administrator)
-                          ? [
-                              { view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> },
-                              { view: 'editor-profile' as ViewType, label: staffProfileLabel(account), icon: <ShieldCheck size={18} /> },
-                            ]
+                          ? [{ view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> }]
                           : []),
-                        ...(account?.is_manager && !account?.is_administrator && !account?.is_editor
-                          ? [{ view: 'admin' as ViewType, label: 'Manager', icon: <ShieldCheck size={18} /> }]
-                          : []),
+                        { view: staffProfileView(account), label: staffProfileLabel(account), icon: <ShieldCheck size={18} /> },
                       ]).map((item) => {
                         const shown = navVisibility[item.view] ?? true
                         return (

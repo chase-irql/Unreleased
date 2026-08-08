@@ -395,6 +395,16 @@ export default function WrldView(): JSX.Element {
     wasVoteActiveRef.current = isActive
   }, [radioFmVote?.active])
 
+  // Time the warning out like the propose error below it. The rising-edge reset
+  // above only fires when a brand new ballot arrives, which can be a long way
+  // off — long enough for "tune in to 999 FM" to still be sitting there after
+  // the listener has done exactly that.
+  useEffect(() => {
+    if (!voteError) return
+    const t = setTimeout(() => setVoteError(false), 4000)
+    return () => clearTimeout(t)
+  }, [voteError])
+
   // Highlight a choice only once the socket accepted it — the server discards
   // votes from a connection it hasn't seen listening:true on, which otherwise
   // looks identical to a counted vote.

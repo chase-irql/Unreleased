@@ -32,6 +32,16 @@ export default function RadioVotePopup(): JSX.Element | null {
     wasActiveRef.current = isActive
   }, [radioFmVote?.active])
 
+  // Time the warning out the way the WRLD panel times out its propose error.
+  // The rising-edge reset above only fires when a brand new ballot arrives,
+  // which can be a long way off — long enough for a stale "didn't send" to sit
+  // under a vote the listener has since cast successfully.
+  useEffect(() => {
+    if (!voteError) return
+    const t = setTimeout(() => setVoteError(false), 4000)
+    return () => clearTimeout(t)
+  }, [voteError])
+
   // Tick the countdown locally, once per second, independent of how often the
   // server rebroadcasts metadata (created once per vote, only re-synced after).
   useEffect(() => {

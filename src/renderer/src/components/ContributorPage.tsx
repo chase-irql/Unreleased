@@ -212,6 +212,16 @@ export default function ContributorPage(): JSX.Element {
   const usesPathFields = !isDelete
   const destinationPath = joinPath(destFolder.trim().replace(/\/+$/, ''), destFileName.trim())
 
+  // Switching type drops any files picked under the previous one. The file
+  // section is hidden for move/delete/create_folder, so a leftover selection
+  // would be invisible here and still ride along on the request below.
+  const selectChangeType = (type: CompProposalChangeType): void => {
+    setChangeType(type)
+    setSelectedFiles([])
+    setSubmitError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const buildForm = (path: string, file: File | null): FormData => {
     const form = new FormData()
     form.append('file_path', path)
@@ -255,7 +265,10 @@ export default function ContributorPage(): JSX.Element {
       ? deletePaths.map((path) => ({ path, file: null as File | null }))
       : isUpload && selectedFiles.length > 1
         ? selectedFiles.map((file, i) => ({ path: batchPaths[i], file: file as File | null }))
-        : [{ path: filePath, file: selectedFiles[0] ?? null }]
+        // `carriesFile` guard as well as the reset above: only upload/replace
+        // may send a body, and a move or new-folder proposal that quietly
+        // carried one would be accepted looking like something it isn't.
+        : [{ path: filePath, file: carriesFile ? selectedFiles[0] ?? null : null }]
     // Anything carrying a file body goes to the background queue: a comp zip is
     // routinely hundreds of megabytes, and awaiting it here meant the user had
     // to sit on this page (and keep the window open) until it finished. The
@@ -263,11 +276,20 @@ export default function ContributorPage(): JSX.Element {
     // lib/compUploads. Delete and move proposals carry no body, so they stay
     // inline below where their result can be reported immediately.
     if (carriesFile) {
-      queueCompUploads(jobs.map((job) => ({
-        label: basename(job.path),
-        form: buildForm(job.path, job.file),
-        bytes: job.file?.size,
-      })))
+      try {
+        queueCompUploads(jobs.map((job) => ({
+          label: basename(job.path),
+          form: buildForm(job.path, job.file),
+          bytes: job.file?.size,
+        })))
+      } catch (e) {
+        // Without this the latch never clears and the submit button stays dead
+        // for the life of the page.
+        setSubmitState('error')
+        setSubmitError(e instanceof Error ? e.message : 'Could not queue the upload')
+        setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
+        return
+      }
       setSubmitState('submitted')
       setSelectedFiles([])
       setNotes('')
@@ -489,7 +511,7 @@ export default function ContributorPage(): JSX.Element {
             )}
             <div className="flex flex-wrap gap-2">
               {CHANGE_OPTIONS.map(opt => (
-                <button key={opt.value} onClick={() => setChangeType(opt.value)}
+                <button key={opt.value} onClick={() => selectChangeType(opt.value)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${changeType === opt.value ? 'bg-accent text-white' : 'bg-surface-overlay text-text-muted hover:text-text-primary'}`}>
                   <opt.icon size={13} /> {opt.label}
                 </button>

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertCircle } from 'lucide-react'
+import { RefreshCw, AlertCircle, Folder } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import {
   fetchTrackerChanges, fetchCompChanges,
@@ -63,7 +63,10 @@ function CompRow({ item, onOpen }: { item: CompChange; onOpen: (i: CompChange) =
     >
       <ActionBadge action={item.action} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-text-primary truncate">{item.name}</div>
+        <div className="text-sm font-semibold text-text-primary truncate flex items-center gap-1.5">
+          {item.is_folder && <Folder size={13} className="shrink-0 text-text-muted" />}
+          <span className="truncate">{item.name}</span>
+        </div>
         <div className="text-xs text-text-muted truncate">{item.folder || '/'}</div>
         {item.action === 'move' && item.source_path && (
           <div className="text-[11px] text-text-muted truncate mt-0.5">from {item.source_path}</div>
@@ -72,7 +75,9 @@ function CompRow({ item, onOpen }: { item: CompChange; onOpen: (i: CompChange) =
       <div className="shrink-0 text-right">
         <div className="text-xs text-text-secondary truncate max-w-[9rem]">{item.user}</div>
         <div className="text-[11px] text-text-muted">{timeAgo(item.timestamp)}</div>
-        {humanSize(item.size) && <div className="text-[11px] text-text-muted">{humanSize(item.size)}</div>}
+        {/* Folders carry no meaningful byte count — the server sends 0 for them
+            and a "0 B" line next to a new folder just reads like a failure. */}
+        {!item.is_folder && humanSize(item.size) && <div className="text-[11px] text-text-muted">{humanSize(item.size)}</div>}
       </div>
     </button>
   )

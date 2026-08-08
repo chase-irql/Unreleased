@@ -208,6 +208,13 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
     </div>
   )
 
+  // Admins only, deliberately. A manager approving proposals is making the same
+  // kind of irreversible change, so gating them on 2FA as well would be the
+  // right call — but they can't satisfy it: GET accounts/otp/setup/ answers
+  // "Administrator access required.", so a manager with otp_enabled false would
+  // be parked in front of a panel whose first request 403s, with no way through
+  // to the review queues. Enforcing this is the API's job; don't tighten it here
+  // until that endpoint accepts a manager token.
   if (isFullAdmin && !otpEnabled) return (
     <div className="flex-1 overflow-y-auto flex items-center justify-center p-8">
       <div className="w-full max-w-sm">
@@ -230,6 +237,8 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
     { id: 'stats',        label: 'Stats',        icon: <TrendingUp size={13} /> },
     { id: 'security',     label: 'Security',     icon: <Shield size={13} /> },
   ]
+  // No Security tab for managers: it renders a flat "2FA is enabled", which the
+  // gate above guarantees for admins and can't guarantee for them.
   const nav = isFullAdmin
     ? fullNav
     : fullNav.filter(n => n.id === 'proposals' || n.id === 'comp-proposals')

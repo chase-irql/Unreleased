@@ -105,7 +105,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
               className={`w-full text-left px-3 py-3 border-b border-[var(--border)] transition-colors ${selected?.id === item.id ? 'bg-accent/10' : 'hover:bg-surface-raised'}`}>
               <div className="flex items-center gap-1.5 mb-1">
                 <StatusChip status={item.status} />
-                <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded">{item.change_type}</span>
+                <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded">{userApi.compChangeTypeLabel(item.change_type)}</span>
               </div>
               <p className="text-[11px] font-mono text-text-primary truncate">{item.file_path}</p>
               {item.change_type === 'move' && item.destination_path && (
@@ -127,7 +127,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1.5">
                     <StatusChip status={p.status} />
-                    <span className="text-[10px] text-text-muted bg-surface-raised px-2 py-0.5 rounded">{p.change_type}</span>
+                    <span className="text-[10px] text-text-muted bg-surface-raised px-2 py-0.5 rounded">{userApi.compChangeTypeLabel(p.change_type)}</span>
                   </div>
                   <h2 className="text-text-primary font-bold text-base font-mono break-all">{p.file_path}</h2>
                   {p.change_type === 'move' && p.destination_path && (

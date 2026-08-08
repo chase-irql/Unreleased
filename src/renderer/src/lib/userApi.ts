@@ -20,7 +20,9 @@ export interface AccountUser {
   discord_avatar: string
   is_editor: boolean
   is_contributor: boolean
-  is_manager: boolean
+  // Optional: the API only started returning this with the manager role, so
+  // older responses and anything replayed from cache simply omit it.
+  is_manager?: boolean
   is_administrator: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
@@ -421,6 +423,17 @@ export async function removeFromPlaylist(id: number, songId: number): Promise<vo
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
 export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete' | 'create_folder'
 
+// Only the underscored ones need spelling out; everything else reads fine as
+// the raw enum. Lives here rather than in one of the review components because
+// four separate places render this badge.
+const COMP_CHANGE_LABELS: Record<string, string> = {
+  create_folder: 'new folder',
+}
+
+export function compChangeTypeLabel(type: string): string {
+  return COMP_CHANGE_LABELS[type] ?? type
+}
+
 export interface CompFileProposal {
   id: number
   contributor_username: string
@@ -740,10 +753,13 @@ export function showStaffProfile(account: AccountUser | null): boolean {
 export function staffProfileView(account: AccountUser | null): ViewType {
   if (!account) return 'api-tracker'
   const isContributor = CONTRIBUTOR_ENABLED && !!account.is_contributor
-  if (account.is_administrator || account.is_editor) {
-    return isContributor && !account.is_editor ? 'contributor-profile' : 'editor-profile'
-  }
-  if (account.is_manager) return 'admin'
+  // Everyone with review duties lands on the editor profile — it's the personal
+  // page (your own song edits, your own comp files) and it embeds the review
+  // queue as a tab. Pointing managers straight at the review panel instead cost
+  // them any way to reach their own proposals, since this is the single profile
+  // entry in the sidebar and bottom bar. It also carries a Comp tab of its own,
+  // so contributors who also hold one of these roles lose nothing here.
+  if (account.is_administrator || account.is_editor || account.is_manager) return 'editor-profile'
   if (isContributor) return 'contributor-profile'
   return 'editor-profile'
 }

@@ -1,4 +1,4 @@
-import { JWAPI_BASE } from './juicewrldApi'
+import { apiFetch } from './juicewrldApi'
 
 // The DJ publishes its own library snapshot to /radio/library/, keyed by a hash
 // of each file path. That id is the only thing `propose_queue` can resolve — a
@@ -25,9 +25,10 @@ export async function fetchRadioLibrary(): Promise<RadioLibraryTrack[]> {
   if (inFlight) return inFlight
   inFlight = (async () => {
     try {
-      const res = await fetch(`${JWAPI_BASE}/radio/library/`)
-      if (!res.ok) throw new Error(`Radio library ${res.status}`)
-      const data = (await res.json()) as RadioLibraryResponse
+      // Through apiFetch rather than a bare fetch: it revalidates against the
+      // HTTP cache (this snapshot is ~95KB) and writes to the offline cache, so
+      // suggestions still work on a cold, offline start.
+      const data = await apiFetch<RadioLibraryResponse>('/radio/library/')
       const flat: RadioLibraryTrack[] = []
       for (const era of data.eras ?? []) {
         for (const track of era.tracks ?? []) {
