@@ -175,9 +175,12 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
       }`}
       onClick={(e) => { if (!floating && e.currentTarget === e.target) close() }}
     >
-      <div className={`bg-surface flex flex-col ${floating
-        ? 'w-full h-full overflow-y-auto'
-        : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto'}`}>
+      <div
+        className={`bg-surface flex flex-col ${floating
+          ? 'w-full h-full overflow-y-auto'
+          : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto'}`}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div
           className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0"
           style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}

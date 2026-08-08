@@ -21,7 +21,10 @@ export default function ReportModal(): JSX.Element | null {
       className="fixed inset-0 z-[170] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
       onClick={(e) => { if (e.currentTarget === e.target) closeReport() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface">
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
             <Icon size={15} className="text-accent" /> {title}

@@ -260,15 +260,37 @@ function LocalPlaylistMosaic({ trackIds, className = '' }: {
   )
 }
 
+// Guest playlists carry full Track snapshots (see GuestPlaylist), so their
+// art comes straight off the tracks — no id lookup into another store slice.
+function GuestPlaylistMosaic({ tracks, className = '' }: { tracks: Track[]; className?: string }): JSX.Element {
+  const artUrls = tracks.map(t => t.imageUrl).filter((u): u is string => !!u).slice(0, 4)
+  if (artUrls.length === 0) {
+    return (
+      <div className={`bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center ${className}`}>
+        <Music2 size={32} className="text-accent/50" />
+      </div>
+    )
+  }
+  if (artUrls.length < 4) return <img src={artUrls[0]} alt="" className={`object-cover ${className}`} />
+  return (
+    <div className={`grid grid-cols-2 ${className}`} style={{ overflow: 'hidden', transform: 'translateZ(0)' }}>
+      {artUrls.map((url, i) => (
+        <img key={i} src={url} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
+      ))}
+    </div>
+  )
+}
+
 
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, toggleLike, setActiveView, setPendingEditorSongId,
     localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, importM3uEntriesLocal, exportLocalPlaylistM3u,
+    guestPlaylists, createGuestPlaylist, deleteGuestPlaylist, renameGuestPlaylist, removeFromGuestPlaylist,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -280,6 +302,15 @@ export default function PlaylistsView(): JSX.Element {
   const [newName, setNewName] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+
+  // Guest playlists (signed-out, streamed-song playlists — see GuestPlaylist)
+  // stay entirely separate from the api/local machinery above: no folders, no
+  // multi-select, no bulk actions. Just enough to create, open, rename, and
+  // delete one, which is all that's needed while signed out.
+  const [guestSelectedId, setGuestSelectedId] = useState<string | null>(null)
+  const [guestCreating, setGuestCreating] = useState(false)
+  const [guestNewName, setGuestNewName] = useState('')
+  const [guestMenu, setGuestMenu] = useState<{ id: string; x: number; y: number; renaming?: boolean; renameVal?: string } | null>(null)
 
   // Context menus
   const [trackMenu, setTrackMenu] = useState<SongContextMenuState | null>(null)
@@ -701,11 +732,11 @@ export default function PlaylistsView(): JSX.Element {
 
   // Close menus on outside click
   useEffect(() => {
-    if (!trackMenu && !cardMenu && !showAddAllMenu && !plBulkMenu && !folderMenu) return
-    const h = () => { setTrackMenu(null); setCardMenu(null); setShowAddAllMenu(false); setPlBulkMenu(null); setFolderMenu(null) }
+    if (!trackMenu && !cardMenu && !showAddAllMenu && !plBulkMenu && !folderMenu && !guestMenu) return
+    const h = () => { setTrackMenu(null); setCardMenu(null); setShowAddAllMenu(false); setPlBulkMenu(null); setFolderMenu(null); setGuestMenu(null) }
     setTimeout(() => window.addEventListener('click', h), 0)
     return () => window.removeEventListener('click', h)
-  }, [trackMenu, cardMenu, showAddAllMenu, plBulkMenu, folderMenu])
+  }, [trackMenu, cardMenu, showAddAllMenu, plBulkMenu, folderMenu, guestMenu])
 
 
   const loadDetail = useCallback(async (id: number, shared = false) => {
@@ -1695,6 +1726,139 @@ export default function PlaylistsView(): JSX.Element {
   // ── Auth guard ─────────────────────────────────────────────────────────────────────────
 
   if (!account) {
+    // Guest playlists (streamed songs, added via SongContextMenu while signed
+    // out) get their own detail view — tracks are full snapshots already, so
+    // there's no library lookup like the local-playlist branch below needs.
+    if (guestSelectedId !== null) {
+      const gp = guestPlaylists.find(p => p.id === guestSelectedId)
+      if (!gp) { setGuestSelectedId(null); return <div /> }
+      return (
+        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
+          <div className="relative overflow-hidden px-6 pb-6 shrink-0">
+            <HeroBackdrop src={gp.tracks.map(t => t.imageUrl).find(a => !!a) ?? null} />
+            <div className="relative z-10 pt-5">
+              <button onClick={() => setGuestSelectedId(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
+                <ArrowLeft size={15} /> Playlists
+              </button>
+            </div>
+            <div className="relative z-10 flex gap-6 items-end pt-6">
+              <div className="shrink-0 rounded-xl shadow-2xl overflow-hidden bg-surface-overlay flex items-center justify-center" style={{ width: 180, height: 180 }}>
+                <GuestPlaylistMosaic tracks={gp.tracks} className="w-full h-full" />
+              </div>
+              <div className="pb-2">
+                <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-1">Playlist &middot; not signed in</p>
+                <h1 className="text-white text-3xl font-black mb-1">{gp.name}</h1>
+                <p className="text-white/60 text-sm">{gp.tracks.length} songs</p>
+              </div>
+            </div>
+            <div className="relative z-10 flex items-center gap-3 mt-5">
+              {gp.tracks.length > 0 && <HeroPlayButton onClick={() => playCollection(gp.tracks)} />}
+              {gp.tracks.length > 1 && (
+                <HeroShuffleButton onClick={() => { const sh = fisherYates(gp.tracks); playTrack(sh[0], sh) }} />
+              )}
+              <button
+                onClick={e => setGuestMenu({ id: gp.id, x: e.clientX, y: e.clientY })}
+                className="w-11 h-11 flex items-center justify-center rounded-full bg-surface-overlay hover:bg-surface-raised text-white/80 border border-white/10 transition-colors"
+                title="More"
+              >
+                <MoreHorizontal size={17} />
+              </button>
+            </div>
+          </div>
+          <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
+          <div className="px-2 pb-8">
+            {gp.tracks.length === 0 ? (
+              <p className="text-text-muted text-sm px-4 py-6 text-center">
+                No songs yet — use a song's "Add to playlist" menu to add one here.
+              </p>
+            ) : (
+              <>
+                <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}>
+                  {!isMobile && <span className="text-center">#</span>}<span /><span>Title</span><div className="flex justify-center"><Clock size={12} /></div>
+                </div>
+                {gp.tracks.map((t, i) => (
+                  <div
+                    key={t.id}
+                    className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default select-none"
+                    style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}
+                    onClick={() => { if (isMobile) playTrack(t, gp.tracks) }}
+                    onDoubleClick={() => playTrack(t, gp.tracks)}
+                    onContextMenu={e => { e.preventDefault(); setTrackMenu({ track: t, songId: userApi.trackIdToSongId(t.id), x: e.clientX, y: e.clientY }) }}
+                  >
+                    {!isMobile && (
+                      <>
+                        <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
+                        <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(t, gp.tracks)}><Play size={14} fill="currentColor" /></button>
+                      </>
+                    )}
+                    <div className="w-10 h-10 rounded-md overflow-hidden shrink-0">
+                      <AlbumArtThumbnail track={t} size={40} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-text-primary text-sm font-medium truncate" title={t.title}>{t.title}</p>
+                      <p className="text-text-muted text-xs truncate">{t.artist}</p>
+                    </div>
+                    <div className="flex items-center justify-end gap-1">
+                      <span className="text-text-muted text-xs tabular-nums text-center">
+                        {formatDuration(t.duration, '--:--')}
+                      </span>
+                      <button
+                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 w-8 h-8 flex items-center justify-center text-text-muted hover:text-red-400 transition-colors shrink-0"
+                        onClick={e => { e.stopPropagation(); removeFromGuestPlaylist(gp.id, t.id) }}
+                        aria-label="Remove from playlist"
+                        title="Remove from playlist"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+          {guestMenu && (
+            <ClampedMenu x={guestMenu.x} y={guestMenu.y} className="min-w-[190px]">
+              {guestMenu.renaming ? (
+                <div className="flex gap-1.5 px-3 py-2">
+                  <input
+                    value={guestMenu.renameVal ?? ''}
+                    onChange={e => setGuestMenu(prev => prev ? { ...prev, renameVal: e.target.value } : null)}
+                    onKeyDown={e => e.key === 'Enter' && (renameGuestPlaylist(guestMenu.id, (guestMenu.renameVal ?? '').trim() || gp.name), setGuestMenu(null))}
+                    autoFocus
+                    className="flex-1 min-w-0 bg-surface-overlay rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none border border-[var(--border)]"
+                  />
+                  <button
+                    onClick={() => { renameGuestPlaylist(guestMenu.id, (guestMenu.renameVal ?? '').trim() || gp.name); setGuestMenu(null) }}
+                    className="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium"
+                  >Save</button>
+                </div>
+              ) : (
+                <>
+                  <MenuItem icon={Pencil} label="Rename" onClick={() => setGuestMenu(prev => prev ? { ...prev, renaming: true, renameVal: gp.name } : null)} />
+                  <div className="border-t border-[var(--border)] my-1" />
+                  <MenuItem
+                    icon={Trash2}
+                    label="Delete playlist"
+                    destructive
+                    onClick={() => { deleteGuestPlaylist(gp.id); setGuestMenu(null); setGuestSelectedId(null) }}
+                  />
+                </>
+              )}
+            </ClampedMenu>
+          )}
+          {trackMenu && (
+            <SongContextMenu
+              state={trackMenu}
+              onClose={() => setTrackMenu(null)}
+              canEdit={false}
+              onInfo={() => { const sid = userApi.trackIdToSongId(trackMenu.track.id); if (sid) openSongInfo(sid) }}
+              onPlay={() => playTrack(trackMenu.track, gp.tracks)}
+              removeAction={{ label: 'Remove from playlist', onClick: () => removeFromGuestPlaylist(gp.id, trackMenu.track.id) }}
+            />
+          )}
+        </div>
+      )
+    }
     // show local playlists + login prompt even when not logged in
     if (localSelectedId !== null) {
       const localPl = localPlaylists.find(p => p.id === localSelectedId)
@@ -1770,7 +1934,97 @@ export default function PlaylistsView(): JSX.Element {
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
         <div className="px-5 pt-5 pb-8">
           <h1 className="text-text-primary text-xl font-bold mb-1">Your Library</h1>
-          <p className="text-text-muted text-sm mb-6">Local playlists</p>
+
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-text-muted text-sm">Playlists (this device)</p>
+            {!guestCreating && (
+              <button
+                onClick={() => setGuestCreating(true)}
+                className="flex items-center gap-1 text-xs text-accent hover:underline shrink-0"
+              >
+                <Plus size={13} /> New Playlist
+              </button>
+            )}
+          </div>
+          {guestCreating && (
+            <div className="flex gap-1.5 mb-4">
+              <input
+                value={guestNewName}
+                onChange={e => setGuestNewName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && guestNewName.trim()) { createGuestPlaylist(guestNewName.trim()); setGuestNewName(''); setGuestCreating(false) }
+                  if (e.key === 'Escape') { setGuestNewName(''); setGuestCreating(false) }
+                }}
+                placeholder="Playlist name"
+                autoFocus
+                className="flex-1 min-w-0 bg-surface-overlay rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none border border-[var(--border)]"
+              />
+              <button
+                onClick={() => { if (guestNewName.trim()) { createGuestPlaylist(guestNewName.trim()); setGuestNewName('') }; setGuestCreating(false) }}
+                className="px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold"
+              >
+                Create
+              </button>
+            </div>
+          )}
+          {guestPlaylists.length === 0 ? (
+            <p className="text-text-muted text-sm mb-6">
+              No playlists yet. Create one, or use a song's "Add to playlist" menu.
+            </p>
+          ) : (
+            <div className="grid gap-4 mb-8" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+              {guestPlaylists.map(gp => (
+                <PlaylistCard
+                  key={gp.id}
+                  name={gp.name}
+                  subtitle={`${gp.tracks.length} ${gp.tracks.length === 1 ? 'track' : 'tracks'}`}
+                  cover={<GuestPlaylistMosaic tracks={gp.tracks} className="w-full h-full" />}
+                  selected={false}
+                  selectMode={false}
+                  onClick={() => setGuestSelectedId(gp.id)}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setGuestMenu({ id: gp.id, x: e.clientX, y: e.clientY }) }}
+                  onMenuButton={e => setGuestMenu({ id: gp.id, x: e.clientX, y: e.clientY })}
+                  onPlay={() => { if (gp.tracks.length) playCollection(gp.tracks) }}
+                />
+              ))}
+            </div>
+          )}
+          {guestMenu && (
+            <ClampedMenu x={guestMenu.x} y={guestMenu.y} className="min-w-[190px]">
+              {guestMenu.renaming ? (
+                <div className="flex gap-1.5 px-3 py-2">
+                  <input
+                    value={guestMenu.renameVal ?? ''}
+                    onChange={e => setGuestMenu(prev => prev ? { ...prev, renameVal: e.target.value } : null)}
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter') return
+                      const val = (guestMenu.renameVal ?? '').trim()
+                      if (val) renameGuestPlaylist(guestMenu.id, val)
+                      setGuestMenu(null)
+                    }}
+                    autoFocus
+                    className="flex-1 min-w-0 bg-surface-overlay rounded-lg px-2.5 py-1.5 text-sm text-text-primary focus:outline-none border border-[var(--border)]"
+                  />
+                  <button
+                    onClick={() => {
+                      const val = (guestMenu.renameVal ?? '').trim()
+                      if (val) renameGuestPlaylist(guestMenu.id, val)
+                      setGuestMenu(null)
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-medium"
+                  >Save</button>
+                </div>
+              ) : (
+                <>
+                  <MenuItem icon={Pencil} label="Rename" onClick={() => setGuestMenu(prev => prev ? { ...prev, renaming: true, renameVal: guestPlaylists.find(p => p.id === prev.id)?.name ?? '' } : null)} />
+                  <div className="border-t border-[var(--border)] my-1" />
+                  <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { deleteGuestPlaylist(guestMenu.id); setGuestMenu(null) }} />
+                </>
+              )}
+            </ClampedMenu>
+          )}
+
+          <p className="text-text-muted text-sm mb-6 pt-2 border-t border-[var(--border)]">Local playlists (from your music library)</p>
           {localPlaylists.length === 0 ? (
             <p className="text-text-muted text-sm">No local playlists yet. Add music to your library first.</p>
           ) : (
@@ -1987,14 +2241,18 @@ export default function PlaylistsView(): JSX.Element {
                   </>
                 )}
               </div>
-              {/* Remove cover button (owner only) */}
+              {/* Remove cover button (owner only). Was opacity-0
+                  group-hover:opacity-100 with no touch equivalent — a
+                  destructive action unreachable on mobile, unlike the "Change
+                  cover" overlay above it, which is only decorative (the whole
+                  cover is already tappable via the parent's own onClick). */}
               {!isSharedView && (coverData?.cover_image_url || coverData?.cover_image) && !coverImgError && (
                 <button
-                  className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 text-white opacity-0 group-hover/cover:opacity-100 transition-opacity hover:bg-red-500/80"
+                  className="absolute top-1.5 right-1.5 rounded-md bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/cover:opacity-100 transition-opacity hover:bg-red-500/80 w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:p-1"
                   onClick={e => { e.stopPropagation(); handleRemoveCover() }}
-                  title="Remove cover"
+                  aria-label="Remove cover"
                 >
-                  <ImageOff size={12} />
+                  <ImageOff size={14} className="md:w-3 md:h-3" />
                 </button>
               )}
             </div>

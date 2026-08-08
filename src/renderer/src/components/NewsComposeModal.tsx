@@ -120,7 +120,10 @@ export default function NewsComposeModal({ channels, initialChannel, editing, on
       className="fixed inset-0 z-[170] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
       onClick={(e) => { if (e.currentTarget === e.target && !saving) onClose() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] overflow-y-auto">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] overflow-y-auto"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10">
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
             <FileText size={15} className="text-accent" /> {editing ? 'Edit post' : 'New post'}

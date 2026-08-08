@@ -27,6 +27,7 @@ import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 import { placeFlyout } from '../lib/menuFlyout'
 import { formatDuration } from '../lib/format'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 type Category = 'released' | 'unreleased' | 'unsurfaced' | 'recording_session' | ''
 type ViewMode = 'list' | 'detail' | 'grid'
@@ -1732,12 +1733,16 @@ function VersionTitlePromptModal({
   onSkip: () => void
 }): JSX.Element {
   const [value, setValue] = useState('')
+  useBackToClose(onSkip)
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[9999] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onSkip() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-sm p-5">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-sm p-5"
+        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         <h3 className="text-text-primary text-sm font-semibold mb-1">Name this version group</h3>
         <p className="text-text-muted text-xs mb-3">
           These songs are now linked as versions of each other, but the group has no title yet (e.g. "TV Mix", "Alternate").

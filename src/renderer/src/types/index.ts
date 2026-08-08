@@ -85,6 +85,19 @@ export interface LocalPlaylist {
   coverImage?: string | null  // base64 data URL or null
 }
 
+// A playlist built while signed out, for streamed (API) songs rather than
+// local library files — so it can't reuse LocalPlaylist's trackIds-into-
+// libraryTracks lookup. Holds full Track snapshots instead, persisted to
+// localStorage (not the Electron-only saveLocalPlaylists IPC), so it works
+// the same on the desktop app, the web build, and the Android wrap. Device-
+// only, same as LocalPlaylist — nothing here is ever synced to an account.
+export interface GuestPlaylist {
+  id: string
+  name: string
+  tracks: Track[]
+  createdAt: number
+}
+
 // ─── Offline playlist sync (Electron only) ─────────────────────────────────
 // A downloaded API song, kept fully playable without network — the audio
 // file plus a snapshot of the song's own metadata at download time.

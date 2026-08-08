@@ -114,10 +114,13 @@ export default function DiagnosticsModal(): JSX.Element {
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm px-0 md:px-4"
       onClick={(e) => { if (e.target === overlayRef.current) setShowDiagnostics(false) }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[480px] mx-3 h-[600px] max-h-[85vh] flex flex-col overflow-hidden">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-3xl shadow-2xl w-full md:max-w-[480px] md:mx-3 h-[88svh] md:h-[600px] max-h-[88svh] md:max-h-[85vh] flex flex-col overflow-hidden"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-2">
             <Info size={16} className="text-accent" />

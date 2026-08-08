@@ -765,7 +765,10 @@ function BulkEditor<T>({ spec, onClose }: { spec: BulkSpec<T>; onClose: () => vo
       className="fixed inset-0 z-[170] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
       onClick={(e) => { if (e.currentTarget === e.target) attemptClose() }}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-2xl max-h-[92svh] flex flex-col">
+      <div
+        className="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-2xl max-h-[92svh] flex flex-col"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
 
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--border)] shrink-0">
           <div className="min-w-0">

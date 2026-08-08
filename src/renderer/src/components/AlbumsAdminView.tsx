@@ -194,12 +194,15 @@ function AlbumCard({ album, onClick, onDelete }: {
           </div>
         </div>
 
-        {/* Delete button */}
+        {/* Delete button. Was opacity-0 group-hover:opacity-100 with no touch
+            fallback — a destructive action that was completely unreachable
+            on mobile, not just unlabeled. */}
         <button
           onClick={e => { e.stopPropagation(); onDelete() }}
-          className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/60 backdrop-blur-sm text-white/70 hover:text-white hover:bg-red-500/80 flex items-center justify-center opacity-0 group-hover/card:opacity-100 transition-all duration-150"
+          aria-label={`Delete ${album.name}`}
+          className="absolute top-2 right-2 rounded-full bg-black/60 backdrop-blur-sm text-white/70 hover:text-white hover:bg-red-500/80 flex items-center justify-center opacity-100 md:opacity-0 md:group-hover/card:opacity-100 transition-all duration-150 w-8 h-8 md:w-6 md:h-6"
         >
-          <X size={11} />
+          <X size={13} className="md:w-[11px] md:h-[11px]" />
         </button>
 
         {/* Version count badge */}
@@ -472,7 +475,7 @@ function TrackRow({ song, index, onChangeName, onDelete }: {
 }) {
   return (
     <div className="group/row flex items-center gap-4 px-3 py-2 rounded-xl hover:bg-[var(--surface-overlay)] transition-colors">
-      <span className="w-6 text-right text-sm text-[var(--text-muted)] tabular-nums shrink-0 group-hover/row:opacity-0 transition-opacity">
+      <span className="w-6 text-right text-sm text-[var(--text-muted)] tabular-nums shrink-0 md:group-hover/row:opacity-0 transition-opacity">
         {index + 1}
       </span>
       <div className="flex-1 min-w-0">
@@ -486,11 +489,14 @@ function TrackRow({ song, index, onChangeName, onDelete }: {
       <span className="w-10 text-xs text-[var(--text-muted)] tabular-nums shrink-0">
         {song.id}
       </span>
+      {/* Was opacity-0 group-hover:opacity-100 with no touch fallback — same
+          destructive-and-unreachable issue as the card delete button above. */}
       <button
         onClick={onDelete}
-        className="w-6 h-6 rounded-md text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10 flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-all shrink-0"
+        aria-label={`Delete ${song.name}`}
+        className="rounded-md text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10 flex items-center justify-center opacity-100 md:opacity-0 md:group-hover/row:opacity-100 transition-all shrink-0 w-9 h-9 md:w-6 md:h-6"
       >
-        <X size={13} />
+        <X size={15} className="md:w-[13px] md:h-[13px]" />
       </button>
     </div>
   )

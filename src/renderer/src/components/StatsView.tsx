@@ -316,10 +316,10 @@ export default function StatsView(): JSX.Element {
                   className="group flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-raised transition-colors"
                   onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
                 >
-                  <span className="w-6 text-center text-xs text-text-muted tabular-nums shrink-0">{i + 1}</span>
-                  <button onClick={() => playTrack(track, topTracks)} className="relative shrink-0">
+                  <span className="w-6 text-center text-xs text-text-muted tabular-nums shrink-0 hidden md:block">{i + 1}</span>
+                  <button onClick={() => playTrack(track, topTracks)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
                     <AlbumArtThumbnail track={track} size={40} className="rounded-md" />
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 rounded-md transition-opacity">
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 md:group-hover:opacity-100 rounded-md transition-opacity">
                       <Play size={16} className="text-white" fill="currentColor" />
                     </span>
                   </button>
@@ -341,12 +341,14 @@ export default function StatsView(): JSX.Element {
                   <span className="text-text-secondary text-xs tabular-nums shrink-0 w-16 text-right">
                     {entry.playcount.toLocaleString()} {entry.playcount === 1 ? 'play' : 'plays'}
                   </span>
+                  {/* Was opacity-0 group-hover:opacity-100 with no touch
+                      equivalent — invisible and undiscoverable on mobile. */}
                   <button
                     onClick={(e) => { e.stopPropagation(); setCtxMenu((prev) => prev?.track.id === track.id ? null : { track, songId, x: e.clientX, y: e.clientY }) }}
-                    className="p-1.5 text-text-muted hover:text-text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                    title="More options"
+                    className="text-text-muted hover:text-text-primary opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all shrink-0 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+                    aria-label="More options"
                   >
-                    <MoreHorizontal size={16} />
+                    <MoreHorizontal size={18} className="md:w-4 md:h-4" />
                   </button>
                 </div>
               )

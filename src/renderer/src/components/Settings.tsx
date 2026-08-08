@@ -5,7 +5,7 @@ import {
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
   ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
-  ScrollText, ShieldCheck, Disc,
+  ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
@@ -71,7 +71,7 @@ const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
 ]
 
 type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
-type Tab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
+type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -94,14 +94,18 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
   children?: ReactNode
 }): JSX.Element {
   return (
-    <div className="flex items-center justify-between gap-3 py-3 border-b border-[var(--border)] last:border-b-0">
+    // Taller rows below md so each is a comfortable touch target, and the
+    // label/sub wrap there instead of truncating — on a phone the helper text
+    // is usually the part that explains what the control does, and truncating
+    // it to one clipped line loses exactly that.
+    <div className="flex items-center justify-between gap-3 py-3.5 md:py-3 border-b border-[var(--border)] last:border-b-0">
       <div className="flex items-center gap-2.5 min-w-0">
         <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
           <Icon size={13} className="text-white" strokeWidth={2.25} />
         </div>
         <div className="min-w-0">
-          <p className="text-text-primary text-sm truncate">{label}</p>
-          {sub && <p className="text-text-muted text-[11px] truncate">{sub}</p>}
+          <p className="text-text-primary text-sm md:truncate">{label}</p>
+          {sub && <p className="text-text-muted text-xs md:text-[11px] leading-snug md:truncate">{sub}</p>}
         </div>
         {labelExtra}
       </div>
@@ -112,19 +116,25 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Element {
   return (
+    // Slightly larger on touch (44px including the invisible tap padding
+    // from -m-2/p-2, vs the visually-unchanged w-10 h-5 switch itself on
+    // desktop) — a mouse click doesn't need a bigger switch, a thumb does.
+    // The bigger tap area is padding around the same-looking switch rather
+    // than a bigger switch, so it doesn't change how any row visually reads.
     <button
       onClick={onClick}
-      className={`relative w-10 h-5 rounded-full shrink-0 transition-colors appearance-none border-0 p-0 leading-none ${on ? 'bg-accent' : 'bg-[var(--surface-overlay)]'}`}
+      aria-pressed={on}
+      className="shrink-0 -m-2 p-2 md:m-0 md:p-0"
     >
-      {/* Vertically centered with inset-y-0 + my-auto (an auto-margin flex/
-          block centering trick) instead of a manual top offset — a fixed
-          `top-0.5` still relied on the button having zero padding/border to
-          land exactly right, and browsers don't zero those out on <button>
-          by default. auto-margin centering can't drift regardless of the
-          button's own box model. No shadow on the knob either — its default
-          downward offset (0 1px 3px) reads as visual weight sitting low,
-          making it look off-center even when it's geometrically centered. */}
-      <span className={`absolute inset-y-0 my-auto w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      <span className={`relative block w-10 h-5 rounded-full transition-colors ${on ? 'bg-accent' : 'bg-[var(--surface-overlay)]'}`}>
+        {/* Vertically centered with inset-y-0 + my-auto (an auto-margin flex/
+            block centering trick) instead of a manual top offset — a fixed
+            `top-0.5` still relied on the parent having zero padding/border to
+            land exactly right. No shadow on the knob either — its default
+            downward offset (0 1px 3px) reads as visual weight sitting low,
+            making it look off-center even when it's geometrically centered. */}
+        <span className={`absolute inset-y-0 my-auto w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      </span>
     </button>
   )
 }
@@ -149,11 +159,20 @@ interface AppSettings {
 export default function Settings({ floating = false }: { floating?: boolean }): JSX.Element {
   const [showToken, setShowToken] = useState(false)
   const [tokenCopied, setTokenCopied] = useState(false)
+  // Paste-a-token fallback (Account tab) — for platforms where the Discord
+  // OAuth redirect can't complete in-app (the Android wrap's WebView isn't
+  // registered as a valid Discord redirect target). The user signs in
+  // somewhere the redirect does work, copies their token from this same
+  // section there, and pastes it here instead.
+  const [tokenPasteOpen, setTokenPasteOpen] = useState(false)
+  const [tokenPasteValue, setTokenPasteValue] = useState('')
+  const [tokenPasteSubmitting, setTokenPasteSubmitting] = useState(false)
+  const [tokenPasteError, setTokenPasteError] = useState<string | null>(null)
   const [openAbout, setOpenAbout] = useState<string | null>(null)
   const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null)
   const {
     setShowSettings, setActiveView,
-    account,
+    account, setShowUserAuth, logoutAccount, loginWithToken,
     theme, setTheme,
     customSkins, saveCustomSkin, deleteCustomSkin,
     accentColor, setAccentColor,
@@ -185,7 +204,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -424,6 +443,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   // `sub` shows under the label in the mobile category list; `color` is the
   // badge tint, matching the iOS-Settings idiom the Row primitive already uses.
   const tabs: { id: Tab; label: string; icon: ElementType; color: string; sub: string }[] = [
+    { id: 'account', label: 'Account', icon: User, color: '#1d4ed8', sub: account ? (account.display_name || account.discord_username) : 'Not signed in' },
     { id: 'appearance', label: 'Appearance', icon: Palette, color: '#7c3aed', sub: 'Skin, accent, fonts, layout' },
     { id: 'playback', label: 'Playback', icon: Volume2, color: '#2563eb', sub: 'Output, crossfade, lyrics' },
     // Touch devices have no keyboard to bind, so the whole section is dropped
@@ -586,9 +606,18 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   return (
     <div
       ref={overlayRef}
-      className={`fixed inset-0 z-50 flex items-center justify-center ${floating || isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
-      // Click-outside-to-close only exists where there IS an outside; the
-      // mobile page fills the viewport, so the header's X/back is the only exit.
+      className={`fixed z-50 flex items-center justify-center ${isMobile && !floating ? 'inset-x-0' : 'inset-0'} ${floating || isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
+      // The mobile page fills the viewport minus the bottom-nav strip (see
+      // BottomNav's --bottom-nav-height, or the top strip when the nav is
+      // pinned to the top instead) — it used to cover the whole screen and
+      // hide the nav bar entirely while Settings was open. Click-outside-to-
+      // close only exists where there IS an outside; the mobile page's
+      // header X/back is the only exit either way.
+      style={isMobile && !floating
+        ? (sidebarPosition === 'top'
+          ? { top: 'var(--bottom-nav-height, 0px)', bottom: 0 }
+          : { top: 0, bottom: 'var(--bottom-nav-height, 0px)' })
+        : undefined}
       onClick={(e) => { if (!isMobile && e.target === overlayRef.current) closeSettings() }}
     >
       {/* Custom-skin editor (portals to <body>, so placement here is fine) */}
@@ -750,9 +779,138 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
           </div>
 
           <div
-            className="flex-1 min-w-0 overflow-y-auto px-6 py-5"
+            className="flex-1 min-w-0 overflow-y-auto px-4 py-4 md:px-6 md:py-5"
             style={isMobile ? { paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' } : undefined}
           >
+
+            {/* ── Account ── */}
+            {tab === 'account' && (
+              <div>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Account</h3>
+                {account ? (
+                  <>
+                    <div className="flex items-center gap-3 py-3 border-b border-[var(--border)]">
+                      {account.discord_avatar
+                        ? <img src={account.discord_avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
+                        : <div className="w-11 h-11 rounded-full bg-accent/20 text-accent flex items-center justify-center text-base font-semibold shrink-0">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-text-primary text-sm font-semibold truncate">{account.display_name || account.discord_username}</p>
+                        <p className="text-text-muted text-xs truncate">Signed in with Discord</p>
+                      </div>
+                      <button
+                        onClick={() => logoutAccount()}
+                        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-red-400 transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-red-500/10 border border-[var(--border)] shrink-0"
+                      >
+                        <LogOut size={13} />
+                        Log out
+                      </button>
+                    </div>
+
+                    <div className="mt-2 rounded-xl border border-[var(--border)] overflow-hidden">
+                      <button
+                        onClick={() => setShowToken(v => !v)}
+                        className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] text-text-secondary text-sm font-medium transition-colors"
+                      >
+                        <KeyRound size={15} />
+                        <span className="flex-1 text-left">Auth Token</span>
+                        {showToken ? <EyeOff size={14} className="text-text-muted" /> : <Eye size={14} className="text-text-muted" />}
+                      </button>
+                      {showToken && (
+                        <>
+                          <button
+                            onClick={() => {
+                              const t = getToken()
+                              if (t) {
+                                navigator.clipboard.writeText(t)
+                                setTokenCopied(true)
+                                setTimeout(() => setTokenCopied(false), 2000)
+                              }
+                            }}
+                            className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface)] hover:bg-[var(--surface-raised)] transition-colors border-t border-[var(--border)] group"
+                            title="Click to copy"
+                          >
+                            <code className="flex-1 text-left text-[10px] font-mono text-text-muted truncate">
+                              {getToken() ?? '&#8212;'}
+                            </code>
+                            <span className={`flex-shrink-0 flex items-center gap-1 text-[10px] font-medium transition-colors ${tokenCopied ? 'text-emerald-500' : 'text-text-muted group-hover:text-text-primary'}`}>
+                              {tokenCopied ? 'Copied!' : <><Copy size={11} /> Copy</>}
+                            </span>
+                          </button>
+                          <p className="px-3 py-2 text-[10px] text-text-muted leading-relaxed border-t border-[var(--border)]">
+                            Copy this on a device where sign-in works, then paste it under Account on a device where it doesn't (e.g. the Android app, where Discord's redirect can't complete in-app).
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-text-muted text-sm mb-4 leading-relaxed max-w-md">
+                      Log in with Discord to save favorite tracks and playlists that follow you on every device.
+                    </p>
+                    <button
+                      onClick={() => setShowUserAuth(true)}
+                      className="w-full py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 mb-4"
+                    >
+                      <LogIn size={16} />
+                      Continue with Discord
+                    </button>
+
+                    <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                      <button
+                        onClick={() => setTokenPasteOpen(v => !v)}
+                        className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] text-text-secondary text-sm font-medium transition-colors"
+                      >
+                        <KeyRound size={15} />
+                        <span className="flex-1 text-left">Paste a token instead</span>
+                        {tokenPasteOpen ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
+                      </button>
+                      {tokenPasteOpen && (
+                        <div className="px-3 py-3 border-t border-[var(--border)] space-y-2">
+                          <p className="text-text-muted text-[11px] leading-relaxed">
+                            If Discord sign-in doesn't work here (e.g. the Android app), sign in on another device or the web player, copy your token from Settings &rarr; Account there, and paste it below.
+                          </p>
+                          <div className="flex gap-1.5">
+                            <input
+                              value={tokenPasteValue}
+                              onChange={(e) => { setTokenPasteValue(e.target.value); setTokenPasteError(null) }}
+                              onKeyDown={(e) => e.key === 'Enter' && !tokenPasteSubmitting && tokenPasteValue.trim() && (async () => {
+                                setTokenPasteSubmitting(true)
+                                setTokenPasteError(null)
+                                try { await loginWithToken(tokenPasteValue); setTokenPasteValue(''); setTokenPasteOpen(false) }
+                                catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
+                                finally { setTokenPasteSubmitting(false) }
+                              })()}
+                              placeholder="Paste token"
+                              className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs font-mono text-text-primary focus:outline-none"
+                            />
+                            <button
+                              disabled={tokenPasteSubmitting || !tokenPasteValue.trim()}
+                              onClick={async () => {
+                                setTokenPasteSubmitting(true)
+                                setTokenPasteError(null)
+                                try { await loginWithToken(tokenPasteValue); setTokenPasteValue(''); setTokenPasteOpen(false) }
+                                catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
+                                finally { setTokenPasteSubmitting(false) }
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 shrink-0"
+                            >
+                              {tokenPasteSubmitting ? <Loader2 size={13} className="animate-spin" /> : 'Log in'}
+                            </button>
+                          </div>
+                          {tokenPasteError && (
+                            <div className="flex items-start gap-1.5 text-red-400 text-[11px]">
+                              <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                              {tokenPasteError}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* ── Appearance ── */}
             {tab === 'appearance' && (
@@ -765,7 +923,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-text-primary text-sm">Skin</span>
-                      <p className="text-text-muted text-[11px]">Skins with a signature color also set the accent — or build your own below</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Skins with a signature color also set the accent — or build your own below</p>
                     </div>
                     <button
                       onClick={() => skinImportRef.current?.click()}
@@ -787,9 +945,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     />
                   </div>
                   {skinImportError && (
-                    <p className="text-red-400 text-[11px] mb-2 pl-[34px]">{skinImportError}</p>
+                    <p className="text-red-400 text-[11px] mb-2 pl-0 md:pl-[34px]">{skinImportError}</p>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
                     {[...SKINS, ...customSkins].map((skin) => {
                       const active = theme === skin.id
                       return (
@@ -840,12 +998,16 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           {/* Custom skins get an edit button (sibling, not nested,
                               to keep the markup button-in-button free). */}
                           {skin.custom && (
+                            // Was opacity-0 group-hover:opacity-100 with no
+                            // touch fallback — the double-click alternative
+                            // (see onDoubleClick above) doesn't translate to
+                            // touch either, so this was the only real way in.
                             <button
-                              onClick={() => setEditingSkinId(skin.id)}
-                              className="absolute top-1 right-1 p-1 rounded-md bg-black/45 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/65 transition-opacity"
-                              title="Edit skin"
+                              onClick={(e) => { e.stopPropagation(); setEditingSkinId(skin.id) }}
+                              className="absolute top-1 right-1 rounded-md bg-black/45 text-white opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 hover:bg-black/65 transition-opacity w-7 h-7 md:w-auto md:h-auto flex items-center justify-center md:p-1"
+                              aria-label={`Edit ${skin.name}`}
                             >
-                              <Pencil size={11} />
+                              <Pencil size={13} className="md:w-[11px] md:h-[11px]" />
                             </button>
                           )}
                         </div>
@@ -873,13 +1035,16 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <span className="text-text-primary text-sm">Accent color</span>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                  {/* 36px swatches below md — a 28px circle is a mouse target,
+                      not a finger one, and these sit in a tightly packed row. */}
+                  <div className="flex items-center gap-2.5 md:gap-2 flex-wrap pl-0 md:pl-[34px]">
                     {ACCENT_PRESETS.map((c) => (
                       <button
                         key={c}
                         onClick={() => { setAccentColor(c); setCustomAccent(c) }}
-                        className="w-7 h-7 rounded-full transition-transform hover:scale-110"
+                        className="w-9 h-9 md:w-7 md:h-7 rounded-full transition-transform hover:scale-110"
                         style={{ backgroundColor: c, outline: accentColor === c ? `2px solid ${c}` : 'none', outlineOffset: '2px' }}
+                        aria-label={`Accent color ${c}`}
                       />
                     ))}
                     <input
@@ -890,8 +1055,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         if (accentDebounceRef.current) clearTimeout(accentDebounceRef.current)
                         accentDebounceRef.current = setTimeout(() => setAccentColor(e.target.value), 80)
                       }}
-                      className="w-7 h-7 rounded-full cursor-pointer border-0 p-0 bg-transparent"
+                      className="w-9 h-9 md:w-7 md:h-7 rounded-full cursor-pointer border-0 p-0 bg-transparent"
                       title="Custom color"
+                      aria-label="Custom accent color"
                     />
                   </div>
                 </div>
@@ -910,10 +1076,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">App font</span>
-                      <p className="text-text-muted text-[11px]">Typeface for the whole app — each option previews in its own font</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Typeface for the whole app — each option previews in its own font</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
                     {FONTS.map((font) => {
                       const active = appFont === font.id
                       return (
@@ -950,10 +1116,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">Lyrics font</span>
-                      <p className="text-text-muted text-[11px]">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-[34px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
                     {FONTS.map((font) => {
                       const active = lyricsFont === font.id
                       return (
@@ -988,17 +1154,17 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">App text size</span>
-                      <p className="text-text-muted text-[11px]">Scales text across the whole app</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Scales text across the whole app</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
                     {APP_TEXT_SIZES.map(({ label, value }) => {
                       const active = appTextScale === value
                       return (
                         <button
                           key={value}
                           onClick={() => setAppTextScale(value)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                             active
                               ? 'bg-accent/15 text-accent border-[var(--accent)]'
                               : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
@@ -1017,17 +1183,17 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">Lyrics text size</span>
-                      <p className="text-text-muted text-[11px]">Synced and plain lyrics everywhere — WRLD tab, now playing, mini player</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Synced and plain lyrics everywhere — WRLD tab, now playing, mini player</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
                     {LYRIC_TEXT_SIZES.map(({ label, value }) => {
                       const active = lyricsScale === value
                       return (
                         <button
                           key={value}
                           onClick={() => setLyricsScale(value)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                             active
                               ? 'bg-accent/15 text-accent border-[var(--accent)]'
                               : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
@@ -1046,10 +1212,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">Lyrics alignment</span>
-                      <p className="text-text-muted text-[11px]">How lyric lines line up</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">How lyric lines line up</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
                     {([
                       { id: 'left' as const, label: 'Left', icon: AlignLeft },
                       { id: 'center' as const, label: 'Center', icon: AlignCenter },
@@ -1059,7 +1225,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         <button
                           key={id}
                           onClick={() => setLyricsAlign(id)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                             active
                               ? 'bg-accent/15 text-accent border-[var(--accent)]'
                               : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
@@ -1087,12 +1253,12 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0">
                       <span className="text-text-primary text-sm">Navigation position</span>
-                      <p className="text-text-muted text-[11px]">
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">
                         {isMobile ? 'Which edge the nav tabs sit on' : 'Where the nav menu sits'}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
                     {/* A vertical rail doesn't fit a phone, so mobile only
                         offers the two edges its tab bar can actually take. */}
                     {NAV_POSITIONS.filter(({ id }) => !isMobile || id === 'top' || id === 'bottom').map(({ id, label, icon: PosIcon }) => {
@@ -1106,7 +1272,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         <button
                           key={id}
                           onClick={() => setSidebarPosition(id)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                             active
                               ? 'bg-accent/15 text-accent border-[var(--accent)]'
                               : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
@@ -1127,17 +1293,17 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       </div>
                       <div className="min-w-0">
                         <span className="text-text-primary text-sm">App menu button</span>
-                        <p className="text-text-muted text-[11px]">Where the File / Edit / View… menu opens from</p>
+                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">Where the File / Edit / View… menu opens from</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap pl-[34px]">
+                    <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
                       {APP_MENU_POSITIONS.map(({ id, label, icon: MenuIcon }) => {
                         const active = appMenuPosition === id
                         return (
                           <button
                             key={id}
                             onClick={() => setAppMenuPosition(id)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                               active
                                 ? 'bg-accent/15 text-accent border-[var(--accent)]'
                                 : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
@@ -1158,7 +1324,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-text-primary text-sm">Menu items</span>
-                      <p className="text-text-muted text-[11px]">
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">
                         {isMobile
                           ? 'Reorder with the arrows · tap the eye to show or hide a tab'
                           : 'Drag to reorder · tap the eye to show or hide a tab'}
@@ -1168,13 +1334,13 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       <button
                         onClick={resetNav}
                         title="Restore the default menu items and order"
-                        className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
+                        className="flex items-center gap-1 px-2 py-2 -mr-2 md:p-0 md:mr-0 text-xs md:text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
                       >
                         <RotateCcw size={11} /> Reset
                       </button>
                     )}
                   </div>
-                  <div className="pl-[34px] space-y-1.5">
+                  <div className="pl-0 md:pl-[34px] space-y-1.5">
                     {navRows.map((item, idx) => {
                       const shown = isNavItemVisible(item, navVisibility, isElectron)
                       return (
@@ -1197,22 +1363,26 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           }`}
                         >
                           {isMobile ? (
-                            <div className="flex flex-col shrink-0 -my-1">
+                            // p-0.5 (an ~18px hit area) was too small for the
+                            // exact interaction this replaces drag with — w-9
+                            // h-9 (36px) per button is the largest that fits
+                            // stacked without the row ballooning in height.
+                            <div className="flex flex-col shrink-0 -my-1 -mr-1">
                               <button
                                 onClick={() => { if (idx > 0) moveNavItem(idx, idx - 1) }}
                                 disabled={idx === 0}
                                 aria-label={`Move ${item.label} up`}
-                                className="p-0.5 text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                                className="w-9 h-9 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
                               >
-                                <ChevronUp size={14} />
+                                <ChevronUp size={16} />
                               </button>
                               <button
                                 onClick={() => { if (idx < navRows.length - 1) moveNavItem(idx, idx + 1) }}
                                 disabled={idx === navRows.length - 1}
                                 aria-label={`Move ${item.label} down`}
-                                className="p-0.5 text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                                className="w-9 h-9 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
                               >
-                                <ChevronDown size={14} />
+                                <ChevronDown size={16} />
                               </button>
                             </div>
                           ) : (
@@ -1223,7 +1393,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           <button
                             onClick={() => setNavItemVisible(item.view, !shown)}
                             title={shown ? 'Hide from menu' : 'Add to menu'}
-                            className="ml-auto shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                            className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
                           >
                             {shown ? <Eye size={15} /> : <EyeOff size={15} />}
                           </button>
@@ -1247,10 +1417,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       </div>
                       <div className="min-w-0 flex-1">
                         <span className="text-text-primary text-sm">Editor tabs (mobile)</span>
-                        <p className="text-text-muted text-[11px]">Show or hide the editor-only tabs in the mobile bottom bar</p>
+                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">Show or hide the editor-only tabs in the mobile bottom bar</p>
                       </div>
                     </div>
-                    <div className="pl-[34px] space-y-1.5">
+                    <div className="pl-0 md:pl-[34px] space-y-1.5">
                       {([
                         { view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> },
                         { view: 'editor-profile' as ViewType, label: account?.is_administrator ? 'Admin' : 'Editor', icon: <ShieldCheck size={18} /> },
@@ -1263,7 +1433,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                             <button
                               onClick={() => setNavItemVisible(item.view, !shown)}
                               title={shown ? 'Hide from menu' : 'Show in menu'}
-                              className="ml-auto shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                              className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
                             >
                               {shown ? <Eye size={15} /> : <EyeOff size={15} />}
                             </button>
@@ -1285,19 +1455,19 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       </div>
                       <div className="min-w-0 flex-1">
                         <span className="text-text-primary text-sm">Menu controls</span>
-                        <p className="text-text-muted text-[11px]">The buttons at the foot of the menu — reorder or hide them</p>
+                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">The buttons at the foot of the menu — reorder or hide them</p>
                       </div>
                       {!ctrlIsDefault && (
                         <button
                           onClick={resetControls}
                           title="Restore the default controls and order"
-                          className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
+                          className="flex items-center gap-1 px-2 py-2 -mr-2 md:p-0 md:mr-0 text-xs md:text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
                         >
                           <RotateCcw size={11} /> Reset
                         </button>
                       )}
                     </div>
-                    <div className="pl-[34px] space-y-1.5">
+                    <div className="pl-0 md:pl-[34px] space-y-1.5">
                       {ctrlRows.map((ctrl, idx) => {
                         const shown = navControlVisibility[ctrl.id] ?? true
                         return (
@@ -1322,7 +1492,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                             <button
                               onClick={() => setNavControlVisible(ctrl.id, !shown)}
                               title={shown ? 'Hide from menu' : 'Show in menu'}
-                              className="ml-auto shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                              className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
                             >
                               {shown ? <Eye size={15} /> : <EyeOff size={15} />}
                             </button>
@@ -1358,8 +1528,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.1) * 10) / 10)}
-                      title="Shift lyrics earlier"
-                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                      aria-label="Shift lyrics earlier"
+                      className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
                     >
                       <Minus size={13} />
                     </button>
@@ -1368,8 +1538,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </span>
                     <button
                       onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.1) * 10) / 10)}
-                      title="Shift lyrics later"
-                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                      aria-label="Shift lyrics later"
+                      className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
                     >
                       <Plus size={13} />
                     </button>
@@ -1637,7 +1807,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <span className="text-text-primary text-sm">Download folder</span>
                   </div>
-                  <div className="flex items-center gap-2 pl-[34px]">
+                  <div className="flex items-center gap-2 pl-0 md:pl-[34px]">
                     <span className="flex-1 text-text-muted text-xs truncate bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]" title={appSettings.downloadPath}>
                       {appSettings.downloadPath || 'Default Downloads folder'}
                     </span>
@@ -1656,7 +1826,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <span className="text-text-primary text-sm">Offline songs folder</span>
                   </div>
-                  <div className="flex items-center gap-2 pl-[34px]">
+                  <div className="flex items-center gap-2 pl-0 md:pl-[34px]">
                     <span className="flex-1 text-text-muted text-xs truncate bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]" title={appSettings.offlineLibraryPath}>
                       {appSettings.offlineLibraryPath || 'Default app data folder'}
                     </span>
@@ -1670,7 +1840,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </button>
                   </div>
                   {offlinePathError && (
-                    <p className="text-red-400 text-[10px] mt-1.5 pl-[34px]">{offlinePathError}</p>
+                    <p className="text-red-400 text-[10px] mt-1.5 pl-0 md:pl-[34px]">{offlinePathError}</p>
                   )}
                 </div>
                 <Row
@@ -1779,14 +1949,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-text-primary text-sm">Pop-out windows</span>
-                      <p className="text-text-muted text-[11px]">Open these in their own separate window. Turn one off to keep it inside the main window instead.</p>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Open these in their own separate window. Turn one off to keep it inside the main window instead.</p>
                     </div>
                     <div className="ml-2 shrink-0">
                       <Toggle on={anyPopout} onClick={() => { const next = !anyPopout; POPOUT_KINDS.forEach((k) => setPopoutWindow(k.key, next)) }} />
                     </div>
                   </div>
                   {anyPopout && (
-                    <div className="pl-[34px] mt-2.5 space-y-2.5">
+                    <div className="pl-0 md:pl-[34px] mt-2.5 space-y-2.5">
                       {POPOUT_KINDS.map(({ key, label, sub }) => (
                         <div key={key} className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
@@ -1801,7 +1971,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   {/* Equalizer is the inverse of the group above — normally an
                       in-app popover, so this opts INTO a pop-out. Shown
                       independently of the master toggle for that reason. */}
-                  <div className="pl-[34px] mt-2.5 flex items-center justify-between gap-3">
+                  <div className="pl-0 md:pl-[34px] mt-2.5 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-text-secondary text-sm truncate">Equalizer as pop-out</p>
                       <p className="text-text-muted text-[11px] truncate">Open the equalizer in its own window instead of an in-app panel</p>
@@ -1939,40 +2109,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     Become a Contributor
                   </button>
                 )}
-                {account && (
-                  <div className="mt-2 rounded-xl border border-[var(--border)] overflow-hidden">
-                    <button
-                      onClick={() => setShowToken(v => !v)}
-                      className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] text-text-secondary text-sm font-medium transition-colors"
-                    >
-                      <KeyRound size={15} />
-                      <span className="flex-1 text-left">Auth Token</span>
-                      {showToken ? <EyeOff size={14} className="text-text-muted" /> : <Eye size={14} className="text-text-muted" />}
-                    </button>
-                    {showToken && (
-                      <button
-                        onClick={() => {
-                          const t = getToken()
-                          if (t) {
-                            navigator.clipboard.writeText(t)
-                            setTokenCopied(true)
-                            setTimeout(() => setTokenCopied(false), 2000)
-                          }
-                        }}
-                        className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface)] hover:bg-[var(--surface-raised)] transition-colors border-t border-[var(--border)] group"
-                        title="Click to copy"
-                      >
-                        <code className="flex-1 text-left text-[10px] font-mono text-text-muted truncate">
-                          {getToken() ?? '&#8212;'}
-                        </code>
-                        <span className={`flex-shrink-0 flex items-center gap-1 text-[10px] font-medium transition-colors ${tokenCopied ? 'text-emerald-500' : 'text-text-muted group-hover:text-text-primary'}`}>
-                          {tokenCopied ? 'Copied!' : <><Copy size={11} /> Copy</>}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                )}
-
                 <button
                   onClick={() => openMainView('docs')}
                   className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors mt-2"

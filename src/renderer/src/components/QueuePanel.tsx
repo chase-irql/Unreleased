@@ -262,6 +262,9 @@ function QueueRow({
         isActive ? 'bg-surface-overlay' : 'hover:bg-surface-overlay'
       } ${onPlay && !isActive ? 'cursor-pointer' : ''}`}
       onDoubleClick={onPlay}
+      // Double-click has no touch equivalent worth relying on — same
+      // tap-to-play treatment as the Tracker/Playlists rows.
+      onClick={() => { if (window.matchMedia('(max-width: 767px)').matches && onPlay && !isActive) onPlay() }}
     >
       {/* Drag handle or spacer */}
       {showDrag ? (
@@ -304,11 +307,14 @@ function QueueRow({
           </span>
         )}
         {onRemove && (
+          // Was opacity-0 group-hover:opacity-100 with no touch equivalent —
+          // invisible and undiscoverable on mobile.
           <button
             onClick={(e) => { e.stopPropagation(); onRemove() }}
-            className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-400 transition-all ml-1 p-0.5"
+            aria-label="Remove from queue"
+            className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-text-muted hover:text-red-400 transition-all ml-1 w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:p-0.5"
           >
-            <X size={11} />
+            <X size={14} className="md:w-[11px] md:h-[11px]" />
           </button>
         )}
       </div>

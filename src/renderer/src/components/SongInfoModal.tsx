@@ -186,9 +186,11 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
       className={`fixed inset-0 z-[160] flex ${floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'}`}
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
-      <div className={`select-text bg-surface flex flex-col overflow-hidden ${floating
-        ? 'w-full h-full'
-        : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh]'}`}
+      <div
+        className={`select-text bg-surface flex flex-col overflow-hidden ${floating
+          ? 'w-full h-full'
+          : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh]'}`}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
 
         {/* Hero — in a pop-out it doubles as the frameless window's drag

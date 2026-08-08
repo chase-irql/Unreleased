@@ -1,6 +1,6 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
+import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, GuestPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
 import { APP_VERSION } from '../lib/appVersion'
 import { ls } from '../lib/persist'
 import * as userApi from '../lib/userApi'
@@ -357,6 +357,11 @@ interface AppState {
   localPlaylists: LocalPlaylist[]
   activeLocalPlaylistId: string | null
 
+  // Playlists built while signed out, holding streamed (API) song snapshots —
+  // see GuestPlaylist. Persisted to localStorage, so unlike localPlaylists
+  // (Electron-only, library-file-based) these work on web/Android too.
+  guestPlaylists: GuestPlaylist[]
+
   // Offline playlist sync (Electron only) — API-backed playlists downloaded
   // for offline playback, kept in sync with the API's song metadata.
   offlineTracks: Record<string, OfflineTrackMeta>
@@ -549,6 +554,13 @@ interface AppActions {
   loadAccount: () => Promise<void>
   loginWithDiscord: () => Promise<void>
   completeDiscordLogin: (code: string, state: string) => Promise<void>
+  // Fallback for platforms where the Discord OAuth redirect can't route back
+  // into the app (the Android wrap's WebView) — the user signs in elsewhere
+  // (desktop/web, where the redirect works) and pastes their own token,
+  // copied from Settings' Account tab, here instead. Throws on an invalid
+  // token so the caller can show the error; the token is only committed to
+  // localStorage once getMe() confirms it actually authenticates.
+  loginWithToken: (token: string) => Promise<void>
   logoutAccount: () => Promise<void>
   refreshPlaylists: () => Promise<void>
   prefetchPlaylistDetails: () => Promise<void>
@@ -611,6 +623,17 @@ interface AppActions {
   importM3uEntriesLocal: (name: string, entries: { path: string; title: string | null; duration?: number | null }[]) => { ok: true; playlistId: string; name: string; matched: number; total: number; unmatched: string[] } | { ok: false; canceled?: boolean; error?: string }
   exportLocalPlaylistM3u: (id: string) => Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }>
   loadLibrary: (force?: boolean) => Promise<void>
+
+  // Guest playlists (see GuestPlaylist) — createGuestPlaylist returns the new
+  // id synchronously so a caller can immediately add the track that prompted
+  // the creation, mirroring createLocalPlaylist's activeLocalPlaylistId trick
+  // without needing a second piece of state.
+  createGuestPlaylist: (name: string) => string
+  deleteGuestPlaylist: (id: string) => void
+  renameGuestPlaylist: (id: string, name: string) => void
+  addToGuestPlaylist: (playlistId: string, track: Track) => void
+  removeFromGuestPlaylist: (playlistId: string, trackId: string) => void
+  reorderGuestPlaylist: (playlistId: string, tracks: Track[]) => void
 
   loadOfflineLibrary: () => Promise<void>
   downloadPlaylistOffline: (key: string, name: string, songIds: number[], opts?: { silent?: boolean }) => Promise<void>
@@ -1611,6 +1634,23 @@ export const useStore = create<AppStore>((set, get, store) => ({
     await get().loadAccount()
   },
 
+  loginWithToken: async (token) => {
+    const trimmed = token.trim()
+    if (!trimmed) throw new Error('Paste a token first.')
+    const previous = userApi.getToken()
+    userApi.setToken(trimmed)
+    try {
+      const account = await userApi.getMe()
+      set({ account })
+      await get().loadAccount()
+    } catch (err) {
+      if (previous) userApi.setToken(previous)
+      else userApi.clearToken()
+      const msg = String(err)
+      throw new Error(msg.includes('401') || msg.includes('403') ? 'That token isn\'t valid.' : 'Could not verify that token.')
+    }
+  },
+
   logoutAccount: async () => {
     await userApi.logout()
     const localLikes = ls.get<string[]>('likedTrackIds') ?? []
@@ -1768,6 +1808,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   developerMode: ls.get<boolean>('developerMode') ?? false,
   localPlaylists: [],
   activeLocalPlaylistId: null,
+  guestPlaylists: ls.get<GuestPlaylist[]>('guestPlaylists') ?? [],
 
   // ── Offline playlist sync ────────────────────────────────────────────────
   offlineTracks: {},
@@ -2053,6 +2094,46 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (res.error) return { ok: false as const, error: res.error }
     return { ok: true as const, path: res.path }
   },
+
+  createGuestPlaylist: (name) => {
+    const id = `gp-${Date.now()}`
+    const playlist: GuestPlaylist = { id, name, tracks: [], createdAt: Date.now() }
+    const next = [...get().guestPlaylists, playlist]
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+    return id
+  },
+  deleteGuestPlaylist: (id) => {
+    const next = get().guestPlaylists.filter((p) => p.id !== id)
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+  },
+  renameGuestPlaylist: (id, name) => {
+    const next = get().guestPlaylists.map((p) => p.id === id ? { ...p, name } : p)
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+  },
+  addToGuestPlaylist: (playlistId, track) => {
+    const next = get().guestPlaylists.map((p) =>
+      p.id === playlistId && !p.tracks.some((t) => t.id === track.id)
+        ? { ...p, tracks: [...p.tracks, track] } : p
+    )
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+  },
+  removeFromGuestPlaylist: (playlistId, trackId) => {
+    const next = get().guestPlaylists.map((p) =>
+      p.id === playlistId ? { ...p, tracks: p.tracks.filter((t) => t.id !== trackId) } : p
+    )
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+  },
+  reorderGuestPlaylist: (playlistId, tracks) => {
+    const next = get().guestPlaylists.map((p) => p.id === playlistId ? { ...p, tracks } : p)
+    set({ guestPlaylists: next })
+    ls.set('guestPlaylists', next)
+  },
+
   loadLibrary: async (force = false) => {
     const el = (window as any).electron
     if (!el) return

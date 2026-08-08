@@ -4,6 +4,7 @@ import {
   BarChart3, Share2, RefreshCw, AlertCircle, Loader2, Volume2, SlidersHorizontal, RotateCcw, Trophy,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
+import { useBackToClose } from '../hooks/useBackToClose'
 import { Avatar } from './adminShared'
 import { apiFetch, songToTrack, buildStreamUrl, smallCoverUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
@@ -255,10 +256,13 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
     if (next.length > 0) set('categories', next)
   }
 
+  useBackToClose(onClose)
+
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        className="w-full md:max-w-md max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-1">
@@ -266,12 +270,16 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
           <h2 className="text-text-primary font-bold">Game settings</h2>
           <button
             onClick={() => onChange({ ...DEFAULT_SETTINGS })}
-            title="Reset to defaults"
-            className="ml-auto p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            aria-label="Reset to defaults"
+            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
           >
             <RotateCcw size={14} />
           </button>
-          <button onClick={onClose} className="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
+          >
             <X size={16} />
           </button>
         </div>
@@ -417,16 +425,22 @@ function StatsPanel({ initialMode, onClose }: { initialMode: DailyMode; onClose:
   const stats: Stats = useMemo(() => loadStats(tab), [tab])
   const max = Math.max(1, ...stats.distribution)
   const winRate = stats.played ? Math.round((stats.won / stats.played) * 100) : 0
+  useBackToClose(onClose)
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
       <div
-        className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        className="w-full md:max-w-sm max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-4">
           <BarChart3 size={16} className="text-accent" />
           <h2 className="text-text-primary font-bold">Statistics</h2>
-          <button onClick={onClose} className="ml-auto p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
+          >
             <X size={16} />
           </button>
         </div>
@@ -553,16 +567,22 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
     </div>
   )
 
+  useBackToClose(onClose)
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        className="w-full md:max-w-md max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-4">
           <Trophy size={16} className="text-accent" />
           <h2 className="text-text-primary font-bold">Leaderboard</h2>
-          <button onClick={onClose} className="ml-auto p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
+          >
             <X size={16} />
           </button>
         </div>
@@ -1237,8 +1257,8 @@ export default function HeardleView(): JSX.Element {
       >
         <button
           onClick={() => setActiveView('wrld')}
-          title="Back"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          aria-label="Back"
+          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
         >
           <ChevronLeft size={18} />
         </button>
@@ -1249,22 +1269,22 @@ export default function HeardleView(): JSX.Element {
       >
         <button
           onClick={() => setShowSettings(true)}
-          title="Game settings"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          aria-label="Game settings"
+          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
         >
           <SlidersHorizontal size={16} />
         </button>
         <button
           onClick={() => setShowLeaderboard(true)}
-          title="Leaderboard"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          aria-label="Leaderboard"
+          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
         >
           <Trophy size={16} />
         </button>
         <button
           onClick={() => setShowStats(true)}
-          title="Statistics"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          aria-label="Statistics"
+          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
         >
           <BarChart3 size={16} />
         </button>

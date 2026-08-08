@@ -121,11 +121,12 @@ export default function SongContextMenu({
   liked, onToggleLike, removeAction, song, disableChangeVersion,
 }: Props): JSX.Element {
   useBackToClose(onClose)
-  const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline, addLibraryTrack } = useStore(
+  const { playlists, account, refreshPlaylists, setShowUserAuth, playTrack, localPlaylists, addToLocalPlaylist, createLocalPlaylist, guestPlaylists, addToGuestPlaylist, createGuestPlaylist, offlineTracks, removeOfflineTrack, downloadTrackOffline, autoDownloadIfOffline, addLibraryTrack } = useStore(
     useShallow(s => ({
       playlists: s.playlists, account: s.account, refreshPlaylists: s.refreshPlaylists,
       setShowUserAuth: s.setShowUserAuth, playTrack: s.playTrack,
       localPlaylists: s.localPlaylists, addToLocalPlaylist: s.addToLocalPlaylist, createLocalPlaylist: s.createLocalPlaylist,
+      guestPlaylists: s.guestPlaylists, addToGuestPlaylist: s.addToGuestPlaylist, createGuestPlaylist: s.createGuestPlaylist,
       offlineTracks: s.offlineTracks, removeOfflineTrack: s.removeOfflineTrack, downloadTrackOffline: s.downloadTrackOffline,
       autoDownloadIfOffline: s.autoDownloadIfOffline, addLibraryTrack: s.addLibraryTrack,
     }))
@@ -207,6 +208,12 @@ export default function SongContextMenu({
       // that's the newly-created playlist's id, needed to add this track to it.
       const newId = useStore.getState().activeLocalPlaylistId
       if (newId) addToLocalPlaylist(newId, track.id)
+      onClose()
+      return
+    }
+    if (!account) {
+      const newId = createGuestPlaylist(name)
+      addToGuestPlaylist(newId, track)
       onClose()
       return
     }
@@ -368,13 +375,32 @@ export default function SongContextMenu({
               })}
             </div>
           ) : !account ? (
-            <div className="px-3 pb-2">
-              <p className="text-xs text-text-muted mb-2">Log in to save to playlists.</p>
+            // Signed out: save into a device-only guest playlist instead of a
+            // synced one — see GuestPlaylist. Login is still one tap away
+            // below, for anyone who'd rather sync across devices.
+            <div className="max-h-44 overflow-y-auto">
+              {guestPlaylists.length === 0 && (
+                <p className="px-3 py-2 text-xs text-text-muted">No playlists yet.</p>
+              )}
+              {guestPlaylists.map((p) => {
+                const alreadyIn = p.tracks.some((t) => t.id === track.id)
+                return (
+                  <button
+                    key={p.id}
+                    onClick={(e) => { e.stopPropagation(); addToGuestPlaylist(p.id, track); setLocalDoneId(p.id) }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                  >
+                    <ListMusic size={13} className={`shrink-0 ${alreadyIn ? 'text-accent' : 'text-text-muted'}`} />
+                    <span className="flex-1 truncate text-xs">{p.name}</span>
+                    {(localDoneId === p.id || alreadyIn) && <Check size={12} className="text-accent shrink-0" />}
+                  </button>
+                )
+              })}
               <button
                 onClick={() => { setShowUserAuth(true); onClose() }}
-                className="w-full py-1.5 rounded-lg bg-accent/15 text-accent text-xs font-semibold"
+                className="w-full mt-1 px-3 py-1.5 text-left text-[11px] text-text-muted hover:text-text-primary transition-colors border-t border-[var(--border)]"
               >
-                Log in
+                Log in to sync playlists across devices
               </button>
             </div>
           ) : (
@@ -403,8 +429,9 @@ export default function SongContextMenu({
               })}
             </div>
           )}
-          {(isLocalOnly || account) && (
-            <div className="border-t border-[var(--border)] pt-1 px-2 pb-1">
+          {/* Every branch above (local, guest, synced) has its own "create
+              new and add" target, so this footer is unconditional. */}
+          <div className="border-t border-[var(--border)] pt-1 px-2 pb-1">
               {creating ? (
                 <div className="flex gap-1">
                   <input
@@ -427,8 +454,7 @@ export default function SongContextMenu({
                   <Plus size={12} /> New playlist
                 </button>
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
 

@@ -401,8 +401,12 @@ export default function HeardleVersusPanel({ embedded, onClose }: Props): JSX.El
   const shell = (content: JSX.Element): JSX.Element => {
     if (embedded) return content
     return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-        <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
+        <div
+          className="w-full md:max-w-md max-h-[88svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
+          style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
+          onClick={(e) => e.stopPropagation()}
+        >
           {content}
         </div>
       </div>
