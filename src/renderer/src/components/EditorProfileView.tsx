@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen, Copy } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, CompFileProposal } from '../lib/userApi'
+import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, withdrawCompProposal, CompFileProposal } from '../lib/userApi'
 import { apiFetch, JWApiEra, JWApiSong } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
@@ -415,6 +415,11 @@ export default function EditorProfileView(): JSX.Element {
   // tab's "Comp files" — the one place proposals are reviewed.
   const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
   const isAdmin = !!account?.is_administrator
+  // Managers review the same two queues admins do, so they get the same
+  // embedded panel here. AdminPage decides for itself which tabs each of them
+  // actually sees.
+  const isManager = !!account?.is_manager
+  const canReviewStaff = isAdmin || isManager
   const [profileTab, setProfileTab] = useState<'proposals' | 'reports' | 'admin' | 'comp'>('proposals')
   const [reportStatus, setReportStatus] = useState<SongReportStatus | ''>('pending')
   const [reports, setReports] = useState<SongReportRow[]>([])
@@ -422,12 +427,25 @@ export default function EditorProfileView(): JSX.Element {
   const [compProposals, setCompProposals] = useState<CompFileProposal[]>([])
   const [loadingComp, setLoadingComp] = useState(false)
   const [compFilter, setCompFilter] = useState<CompFilterTab>('all')
+  const [withdrawingCompId, setWithdrawingCompId] = useState<number | null>(null)
 
   useEffect(() => {
     if (profileTab !== 'comp' || !isContributor) return
     setLoadingComp(true)
     getMyCompProposals().then(setCompProposals).catch(() => {}).finally(() => setLoadingComp(false))
   }, [profileTab, isContributor, refreshKey])
+
+  const handleWithdrawComp = async (id: number): Promise<void> => {
+    setWithdrawingCompId(id)
+    try {
+      await withdrawCompProposal(id)
+      setCompProposals(prev => prev.filter(p => p.id !== id))
+    } catch {
+      setRefreshKey(k => k + 1)
+    } finally {
+      setWithdrawingCompId(null)
+    }
+  }
 
   useEffect(() => {
     if (profileTab !== 'reports' || !canReviewReports) return
@@ -578,6 +596,9 @@ export default function EditorProfileView(): JSX.Element {
               {account?.is_administrator && (
                 <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-semibold uppercase tracking-wide shrink-0">Admin</span>
               )}
+              {isManager && !account?.is_administrator && (
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Manager</span>
+              )}
               {account?.is_editor && !account.is_administrator && (
                 <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary text-[10px] font-semibold uppercase tracking-wide shrink-0">Editor</span>
               )}
@@ -601,13 +622,13 @@ export default function EditorProfileView(): JSX.Element {
       </div>
 
       {/* ── Tabs ── */}
-      {(canReviewReports || isContributor) && (
+      {(canReviewReports || isContributor || canReviewStaff) && (
         <div className="flex items-center gap-1 px-6 pt-3 shrink-0 border-b border-[var(--border)]">
           {([
             { id: 'proposals' as const, label: 'Proposals', icon: <FileEdit size={13} /> },
             ...(isContributor ? [{ id: 'comp' as const, label: 'Comp files', icon: <FolderOpen size={13} /> }] : []),
             ...(canReviewReports ? [{ id: 'reports' as const, label: 'Reports', icon: <Flag size={13} /> }] : []),
-            ...(isAdmin ? [{ id: 'admin' as const, label: 'Admin', icon: <ShieldCheck size={13} /> }] : []),
+            ...(canReviewStaff ? [{ id: 'admin' as const, label: isAdmin ? 'Admin' : 'Manager', icon: <ShieldCheck size={13} /> }] : []),
           ]).map(t => (
             <button key={t.id} onClick={() => setProfileTab(t.id)}
               className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium transition-colors border-b-2 ${
@@ -622,7 +643,7 @@ export default function EditorProfileView(): JSX.Element {
         </div>
       )}
 
-      {profileTab === 'admin' && isAdmin ? (
+      {profileTab === 'admin' && canReviewStaff ? (
         <div className="flex-1 overflow-hidden p-4 md:p-5">
           <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden flex flex-col">
             <AdminPage embedded />
@@ -640,6 +661,8 @@ export default function EditorProfileView(): JSX.Element {
             proposals={filterCompProposals(compProposals, compFilter)}
             loading={loadingComp}
             onSelect={() => setActiveView('contributor')}
+            onWithdraw={handleWithdrawComp}
+            withdrawingId={withdrawingCompId}
           />
         </div>
       ) : profileTab === 'reports' && canReviewReports ? (

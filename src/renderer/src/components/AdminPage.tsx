@@ -161,7 +161,9 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   // no side panel is open to its right (mirrors NowPlaying's same check).
   const isElectron = navigator.userAgent.includes('Electron')
   const needsWindowControlClearance = !embedded && isElectron && !showNowPlaying && !showQueue
-  const isAdmin    = !!account?.is_administrator
+  const isFullAdmin = !!account?.is_administrator
+  const isManager = !!account?.is_manager
+  const canAccessStaff = isFullAdmin || isManager
   const otpEnabled = !!account?.otp_enabled
 
   const [tab,          setTab]          = useState<Tab>('proposals')
@@ -176,16 +178,16 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   const [reports,      setReports]      = useState<SongReportRow[]>([])
 
   const load = useCallback(async () => {
-    if (!isAdmin) return
+    if (!canAccessStaff) return
     setLoading(true); setError(null)
     try {
       if (tab === 'proposals') {
         setProposals(await userApi.adminListProposals(propStatus || undefined))
-      } else if (tab === 'applications') {
+      } else if (isFullAdmin && tab === 'applications') {
         setApplications(await userApi.adminListApplications())
-      } else if (tab === 'reports') {
+      } else if (isFullAdmin && tab === 'reports') {
         setReports(await reportsApi.listSongReports(reportStatus || undefined))
-      } else if (tab === 'users' || tab === 'stats') {
+      } else if (isFullAdmin && (tab === 'users' || tab === 'stats')) {
         setUsers(await userApi.adminListUsers())
         if (tab === 'stats') {
           setApplications(await userApi.adminListApplications())
@@ -194,19 +196,26 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
       }
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
     finally { setLoading(false) }
-  }, [tab, isAdmin, propStatus, reportStatus])
+  }, [tab, canAccessStaff, isFullAdmin, propStatus, reportStatus])
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  if (!isAdmin) return (
+  if (!canAccessStaff) return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
       <Shield size={28} className="text-text-muted" />
-      <p className="text-text-primary font-semibold text-sm">Admins only</p>
+      <p className="text-text-primary font-semibold text-sm">Staff access required</p>
       <button onClick={() => setActiveView('api-tracker')} className="text-xs text-accent hover:underline">Go back</button>
     </div>
   )
 
-  if (!otpEnabled) return (
+  // Admins only, deliberately. A manager approving proposals is making the same
+  // kind of irreversible change, so gating them on 2FA as well would be the
+  // right call — but they can't satisfy it: GET accounts/otp/setup/ answers
+  // "Administrator access required.", so a manager with otp_enabled false would
+  // be parked in front of a panel whose first request 403s, with no way through
+  // to the review queues. Enforcing this is the API's job; don't tighten it here
+  // until that endpoint accepts a manager token.
+  if (isFullAdmin && !otpEnabled) return (
     <div className="flex-1 overflow-y-auto flex items-center justify-center p-8">
       <div className="w-full max-w-sm">
         <OtpSetupPanel onEnabled={async () => { await loadAccount() }} />
@@ -219,7 +228,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   const pendingReports = tab !== 'reports' ? reports.filter(r => r.status === 'pending').length : 0
 
   type NavItem = { id: Tab; label: string; icon: React.ReactNode; badge?: number }
-  const nav: NavItem[] = [
+  const fullNav: NavItem[] = [
     { id: 'proposals',    label: 'Song edits',   icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
     ...(CONTRIBUTOR_ENABLED ? [{ id: 'comp-proposals' as const, label: 'Comp files', icon: <FileCheck size={13} /> }] : []),
     { id: 'applications', label: 'Applications', icon: <Clock size={13} />,      badge: pendingApps || undefined },
@@ -228,6 +237,11 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
     { id: 'stats',        label: 'Stats',        icon: <TrendingUp size={13} /> },
     { id: 'security',     label: 'Security',     icon: <Shield size={13} /> },
   ]
+  // No Security tab for managers: it renders a flat "2FA is enabled", which the
+  // gate above guarantees for admins and can't guarantee for them.
+  const nav = isFullAdmin
+    ? fullNav
+    : fullNav.filter(n => n.id === 'proposals' || n.id === 'comp-proposals')
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -242,7 +256,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
         )}
         {!embedded && (
           <div className="mb-3">
-            <span className="text-text-primary font-bold text-sm">Admin</span>
+            <span className="text-text-primary font-bold text-sm">{isFullAdmin ? 'Admin' : 'Manager'}</span>
             {account?.discord_username && (
               <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
             )}
@@ -488,6 +502,17 @@ function RevisePanel({ proposal, onClose, onDone }: {
 
 // ── Proposals (master-detail) ─────────────────────────────────────────────────
 
+type ProposalSort = 'date' | 'user'
+
+function sortProposals(rows: SongEditProposal[], sortBy: ProposalSort): SongEditProposal[] {
+  if (sortBy === 'date') return rows
+  return [...rows].sort((a, b) => {
+    const byUser = a.editor_username.localeCompare(b.editor_username, undefined, { sensitivity: 'base' })
+    if (byUser !== 0) return byUser
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  })
+}
+
 function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   proposals: SongEditProposal[]
   status: ProposalStatus | ''
@@ -498,10 +523,16 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   const [notes,       setNotes]       = useState<Record<number, string>>({})
   const [selected,    setSelected]    = useState<SongEditProposal | null>(null)
   const [revising,    setRevising]    = useState(false)
+  const [sortBy,      setSortBy]      = useState<ProposalSort>('date')
+
+  const sortedProposals = useMemo(() => sortProposals(proposals, sortBy), [proposals, sortBy])
 
   // Auto-select first item
   useEffect(() => {
-    setSelected(proposals[0] ?? null)
+    setSelected(prev => {
+      if (prev && proposals.some(p => p.id === prev.id)) return prev
+      return proposals[0] ?? null
+    })
     setRevising(false)
   }, [proposals])
 
@@ -533,6 +564,11 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
     { id: '',         label: 'All'      },
   ]
 
+  const SORTS: { id: ProposalSort; label: string }[] = [
+    { id: 'date', label: 'Newest' },
+    { id: 'user', label: 'User' },
+  ]
+
   const p = selected
 
   return (
@@ -540,7 +576,7 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
       {/* Left: list */}
       <div className="w-80 shrink-0 border-r border-[var(--border)] flex flex-col overflow-hidden">
         {/* Filter bar */}
-        <div className="shrink-0 flex gap-1 flex-wrap px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
+        <div className="shrink-0 flex gap-1 flex-wrap items-center px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
           {FILTERS.map(f => (
             <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
               className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
@@ -550,16 +586,34 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
               }`}>{f.label}
             </button>
           ))}
+          <div className="ml-auto flex gap-1 shrink-0">
+            {SORTS.map(s => (
+              <button key={s.id} onClick={() => setSortBy(s.id)}
+                className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
+                  sortBy === s.id
+                    ? 'bg-surface-overlay text-text-primary ring-1 ring-[var(--border)]'
+                    : 'text-text-muted hover:text-text-primary bg-transparent'
+                }`}>{s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* List */}
         <div className="flex-1 overflow-y-auto">
-          {proposals.length === 0 && <Empty label="No proposals" />}
-          {proposals.map(item => {
+          {sortedProposals.length === 0 && <Empty label="No proposals" />}
+          {sortedProposals.map((item, idx) => {
+            const showUserHeader = sortBy === 'user' && (idx === 0 || sortedProposals[idx - 1].editor_username !== item.editor_username)
             const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
             const isActive = selected?.id === item.id
             return (
-              <button key={item.id} onClick={() => setSelected(item)}
+              <div key={item.id}>
+                {showUserHeader && (
+                  <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface-overlay border-b border-[var(--border)] sticky top-0 z-[1]">
+                    {item.editor_username}
+                  </div>
+                )}
+              <button onClick={() => setSelected(item)}
                 className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors ${
                   isActive ? 'bg-accent/10' : 'hover:bg-surface-raised'
                 }`}>
@@ -581,6 +635,7 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
                   {item.editor_username} · {relativeTime(item.created_at)}
                 </p>
               </button>
+              </div>
             )
           })}
         </div>

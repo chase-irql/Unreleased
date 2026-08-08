@@ -3,7 +3,7 @@ import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, Chevro
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { showStaffProfile, staffProfileView } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible, orderedNavControls, isNavControlVisible, type NavControlId } from '../lib/navItems'
 import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
@@ -105,14 +105,12 @@ export default function Sidebar(): JSX.Element {
   ) : null
 
   // Full-width control row for the vertical (left/right) side menu.
-  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
-  const profileView = isContributor && !account?.is_editor ? 'contributor-profile' : 'editor-profile'
-  const showStaffProfile = !!(account?.is_administrator || account?.is_editor) || isContributor
+  const profileView = staffProfileView(account)
 
   const renderControl = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account || !showStaffProfile) return null
+        if (!account || !showStaffProfile(account)) return null
         return (
           <button key="profile" onClick={() => setActiveView(profileView)} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
             <span className={iconWrap}>
@@ -153,7 +151,7 @@ export default function Sidebar(): JSX.Element {
   const renderControlIcon = (id: NavControlId): JSX.Element | null => {
     switch (id) {
       case 'profile':
-        if (!account || !showStaffProfile) return null
+        if (!account || !showStaffProfile(account)) return null
         return (
           <button key="profile" onClick={() => setActiveView(profileView)} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
             {account.discord_avatar

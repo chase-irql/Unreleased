@@ -12,7 +12,10 @@ import {
 import { isSubscribed, setSubscribed, ensureNotifyPermission } from '../lib/newsNotifications'
 import NewsComposeModal from './NewsComposeModal'
 import NewsChannelsModal from './NewsChannelsModal'
+import ChangesFeedPanel from './ChangesFeedPanel'
 import Markdown from './Markdown'
+
+type NewsMode = 'news' | 'feed'
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
@@ -246,6 +249,7 @@ export default function NewsView(): JSX.Element {
   const canManageItem = (item: NewsItem): boolean =>
     !!account && (account.is_administrator || (account.is_editor && item.author_id != null && item.author_id === account.id))
 
+  const [mode, setMode] = useState<NewsMode>('news')
   const [channel, setChannel] = useState<string>(DEFAULT_NEWS_CHANNEL)
   const [sort, setSort] = useState<NewsSort>('newest')
   const [channels, setChannels] = useState<NewsChannel[]>(NEWS_CHANNELS)
@@ -365,6 +369,7 @@ export default function NewsView(): JSX.Element {
             <ChevronLeft size={18} />
           </button>
           <h1 className="text-text-primary text-xl font-bold">News</h1>
+          {mode === 'news' && (
           <div className="ml-auto flex items-center gap-1">
             {channel !== ALL_CHANNEL && (
               <button
@@ -409,8 +414,26 @@ export default function NewsView(): JSX.Element {
               </button>
             )}
           </div>
+          )}
+        </div>
+        {/* Primary tabs */}
+        <div className="flex gap-1 mb-1">
+          {(['news', 'feed'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition-colors ${
+                mode === m
+                  ? 'bg-[var(--surface-raised)] text-accent border border-[var(--border)]'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              {m === 'news' ? 'News' : 'Feed'}
+            </button>
+          ))}
         </div>
         {/* Channels */}
+        {mode === 'news' && (
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
           {tabs.map((ch) => (
             <button
@@ -426,11 +449,14 @@ export default function NewsView(): JSX.Element {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {selected ? (
+        {mode === 'feed' ? (
+          <ChangesFeedPanel />
+        ) : selected ? (
           <ArticleDetail
             item={selected}
             channelLabel={channelLabel(selected.channel)}

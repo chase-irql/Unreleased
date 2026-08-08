@@ -1,8 +1,29 @@
 import { JWAPI_BASE } from './juicewrldApi'
 import { resumeEffectsContext } from './audioEffects'
+import { getToken } from './userApi'
 import type { RadioLiveState } from './radioLive'
 
+const CLIENT_ID_KEY = 'radioClientId'
+
+// A durable id for this browser profile. Without it the server can only identify
+// a listener by socket, so every reload looks like a new voter and every extra
+// tab like another one — which quietly inflates the vote threshold.
+function radioClientId(): string {
+  try {
+    const existing = localStorage.getItem(CLIENT_ID_KEY)
+    if (existing) return existing
+    const id = (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
+      .replace(/[^A-Za-z0-9_-]/g, '')
+      .slice(0, 64)
+    localStorage.setItem(CLIENT_ID_KEY, id)
+    return id
+  } catch {
+    return ''
+  }
+}
+
 const RECONNECT_MS = 3000
+const RECONNECT_MAX_MS = 30000
 const LIVE_LAG_SEC = 6
 const TRIM_KEEP_SEC = 30
 const TRIM_FORCE_SEC = 2
@@ -27,6 +48,7 @@ export class RadioStreamClient {
   private ws: WebSocket | null = null
   private shouldReconnect = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectDelay = RECONNECT_MS
   private audioEl: HTMLAudioElement | null = null
   private mediaSource: MediaSource | null = null
   private sourceBuffer: SourceBuffer | null = null
@@ -67,18 +89,30 @@ export class RadioStreamClient {
   }
 
   private open(): void {
+    // A socket that is still CONNECTING or OPEN must never be replaced: the
+    // orphan keeps delivering metadata and the server counts it as a second
+    // listener, inflating the denominator the quarter vote threshold uses.
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return
+    this.clearReconnectTimer()
     try {
       const ws = new WebSocket(this.wsUrl)
       ws.binaryType = 'arraybuffer'
       ws.onopen = () => {
+        if (this.ws !== ws) return
+        this.clearReconnectTimer()
+        this.reconnectDelay = RECONNECT_MS
         this.onOpen()
         if (this.listening) this.sendListening(true)
       }
-      ws.onmessage = (event) => this.onMessage(event)
-      ws.onclose = () => this.onCloseHandler()
+      ws.onmessage = (event) => {
+        if (this.ws !== ws) return
+        this.onMessage(event)
+      }
+      ws.onclose = () => this.onCloseHandler(ws)
       ws.onerror = () => {}
       this.ws = ws
-    } catch {
+    } catch (error) {
+      console.warn('[radio] websocket open failed', error)
       this.scheduleReconnect()
     }
   }
@@ -87,7 +121,9 @@ export class RadioStreamClient {
     if (typeof event.data === 'string') {
       try {
         this.onMeta(JSON.parse(event.data) as RadioLiveState)
-      } catch {}
+      } catch (error) {
+        console.warn('[radio] bad metadata frame', error)
+      }
       return
     }
     if (this.listening && this.supportsMse) {
@@ -95,7 +131,8 @@ export class RadioStreamClient {
     }
   }
 
-  private onCloseHandler(): void {
+  private onCloseHandler(ws: WebSocket): void {
+    if (this.ws !== ws) return
     this.ws = null
     this.onClose()
     this.scheduleReconnect()
@@ -108,8 +145,14 @@ export class RadioStreamClient {
         type: 'listening',
         value,
         audio: this.supportsMse ? 'ws' : 'http',
+        // Identity for vote de-duplication. The token wins when signed in, so
+        // the same person on the site and in Discord counts once.
+        token: getToken() ?? undefined,
+        client_id: radioClientId() || undefined,
       }))
-    } catch {}
+    } catch (error) {
+      console.warn('[radio] listening update failed', error)
+    }
   }
 
   private send(payload: Record<string, unknown>): boolean {
@@ -122,22 +165,30 @@ export class RadioStreamClient {
     }
   }
 
+  // The server drops propose_skip/propose_queue/vote unless it has seen
+  // listening:true on this socket, so sending while not listening looks like it
+  // worked but never reaches the DJ.
+  canVote(): boolean {
+    return this.listening && !!this.ws && this.ws.readyState === WebSocket.OPEN
+  }
+
   proposeSkip(): boolean {
+    if (!this.canVote()) return false
     return this.send({ type: 'propose_skip' })
   }
 
-  proposeQueue(songId: number | string): boolean {
-    // The rest of the ecosystem (REST /plays/, /library/favorites/, and the
-    // radio metadata's RadioTrack) all key songs as a numeric `song_id` — this
-    // was the lone caller sending a stringified `track_id`, which the server
-    // ignored (proposal "accepted" client-side but never queued). Send the
-    // canonical `song_id` number; keep `track_id` too in case anything old
-    // still reads it.
-    const id = Number(songId)
-    return this.send({ type: 'propose_queue', song_id: id, track_id: String(songId) })
+  // `track_id` is the only field the relay forwards, and it must be the id from
+  // GET /radio/library/ — the DJ resolves it against a path hash, so a numeric
+  // /songs/ id can never match.
+  proposeQueue(trackId: string): boolean {
+    if (!this.canVote()) return false
+    const id = String(trackId).trim()
+    if (!id) return false
+    return this.send({ type: 'propose_queue', track_id: id })
   }
 
   castVote(value: 'yes' | 'no'): boolean {
+    if (!this.canVote()) return false
     return this.send({ type: 'vote', value })
   }
 
@@ -148,7 +199,6 @@ export class RadioStreamClient {
   checkHealth(): void {
     if (!this.shouldReconnect) return
     if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
-      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
       this.open()
     }
     if (this.listening && this.audioEl?.paused) {
@@ -157,15 +207,28 @@ export class RadioStreamClient {
     }
   }
 
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+  }
+
   private scheduleReconnect(): void {
     if (!this.shouldReconnect) return
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = setTimeout(() => this.open(), RECONNECT_MS)
+    this.clearReconnectTimer()
+    const delay = this.reconnectDelay
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.open()
+    }, delay)
   }
 
   disconnect(): void {
     this.shouldReconnect = false
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.clearReconnectTimer()
+    this.reconnectDelay = RECONNECT_MS
     this.stopListening()
     if (this.ws) {
       try {

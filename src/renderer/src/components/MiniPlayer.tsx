@@ -281,16 +281,24 @@ export default function MiniPlayer(): JSX.Element {
   // ── FM elapsed time — ticks locally between WS updates (mirrors Player) ──
   const [fmElapsedMs, setFmElapsedMs] = useState(0)
   const fmBaseRef = useRef<{ elapsed: number; at: number }>({ elapsed: 0, at: 0 })
+  const fmTickRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fmElapsed = radioFmNowPlaying?.elapsed_ms
   useEffect(() => {
-    if (!radioFmActive || !radioFmNowPlaying?.elapsed_ms) { setFmElapsedMs(0); return }
-    fmBaseRef.current = { elapsed: radioFmNowPlaying.elapsed_ms, at: Date.now() }
-    setFmElapsedMs(radioFmNowPlaying.elapsed_ms)
-    const t = setInterval(() => {
-      const { elapsed, at } = fmBaseRef.current
-      setFmElapsedMs(elapsed + (Date.now() - at))
-    }, 500)
-    return () => clearInterval(t)
-  }, [radioFmActive, radioFmNowPlaying])
+    if (!radioFmActive || !fmElapsed) {
+      if (fmTickRef.current) { clearInterval(fmTickRef.current); fmTickRef.current = null }
+      setFmElapsedMs(0)
+      return
+    }
+    fmBaseRef.current = { elapsed: fmElapsed, at: Date.now() }
+    setFmElapsedMs(fmElapsed)
+    if (!fmTickRef.current) {
+      fmTickRef.current = setInterval(() => {
+        const { elapsed, at } = fmBaseRef.current
+        setFmElapsedMs(elapsed + (Date.now() - at))
+      }, 500)
+    }
+  }, [radioFmActive, fmElapsed])
+  useEffect(() => () => { if (fmTickRef.current) clearInterval(fmTickRef.current) }, [])
   const fmDurationMs = radioFmNowPlaying?.duration_ms ?? 0
   const fmProgress = fmDurationMs > 0 ? Math.min(fmElapsedMs / fmDurationMs, 1) : 0
   const getFmTime = useCallback((): number => {
