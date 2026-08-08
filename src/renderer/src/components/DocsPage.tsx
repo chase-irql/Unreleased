@@ -1234,11 +1234,16 @@ Authorization: Token <token>
 Content-Type: multipart/form-data; boundary=... (set automatically — do not set this header yourself)
 
 FormData:
-  change_type       "upload" | "replace" | "move" | "delete"
-  file_path         "Compilation/Unreleased/Song.mp3"     // target path in the compilation
+  change_type       "upload" | "replace" | "move" | "delete" | "create_folder"
+  file_path         "Compilation/Unreleased/Song.mp3"     // target path; a folder path for "create_folder"
   destination_path  "Compilation/Unreleased/New Name.mp3" // only for "move"
   contributor_notes "optional"
   file              <binary>                              // only for "upload"/"replace"`}</Pre>
+        <p className="text-xs text-text-muted mt-2">
+          <Code>create_folder</Code> takes only <Code>file_path</Code> (the new folder&apos;s path, with no
+          extension) — no <Code>file</Code> and no <Code>destination_path</Code>. On approval the empty folder is
+          created under <Code>comp/</Code>, ready to be filled with upload proposals.
+        </p>
         <p className="text-xs text-text-muted font-semibold mt-3">Comp file proposal object shape:</p>
         <Pre>{`{
   "id": 55,

@@ -39,13 +39,18 @@ const ACTION_STYLES: Record<string, string> = {
   replace: 'bg-sky-500/15 text-sky-400 border-sky-500/25',
   move: 'bg-amber-500/15 text-amber-400 border-amber-500/25',
   delete: 'bg-red-500/15 text-red-400 border-red-500/25',
+  create_folder: 'bg-violet-500/15 text-violet-400 border-violet-500/25',
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  create_folder: 'new folder',
 }
 
 function ActionBadge({ action }: { action: string }): JSX.Element {
   const cls = ACTION_STYLES[action] || 'bg-[var(--surface-overlay)] text-text-secondary border-[var(--border)]'
   return (
     <span className={`inline-block shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${cls}`}>
-      {action}
+      {ACTION_LABELS[action] ?? action}
     </span>
   )
 }

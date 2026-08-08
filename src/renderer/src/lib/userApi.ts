@@ -419,7 +419,7 @@ export async function removeFromPlaylist(id: number, songId: number): Promise<vo
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
-export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete'
+export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete' | 'create_folder'
 
 export interface CompFileProposal {
   id: number

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, XCircle, Upload, Replace, Trash2,
-  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch, ArrowUpFromLine, X,
+  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch, ArrowUpFromLine, X, FolderPlus,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -34,6 +34,7 @@ const CHANGE_OPTIONS: { value: CompProposalChangeType; label: string; icon: type
   { value: 'replace', label: 'Replace', icon: Replace },
   { value: 'move', label: 'Move', icon: ArrowRight },
   { value: 'delete', label: 'Delete', icon: Trash2 },
+  { value: 'create_folder', label: 'New folder', icon: FolderPlus },
 ]
 
 function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejection?: EditorApplication | null }): JSX.Element {
@@ -190,8 +191,9 @@ export default function ContributorPage(): JSX.Element {
 
   const filtered = filterCompProposals(proposals, filter)
   const cleanFolder = folderPath.trim().replace(/\/+$/, '')
-  const filePath = joinPath(cleanFolder, fileName.trim())
-  const carriesFile = changeType !== 'delete' && changeType !== 'move'
+  const isCreateFolder = changeType === 'create_folder'
+  const filePath = isCreateFolder ? cleanFolder : joinPath(cleanFolder, fileName.trim())
+  const carriesFile = changeType !== 'delete' && changeType !== 'move' && !isCreateFolder
   // Upload is the only type that batches local files: a replace targets one
   // existing file with one new body, and a move renames one path to another.
   const isUpload = changeType === 'upload'
@@ -221,7 +223,11 @@ export default function ContributorPage(): JSX.Element {
       setSubmitError('Pick at least one file to delete.')
       return
     }
-    if (usesPathFields && !isBatch && !fileName.trim()) {
+    if (isCreateFolder && !cleanFolder) {
+      setSubmitError('Enter a folder path.')
+      return
+    }
+    if (usesPathFields && !isCreateFolder && !isBatch && !fileName.trim()) {
       setSubmitError('Enter a filename.')
       return
     }
@@ -390,21 +396,21 @@ export default function ContributorPage(): JSX.Element {
             {usesPathFields && (
             <div className="space-y-2">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
-                {changeType === 'move' ? 'Source (relative to comp/)' : 'Target (relative to comp/)'}
+                {changeType === 'move' ? 'Source (relative to comp/)' : isCreateFolder ? 'New folder (relative to comp/)' : 'Target (relative to comp/)'}
               </label>
               <div className="flex gap-2">
                 <input value={folderPath} onChange={e => setFolderPath(e.target.value)} placeholder="Folder — e.g. Compilation/Unreleased"
                   className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
                 <button
                   type="button"
-                  onClick={() => setPicker(changeType === 'upload' ? 'upload-folder' : 'file')}
-                  title={changeType === 'upload' ? 'Pick the folder to upload into' : 'Pick the file this applies to'}
+                  onClick={() => setPicker(changeType === 'upload' || isCreateFolder ? 'upload-folder' : 'file')}
+                  title={changeType === 'upload' ? 'Pick the folder to upload into' : isCreateFolder ? 'Pick where to create the folder' : 'Pick the file this applies to'}
                   className="shrink-0 px-3 rounded-xl border border-[var(--border)] bg-surface-overlay text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors flex items-center gap-1.5 text-xs font-semibold"
                 >
                   <FolderSearch size={14} /> Browse
                 </button>
               </div>
-              {!isBatch && (
+              {!isBatch && !isCreateFolder && (
                 <input value={fileName} onChange={e => setFileName(e.target.value)} placeholder="Filename — e.g. My Song.mp3"
                   className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
               )}
@@ -565,7 +571,7 @@ export default function ContributorPage(): JSX.Element {
             )}
             <button onClick={submitProposal}
               disabled={submitState === 'submitting'
-                || (isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
+                || (isCreateFolder ? !cleanFolder : isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
                 || (carriesFile && selectedFiles.length === 0)
                 || (changeType === 'move' && !destFileName.trim())}
               className="px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold disabled:opacity-40 flex items-center gap-2">
@@ -598,6 +604,7 @@ export default function ContributorPage(): JSX.Element {
           // tracklist just as easily as a song.
           kind="any"
           allowFolderSelect={picker === 'upload-folder' || picker === 'dest-folder'}
+          emptyFolderProposable={isCreateFolder}
           multiple={picker === 'delete-files'}
           onSelectMany={(paths) => {
             setDeletePaths(prev => [...prev, ...paths.filter(x => !prev.includes(x))])
@@ -607,7 +614,7 @@ export default function ContributorPage(): JSX.Element {
           title={
             picker === 'file' ? 'Pick the file this proposal applies to'
               : picker === 'delete-files' ? 'Pick the files to delete'
-              : picker === 'upload-folder' ? 'Pick the folder to upload into'
+              : picker === 'upload-folder' ? (isCreateFolder ? 'Pick where to create the folder' : 'Pick the folder to upload into')
               : 'Pick the folder to move it into'
           }
           onClose={() => setPicker(null)}

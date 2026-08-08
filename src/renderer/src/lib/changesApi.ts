@@ -16,6 +16,7 @@ export interface TrackerChange {
 export interface CompChange {
   id: string
   action: string
+  is_folder?: boolean
   path: string
   name: string
   folder: string
