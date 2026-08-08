@@ -59,6 +59,8 @@ export default function MediaLightbox({ items, index, onClose, onNav }: Props): 
           float directly above the media itself instead. */}
       <div
         className="flex items-center px-4 py-3 shrink-0 bg-black/60 backdrop-blur-sm"
+        // Fixed overlay, so the app shell's status-bar inset doesn't reach it.
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))' }}
         onClick={(e) => e.stopPropagation()}
       >
         <span className="text-white/80 text-sm truncate max-w-[60vw]">{item.name}</span>

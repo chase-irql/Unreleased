@@ -25,6 +25,8 @@ import { registerBackHandler } from '../lib/backHandlers'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
+import AndroidUpdateSection from './AndroidUpdateSection'
+import { isAndroidApp } from '../lib/androidUpdate'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -737,25 +739,59 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             screen instead of sharing it with a pill scroller. */}
         {isMobile && !mobileDetail && (
           <div
-            className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4"
             style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
           >
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => openSection(t.id)}
-                className="w-full flex items-center gap-3 px-2 py-3.5 border-b border-[var(--border)] last:border-b-0 text-left active:bg-[var(--surface-overlay)] transition-colors"
-              >
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: t.color }}>
-                  <t.icon size={17} className="text-white" strokeWidth={2.25} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-text-primary text-[15px] truncate">{t.label}</p>
-                  <p className="text-text-muted text-xs truncate">{t.sub}</p>
-                </div>
-                <ChevronRight size={18} className="text-text-muted shrink-0" />
-              </button>
-            ))}
+            {/* Account gets a profile header rather than a list row — the
+                platform idiom (iOS's Apple ID card, Android's account chip),
+                and it makes signing in discoverable instead of buried as one
+                more identical row. It's pulled out of the list below. */}
+            <button
+              onClick={() => openSection('account')}
+              className="w-full flex items-center gap-3.5 p-3.5 rounded-2xl bg-[var(--surface-overlay)] border border-[var(--border)] text-left active:bg-[var(--surface-raised)] transition-colors"
+            >
+              {account?.discord_avatar
+                ? <img src={account.discord_avatar} alt="" className="w-12 h-12 rounded-full object-cover shrink-0" />
+                : (
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${account ? 'bg-accent/20 text-accent text-lg font-semibold' : 'bg-[var(--surface-raised)] text-text-muted'}`}>
+                    {account
+                      ? (account.display_name || account.discord_username || '?').charAt(0).toUpperCase()
+                      : <User size={22} />}
+                  </div>
+                )}
+              <div className="min-w-0 flex-1">
+                <p className="text-text-primary text-base font-semibold truncate">
+                  {account ? (account.display_name || account.discord_username) : 'Not signed in'}
+                </p>
+                <p className="text-text-muted text-xs truncate">
+                  {account ? 'Account, token, sign out' : 'Sign in to sync likes and playlists'}
+                </p>
+              </div>
+              <ChevronRight size={18} className="text-text-muted shrink-0" />
+            </button>
+
+            {/* The rest as one inset grouped card, so the section reads as a
+                single surface instead of rows floating on the page. */}
+            <div className="rounded-2xl border border-[var(--border)] overflow-hidden">
+              {tabs.filter((t) => t.id !== 'account').map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => openSection(t.id)}
+                  className="w-full flex items-center gap-3 px-3.5 py-3.5 border-b border-[var(--border)] last:border-b-0 text-left bg-[var(--surface-overlay)] active:bg-[var(--surface-raised)] transition-colors"
+                >
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: t.color }}>
+                    <t.icon size={17} className="text-white" strokeWidth={2.25} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-text-primary text-[15px] truncate">{t.label}</p>
+                    <p className="text-text-muted text-xs truncate">{t.sub}</p>
+                  </div>
+                  <ChevronRight size={18} className="text-text-muted shrink-0" />
+                </button>
+              ))}
+            </div>
+
+            <p className="text-text-muted text-[11px] text-center pt-1">unreleased v{APP_VERSION}</p>
           </div>
         )}
 
@@ -799,7 +835,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       </div>
                       <button
                         onClick={() => logoutAccount()}
-                        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-red-400 transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-red-500/10 border border-[var(--border)] shrink-0"
+                        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-red-400 transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-red-500/10 border border-[var(--border)] shrink-0"
                       >
                         <LogOut size={13} />
                         Log out
@@ -882,7 +918,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                                 finally { setTokenPasteSubmitting(false) }
                               })()}
                               placeholder="Paste token"
-                              className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs font-mono text-text-primary focus:outline-none"
+                              className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2.5 py-2.5 md:py-1.5 text-xs font-mono text-text-primary focus:outline-none"
                             />
                             <button
                               disabled={tokenPasteSubmitting || !tokenPasteValue.trim()}
@@ -893,7 +929,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                                 catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
                                 finally { setTokenPasteSubmitting(false) }
                               }}
-                              className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 shrink-0"
+                              className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 shrink-0"
                             >
                               {tokenPasteSubmitting ? <Loader2 size={13} className="animate-spin" /> : 'Log in'}
                             </button>
@@ -927,7 +963,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                     <button
                       onClick={() => skinImportRef.current?.click()}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0"
+                      className="flex items-center gap-1.5 px-3 py-2.5 md:px-2.5 md:py-1.5 rounded-lg text-xs md:text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0"
                       title="Import a skin file"
                     >
                       <Upload size={13} /> Import
@@ -1514,7 +1550,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     <select
                       value={audioOutput}
                       onChange={(e) => setAudioOutput(e.target.value)}
-                      className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)] max-w-[180px] truncate"
+                      className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)] max-w-[180px] truncate"
                     >
                       <option value="">Default</option>
                       {devices.map((d) => (
@@ -1594,14 +1630,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       <select
                         value={sleepMinutes}
                         onChange={(e) => setSleepMinutes(parseInt(e.target.value))}
-                        className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                        className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
                       >
                         {[15, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} min</option>)}
                       </select>
                     )}
                     <button
                       onClick={toggleSleepTimer}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors ${
                         sleepTimerEnd ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'bg-accent/15 text-accent hover:bg-accent/25'
                       }`}
                     >
@@ -1628,7 +1664,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     lastfmUser ? (
                       <button
                         onClick={disconnectLastfm}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                        className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-red-500/15 text-red-400 hover:bg-red-500/25"
                       >
                         Disconnect
                       </button>
@@ -1637,7 +1673,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         <Loader2 size={14} className="animate-spin text-text-muted" />
                         <button
                           onClick={stopLastfmPoll}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-[var(--surface-overlay)] text-text-secondary hover:text-text-primary border border-[var(--border)]"
+                          className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-[var(--surface-overlay)] text-text-secondary hover:text-text-primary border border-[var(--border)]"
                         >
                           Cancel
                         </button>
@@ -1646,7 +1682,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       <button
                         onClick={connectLastfm}
                         disabled={lastfmBusy}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50"
+                        className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50"
                       >
                         Connect
                       </button>
@@ -1677,7 +1713,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   <select
                     value={hotkeySeekSeconds}
                     onChange={(e) => setHotkeySeekSeconds(parseInt(e.target.value))}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
                   >
                     {[5, 10, 15, 30, 60].map((s) => <option key={s} value={s}>{s} seconds</option>)}
                   </select>
@@ -1862,7 +1898,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   <select
                     value={appSettings.startupView}
                     onChange={(e) => setSetting('startupView', e.target.value)}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
                   >
                     <option value="api-tracker">Tracker</option>
                     <option value="api-files">Files</option>
@@ -1892,7 +1928,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           onChange={(e) => { setBetaCode(e.target.value); setBetaMsg(null) }}
                           onKeyDown={(e) => { if (e.key === 'Enter') joinBeta() }}
                           placeholder="Access code"
-                          className="w-32 bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)] placeholder:text-text-muted"
+                          className="w-32 bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)] placeholder:text-text-muted"
                         />
                         <button
                           onClick={joinBeta}
@@ -1917,7 +1953,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   <select
                     value={appSettings.minimizeTo}
                     onChange={(e) => setSetting('minimizeTo', e.target.value)}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
                   >
                     <option value="taskbar">Taskbar</option>
                     <option value="tray">Tray</option>
@@ -2061,12 +2097,18 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     juicewrldapi.com
                   </a>
                 </p>
+                {/* Android has no store/update channel (sideloaded APK), so it
+                    gets its own updater here. The desktop equivalent is the
+                    refresh button in this panel's header (electron-updater).
+                    Note this reports the APK's own versionName, which is not
+                    the APP_VERSION above — see lib/androidUpdate. */}
+                {isAndroidApp() && <AndroidUpdateSection />}
                 <div className="flex flex-wrap gap-2 mb-4">
                   <a
                     href="https://github.com/leanwrldd/unreleased"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
                   >
                     <Github size={13} />
                     GitHub
@@ -2075,7 +2117,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     href="https://discord.gg/jwa"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
                   >
                     <MessageCircle size={13} />
                     Discord
@@ -2084,7 +2126,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     href="https://juicewrldapi.com"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
                   >
                     <Globe size={13} />
                     API

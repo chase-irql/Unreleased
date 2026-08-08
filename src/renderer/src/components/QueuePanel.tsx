@@ -67,7 +67,9 @@ export default function QueuePanel(): JSX.Element {
     <div
       className="bg-surface-raised flex shrink-0 overflow-hidden animate-slide-in-right"
       style={isMobile
-        ? { position: 'fixed', inset: 0, zIndex: 50 }
+        // Full-screen on a phone, so it sits outside the app shell's
+        // safe-area padding and owns the gesture-bar inset itself.
+        ? { position: 'fixed', inset: 0, zIndex: 50, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
         : { width: panelWidth, borderLeft: '1px solid var(--border)' }
       }
     >
@@ -83,7 +85,12 @@ export default function QueuePanel(): JSX.Element {
         {/* Header */}
         <div
           className="flex items-center justify-between px-5 pb-3 shrink-0 border-b border-[var(--border)]"
-          style={{ paddingTop: isElectron && !isMobile ? 36 : 20, paddingRight: isElectron && !isMobile ? 148 : undefined }}
+          style={{
+            // Clears the status bar when running edge-to-edge on Android —
+            // this panel is fixed, so the shell's inset doesn't reach it.
+            paddingTop: isMobile ? 'max(20px, env(safe-area-inset-top, 0px))' : (isElectron ? 36 : 20),
+            paddingRight: isElectron && !isMobile ? 148 : undefined,
+          }}
         >
           <div className="flex items-center gap-2">
             <ListMusic size={15} className="text-text-muted" />

@@ -2,7 +2,9 @@
 """
 Unreleased Music Player — Android (Capacitor) Release Script
 
-Just run it — no arguments needed.
+Just run it. Optional flag:
+  --skip-install   stop after compiling the APK — skips the adb install +
+                    launch, so no device/emulator connection is required.
 
 Separate from release.py on purpose: this one only ever touches the
 `android` branch. It never checks out, commits to, or pushes app/web, and
@@ -22,9 +24,11 @@ for the desktop app's auto-updater or gets anywhere near the web deploy.
      android-v* tag)
   ── nothing left to answer past this point ──
   5. Commit all changes to android
-  6. Build the renderer, `cap sync android`, then `gradlew assembleDebug`
-     (debug-signed — no release keystore exists yet; see step_build's
-     docstring before wiring in a real one)
+  6. Run `npm run android:deploy` (scripts/android-deploy.sh): build the
+     renderer, `cap sync android`, `gradlew assembleDebug`, then — unless
+     --skip-install — install and launch it on whatever device/emulator adb
+     sees. Debug-signed either way; no release keystore exists yet, see
+     step_build's docstring before wiring in a real one.
   7. Push android to GitHub
   8. Create the GitHub release (tag android-v<version>, target_commitish
      android) and upload the APK
@@ -46,7 +50,6 @@ REPO_NAME      = "unreleased"
 ANDROID_BRANCH = "android"
 API_BASE       = "https://api.github.com"
 UPLOAD_BASE    = "https://uploads.github.com"
-GRADLE_CMD     = "gradlew.bat" if sys.platform == "win32" else "./gradlew"
 APK_PATH       = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
@@ -350,43 +353,44 @@ def step_commit(version, msg, state):
         ok("Nothing to commit — tree is clean")
 
 
-def step_build():
-    """assembleDebug, not assembleRelease: there's no release-signing keystore
-    for this app yet. A debug-signed APK is fine for sideloading (what this
-    script's GitHub release is for) but isn't what you'd want for a Play
-    Store submission or an auto-update feed — don't repurpose this step for
-    either without adding real signing first."""
-    section(6, TOTAL, "Build APK")
+def step_build(skip_install):
+    """Delegates to `npm run android:deploy` (scripts/android-deploy.sh) rather
+    than re-implementing build + cap sync + gradlew here — one recipe instead
+    of two that could quietly drift apart. That script also `adb install -r`s
+    and launches the APK on whatever device/emulator adb sees by default,
+    which means a device/emulator connection is normally required — pass
+    --skip-install (this script's own flag) to stop after the APK is
+    compiled instead. Without either the flag or a connected device, this
+    step fails loudly (the script runs with `set -euo pipefail`) rather than
+    silently skipping the on-device check.
+
+    Still produces a debug-signed APK (assembleDebug) — there's no
+    release-signing keystore for this app yet. Fine for sideloading (what
+    this script's GitHub release is for), not for a Play Store submission or
+    an auto-update feed — don't repurpose this step for either without adding
+    real signing first."""
+    section(6, TOTAL, "Build, sync, compile" + ("" if skip_install else " & deploy") + " APK")
     warn("This can take a few minutes on a cold Gradle cache — output streams below")
+    if skip_install:
+        info("--skip-install: stopping after the APK is compiled, no device required")
+    else:
+        warn("Requires a device or emulator connected via adb (pass --skip-install to opt out)")
     print()
-
-    info("Compiling renderer (npm run build)…")
-    renderer = subprocess.run("npm run build", shell=True, cwd=ROOT)
-    print()
-    if renderer.returncode != 0:
-        raise RuntimeError("Renderer build failed (tsc / vite). See output above.")
-    ok("Renderer compiled → dist/")
-
-    print()
-    info("Syncing web build into the Capacitor Android project (cap sync android)…")
-    sync = subprocess.run("npx cap sync android", shell=True, cwd=ROOT)
-    if sync.returncode != 0:
-        raise RuntimeError("cap sync failed. See output above.")
-    ok("Synced")
 
     if APK_PATH.exists():
         APK_PATH.unlink()
 
+    cmd = "npm run android:deploy" + (" -- --skip-install" if skip_install else "")
+    deploy = subprocess.run(cmd, shell=True, cwd=ROOT)
     print()
-    info("Assembling debug APK (gradlew assembleDebug)…")
-    gradle = subprocess.run(f"{GRADLE_CMD} assembleDebug", shell=True, cwd=ROOT / "android")
-    print()
-    if gradle.returncode != 0:
-        raise RuntimeError("Gradle build failed. See output above.")
+    if deploy.returncode != 0:
+        raise RuntimeError("android:deploy failed. See output above — "
+                            "if there's no device/emulator connected, connect one, "
+                            "or re-run with --skip-install.")
 
     if not APK_PATH.exists():
         raise RuntimeError(f"Build reported success but no APK at {APK_PATH}")
-    ok(f"Build complete → {APK_PATH.relative_to(ROOT)}")
+    ok(f"Build complete, installed & launched → {APK_PATH.relative_to(ROOT)}")
 
 
 def step_push(state):
@@ -500,6 +504,7 @@ def rollback(state):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    skip_install = "--skip-install" in sys.argv[1:]
     banner()
     state = {}
     try:
@@ -517,7 +522,7 @@ def main():
         release_notes = prompt_release_notes()
 
         step_commit(version, commit_msg, state)
-        step_build()
+        step_build(skip_install)
         step_push(state)
         step_release(version, token, release_notes, state)
 

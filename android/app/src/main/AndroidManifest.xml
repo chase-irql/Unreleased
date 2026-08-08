@@ -32,4 +32,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- In-app updates: this app is sideloaded (not on Play), so it ships its
+         own updater — see ApkInstallerPlugin and lib/androidUpdate.ts. Holding
+         this permission only lets us *ask*; on API 26+ the user still has to
+         grant "install unknown apps" for this app, which the plugin routes
+         them to when it isn't granted yet. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

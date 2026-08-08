@@ -879,12 +879,17 @@ export default function WrldView(): JSX.Element {
           one unit — 999FM sits top-right on mobile, top-left on desktop
           (md:), and fullscreen now rides along right next to it instead of
           living in its own corner. */}
-      {/* top-[max(...)] clears the status bar on Android — without it these
-          buttons sit at a flat 12px from the CSS viewport's top edge, which
-          is physically under the system status bar. Touches there never
-          reach the WebView at all (confirmed via a document-level capture
-          listener that never saw the pointerdown), not just visual overlap. */}
-      <div className="absolute z-30 flex items-center gap-2 right-3 top-[max(0.75rem,calc(0.75rem+env(safe-area-inset-top,0px)))] md:top-4 md:left-4 md:right-auto">
+      {/* The status-bar inset is only this component's problem in fullscreen,
+          where the portal (fixed inset-0) escapes the app shell and this sits
+          at a flat 12px from the CSS viewport's top edge — physically under
+          the system status bar, where touches never reach the WebView at all
+          (confirmed via a document-level capture listener that never saw the
+          pointerdown), not merely overlapping it. In normal (in-flow) mode
+          <main> has already absorbed the same inset, so adding it again here
+          would push these buttons down by twice the notch height. */}
+      <div className={`absolute z-30 flex items-center gap-2 right-3 md:top-4 md:left-4 md:right-auto ${
+        fullscreen ? 'top-[max(0.75rem,calc(0.75rem+env(safe-area-inset-top,0px)))]' : 'top-3'
+      }`}>
         <button
           onClick={() => {
             const next = !radioFmActive

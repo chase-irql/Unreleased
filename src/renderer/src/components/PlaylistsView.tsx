@@ -341,6 +341,8 @@ export default function PlaylistsView(): JSX.Element {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedTracks, setSelectedTracks] = useState<Map<string, Track>>(new Map())
   const [showBulkPlaylists, setShowBulkPlaylists] = useState(false)
+  const [bulkNewName, setBulkNewName] = useState('')
+  const [bulkCreating, setBulkCreating] = useState(false)
   const [bulkRemoving, setBulkRemoving] = useState(false)
   const [localRenaming, setLocalRenaming] = useState(false)
   const [localRenameVal, setLocalRenameVal] = useState('')
@@ -864,6 +866,7 @@ export default function PlaylistsView(): JSX.Element {
     setSelectMode(false)
     setSelectedTracks(new Map())
     setShowBulkPlaylists(false)
+    setBulkNewName('')
   }, [])
 
   const selectedTrackList = useMemo(() => [...selectedTracks.values()], [selectedTracks])
@@ -887,6 +890,28 @@ export default function PlaylistsView(): JSX.Element {
     useStore.getState().autoDownloadIfOffline(targetId, ids)
     exitSelectMode()
   }, [selectedTrackList, refreshPlaylists, exitSelectMode])
+
+  // Same as bulkAddToPlaylist, but into a playlist created on the spot — the
+  // per-song context menu has always offered "New playlist", so the bulk bar
+  // would otherwise be a dead end for anyone whose only playlist is the open
+  // one.
+  const bulkCreateAndAddToPlaylist = useCallback(async () => {
+    const name = bulkNewName.trim()
+    if (!name) return
+    const ids = selectedTrackList
+      .map(t => (t.id ? userApi.trackIdToSongId(t.id) : null))
+      .filter((id): id is number => id != null && id > 0)
+    if (!ids.length) return
+    setBulkCreating(true)
+    try {
+      const playlist = await userApi.createPlaylist(name)
+      await Promise.all(ids.map(id => userApi.addToPlaylist(playlist.id, id).catch(() => {})))
+      membershipCache.current.set(playlist.id, new Set(ids))
+      await refreshPlaylists()
+      useStore.getState().autoDownloadIfOffline(playlist.id, ids)
+      exitSelectMode()
+    } catch {} finally { setBulkCreating(false) }
+  }, [bulkNewName, selectedTrackList, refreshPlaylists, exitSelectMode])
 
   // Remove every selected track in one pass, then refresh once (rather than
   // per-track like removeTrack) — otherwise a large selection fires a refresh
@@ -2751,39 +2776,58 @@ export default function PlaylistsView(): JSX.Element {
             >
               <ListPlus size={13} /> Add to queue
             </button>
-            {otherPlaylists.length > 0 && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowBulkPlaylists(v => !v)}
-                  disabled={selectedTracks.size === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-                >
-                  <Plus size={13} /> Add to playlist
-                </button>
-                {showBulkPlaylists && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowBulkPlaylists(false)} />
-                    <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
-                      <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
-                        Add to playlist
-                      </div>
-                      <div className="max-h-56 overflow-y-auto py-1">
-                        {otherPlaylists.map(p => (
-                          <button
-                            key={p.id}
-                            onClick={() => bulkAddToPlaylist(p.id)}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
-                          >
-                            <ListMusic size={14} className="shrink-0 text-text-muted" />
-                            <span className="flex-1 truncate">{p.name}</span>
-                          </button>
-                        ))}
-                      </div>
+            {/* Always offered, even with no other playlist to target — the
+                flyout can create one. */}
+            <div className="relative">
+              <button
+                onClick={() => setShowBulkPlaylists(v => !v)}
+                disabled={selectedTracks.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                <Plus size={13} /> Add to playlist
+              </button>
+              {showBulkPlaylists && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => { setShowBulkPlaylists(false); setBulkNewName('') }} />
+                  <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
+                    <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                      Add to playlist
                     </div>
-                  </>
-                )}
-              </div>
-            )}
+                    <div className="max-h-56 overflow-y-auto py-1">
+                      {otherPlaylists.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-text-muted">No other playlists yet.</p>
+                      ) : otherPlaylists.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => bulkAddToPlaylist(p.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                        >
+                          <ListMusic size={14} className="shrink-0 text-text-muted" />
+                          <span className="flex-1 truncate">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="border-t border-[var(--border)] p-2 flex items-center gap-1.5">
+                      <input
+                        value={bulkNewName}
+                        onChange={e => setBulkNewName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') bulkCreateAndAddToPlaylist() }}
+                        placeholder="New playlist…"
+                        className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={bulkCreateAndAddToPlaylist}
+                        disabled={!bulkNewName.trim() || bulkCreating}
+                        className="shrink-0 p-1.5 rounded-lg bg-accent text-black disabled:opacity-40 transition-opacity"
+                        title="Create playlist and add selection"
+                      >
+                        {bulkCreating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
             {!isSharedView && (
               <button
                 onClick={bulkRemove}

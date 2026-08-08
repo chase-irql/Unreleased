@@ -243,7 +243,21 @@ export default function App(): JSX.Element {
           : 'flex-row'
       }`}>
         <Sidebar />
-        <main className="flex-1 overflow-hidden flex flex-col relative">
+        {/* Android runs the WebView edge-to-edge (viewport-fit=cover), so the
+            CSS viewport starts behind the status bar / notch. Every view in
+            here opens with a flat pt-5-ish header, which physically lands
+            under the cutout — so the inset is absorbed once, here, instead of
+            each view remembering to. Two cases opt out and are unaffected:
+            anything position:fixed (NowPlaying, QueuePanel, Settings, sheets)
+            escapes this box entirely and owns its own inset, and WrldView
+            cancels it below to keep its cover-art backdrop full-bleed.
+            Skipped when the nav sits on top, since BottomNav already pads
+            itself by the same amount and content flows below it. Desktop is
+            unaffected — env() resolves to 0 there. */}
+        <main
+          className="flex-1 overflow-hidden flex flex-col relative"
+          style={sidebarPosition !== 'top' ? { paddingTop: 'env(safe-area-inset-top, 0px)' } : undefined}
+        >
           {/* Frameless-window drag strip — when the nav bar sits on top (md+
               only; it's hidden on narrow windows) the bar touches the window
               edge instead and carries its own strip. mr-[188px] clears the
