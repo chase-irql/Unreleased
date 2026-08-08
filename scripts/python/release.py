@@ -450,12 +450,37 @@ def refresh_bundled_binaries():
     info("Skipping bundled-binary refresh — ffmpeg/yt-dlp are downloaded on demand since v1.19")
 
 
+def guard_no_mobile_dirs():
+    """android/ and ios/ are the Capacitor mobile project — it lives on
+    mobile-android-ux, not here. It already leaked into app once (sat
+    committed and unused for months after a shared-ancestor merge, never
+    caught until someone noticed it by eye) and .gitignore alone won't stop
+    a re-merge from re-tracking it, since `git add -A` still stages changes
+    to files that are already tracked regardless of ignore rules. Checked
+    right before the commit that would otherwise ship it again."""
+    for name in ("android", "ios"):
+        d = ROOT / name
+        if not d.exists():
+            continue
+        tracked = capture(f'git ls-files -- "{name}"')
+        if tracked:
+            die(f"{name}/ is tracked on {APP_BRANCH} — this is the Electron desktop branch,\n"
+                f"     the Capacitor mobile project belongs on mobile-android-ux only.\n"
+                f"     Likely came in through a merge. Remove it before releasing:\n"
+                f"       git rm -r {name}/")
+        else:
+            warn(f"{name}/ exists untracked in the working tree — gitignored, won't be committed, "
+                 f"but consider deleting it (it has no purpose on {APP_BRANCH}).")
+
+
 def step_commit(version, msg, state):
     section(5, TOTAL, f"Commit → {APP_BRANCH}")
 
     if git_branch() != APP_BRANCH:
         info(f"Switching to {APP_BRANCH}")
         run(f"git checkout {APP_BRANCH}")
+
+    guard_no_mobile_dirs()
 
     # Recorded even when there's nothing to commit — a no-op reset to this
     # sha is still correct, it just reverts nothing.

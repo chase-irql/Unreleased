@@ -77,10 +77,9 @@ coverage/
 
 .vercel
 
-# Capacitor
-android/build/
-android/.gradle/
-android/local.properties
-android/app/build/
-ios/App/Pods/
-ios/App/App/public/
+# Capacitor — this is the Electron desktop branch, the mobile Capacitor
+# project lives on mobile-android-ux only. Ignored wholesale here (not just
+# build/) after android/ leaked in via a shared ancestor and sat committed,
+# unused, for months (see commit removing it).
+android/
+ios/
