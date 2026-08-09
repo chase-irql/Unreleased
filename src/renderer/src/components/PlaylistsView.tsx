@@ -284,13 +284,13 @@ function GuestPlaylistMosaic({ tracks, className = '' }: { tracks: Track[]; clas
 
 export default function PlaylistsView(): JSX.Element {
   const { account, playlists, refreshPlaylists, playTrack, playCollection, addToQueue, setShowUserAuth, likedTrackIds, toggleLike, setActiveView, setPendingEditorSongId,
-    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, importM3uEntriesLocal, exportLocalPlaylistM3u,
+    localPlaylists, libraryTracks, libraryArt, loadLibrary, deleteLocalPlaylist, renameLocalPlaylist, updateLocalPlaylist, addToLocalPlaylist, removeFromLocalPlaylist, reorderLocalPlaylist, createLocalPlaylist, importM3uEntriesLocal, exportLocalPlaylistM3u,
     guestPlaylists, createGuestPlaylist, deleteGuestPlaylist, renameGuestPlaylist, removeFromGuestPlaylist,
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
-    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
+    playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder, appTextScale } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'removeFromLocalPlaylist', 'reorderLocalPlaylist', 'createLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -344,8 +344,6 @@ export default function PlaylistsView(): JSX.Element {
   const [bulkNewName, setBulkNewName] = useState('')
   const [bulkCreating, setBulkCreating] = useState(false)
   const [bulkRemoving, setBulkRemoving] = useState(false)
-  const [localRenaming, setLocalRenaming] = useState(false)
-  const [localRenameVal, setLocalRenameVal] = useState('')
   const [showAddAllMenu, setShowAddAllMenu] = useState(false)
   const addAllMenuRef = useRef<HTMLDivElement>(null)
   // The open-playlist hero's "⋯" menu (replaces the old cluster of loose
@@ -471,6 +469,9 @@ export default function PlaylistsView(): JSX.Element {
     setM3uChoice(null)
     const r = importM3uEntriesLocal(name, entries)
     if (r.ok) {
+      // Both ids feed one detail view now, and the synced one wins the tie —
+      // so opening a local playlist has to clear it.
+      setSelectedId(null)
       setLocalSelectedId(r.playlistId)
       setM3uSummary({ name: r.name, matched: r.matched, total: r.total, unmatched: r.unmatched })
     } else if (!r.canceled && r.error) {
@@ -603,11 +604,37 @@ export default function PlaylistsView(): JSX.Element {
   // ── Derived data — ALL hooks at top level, no conditionals ────────────────
 
   const summary = useMemo(() => playlists.find(p => p.id === selectedId), [playlists, selectedId])
-  const tracks: Track[] = useMemo(
-    () => detail ? detail.items.map(it => userApi.liteSongToTrack(it.song)) : [],
-    [detail]
+
+  // ── Open-playlist mode ────────────────────────────────────────────────────
+  // The detail view below is a single tree rendered for both kinds; `isLocal`
+  // is the flag that swaps the storage-specific bits (cover, rename, reorder,
+  // remove, bulk targets). Everything derived from `tracks` — search, sort,
+  // virtualization, multi-select — is therefore shared, which is the whole
+  // point: the local playlist used to be a stripped-down second copy.
+  const isLocal = selectedId == null && localSelectedId !== null
+  const localPl = useMemo(
+    () => (localSelectedId !== null ? localPlaylists.find(p => p.id === localSelectedId) ?? null : null),
+    [localPlaylists, localSelectedId]
   )
+  // Local playlists store library track ids; resolve them against the scanned
+  // library (dropping ids whose file is no longer there).
+  const localLibTracks = useMemo(
+    () => (localPl
+      ? localPl.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter(Boolean) as LibraryTrack[]
+      : []),
+    [localPl, libraryTracks]
+  )
+  // Rows need the LibraryTrack back (AlbumArtThumb reads art off disk by
+  // filePath — AlbumArtThumbnail can only show art the API already gave us).
+  const localTrackById = useMemo(() => new Map(localLibTracks.map(t => [t.id, t])), [localLibTracks])
+
+  const tracks: Track[] = useMemo(() => {
+    if (isLocal) return localLibTracks.map(libTrackToTrack)
+    return detail ? detail.items.map(it => userApi.liteSongToTrack(it.song)) : []
+  }, [isLocal, localLibTracks, detail])
+
   const otherPlaylists = useMemo(() => playlists.filter(p => p.id !== selectedId), [playlists, selectedId])
+  const otherLocalPlaylists = useMemo(() => localPlaylists.filter(p => p.id !== localSelectedId), [localPlaylists, localSelectedId])
   const dragEnabled = sort.field === 'default' && !search.trim()
 
   const displayTracks = useMemo(() => {
@@ -804,7 +831,9 @@ export default function PlaylistsView(): JSX.Element {
     setShowBulkPlaylists(false)
     setShowHeroMenu(false)
     setShowAddAllMenu(false)
-  }, [selectedId])
+    setRenaming(false)
+    setCompactView(false)
+  }, [selectedId, localSelectedId])
 
   // Deselecting the last track drops out of select mode on its own (same as
   // the Tracker), so there's no separate "Cancel" needed — Escape works too.
@@ -826,14 +855,28 @@ export default function PlaylistsView(): JSX.Element {
     try { await userApi.createPlaylist(name); setNewName(''); setCreating(false); await refreshPlaylists() } catch {}
   }
 
+  // Delete / rename / remove-track act on whichever playlist is open — the
+  // local kind goes through the store, the synced kind through the API.
   const deleteSelected = async () => {
+    if (isLocal) {
+      if (!localPl) return
+      deleteLocalPlaylist(localPl.id)
+      setLocalSelectedId(null)
+      return
+    }
     if (selectedId == null) return
-    try { await userApi.deletePlaylist(selectedId); setSelectedId(null); await refreshPlaylists() } catch {}
+    try { await userApi.deletePlaylist(selectedId); setSelectedId(null); setLocalSelectedId(null); await refreshPlaylists() } catch {}
   }
 
   const renameSelected = async () => {
-    if (selectedId == null) return
     const name = renameValue.trim(); if (!name) return
+    if (isLocal) {
+      if (!localPl) return
+      renameLocalPlaylist(localPl.id, name)
+      setRenaming(false)
+      return
+    }
+    if (selectedId == null) return
     try {
       const u = await userApi.renamePlaylist(selectedId, name)
       setDetail(u)
@@ -843,13 +886,19 @@ export default function PlaylistsView(): JSX.Element {
   }
 
   // Optimistic remove — no loading flash
-  const removeTrack = useCallback(async (songId: number) => {
-    if (selectedId == null) return
+  const removeTrack = useCallback(async (track: Track) => {
+    if (isLocal) {
+      if (!localPl) return
+      removeFromLocalPlaylist(localPl.id, track.id)
+      return
+    }
+    const songId = track.id ? userApi.trackIdToSongId(track.id) : null
+    if (selectedId == null || songId == null || songId <= 0) return
     setDetail(prev => prev ? { ...prev, items: prev.items.filter(i => i.song.id !== songId) } : null)
     membershipCache.current.get(selectedId)?.delete(songId)
     try { await userApi.removeFromPlaylist(selectedId, songId); await refreshPlaylists() }
     catch { await loadDetail(selectedId) }
-  }, [selectedId, loadDetail, refreshPlaylists])
+  }, [isLocal, localPl, removeFromLocalPlaylist, selectedId, loadDetail, refreshPlaylists])
 
   // ── Multi-select bulk actions ─────────────────────────────────────────────
   const toggleTrackSelect = useCallback((track: Track) => {
@@ -891,13 +940,30 @@ export default function PlaylistsView(): JSX.Element {
     exitSelectMode()
   }, [selectedTrackList, refreshPlaylists, exitSelectMode])
 
-  // Same as bulkAddToPlaylist, but into a playlist created on the spot — the
+  // Local counterpart — device-only playlists hold library track ids, so the
+  // selection goes in verbatim with no id translation.
+  const bulkAddToLocalPlaylist = useCallback((targetId: string) => {
+    setShowBulkPlaylists(false)
+    selectedTrackList.forEach(t => addToLocalPlaylist(targetId, t.id))
+    exitSelectMode()
+  }, [selectedTrackList, addToLocalPlaylist, exitSelectMode])
+
+  // Same as the two above, but into a playlist created on the spot — the
   // per-song context menu has always offered "New playlist", so the bulk bar
   // would otherwise be a dead end for anyone whose only playlist is the open
   // one.
   const bulkCreateAndAddToPlaylist = useCallback(async () => {
     const name = bulkNewName.trim()
     if (!name) return
+    if (isLocal) {
+      createLocalPlaylist(name)
+      // createLocalPlaylist applies synchronously and parks the new id in
+      // activeLocalPlaylistId (same trick SongContextMenu uses).
+      const newId = useStore.getState().activeLocalPlaylistId
+      if (newId) selectedTrackList.forEach(t => addToLocalPlaylist(newId, t.id))
+      exitSelectMode()
+      return
+    }
     const ids = selectedTrackList
       .map(t => (t.id ? userApi.trackIdToSongId(t.id) : null))
       .filter((id): id is number => id != null && id > 0)
@@ -911,12 +977,18 @@ export default function PlaylistsView(): JSX.Element {
       useStore.getState().autoDownloadIfOffline(playlist.id, ids)
       exitSelectMode()
     } catch {} finally { setBulkCreating(false) }
-  }, [bulkNewName, selectedTrackList, refreshPlaylists, exitSelectMode])
+  }, [bulkNewName, isLocal, createLocalPlaylist, addToLocalPlaylist, selectedTrackList, refreshPlaylists, exitSelectMode])
 
   // Remove every selected track in one pass, then refresh once (rather than
   // per-track like removeTrack) — otherwise a large selection fires a refresh
   // storm. Optimistically drops them from the open detail first.
   const bulkRemove = useCallback(async () => {
+    if (isLocal) {
+      if (!localPl) return
+      selectedTrackList.forEach(t => removeFromLocalPlaylist(localPl.id, t.id))
+      exitSelectMode()
+      return
+    }
     if (selectedId == null) return
     const ids = selectedTrackList
       .map(t => (t.id ? userApi.trackIdToSongId(t.id) : null))
@@ -932,7 +1004,7 @@ export default function PlaylistsView(): JSX.Element {
     } catch { await loadDetail(selectedId) }
     setBulkRemoving(false)
     exitSelectMode()
-  }, [selectedId, selectedTrackList, refreshPlaylists, loadDetail, exitSelectMode])
+  }, [isLocal, localPl, removeFromLocalPlaylist, selectedId, selectedTrackList, refreshPlaylists, loadDetail, exitSelectMode])
 
   // ── Multi-select of playlists (library grid) ──────────────────────────────
   const togglePlaylistSelect = useCallback((key: string) => {
@@ -1034,7 +1106,20 @@ export default function PlaylistsView(): JSX.Element {
   }
 
   const handleDrop = useCallback(async (toIdx: number) => {
-    if (dragIdx === null || !detail || selectedId == null) return
+    if (dragIdx === null) return
+    // Local playlists reorder their own id array in the store; there's no
+    // server round trip to reconcile.
+    if (isLocal) {
+      const from = dragIdx
+      setDragIdx(null); setDropIdx(null)
+      if (from === toIdx || !localPl) return
+      const ids = localLibTracks.map(t => t.id)
+      const [moved] = ids.splice(from, 1)
+      ids.splice(toIdx, 0, moved)
+      reorderLocalPlaylist(localPl.id, ids)
+      return
+    }
+    if (!detail || selectedId == null) return
     const from = dragIdx
     setDragIdx(null); setDropIdx(null)
     if (from === toIdx) return
@@ -1046,7 +1131,7 @@ export default function PlaylistsView(): JSX.Element {
       const updated = await userApi.reorderPlaylist(selectedId, newItems.map(it => it.song.id))
       setDetail(updated)
     } catch { await loadDetail(selectedId) }
-  }, [dragIdx, detail, selectedId, loadDetail])
+  }, [dragIdx, detail, selectedId, loadDetail, isLocal, localPl, localLibTracks, reorderLocalPlaylist])
 
   const openSongInfo = useCallback(async (songId: number) => {
     try { setInfoSong(await apiFetch<JWApiSong>(`/songs/${songId}/`)) } catch {}
@@ -1064,6 +1149,15 @@ export default function PlaylistsView(): JSX.Element {
     } catch {}
     setCoverUploading(false)
   }, [selectedId, coverUploading, refreshPlaylists])
+
+  // Local covers are a data URL stored on the playlist itself (no upload
+  // endpoint), picked through the Electron file dialog.
+  const handleLocalCoverPick = useCallback(async () => {
+    const el = (window as any).electron
+    if (!el || !localPl) return
+    const dataUrl = await el.selectImageFile()
+    if (dataUrl) updateLocalPlaylist(localPl.id, { coverImage: dataUrl })
+  }, [localPl, updateLocalPlaylist])
 
   const handleRemoveCover = useCallback(async () => {
     if (!selectedId) return
@@ -1303,7 +1397,7 @@ export default function PlaylistsView(): JSX.Element {
       ) : cardMenu.kind === 'local' ? (
         /* ── Local playlist menu ── */
         <>
-          <MenuItem icon={Play} label="Open" onClick={() => { setLocalSelectedId(cardMenu.playlist.id); setCardMenu(null) }} />
+          <MenuItem icon={Play} label="Open" onClick={() => { setSelectedId(null); setLocalSelectedId(cardMenu.playlist.id); setCardMenu(null) }} />
           <MenuItem
             icon={Shuffle}
             label="Play all"
@@ -1602,6 +1696,7 @@ export default function PlaylistsView(): JSX.Element {
         onClick={e => {
           if (e.ctrlKey || e.metaKey) { togglePlaylistSelect(plKey); return }
           if (plSelectMode) { togglePlaylistSelect(plKey); return }
+          setSelectedId(null)
           setLocalSelectedId(lp.id)
         }}
         onContextMenu={e => {
@@ -1748,6 +1843,755 @@ export default function PlaylistsView(): JSX.Element {
     )
   }
 
+  // ── Playlist detail (synced + local) ──────────────────────────────────────
+  // One tree for both kinds. `isLocal` swaps only the storage-specific pieces:
+  // where the cover comes from, how rename/delete/reorder/remove are applied,
+  // and which playlists the bulk "Add to playlist" targets. Everything else —
+  // the hero, search, sort, virtualized rows, multi-select, context menu — is
+  // literally the same code, which is the point: the local view used to be a
+  // stripped-down copy that silently missed every feature added to this one.
+  // Not a component: it must not introduce hooks below the ones above it.
+  const renderDetail = (): JSX.Element => {
+    if (isLocal && !localPl) { setLocalSelectedId(null); return <div /> }
+    const durLabel = totalDurationLabel(tracks)
+    const name = isLocal ? (localPl?.name ?? '') : (detail?.name ?? summary?.name ?? null)
+    // The hero's "⋯" menu needs loaded metadata on the API side; a local
+    // playlist is always fully known.
+    const hasMeta = isLocal ? true : !!detail
+    const loading = !isLocal && loadingDetail
+    const localCover = localPl?.coverImage ?? null
+    const hasApiCover = !!(coverData?.cover_image_url || coverData?.cover_image) && !coverImgError
+    // Extra leading checkbox column while selecting. rem, not px, so the fixed
+    // columns (notably the album-art column) scale with the app text-size
+    // setting alongside the rem-sized covers and text — identical at scale 1.
+    // Mobile drops the grip, index/play and duration columns (see isMobile
+    // above) and widens the trailing one to hold a 44px "more" button.
+    const gridCols = isMobile
+      ? (selectMode ? '1.25rem 2.5rem 1fr 2.75rem' : '2.5rem 1fr 2.75rem')
+      : (selectMode ? '1.25rem 1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' : '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem')
+
+    const playShuffle = (): void => {
+      if (!tracks.length) return
+      const shuffled = fisherYates(tracks)
+      playTrack(shuffled[0], shuffled)
+    }
+
+    const goBack = (): void => {
+      // Clear both ids: a stale local id left over from an earlier visit would
+      // otherwise reopen that local playlist the moment the synced one closes.
+      setLocalSelectedId(null); setRenaming(false)
+      if (isLocal) return
+      setSelectedId(null)
+      if (isSharedView) { setIsSharedView(false); window.history.pushState({}, '', '/playlists') }
+    }
+
+    return (
+      <div ref={setListScrollEl} className="relative flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false); setShowHeroMenu(false) }}>
+        {/* ── Hero — the backdrop extends behind the back button too, instead
+            of leaving a plain theme-background strip above the gradient. Text
+            in this section is fixed to a light palette regardless of app
+            theme, since the backdrop is always a dark blurred image. ── */}
+        <div className="relative overflow-hidden px-6 pb-6 shrink-0">
+          <HeroBackdrop src={
+            isLocal
+              ? (localCover ?? localLibTracks.map(t => libraryArt[t.id]).find(a => !!a) ?? null)
+              : (playlistCoverUrl(coverData ?? {}) ?? tracks[0]?.imageUrl ?? null)
+          } />
+
+          <div className="relative z-10 px-0 pt-5">
+            <button onClick={goBack} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
+              <ArrowLeft size={15} /> Playlists
+            </button>
+          </div>
+
+          {/* Hidden file input (API covers upload; local ones use the native
+              Electron picker instead) */}
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleCoverUpload(f); e.target.value = '' }}
+          />
+
+          <div className="relative z-10 flex gap-6 items-end pt-6">
+            {/* Cover image — clickable to change (owner only) */}
+            <div
+              className={`shrink-0 self-start group/cover relative rounded-xl shadow-2xl overflow-hidden ${isSharedView || (isLocal && !isElectron) ? 'cursor-default' : 'cursor-pointer'}`}
+              style={{ width: 180, height: 180 }}
+              onClick={() => {
+                if (isSharedView) return
+                if (isLocal) { if (isElectron) handleLocalCoverPick(); return }
+                coverInputRef.current?.click()
+              }}
+            >
+              {isLocal ? (
+                localCover
+                  ? <img src={localCover} alt="" className="w-full h-full object-cover" />
+                  : <LocalPlaylistMosaic trackIds={localPl?.trackIds ?? []} className="w-full h-full" />
+              ) : loading && tracks.length === 0 ? (
+                <div className="w-full h-full bg-surface-overlay animate-pulse" />
+              ) : coverLoading ? (
+                <div className="w-full h-full bg-surface-overlay flex items-center justify-center">
+                  <Loader2 size={28} className="text-text-muted opacity-50 animate-spin" />
+                </div>
+              ) : playlistCoverUrl(coverData ?? {}) && !coverImgError ? (
+                <img
+                  src={playlistCoverUrl(coverData ?? {})}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  onError={() => setCoverImgError(true)}
+                />
+              ) : (
+                <PlaylistMosaic tracks={tracks} className="w-full h-full" />
+              )}
+              {/* Upload overlay (owner only) */}
+              <div className={`absolute inset-0 bg-black/50 transition-opacity flex flex-col items-center justify-center gap-2 ${isSharedView || (isLocal && !isElectron) ? 'opacity-0 pointer-events-none' : 'opacity-0 group-hover/cover:opacity-100'}`}>
+                {coverUploading && !isLocal ? (
+                  <Loader2 size={24} className="text-white animate-spin" />
+                ) : (
+                  <>
+                    <Pencil size={24} className="text-white" />
+                    <span className="text-white text-xs font-medium">Change cover</span>
+                  </>
+                )}
+              </div>
+              {/* Remove cover — kept tappable on mobile (it's destructive and
+                  was previously hover-only, i.e. unreachable on touch). */}
+              {!isSharedView && (isLocal ? !!localCover : hasApiCover) && (
+                <button
+                  className="absolute top-1.5 right-1.5 rounded-md bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/cover:opacity-100 transition-opacity hover:bg-red-500/80 w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:p-1"
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (isLocal) { if (localPl) updateLocalPlaylist(localPl.id, { coverImage: null }); return }
+                    handleRemoveCover()
+                  }}
+                  aria-label="Remove cover"
+                >
+                  <ImageOff size={14} className="md:w-3 md:h-3" />
+                </button>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 pb-1">
+              <p className="text-white/60 text-xs uppercase tracking-widest font-semibold mb-2">{isLocal ? 'Local Playlist' : 'Playlist'}</p>
+              {renaming ? (
+                <div className="flex items-center gap-2 mb-3">
+                  <input value={renameValue} onChange={e => setRenameValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && renameSelected()} autoFocus className="bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-2xl font-black focus:outline-none focus:border-accent/50 w-full" />
+                  <button onClick={renameSelected} className="p-2 rounded-lg bg-accent/15 text-accent shrink-0"><Check size={16} /></button>
+                  <button onClick={() => setRenaming(false)} className="p-2 rounded-lg text-white/60 hover:text-white shrink-0"><X size={16} /></button>
+                </div>
+              ) : (
+                <h1 className="text-white text-3xl md:text-4xl font-black truncate mb-2">
+                  {name || <span className="bg-white/10 rounded animate-pulse text-transparent select-none">Loading…</span>}
+                </h1>
+              )}
+              <div className="flex items-center gap-1.5 text-white/60 text-sm mb-2">
+                {isLocal ? (
+                  <><HardDrive size={12} className="shrink-0" /><span className="font-medium text-white/85">This device</span></>
+                ) : (
+                  <span className="font-medium text-white/85">{account?.discord_username}</span>
+                )}
+                {!loading && (
+                  <>
+                    <span>·</span>
+                    <span>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</span>
+                    {durLabel && <><span>·</span><span className="flex items-center gap-1"><Clock size={12} />{durLabel}</span></>}
+                  </>
+                )}
+                {loading && <span className="ml-1 text-xs opacity-50">Loading…</span>}
+              </div>
+
+              {/* Description — synced playlists only; local ones have no such
+                  field to store it in. */}
+              {!isLocal && (editingDesc ? (
+                <div className="flex items-start gap-2 mb-3">
+                  <textarea
+                    value={descValue}
+                    onChange={e => setDescValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveDescription() } if (e.key === 'Escape') setEditingDesc(false) }}
+                    autoFocus
+                    rows={2}
+                    placeholder="Add a description…"
+                    className="flex-1 bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-accent/50 resize-none placeholder:text-white/40"
+                  />
+                  <div className="flex flex-col gap-1 shrink-0">
+                    <button onClick={saveDescription} className="p-1.5 rounded-lg bg-accent/15 text-accent"><Check size={14} /></button>
+                    <button onClick={() => setEditingDesc(false)} className="p-1.5 rounded-lg text-white/60 hover:text-white"><X size={14} /></button>
+                  </div>
+                </div>
+              ) : isSharedView ? (
+                detail?.description ? (
+                  <p className="text-white/60 text-sm line-clamp-2 mb-3">{detail.description}</p>
+                ) : null
+              ) : (
+                <button
+                  className="text-left mb-3 group/desc flex items-start gap-1.5"
+                  onClick={() => { setDescValue(detail?.description ?? ''); setEditingDesc(true) }}
+                >
+                  {detail?.description ? (
+                    <>
+                      <p className="text-white/60 text-sm line-clamp-2 group-hover/desc:text-white/80 transition-colors">{detail.description}</p>
+                      <Pencil size={11} className="text-white/60 opacity-0 group-hover/desc:opacity-60 transition-opacity shrink-0 mt-1" />
+                    </>
+                  ) : (
+                    <p className="text-white/60 text-sm opacity-40 hover:opacity-70 transition-opacity italic">+ Add description</p>
+                  )}
+                </button>
+              ))}
+
+              {/* Action row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {tracks.length > 0 && <HeroPlayButton onClick={() => playCollection(tracks)} />}
+                {tracks.length > 1 && <HeroShuffleButton onClick={playShuffle} />}
+
+                {/* Shared (not-owned) playlists only get "Save to library" —
+                    the owner-only actions below don't apply. */}
+                {!isLocal && isSharedView && account && tracks.length > 0 && detail && (
+                  <button
+                    onClick={handleImportPlaylist}
+                    disabled={importState === 'loading' || importState === 'done'}
+                    title={importState === 'done' ? 'Saved to library!' : importState === 'error' ? 'Import failed' : 'Save to my library'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-60 ${
+                      importState === 'done' ? 'text-accent bg-accent/10' :
+                      importState === 'error' ? 'text-red-400 bg-red-400/10' :
+                      'text-text-primary bg-surface-raised hover:bg-surface-overlay'
+                    }`}
+                  >
+                    {importState === 'loading' ? <Loader2 size={14} className="animate-spin" /> :
+                     importState === 'done' ? <Check size={14} /> :
+                     <FolderInput size={14} />}
+                    {importState === 'loading' ? 'Saving…' : importState === 'done' ? 'Saved!' : importState === 'error' ? 'Failed' : 'Save to library'}
+                  </button>
+                )}
+
+                {/* Everything else (download, share, public/private, add-all,
+                    rename, delete) lives behind one "⋯" menu instead of a row
+                    of loose icon buttons. */}
+                {!isSharedView && hasMeta && (
+                  <div className="relative" ref={heroMenuRef}>
+                    <button
+                      ref={heroBtnRef}
+                      onClick={e => { e.stopPropagation(); setShowHeroMenu(v => !v); setShowAddAllMenu(false) }}
+                      title="More"
+                      className={`p-2.5 rounded-full text-sm transition-colors ${showHeroMenu ? 'text-white bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                    {/* Portaled to <body> so the hero's overflow-hidden can't
+                        clip it, and height-clamped to the viewport so a long
+                        "Add all to playlist" list stays fully visible. */}
+                    {showHeroMenu && createPortal(
+                      <>
+                        <div className="fixed inset-0 z-[60]" onClick={() => { setShowHeroMenu(false); setShowAddAllMenu(false) }} />
+                        {(() => {
+                          const r = heroBtnRef.current?.getBoundingClientRect()
+                          const top = r ? r.bottom + 6 : 0
+                          const left = r ? Math.min(r.left, window.innerWidth - 218) : 0
+                          const addAllTargets: { id: number | string; name: string }[] =
+                            isLocal ? otherLocalPlaylists.map(p => ({ id: p.id, name: p.name })) : otherPlaylists.map(p => ({ id: p.id, name: p.name }))
+                          return (
+                            <div
+                              className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px] overflow-y-auto"
+                              style={{ top, left, maxHeight: window.innerHeight - top - 8 }}
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {isLocal ? (
+                                isElectron && (
+                                  <MenuItem
+                                    icon={FileDown}
+                                    label="Export as M3U"
+                                    disabled={tracks.length === 0}
+                                    onClick={() => { setShowHeroMenu(false); if (localPl) exportLocalPlaylistM3u(localPl.id) }}
+                                  />
+                                )
+                              ) : (
+                                <>
+                                  <MenuItem
+                                    icon={zipState === 'loading' ? Loader2 : Archive}
+                                    label={zipState === 'error' ? 'Download failed' : zipState === 'done' ? 'Download started' : 'Download as ZIP'}
+                                    disabled={zipState === 'loading' || tracks.length === 0}
+                                    onClick={() => { handleZipDownload(tracks, name ?? 'playlist') }}
+                                  />
+                                  {!!(window as any).electron && (
+                                    <MenuItem
+                                      icon={offlineSyncState?.state === 'syncing' ? Loader2 : Download}
+                                      label={
+                                        offlineSyncState?.state === 'syncing' ? `Downloading… ${offlineSyncState.current}/${offlineSyncState.total}`
+                                          : isOffline ? 'Remove offline download' : 'Download for offline'
+                                      }
+                                      disabled={offlineSyncState?.state === 'syncing' || tracks.length === 0}
+                                      onClick={() => { handleToggleOffline() }}
+                                    />
+                                  )}
+                                  <MenuItem
+                                    icon={shareCopied ? Check : Link}
+                                    label={shareCopied ? 'Link copied!' : 'Copy share link'}
+                                    disabled={tracks.length === 0}
+                                    onClick={() => { handleShare() }}
+                                  />
+                                  <MenuItem
+                                    icon={detail?.is_public ? Globe : Lock}
+                                    label={detail?.is_public ? 'Make private' : 'Make public'}
+                                    disabled={togglingPublic}
+                                    onClick={() => { handleTogglePublic() }}
+                                  />
+                                </>
+                              )}
+                              {addAllTargets.length > 0 && tracks.length > 0 && (
+                                <>
+                                  <MenuItem
+                                    icon={FolderInput}
+                                    label="Add all to playlist"
+                                    disabled={addingAll}
+                                    trailing={<span className="text-text-muted text-xs">{showAddAllMenu ? '⌄' : '›'}</span>}
+                                    onClick={() => setShowAddAllMenu(v => !v)}
+                                  />
+                                  {showAddAllMenu && (
+                                    <div className="border-t border-b border-[var(--border)] max-h-40 overflow-y-auto">
+                                      {addAllTargets.map(p => (
+                                        <button key={p.id} onClick={async () => {
+                                          setShowAddAllMenu(false); setShowHeroMenu(false)
+                                          if (isLocal) tracks.forEach(t => addToLocalPlaylist(p.id as string, t.id))
+                                          else if (detail) await handleAddAllTo(p.id as number, detail)
+                                        }}
+                                          className="w-full text-left pl-9 pr-3.5 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors truncate">
+                                          {p.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              <div className="border-t border-[var(--border)] my-1" />
+                              {!renaming && (
+                                <MenuItem icon={Pencil} label="Rename" onClick={() => { setShowHeroMenu(false); setRenameValue(name ?? ''); setRenaming(true) }} />
+                              )}
+                              <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { setShowHeroMenu(false); deleteSelected() }} />
+                            </div>
+                          )
+                        })()}
+                      </>,
+                      document.body
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
+
+        {/* ── Tracklist ── */}
+        {loading ? (
+          <TrackSkeleton />
+        ) : tracks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 gap-2 text-center px-8">
+            <Music2 className="text-text-muted opacity-20" size={40} />
+            <p className="text-text-muted text-sm">This playlist is empty.</p>
+            <p className="text-text-muted text-xs">{isLocal ? 'Add tracks from the Library tab.' : 'Add tracks from the Tracker or Liked Songs.'}</p>
+          </div>
+        ) : (
+          <div className="px-2 pb-8">
+            {/* Pinned list header: controls on one row, column labels on their
+                own full-width row beneath. Sticky so scrolled track rows never
+                reach the top of the scroll container, where they'd render
+                behind the frameless window's fixed min/max/close buttons; the
+                opaque background is what stops that.
+                The controls sit on the LEFT on purpose. Right-aligned they'd
+                land under those window buttons, which forces the 188px gutter
+                the other toolbars carry — and that gutter is pure dead space
+                next to the controls. Nothing here may share the column row
+                either: anything in that grid steals width from the columns and
+                knocks the duration header out of line with the rows.
+                -mx-2 px-6 backs the full container width while keeping the
+                grid's content box lined up with the rows' px-4. */}
+            <div className="sticky top-0 z-20 -mx-2 px-6 pt-2 pb-1 bg-surface">
+              <div className="flex items-center gap-2 mb-2">
+                {searchOpen ? (
+                  <div className="relative w-64">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                    <input
+                      ref={searchInputRef}
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      onBlur={() => { if (!search) setSearchOpen(false) }}
+                      onKeyDown={e => { if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur() } }}
+                      placeholder={`Search ${tracks.length} tracks…`}
+                      className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-8 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+                    />
+                    <button
+                      onClick={() => { setSearch(''); setSearchOpen(false) }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                      title="Close search"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setSearchOpen(true)}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl text-text-muted hover:text-text-primary bg-surface-overlay transition-colors"
+                    title="Search tracks"
+                  >
+                    <Search size={15} />
+                  </button>
+                )}
+                {/* Version grouping is an API concept — local files have no
+                    version metadata to group by. */}
+                {versionsEnabled && !isLocal && (
+                  <button
+                    onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
+                    className={`flex items-center gap-1.5 px-3 h-9 rounded-xl text-xs font-medium transition-colors ${
+                      compactView
+                        ? 'bg-accent/15 text-accent border border-accent/30'
+                        : 'bg-surface-overlay text-text-muted hover:text-text-secondary border border-transparent'
+                    }`}
+                    title="Collapse tracks into their version groups"
+                  >
+                    <Layers size={13} />
+                    <span className="hidden sm:inline">Compact</span>
+                  </button>
+                )}
+                {compactView && !isLocal && (
+                  <span className="text-text-muted text-xs uppercase tracking-widest ml-1">
+                    {loadingCompact ? 'Loading…' : `${filteredCompactGroups.length} group${filteredCompactGroups.length === 1 ? '' : 's'}`}
+                  </span>
+                )}
+              </div>
+
+              {!(compactView && !isLocal) && (
+                <div className="grid items-center gap-3 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
+                  {selectMode && (
+                    <button
+                      onClick={() => {
+                        const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                        setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
+                      }}
+                      className="flex items-center justify-center text-text-muted hover:text-text-primary"
+                      title="Select all / none"
+                    >
+                      {displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
+                        ? <CheckSquare2 size={15} className="text-accent" />
+                        : <Square size={15} className="opacity-50" />}
+                    </button>
+                  )}
+                  {!isMobile && <span />}
+                  {!isMobile && <span className="text-center">#</span>}
+                  <span />
+                  <SortHeader label="Title" field="title" sort={sort} onSort={handleSort} />
+                  {!isMobile && (
+                    <div className="flex justify-center">
+                      <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
+                    </div>
+                  )}
+                  <span />
+                </div>
+              )}
+            </div>
+
+            {compactView && !isLocal ? (
+              loadingCompact ? (
+                <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
+                  <Loader2 size={18} className="animate-spin" />
+                  <span className="text-sm">Loading version groups…</span>
+                </div>
+              ) : filteredCompactGroups.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 gap-2">
+                  <CompactEmptyIcon size={32} className="text-text-muted opacity-30" />
+                  <p className="text-text-muted text-sm">
+                    {compactGroups.length === 0 ? 'No version groups in this playlist' : `No version groups match "${search}"`}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {filteredCompactGroups.map((group) => (
+                    <div key={group.groupId}>
+                      <CompactGroupRow
+                        coverTrack={group.members[0].item}
+                        title={group.title}
+                        count={group.members.length}
+                        expanded={expandedGroups.has(group.groupId)}
+                        onToggle={() => toggleGroupExpanded(group.groupId)}
+                      />
+                      {expandedGroups.has(group.groupId) && (
+                        <div className="ml-4 pl-4 border-l border-[var(--border)] space-y-0.5">
+                          {group.members.map(({ item: track, meta }) => {
+                            const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
+                            return (
+                              <div
+                                key={track.id}
+                                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
+                                className="group flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default"
+                                onClick={() => { if (isMobile) playTrack(track, group.members.map(m => m.item)) }}
+                                onDoubleClick={() => playTrack(track, group.members.map(m => m.item))}
+                              >
+                                <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} eager />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-text-primary text-sm font-medium truncate" title={track.title}>
+                                    {track.title}
+                                    {meta.version && <span className="text-text-muted"> ({meta.version})</span>}
+                                  </p>
+                                  <p className="text-text-muted text-xs truncate">{track.album || track.artist}</p>
+                                </div>
+                                <button
+                                  onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
+                                  className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors shrink-0 ${
+                                    isMobile ? 'w-11 h-11 flex items-center justify-center -mr-1' : 'p-1.5'
+                                  }`}
+                                  aria-label="More options"
+                                >
+                                  <MoreHorizontal size={isMobile ? 18 : 13} />
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              <>
+            {displayTracks.length === 0 && (
+              <p className="text-text-muted text-sm text-center py-8">No tracks match "{search}"</p>
+            )}
+
+            {/* Windowed rows — absolutely positioned at displayIdx * TRACK_ROW_H
+                inside a container sized to the full list, so only the visible
+                slice is mounted (see useVirtualWindowEl). */}
+            <div ref={setListContentEl} style={{ height: rowsTotalHeight, position: 'relative' }}>
+            {displayTracks.slice(rowStart, rowEnd).map((track, sliceIdx) => {
+              const displayIdx = rowStart + sliceIdx
+              const originalIdx = trackIndexOf.get(track) ?? -1
+              const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
+              const isDragging = dragEnabled && dragIdx === originalIdx
+              const isDropTarget = dragEnabled && dropIdx === displayIdx && dragIdx !== null && dragIdx !== displayIdx
+              const isSelected = selectedTracks.has(track.id)
+              const libTrack = isLocal ? localTrackById.get(track.id) : undefined
+
+              return (
+                <div
+                  key={track.id}
+                  draggable={!isSharedView && dragEnabled && !selectMode}
+                  onDragStart={() => !isSharedView && dragEnabled && !selectMode && setDragIdx(originalIdx)}
+                  onDragOver={e => { if (!dragEnabled || selectMode) return; e.preventDefault(); setDropIdx(displayIdx) }}
+                  onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
+                  onDrop={() => dragEnabled && !selectMode && handleDrop(displayIdx)}
+                  onClick={e => {
+                    if (e.ctrlKey || e.metaKey || selectMode) { toggleTrackSelect(track); return }
+                    // Touch has no hover play button — the row is the target.
+                    if (isMobile) playTrack(track, displayTracks)
+                  }}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
+                  className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
+                    isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
+                  }`}
+                  style={{ gridTemplateColumns: gridCols, position: 'absolute', top: displayIdx * TRACK_ROW_H, left: 0, right: 0, height: TRACK_ROW_H }}
+                >
+                  {selectMode && (
+                    <span className="flex items-center justify-center shrink-0">
+                      {isSelected ? <CheckSquare2 size={16} className="text-accent" /> : <Square size={16} className="text-text-muted opacity-50" />}
+                    </span>
+                  )}
+                  {!isMobile && (
+                    <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled && !selectMode ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
+                      <GripVertical size={14} />
+                    </span>
+                  )}
+                  {!isMobile && (
+                    <>
+                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{displayIdx + 1}</span>
+                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                    </>
+                  )}
+                  {/* Local art is read off the file itself (AlbumArtThumb does
+                      the IPC + caching); API art is a URL. */}
+                  {libTrack ? (
+                    <div className="rounded-md overflow-hidden shrink-0">
+                      <AlbumArtThumb track={libTrack} size={40} />
+                    </div>
+                  ) : (
+                    <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} eager />
+                  )}
+                  <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
+                    <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
+                    <p className="text-text-muted text-xs truncate flex items-center gap-1">
+                      {!isLocal && !!track.id && offlineTracks[track.id] && (
+                        <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
+                          <CircleArrowDown size={11} fill="currentColor" />
+                        </span>
+                      )}
+                      {/* Duration has no column of its own on mobile — it
+                          rides along here rather than being dropped. */}
+                      <span className="truncate">
+                        {track.artist || 'Unknown Artist'}{track.album ? ` · ${track.album}` : ''}
+                        {isMobile ? ` · ${formatDuration(track.duration, '--:--')}` : ''}
+                      </span>
+                    </p>
+                  </div>
+                  {!isMobile && (
+                    <span className="text-text-muted text-xs tabular-nums text-center">
+                      {formatDuration(track.duration, '--:--')}
+                    </span>
+                  )}
+                  {/* Was hover-reveal + `hidden md:flex`, i.e. unreachable on
+                      touch — the context menu had no entry point at all. */}
+                  <div className={`flex items-center justify-end transition-opacity ${
+                    selectMode ? 'opacity-0 pointer-events-none' : isMobile ? '' : 'opacity-0 group-hover:opacity-100'
+                  }`}>
+                    <button onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
+                      className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors ${
+                        isMobile ? 'w-11 h-11 flex items-center justify-center -mr-2' : 'p-1.5 hidden md:flex'
+                      }`}
+                      aria-label="More options">
+                      <MoreHorizontal size={isMobile ? 18 : 13} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+            </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Track context menu ── */}
+        {trackMenu && (
+          <SongContextMenu
+            state={trackMenu}
+            onClose={() => setTrackMenu(null)}
+            canEdit={canEdit}
+            onInfo={() => openSongInfo(trackMenu.songId as number)}
+            onPlay={() => playTrack(trackMenu.track, displayTracks)}
+            onAddToQueue={() => addToQueue(trackMenu.track)}
+            onSelect={() => toggleTrackSelect(trackMenu.track)}
+            liked={likedTrackIds.includes(trackMenu.track.id)}
+            onToggleLike={() => toggleLike(trackMenu.track.id)}
+            removeAction={!isSharedView ? { label: 'Remove from playlist', onClick: () => removeTrack(trackMenu.track) } : undefined}
+          />
+        )}
+
+        {/* ── Bulk selection action bar ── */}
+        {selectMode && (
+          <div className="sticky bottom-0 shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2 relative z-30" onClick={e => e.stopPropagation()}>
+            <span className="text-sm text-text-primary font-medium flex-1">
+              {selectedTracks.size} {selectedTracks.size === 1 ? 'track' : 'tracks'} selected
+            </span>
+            <button
+              onClick={() => setSelectedTracks(new Map(displayTracks.map(t => [t.id, t])))}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => setSelectedTracks(new Map())}
+              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={bulkAddToQueue}
+              disabled={selectedTracks.size === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              <ListPlus size={13} /> Add to queue
+            </button>
+            {/* Always offered, even with no other playlist to target — the
+                flyout can create one. Targets match the open playlist's kind:
+                a local file can't join a synced playlist, and vice versa. */}
+            <div className="relative">
+              <button
+                onClick={() => setShowBulkPlaylists(v => !v)}
+                disabled={selectedTracks.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                <Plus size={13} /> Add to playlist
+              </button>
+              {showBulkPlaylists && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => { setShowBulkPlaylists(false); setBulkNewName('') }} />
+                  <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
+                    <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
+                      Add to playlist
+                    </div>
+                    <div className="max-h-56 overflow-y-auto py-1">
+                      {(isLocal ? otherLocalPlaylists.length : otherPlaylists.length) === 0 ? (
+                        <p className="px-3 py-2 text-xs text-text-muted">No other playlists yet.</p>
+                      ) : isLocal ? otherLocalPlaylists.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => bulkAddToLocalPlaylist(p.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                        >
+                          <HardDrive size={14} className="shrink-0 text-text-muted" />
+                          <span className="flex-1 truncate">{p.name}</span>
+                        </button>
+                      )) : otherPlaylists.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => bulkAddToPlaylist(p.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                        >
+                          <ListMusic size={14} className="shrink-0 text-text-muted" />
+                          <span className="flex-1 truncate">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="border-t border-[var(--border)] p-2 flex items-center gap-1.5">
+                      <input
+                        value={bulkNewName}
+                        onChange={e => setBulkNewName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') bulkCreateAndAddToPlaylist() }}
+                        placeholder="New playlist…"
+                        className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={bulkCreateAndAddToPlaylist}
+                        disabled={!bulkNewName.trim() || bulkCreating}
+                        className="shrink-0 p-1.5 rounded-lg bg-accent text-black disabled:opacity-40 transition-opacity"
+                        title="Create playlist and add selection"
+                      >
+                        {bulkCreating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {!isSharedView && (
+              <button
+                onClick={bulkRemove}
+                disabled={selectedTracks.size === 0 || bulkRemoving}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-red-500/10 text-red-400 rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                {bulkRemoving ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Remove
+              </button>
+            )}
+            <button
+              onClick={exitSelectMode}
+              className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
+              title="Exit selection"
+            >
+              <X size={15} className="text-text-muted" />
+            </button>
+          </div>
+        )}
+
+        <SongInfoModal
+          song={infoSong}
+          onClose={() => setInfoSong(null)}
+          onEdit={canEdit ? (songId) => { setInfoSong(null); setPendingEditorSongId(songId); setActiveView('editor') } : undefined}
+        />
+      </div>
+    )
+  }
+
   // ── Auth guard ─────────────────────────────────────────────────────────────────────────
 
   if (!account) {
@@ -1884,77 +2728,9 @@ export default function PlaylistsView(): JSX.Element {
         </div>
       )
     }
-    // show local playlists + login prompt even when not logged in
-    if (localSelectedId !== null) {
-      const localPl = localPlaylists.find(p => p.id === localSelectedId)
-      if (!localPl) { setLocalSelectedId(null); return <div /> }
-      const localTracks = localPl.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter(Boolean) as LibraryTrack[]
-      const localQTracks: Track[] = localTracks.map(libTrackToTrack)
-      return (
-        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
-          <div className="relative overflow-hidden px-6 pb-6 shrink-0">
-            <HeroBackdrop src={localPl.coverImage ?? localTracks.map(t => libraryArt[t.id]).find(a => !!a) ?? null} />
-            <div className="relative z-10 pt-5">
-              <button onClick={() => setLocalSelectedId(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
-                <ArrowLeft size={15} /> Playlists
-              </button>
-            </div>
-            <div className="relative z-10 flex gap-6 items-end pt-6">
-              <div className="shrink-0 rounded-xl shadow-2xl overflow-hidden bg-surface-overlay flex items-center justify-center" style={{ width: 180, height: 180 }}>
-                {localPl.coverImage
-                  ? <img src={localPl.coverImage} alt="" className="w-full h-full object-cover" />
-                  : <LocalPlaylistMosaic trackIds={localPl.trackIds} className="w-full h-full" />
-                }
-              </div>
-              <div className="pb-2">
-                <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-1">Local Playlist</p>
-                <h1 className="text-white text-3xl font-black mb-1">{localPl.name}</h1>
-                <p className="text-white/60 text-sm">{localTracks.length} songs</p>
-              </div>
-            </div>
-            <div className="relative z-10 flex items-center gap-3 mt-5">
-              {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
-              {localQTracks.length > 1 && (
-                <HeroShuffleButton onClick={() => { const sh = fisherYates(localQTracks); playTrack(sh[0], sh) }} />
-              )}
-            </div>
-          </div>
-          <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
-          <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}>
-              {!isMobile && <span className="text-center">#</span>}<span /><span>Title</span><div className="flex justify-center"><Clock size={12} /></div>
-            </div>
-            {localTracks.map((lt, i) => {
-              const qt = libTrackToTrack(lt)
-              return (
-                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}
-                  onClick={() => { if (isMobile) playTrack(qt, localQTracks) }}
-                  onDoubleClick={() => playTrack(qt, localQTracks)}
-                >
-                  {!isMobile && (
-                    <>
-                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
-                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}><Play size={14} fill="currentColor" /></button>
-                    </>
-                  )}
-                  <div className="w-10 h-10 rounded-md overflow-hidden shrink-0">
-                    <AlbumArtThumb track={lt} size={40} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-text-primary text-sm font-medium truncate" title={lt.title}>{lt.title}</p>
-                    <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
-                  </div>
-                  <span className="text-text-muted text-xs tabular-nums text-center">
-                    {formatDuration(lt.duration, '--:--')}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )
-    }
+    // Local playlists work signed-out too — same detail view as the signed-in
+    // path (renderDetail already handles the missing account).
+    if (localSelectedId !== null) return renderDetail()
     return (
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]">
         <div className="px-5 pt-5 pb-8">
@@ -2188,812 +2964,9 @@ export default function PlaylistsView(): JSX.Element {
     )
   }
 
-  // ── Playlist detail ────────────────────────────────────────────────────────
+  // ── Playlist detail (synced or local) — one shared tree, see renderDetail
 
-  if (selectedId != null) {
-    const durLabel = totalDurationLabel(tracks)
-    // Extra leading checkbox column while selecting. rem, not px, so the fixed
-    // columns (notably the album-art column) scale with the app text-size
-    // setting alongside the rem-sized covers and text — identical at scale 1.
-    // Mobile drops the grip, index/play and duration columns (see isMobile
-    // above) and widens the trailing one to hold a 44px "more" button.
-    const gridCols = isMobile
-      ? (selectMode ? '1.25rem 2.5rem 1fr 2.75rem' : '2.5rem 1fr 2.75rem')
-      : (selectMode ? '1.25rem 1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem' : '1rem 1.75rem 2.5rem 1fr 3.5rem 2.25rem')
-
-    const playShuffle = () => {
-      if (!tracks.length) return
-      const shuffled = fisherYates(tracks)
-      playTrack(shuffled[0], shuffled)
-    }
-
-    return (
-      <div ref={setListScrollEl} className="relative flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden" onClick={() => { setTrackMenu(null); setShowAddAllMenu(false); setShowHeroMenu(false) }}>
-        {/* ── Hero (shown immediately using summary data) — the backdrop now
-            extends behind the back button too, instead of leaving a plain
-            theme-background strip above the gradient. Text in this section
-            is fixed to a light palette regardless of app theme, since the
-            backdrop is always a dark blurred image — theme-aware text colors
-            (which flip to dark-on-light in light mode) were unreadable here. ── */}
-        <div className="relative overflow-hidden px-6 pb-6 shrink-0">
-          <HeroBackdrop src={playlistCoverUrl(coverData ?? {}) ?? tracks[0]?.imageUrl ?? null} />
-
-          <div className="relative z-10 px-0 pt-5">
-            <button onClick={() => {
-              setSelectedId(null); setRenaming(false)
-              if (isSharedView) { setIsSharedView(false); window.history.pushState({}, '', '/playlists') }
-            }} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
-              <ArrowLeft size={15} /> Playlists
-            </button>
-          </div>
-
-          {/* Hidden file input */}
-          <input
-            ref={coverInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleCoverUpload(f); e.target.value = '' }}
-          />
-
-          <div className="relative z-10 flex gap-6 items-end pt-6">
-            {/* Cover image — clickable to upload (owner only) */}
-            <div className={`shrink-0 self-start group/cover relative rounded-xl shadow-2xl overflow-hidden ${isSharedView ? "cursor-default" : "cursor-pointer"}`} style={{ width: 180, height: 180 }} onClick={() => !isSharedView && coverInputRef.current?.click()}>
-              {loadingDetail && tracks.length === 0 ? (
-                <div className="w-full h-full bg-surface-overlay animate-pulse" />
-              ) : coverLoading ? (
-                <div className="w-full h-full bg-surface-overlay flex items-center justify-center">
-                  <Loader2 size={28} className="text-text-muted opacity-50 animate-spin" />
-                </div>
-              ) : playlistCoverUrl(coverData ?? {}) && !coverImgError ? (
-                <img
-                  src={playlistCoverUrl(coverData ?? {})}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  onError={() => setCoverImgError(true)}
-                />
-              ) : (
-                <PlaylistMosaic tracks={tracks} className="w-full h-full" />
-              )}
-              {/* Upload overlay (owner only) */}
-              <div className={`absolute inset-0 bg-black/50 transition-opacity flex flex-col items-center justify-center gap-2 ${isSharedView ? "opacity-0 pointer-events-none" : "opacity-0 group-hover/cover:opacity-100"}`}>
-                {coverUploading ? (
-                  <Loader2 size={24} className="text-white animate-spin" />
-                ) : (
-                  <>
-                    <Pencil size={24} className="text-white" />
-                    <span className="text-white text-xs font-medium">Change cover</span>
-                  </>
-                )}
-              </div>
-              {/* Remove cover button (owner only). Was opacity-0
-                  group-hover:opacity-100 with no touch equivalent — a
-                  destructive action unreachable on mobile, unlike the "Change
-                  cover" overlay above it, which is only decorative (the whole
-                  cover is already tappable via the parent's own onClick). */}
-              {!isSharedView && (coverData?.cover_image_url || coverData?.cover_image) && !coverImgError && (
-                <button
-                  className="absolute top-1.5 right-1.5 rounded-md bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/cover:opacity-100 transition-opacity hover:bg-red-500/80 w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:p-1"
-                  onClick={e => { e.stopPropagation(); handleRemoveCover() }}
-                  aria-label="Remove cover"
-                >
-                  <ImageOff size={14} className="md:w-3 md:h-3" />
-                </button>
-              )}
-            </div>
-
-            <div className="min-w-0 flex-1 pb-1">
-              <p className="text-white/60 text-xs uppercase tracking-widest font-semibold mb-2">Playlist</p>
-              {renaming ? (
-                <div className="flex items-center gap-2 mb-3">
-                  <input value={renameValue} onChange={e => setRenameValue(e.target.value)} onKeyDown={e => e.key === 'Enter' && renameSelected()} autoFocus className="bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-2xl font-black focus:outline-none focus:border-accent/50 w-full" />
-                  <button onClick={renameSelected} className="p-2 rounded-lg bg-accent/15 text-accent shrink-0"><Check size={16} /></button>
-                  <button onClick={() => setRenaming(false)} className="p-2 rounded-lg text-white/60 hover:text-white shrink-0"><X size={16} /></button>
-                </div>
-              ) : (
-                <h1 className="text-white text-3xl md:text-4xl font-black truncate mb-2">
-                  {detail?.name ?? summary?.name ?? <span className="bg-white/10 rounded animate-pulse text-transparent select-none">Loading…</span>}
-                </h1>
-              )}
-              <div className="flex items-center gap-1.5 text-white/60 text-sm mb-2">
-                <span className="font-medium text-white/85">{account.discord_username}</span>
-                {!loadingDetail && (
-                  <>
-                    <span>·</span>
-                    <span>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</span>
-                    {durLabel && <><span>·</span><span className="flex items-center gap-1"><Clock size={12} />{durLabel}</span></>}
-                  </>
-                )}
-                {loadingDetail && <span className="ml-1 text-xs opacity-50">Loading…</span>}
-              </div>
-
-              {/* Description */}
-              {editingDesc ? (
-                <div className="flex items-start gap-2 mb-3">
-                  <textarea
-                    value={descValue}
-                    onChange={e => setDescValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveDescription() } if (e.key === 'Escape') setEditingDesc(false) }}
-                    autoFocus
-                    rows={2}
-                    placeholder="Add a description…"
-                    className="flex-1 bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-accent/50 resize-none placeholder:text-white/40"
-                  />
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <button onClick={saveDescription} className="p-1.5 rounded-lg bg-accent/15 text-accent"><Check size={14} /></button>
-                    <button onClick={() => setEditingDesc(false)} className="p-1.5 rounded-lg text-white/60 hover:text-white"><X size={14} /></button>
-                  </div>
-                </div>
-              ) : isSharedView ? (
-                detail?.description ? (
-                  <p className="text-white/60 text-sm line-clamp-2 mb-3">{detail.description}</p>
-                ) : null
-              ) : (
-                <button
-                  className="text-left mb-3 group/desc flex items-start gap-1.5"
-                  onClick={() => { setDescValue(detail?.description ?? ''); setEditingDesc(true) }}
-                >
-                  {detail?.description ? (
-                    <>
-                      <p className="text-white/60 text-sm line-clamp-2 group-hover/desc:text-white/80 transition-colors">{detail.description}</p>
-                      <Pencil size={11} className="text-white/60 opacity-0 group-hover/desc:opacity-60 transition-opacity shrink-0 mt-1" />
-                    </>
-                  ) : (
-                    <p className="text-white/60 text-sm opacity-40 hover:opacity-70 transition-opacity italic">+ Add description</p>
-                  )}
-                </button>
-              )}
-
-              {/* Action row */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {tracks.length > 0 && <HeroPlayButton onClick={() => playCollection(tracks)} />}
-                {tracks.length > 1 && <HeroShuffleButton onClick={playShuffle} />}
-
-                {/* Shared (not-owned) playlists only get "Save to library" —
-                    the owner-only actions below don't apply. */}
-                {isSharedView && account && tracks.length > 0 && detail && (
-                  <button
-                    onClick={handleImportPlaylist}
-                    disabled={importState === 'loading' || importState === 'done'}
-                    title={importState === 'done' ? 'Saved to library!' : importState === 'error' ? 'Import failed' : 'Save to my library'}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-60 ${
-                      importState === 'done' ? 'text-accent bg-accent/10' :
-                      importState === 'error' ? 'text-red-400 bg-red-400/10' :
-                      'text-text-primary bg-surface-raised hover:bg-surface-overlay'
-                    }`}
-                  >
-                    {importState === 'loading' ? <Loader2 size={14} className="animate-spin" /> :
-                     importState === 'done' ? <Check size={14} /> :
-                     <FolderInput size={14} />}
-                    {importState === 'loading' ? 'Saving…' : importState === 'done' ? 'Saved!' : importState === 'error' ? 'Failed' : 'Save to library'}
-                  </button>
-                )}
-
-                {/* Everything else (download, share, public/private, add-all,
-                    rename, delete) lives behind one "⋯" menu instead of a row
-                    of loose icon buttons. */}
-                {!isSharedView && detail && (
-                  <div className="relative" ref={heroMenuRef}>
-                    <button
-                      ref={heroBtnRef}
-                      onClick={e => { e.stopPropagation(); setShowHeroMenu(v => !v); setShowAddAllMenu(false) }}
-                      title="More"
-                      className={`p-2.5 rounded-full text-sm transition-colors ${showHeroMenu ? 'text-white bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
-                    >
-                      <MoreHorizontal size={18} />
-                    </button>
-                    {/* Portaled to <body> so the hero's overflow-hidden can't
-                        clip it, and height-clamped to the viewport so a long
-                        "Add all to playlist" list stays fully visible. */}
-                    {showHeroMenu && createPortal(
-                      <>
-                        <div className="fixed inset-0 z-[60]" onClick={() => { setShowHeroMenu(false); setShowAddAllMenu(false) }} />
-                        {(() => {
-                          const r = heroBtnRef.current?.getBoundingClientRect()
-                          const top = r ? r.bottom + 6 : 0
-                          const left = r ? Math.min(r.left, window.innerWidth - 218) : 0
-                          return (
-                            <div
-                              className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[210px] overflow-y-auto"
-                              style={{ top, left, maxHeight: window.innerHeight - top - 8 }}
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <MenuItem
-                                icon={zipState === 'loading' ? Loader2 : Archive}
-                                label={zipState === 'error' ? 'Download failed' : zipState === 'done' ? 'Download started' : 'Download as ZIP'}
-                                disabled={zipState === 'loading' || tracks.length === 0}
-                                onClick={() => { handleZipDownload(tracks, detail.name ?? summary?.name ?? 'playlist') }}
-                              />
-                              {!!(window as any).electron && (
-                                <MenuItem
-                                  icon={offlineSyncState?.state === 'syncing' ? Loader2 : Download}
-                                  label={
-                                    offlineSyncState?.state === 'syncing' ? `Downloading… ${offlineSyncState.current}/${offlineSyncState.total}`
-                                      : isOffline ? 'Remove offline download' : 'Download for offline'
-                                  }
-                                  disabled={offlineSyncState?.state === 'syncing' || tracks.length === 0}
-                                  onClick={() => { handleToggleOffline() }}
-                                />
-                              )}
-                              <MenuItem
-                                icon={shareCopied ? Check : Link}
-                                label={shareCopied ? 'Link copied!' : 'Copy share link'}
-                                disabled={tracks.length === 0}
-                                onClick={() => { handleShare() }}
-                              />
-                              <MenuItem
-                                icon={detail.is_public ? Globe : Lock}
-                                label={detail.is_public ? 'Make private' : 'Make public'}
-                                disabled={togglingPublic}
-                                onClick={() => { handleTogglePublic() }}
-                              />
-                              {otherPlaylists.length > 0 && tracks.length > 0 && (
-                                <>
-                                  <MenuItem
-                                    icon={FolderInput}
-                                    label="Add all to playlist"
-                                    disabled={addingAll}
-                                    trailing={<span className="text-text-muted text-xs">{showAddAllMenu ? '⌄' : '›'}</span>}
-                                    onClick={() => setShowAddAllMenu(v => !v)}
-                                  />
-                                  {showAddAllMenu && (
-                                    <div className="border-t border-b border-[var(--border)] max-h-40 overflow-y-auto">
-                                      {otherPlaylists.map(p => (
-                                        <button key={p.id} onClick={async () => { setShowAddAllMenu(false); setShowHeroMenu(false); await handleAddAllTo(p.id, detail) }}
-                                          className="w-full text-left pl-9 pr-3.5 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors truncate">
-                                          {p.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              <div className="border-t border-[var(--border)] my-1" />
-                              {!renaming && (
-                                <MenuItem icon={Pencil} label="Rename" onClick={() => { setShowHeroMenu(false); setRenameValue(detail.name); setRenaming(true) }} />
-                              )}
-                              <MenuItem icon={Trash2} label="Delete playlist" destructive onClick={() => { setShowHeroMenu(false); deleteSelected() }} />
-                            </div>
-                          )
-                        })()}
-                      </>,
-                      document.body
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
-
-        {/* ── Tracklist ── */}
-        {loadingDetail ? (
-          <TrackSkeleton />
-        ) : tracks.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 gap-2 text-center px-8">
-            <Music2 className="text-text-muted opacity-20" size={40} />
-            <p className="text-text-muted text-sm">This playlist is empty.</p>
-            <p className="text-text-muted text-xs">Add tracks from the Tracker or Liked Songs.</p>
-          </div>
-        ) : (
-          <div className="px-2 pb-8">
-            {/* Pinned list header: controls on one row, column labels on their
-                own full-width row beneath. Sticky so scrolled track rows never
-                reach the top of the scroll container, where they'd render
-                behind the frameless window's fixed min/max/close buttons; the
-                opaque background is what stops that.
-                The controls sit on the LEFT on purpose. Right-aligned they'd
-                land under those window buttons, which forces the 188px gutter
-                the other toolbars carry — and that gutter is pure dead space
-                next to the controls. Nothing here may share the column row
-                either: anything in that grid steals width from the columns and
-                knocks the duration header out of line with the rows.
-                -mx-2 px-6 backs the full container width while keeping the
-                grid's content box lined up with the rows' px-4. */}
-            <div className="sticky top-0 z-20 -mx-2 px-6 pt-2 pb-1 bg-surface">
-              <div className="flex items-center gap-2 mb-2">
-                {searchOpen ? (
-                  <div className="relative w-64">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                    <input
-                      ref={searchInputRef}
-                      value={search}
-                      onChange={e => setSearch(e.target.value)}
-                      onBlur={() => { if (!search) setSearchOpen(false) }}
-                      onKeyDown={e => { if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur() } }}
-                      placeholder={`Search ${tracks.length} tracks…`}
-                      className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl pl-8 pr-8 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
-                    />
-                    <button
-                      onClick={() => { setSearch(''); setSearchOpen(false) }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-                      title="Close search"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setSearchOpen(true)}
-                    className="flex items-center justify-center w-9 h-9 rounded-xl text-text-muted hover:text-text-primary bg-surface-overlay transition-colors"
-                    title="Search tracks"
-                  >
-                    <Search size={15} />
-                  </button>
-                )}
-                {versionsEnabled && (
-                  <button
-                    onClick={() => { setCompactView(v => !v); clearExpandedGroups() }}
-                    className={`flex items-center gap-1.5 px-3 h-9 rounded-xl text-xs font-medium transition-colors ${
-                      compactView
-                        ? 'bg-accent/15 text-accent border border-accent/30'
-                        : 'bg-surface-overlay text-text-muted hover:text-text-secondary border border-transparent'
-                    }`}
-                    title="Collapse tracks into their version groups"
-                  >
-                    <Layers size={13} />
-                    <span className="hidden sm:inline">Compact</span>
-                  </button>
-                )}
-                {compactView && (
-                  <span className="text-text-muted text-xs uppercase tracking-widest ml-1">
-                    {loadingCompact ? 'Loading…' : `${filteredCompactGroups.length} group${filteredCompactGroups.length === 1 ? '' : 's'}`}
-                  </span>
-                )}
-              </div>
-
-              {!compactView && (
-                <div className="grid items-center gap-3 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: gridCols }}>
-                  {selectMode && (
-                    <button
-                      onClick={() => {
-                        const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
-                        setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
-                      }}
-                      className="flex items-center justify-center text-text-muted hover:text-text-primary"
-                      title="Select all / none"
-                    >
-                      {displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
-                        ? <CheckSquare2 size={15} className="text-accent" />
-                        : <Square size={15} className="opacity-50" />}
-                    </button>
-                  )}
-                  {!isMobile && <span />}
-                  {!isMobile && <span className="text-center">#</span>}
-                  <span />
-                  <SortHeader label="Title" field="title" sort={sort} onSort={handleSort} />
-                  {!isMobile && (
-                    <div className="flex justify-center">
-                      <SortHeader label={<Clock size={12} className="inline" />} field="duration" sort={sort} onSort={handleSort} />
-                    </div>
-                  )}
-                  <span />
-                </div>
-              )}
-            </div>
-
-            {compactView ? (
-              loadingCompact ? (
-                <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
-                  <Loader2 size={18} className="animate-spin" />
-                  <span className="text-sm">Loading version groups…</span>
-                </div>
-              ) : filteredCompactGroups.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-40 gap-2">
-                  <CompactEmptyIcon size={32} className="text-text-muted opacity-30" />
-                  <p className="text-text-muted text-sm">
-                    {compactGroups.length === 0 ? 'No version groups in this playlist' : `No version groups match "${search}"`}
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-0.5">
-                  {filteredCompactGroups.map((group) => (
-                    <div key={group.groupId}>
-                      <CompactGroupRow
-                        coverTrack={group.members[0].item}
-                        title={group.title}
-                        count={group.members.length}
-                        expanded={expandedGroups.has(group.groupId)}
-                        onToggle={() => toggleGroupExpanded(group.groupId)}
-                      />
-                      {expandedGroups.has(group.groupId) && (
-                        <div className="ml-4 pl-4 border-l border-[var(--border)] space-y-0.5">
-                          {group.members.map(({ item: track, meta }) => {
-                            const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
-                            return (
-                              <div
-                                key={track.id}
-                                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                                className="group flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default"
-                                onClick={() => { if (isMobile) playTrack(track, group.members.map(m => m.item)) }}
-                                onDoubleClick={() => playTrack(track, group.members.map(m => m.item))}
-                              >
-                                <AlbumArtThumbnail track={track} size={32} className="rounded-md shrink-0" shimmer={false} eager />
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-text-primary text-sm font-medium truncate" title={track.title}>
-                                    {track.title}
-                                    {meta.version && <span className="text-text-muted"> ({meta.version})</span>}
-                                  </p>
-                                  <p className="text-text-muted text-xs truncate">{track.album || track.artist}</p>
-                                </div>
-                                <button
-                                  onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                                  className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors shrink-0 ${
-                                    isMobile ? 'w-11 h-11 flex items-center justify-center -mr-1' : 'p-1.5'
-                                  }`}
-                                  aria-label="More options"
-                                >
-                                  <MoreHorizontal size={isMobile ? 18 : 13} />
-                                </button>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )
-            ) : (
-              <>
-            {displayTracks.length === 0 && (
-              <p className="text-text-muted text-sm text-center py-8">No tracks match "{search}"</p>
-            )}
-
-            {/* Windowed rows — absolutely positioned at displayIdx * TRACK_ROW_H
-                inside a container sized to the full list, so only the visible
-                slice is mounted (see useVirtualWindowEl). */}
-            <div ref={setListContentEl} style={{ height: rowsTotalHeight, position: 'relative' }}>
-            {displayTracks.slice(rowStart, rowEnd).map((track, sliceIdx) => {
-              const displayIdx = rowStart + sliceIdx
-              const originalIdx = trackIndexOf.get(track) ?? -1
-              const songId = track.id ? (userApi.trackIdToSongId(track.id) ?? -1) : -1
-              const isDragging = dragEnabled && dragIdx === originalIdx
-              const isDropTarget = dragEnabled && dropIdx === displayIdx && dragIdx !== null && dragIdx !== displayIdx
-              const isSelected = selectedTracks.has(track.id)
-
-              return (
-                <div
-                  key={track.id}
-                  draggable={!isSharedView && dragEnabled && !selectMode}
-                  onDragStart={() => !isSharedView && dragEnabled && !selectMode && setDragIdx(originalIdx)}
-                  onDragOver={e => { if (!dragEnabled || selectMode) return; e.preventDefault(); setDropIdx(displayIdx) }}
-                  onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
-                  onDrop={() => dragEnabled && !selectMode && handleDrop(displayIdx)}
-                  onClick={e => {
-                    if (e.ctrlKey || e.metaKey || selectMode) { toggleTrackSelect(track); return }
-                    // Touch has no hover play button — the row is the target.
-                    if (isMobile) playTrack(track, displayTracks)
-                  }}
-                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                  className={`group grid items-center gap-3 px-4 py-2 rounded-lg transition-colors cursor-default select-none ${
-                    isDragging ? 'opacity-40 bg-surface-raised' : isDropTarget ? 'border-t-2 border-accent bg-surface-overlay' : isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
-                  }`}
-                  style={{ gridTemplateColumns: gridCols, position: 'absolute', top: displayIdx * TRACK_ROW_H, left: 0, right: 0, height: TRACK_ROW_H }}
-                >
-                  {selectMode && (
-                    <span className="flex items-center justify-center shrink-0">
-                      {isSelected ? <CheckSquare2 size={16} className="text-accent" /> : <Square size={16} className="text-text-muted opacity-50" />}
-                    </span>
-                  )}
-                  {!isMobile && (
-                    <span className={`flex items-center justify-center text-text-muted ${!isSharedView && dragEnabled && !selectMode ? 'opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing' : 'opacity-0 pointer-events-none'}`}>
-                      <GripVertical size={14} />
-                    </span>
-                  )}
-                  {!isMobile && (
-                    <>
-                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{displayIdx + 1}</span>
-                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={e => { e.stopPropagation(); if (selectMode) toggleTrackSelect(track); else playTrack(track, displayTracks) }}>
-                        <Play size={14} fill="currentColor" />
-                      </button>
-                    </>
-                  )}
-                  <AlbumArtThumbnail track={track} size={40} className="rounded-md" shimmer={false} eager />
-                  <div className="min-w-0" onDoubleClick={() => { if (!selectMode) playTrack(track, displayTracks) }}>
-                    <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
-                    <p className="text-text-muted text-xs truncate flex items-center gap-1">
-                      {!!track.id && offlineTracks[track.id] && (
-                        <span className="shrink-0 text-emerald-400" title="Downloaded for offline playback">
-                          <CircleArrowDown size={11} fill="currentColor" />
-                        </span>
-                      )}
-                      {/* Duration has no column of its own on mobile — it
-                          rides along here rather than being dropped. */}
-                      <span className="truncate">
-                        {track.artist}{track.album ? ` · ${track.album}` : ''}
-                        {isMobile ? ` · ${formatDuration(track.duration, '--:--')}` : ''}
-                      </span>
-                    </p>
-                  </div>
-                  {!isMobile && (
-                    <span className="text-text-muted text-xs tabular-nums text-center">
-                      {formatDuration(track.duration, '--:--')}
-                    </span>
-                  )}
-                  {/* Was hover-reveal + `hidden md:flex`, i.e. unreachable on
-                      touch — the context menu had no entry point at all. */}
-                  <div className={`flex items-center justify-end transition-opacity ${
-                    selectMode ? 'opacity-0 pointer-events-none' : isMobile ? '' : 'opacity-0 group-hover:opacity-100'
-                  }`}>
-                    <button onClick={e => { e.stopPropagation(); setTrackMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
-                      className={`text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors ${
-                        isMobile ? 'w-11 h-11 flex items-center justify-center -mr-2' : 'p-1.5 hidden md:flex'
-                      }`}
-                      aria-label="More options">
-                      <MoreHorizontal size={isMobile ? 18 : 13} />
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-            </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Track context menu ── */}
-        {trackMenu && (
-          <SongContextMenu
-            state={trackMenu}
-            onClose={() => setTrackMenu(null)}
-            canEdit={canEdit}
-            onInfo={() => openSongInfo(trackMenu.songId as number)}
-            onPlay={() => playTrack(trackMenu.track, displayTracks)}
-            onAddToQueue={() => addToQueue(trackMenu.track)}
-            onSelect={() => toggleTrackSelect(trackMenu.track)}
-            liked={likedTrackIds.includes(trackMenu.track.id)}
-            onToggleLike={() => toggleLike(trackMenu.track.id)}
-            removeAction={!isSharedView ? { label: 'Remove from playlist', onClick: () => removeTrack(trackMenu.songId as number) } : undefined}
-          />
-        )}
-
-        {/* ── Bulk selection action bar ── */}
-        {selectMode && (
-          <div className="sticky bottom-0 shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2 relative z-30" onClick={e => e.stopPropagation()}>
-            <span className="text-sm text-text-primary font-medium flex-1">
-              {selectedTracks.size} {selectedTracks.size === 1 ? 'track' : 'tracks'} selected
-            </span>
-            <button
-              onClick={() => setSelectedTracks(new Map(displayTracks.map(t => [t.id, t])))}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
-            >
-              Select all
-            </button>
-            <button
-              onClick={() => setSelectedTracks(new Map())}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
-            >
-              Clear
-            </button>
-            <button
-              onClick={bulkAddToQueue}
-              disabled={selectedTracks.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-            >
-              <ListPlus size={13} /> Add to queue
-            </button>
-            {/* Always offered, even with no other playlist to target — the
-                flyout can create one. */}
-            <div className="relative">
-              <button
-                onClick={() => setShowBulkPlaylists(v => !v)}
-                disabled={selectedTracks.size === 0}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-              >
-                <Plus size={13} /> Add to playlist
-              </button>
-              {showBulkPlaylists && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => { setShowBulkPlaylists(false); setBulkNewName('') }} />
-                  <div className="absolute right-0 bottom-full mb-1 z-50 w-56 bg-surface border border-[var(--border)] rounded-xl shadow-2xl overflow-hidden">
-                    <div className="px-3 py-2 border-b border-[var(--border)] text-[11px] uppercase tracking-wider text-text-muted font-semibold">
-                      Add to playlist
-                    </div>
-                    <div className="max-h-56 overflow-y-auto py-1">
-                      {otherPlaylists.length === 0 ? (
-                        <p className="px-3 py-2 text-xs text-text-muted">No other playlists yet.</p>
-                      ) : otherPlaylists.map(p => (
-                        <button
-                          key={p.id}
-                          onClick={() => bulkAddToPlaylist(p.id)}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
-                        >
-                          <ListMusic size={14} className="shrink-0 text-text-muted" />
-                          <span className="flex-1 truncate">{p.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="border-t border-[var(--border)] p-2 flex items-center gap-1.5">
-                      <input
-                        value={bulkNewName}
-                        onChange={e => setBulkNewName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') bulkCreateAndAddToPlaylist() }}
-                        placeholder="New playlist…"
-                        className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
-                      />
-                      <button
-                        onClick={bulkCreateAndAddToPlaylist}
-                        disabled={!bulkNewName.trim() || bulkCreating}
-                        className="shrink-0 p-1.5 rounded-lg bg-accent text-black disabled:opacity-40 transition-opacity"
-                        title="Create playlist and add selection"
-                      >
-                        {bulkCreating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-            {!isSharedView && (
-              <button
-                onClick={bulkRemove}
-                disabled={selectedTracks.size === 0 || bulkRemoving}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-red-500/10 text-red-400 rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-              >
-                {bulkRemoving ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Remove
-              </button>
-            )}
-            <button
-              onClick={exitSelectMode}
-              className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
-              title="Exit selection"
-            >
-              <X size={15} className="text-text-muted" />
-            </button>
-          </div>
-        )}
-
-        <SongInfoModal
-          song={infoSong}
-          onClose={() => setInfoSong(null)}
-          onEdit={canEdit ? (songId) => { setInfoSong(null); setPendingEditorSongId(songId); setActiveView('editor') } : undefined}
-        />
-      </div>
-    )
-  }
-
-  // ── Local playlist detail ─────────────────────────────────────────────────
-
-  if (localSelectedId !== null) {
-    const localPl = localPlaylists.find(p => p.id === localSelectedId)
-    if (!localPl) { setLocalSelectedId(null); return <div /> }
-    const localTracks = localPl.trackIds.map(id => libraryTracks.find(t => t.id === id)).filter(Boolean) as LibraryTrack[]
-    const localQTracks: Track[] = localTracks.map(libTrackToTrack)
-    const localDurLabel = totalDurationLabel(localQTracks)
-
-    return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
-        {/* Hero */}
-        <div className="relative overflow-hidden px-6 pb-6 shrink-0">
-          <HeroBackdrop src={localPl.coverImage ?? localTracks.map(t => libraryArt[t.id]).find(a => !!a) ?? null} />
-          <div className="relative z-10 pt-5">
-            <button onClick={() => setLocalSelectedId(null)} className="flex items-center gap-1.5 text-white/60 hover:text-white text-sm transition-colors">
-              <ArrowLeft size={15} /> Playlists
-            </button>
-          </div>
-          <div className="relative z-10 flex gap-6 items-end pt-6">
-            <div
-              className="shrink-0 rounded-xl shadow-2xl overflow-hidden relative group cursor-pointer"
-              style={{ width: 180, height: 180 }}
-              onClick={async () => {
-                const el = (window as any).electron
-                if (!el) return
-                const dataUrl = await el.selectImageFile()
-                if (dataUrl) updateLocalPlaylist(localPl.id, { coverImage: dataUrl })
-              }}
-              title="Click to change cover"
-            >
-              {localPl.coverImage
-                ? <img src={localPl.coverImage} alt="" className="w-full h-full object-cover" />
-                : <LocalPlaylistMosaic trackIds={localPl.trackIds} className="w-full h-full" />
-              }
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                <ImageOff size={22} className="text-white" />
-              </div>
-            </div>
-            <div className="min-w-0 flex-1 pb-1">
-              <p className="text-white/60 text-xs uppercase tracking-widest font-semibold mb-2">Local Playlist</p>
-              {localRenaming ? (
-                <div className="flex items-center gap-2 mb-3">
-                  <input value={localRenameVal} onChange={e => setLocalRenameVal(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { renameLocalPlaylist(localPl.id, localRenameVal.trim() || localPl.name); setLocalRenaming(false) } }}
-                    autoFocus className="bg-black/30 border border-white/20 rounded-lg px-3 py-2 text-white text-2xl font-black focus:outline-none focus:border-accent/50 w-full" />
-                  <button onClick={() => { renameLocalPlaylist(localPl.id, localRenameVal.trim() || localPl.name); setLocalRenaming(false) }} className="p-2 rounded-lg bg-accent/15 text-accent shrink-0"><Check size={16} /></button>
-                  <button onClick={() => setLocalRenaming(false)} className="p-2 rounded-lg text-white/60 hover:text-white shrink-0"><X size={16} /></button>
-                </div>
-              ) : (
-                <h1 className="text-white text-3xl md:text-4xl font-black truncate mb-2">{localPl.name}</h1>
-              )}
-              <div className="flex items-center gap-1.5 text-white/60 text-sm mb-4">
-                <HardDrive size={12} className="shrink-0" />
-                <span>Local</span>
-                <span>·</span>
-                <span>{localTracks.length} {localTracks.length === 1 ? 'track' : 'tracks'}</span>
-                {localDurLabel && <><span>·</span><span className="flex items-center gap-1"><Clock size={12} />{localDurLabel}</span></>}
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {localQTracks.length > 0 && <HeroPlayButton onClick={() => playCollection(localQTracks)} />}
-                {localQTracks.length > 1 && (
-                  <HeroShuffleButton onClick={() => { const s = fisherYates(localQTracks); playTrack(s[0], s) }} />
-                )}
-                {!localRenaming && (
-                  <button onClick={() => { setLocalRenameVal(localPl.name); setLocalRenaming(true) }} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Rename">
-                    <Pencil size={15} />
-                  </button>
-                )}
-                {isElectron && localTracks.length > 0 && (
-                  <button onClick={() => exportLocalPlaylistM3u(localPl.id)} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Export as M3U">
-                    <FileDown size={15} />
-                  </button>
-                )}
-                {localPl.coverImage && (
-                  <button onClick={() => updateLocalPlaylist(localPl.id, { coverImage: null })} className="p-2.5 rounded-full text-white/60 hover:text-white hover:bg-white/10 text-sm transition-colors" title="Remove custom cover">
-                    <ImageOff size={15} />
-                  </button>
-                )}
-                <button onClick={() => { deleteLocalPlaylist(localPl.id); setLocalSelectedId(null) }} className="p-2.5 rounded-full text-white/60 hover:text-red-400 hover:bg-red-500/10 text-sm transition-colors" title="Delete playlist">
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-[var(--border)] mx-6 mb-3 shrink-0" />
-
-        {/* Track list */}
-        {localTracks.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 gap-2 text-center px-8">
-            <Music2 className="text-text-muted opacity-20" size={40} />
-            <p className="text-text-muted text-sm">This playlist is empty.</p>
-            <p className="text-text-muted text-xs">Add tracks from the Library tab.</p>
-          </div>
-        ) : (
-          <div className="px-2 pb-8">
-            <div className="grid items-center gap-3 px-4 pb-2 text-text-muted text-xs uppercase tracking-widest" style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}>
-              {!isMobile && <span>#</span>}
-              <span />
-              <span>Title</span>
-              <div className="flex justify-center"><Clock size={12} /></div>
-            </div>
-            {localTracks.map((lt, i) => {
-              const qt = libTrackToTrack(lt)
-              return (
-                <div key={lt.id} className="group grid items-center gap-3 px-4 py-2 rounded-lg hover:bg-surface-raised active:bg-surface-raised transition-colors cursor-default select-none"
-                  style={{ gridTemplateColumns: isMobile ? '2.5rem 1fr 3.5rem' : '1.75rem 2.5rem 1fr 3.5rem' }}
-                  onClick={() => { if (isMobile) playTrack(qt, localQTracks) }}
-                  onDoubleClick={() => playTrack(qt, localQTracks)}
-                >
-                  {!isMobile && (
-                    <>
-                      <span className="text-center text-xs text-text-muted tabular-nums group-hover:hidden">{i + 1}</span>
-                      <button className="hidden group-hover:flex items-center justify-center text-text-primary" onClick={() => playTrack(qt, localQTracks)}>
-                        <Play size={14} fill="currentColor" />
-                      </button>
-                    </>
-                  )}
-                  <div className="w-10 h-10 rounded-md overflow-hidden shrink-0">
-                    <AlbumArtThumb track={lt} size={40} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-text-primary text-sm font-medium truncate" title={lt.title}>{lt.title}</p>
-                    <p className="text-text-muted text-xs truncate">{lt.artist || 'Unknown Artist'}{lt.album ? ` · ${lt.album}` : ''}</p>
-                  </div>
-                  <span className="text-text-muted text-xs tabular-nums text-center">
-                    {formatDuration(lt.duration, '--:--')}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    )
-  }
+  if (selectedId != null || localSelectedId !== null) return renderDetail()
 
   // A full-window drop hint, portaled to the body so it shows over whichever
   // view is active. The actual drop is handled by the window listener above.

@@ -653,19 +653,23 @@ export default function ApiFilesView(): JSX.Element {
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Header */}
         <div className={`px-5 pb-3 shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <HardDrive size={18} className="text-text-muted" />
-              <h1 className="text-text-primary text-xl font-bold">API Files</h1>
+              <h1 className="text-text-primary text-lg md:text-xl font-bold">API Files</h1>
             </div>
-            <div className="flex items-center gap-3">
+            {/* Scrolls horizontally instead of wrapping/squeezing on narrow
+                screens — same pattern as the Tracker's stat strip. Harmless
+                on desktop, where everything already fits and there's nothing
+                to scroll. */}
+            <div className="flex items-center gap-2 md:gap-3 overflow-x-auto no-scrollbar">
               {/* Sort controls */}
-              <div className="flex items-center gap-1 text-text-muted">
+              <div className="flex items-center gap-1 text-text-muted shrink-0">
                 {(['name', 'type', 'size'] as SortBy[]).map((by) => (
                   <button
                     key={by}
                     onClick={() => toggleSort(by)}
-                    className={`flex items-center gap-0.5 text-xs px-2 py-1 rounded-md transition-colors capitalize ${
+                    className={`flex items-center gap-0.5 text-xs px-2.5 py-2 md:px-2 md:py-1 rounded-md transition-colors capitalize ${
                       sortBy === by
                         ? 'bg-surface-raised text-text-primary'
                         : 'hover:text-text-secondary hover:bg-surface-overlay'
@@ -678,32 +682,32 @@ export default function ApiFilesView(): JSX.Element {
                 ))}
               </div>
               {/* Type filter */}
-              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5">
+              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5 shrink-0">
                 {MEDIA_FILTERS.map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
                     onClick={() => setTypeFilter(key)}
-                    className={`p-2 rounded-md transition-colors ${typeFilter === key ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                    className={`p-2.5 md:p-2 rounded-md transition-colors ${typeFilter === key ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                     title={`Show ${label.toLowerCase()}`}
                   ><Icon size={14} /></button>
                 ))}
               </div>
               {/* View toggle */}
-              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5">
+              <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-0.5 shrink-0">
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`p-2.5 md:p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                   title="List view"
                 ><LayoutList size={15} /></button>
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
+                  className={`p-2.5 md:p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-surface-raised text-text-primary' : 'text-text-muted hover:text-text-secondary'}`}
                   title="Grid view"
                 ><LayoutGrid size={15} /></button>
               </div>
               {/* API / Local toggle (Electron only) */}
               {isElectron && (
-                <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-1">
+                <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-1 shrink-0">
                   <button
                     onClick={() => setLocalMode(false)}
                     className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${!localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
@@ -730,7 +734,7 @@ export default function ApiFilesView(): JSX.Element {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search files…"
-                className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg pl-8 pr-8 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
+                className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg pl-8 pr-8 py-2.5 md:py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
               />
               {search && (
                 <button
@@ -755,16 +759,16 @@ export default function ApiFilesView(): JSX.Element {
             ) : (
               <div className="flex items-center gap-1.5">
                 <button onClick={goBack} disabled={history.length === 0 && !currentPath}
-                  className="p-1.5 rounded-lg hover:bg-surface-overlay disabled:opacity-30 disabled:pointer-events-none transition-colors" title="Back">
+                  className="p-2.5 md:p-1.5 rounded-lg hover:bg-surface-overlay disabled:opacity-30 disabled:pointer-events-none transition-colors" title="Back">
                   <ArrowLeft size={15} className="text-text-muted" />
                 </button>
-                <button onClick={goHome} className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors" title="Root">
+                <button onClick={goHome} className="p-2.5 md:p-1.5 rounded-lg hover:bg-surface-overlay transition-colors" title="Root">
                   <Home size={15} className="text-text-muted" />
                 </button>
-                <div className="flex items-center gap-0.5 overflow-hidden ml-1 flex-1 min-w-0">
+                <div className="flex items-center gap-0.5 overflow-x-auto no-scrollbar ml-1 flex-1 min-w-0">
                   <button
                     onClick={goHome}
-                    className={`text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${
+                    className={`text-xs px-2 py-1.5 md:px-1.5 md:py-0.5 rounded transition-colors shrink-0 ${
                       crumbs.length === 0 ? 'text-text-primary font-medium' : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'
                     }`}
                   >Root</button>
@@ -773,7 +777,7 @@ export default function ApiFilesView(): JSX.Element {
                       <ChevronRight size={12} className="text-text-muted shrink-0" />
                       <button
                         onClick={() => navigate(crumb.path)}
-                        className={`text-xs px-1.5 py-0.5 rounded transition-colors truncate max-w-[140px] ${
+                        className={`text-xs px-2 py-1.5 md:px-1.5 md:py-0.5 rounded transition-colors truncate max-w-[140px] ${
                           i === crumbs.length - 1 ? 'text-text-primary font-medium' : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'
                         }`}
                         title={crumb.path}
@@ -793,7 +797,7 @@ export default function ApiFilesView(): JSX.Element {
             <div className="flex items-center gap-1.5 mb-3">
               <button
                 onClick={pickLocalFolder}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
               ><FolderOpen size={13} /> Change folder</button>
               {localPath && (
                 <span className="text-text-muted text-xs truncate flex-1" title={localPath}>{localPath}</span>
@@ -827,7 +831,7 @@ export default function ApiFilesView(): JSX.Element {
                       const parent = localPath.replace(/[/\\][^/\\]+$/, '')
                       if (parent && parent !== localPath) browseLocal(parent)
                     }}
-                    className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left"
+                    className="flex items-center gap-3 w-full px-3 py-2.5 md:py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left"
                   >
                     <div className="w-9 h-9 flex items-center justify-center shrink-0"><FolderOpen size={18} className="text-text-muted" /></div>
                     <span className="text-text-muted text-sm">..</span>
@@ -840,7 +844,7 @@ export default function ApiFilesView(): JSX.Element {
                   return (
                     <div
                       key={entry.path}
-                      className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-overlay transition-colors cursor-default"
+                      className="group flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-lg hover:bg-surface-overlay transition-colors cursor-default"
                       onClick={() => {
                         if (isDir) browseLocal(entry.path)
                         else if (mt === 'audio') handleLocalPlay(entry)
@@ -951,7 +955,7 @@ export default function ApiFilesView(): JSX.Element {
             /* ── List view ────────────────────────────────────────────────────── */
             <div className="space-y-0.5">
               {currentPath && !isSearching && (
-                <button onClick={goBack} className="flex items-center gap-3 w-full px-3 py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left">
+                <button onClick={goBack} className="flex items-center gap-3 w-full px-3 py-2.5 md:py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left">
                   <div className="w-9 h-9 flex items-center justify-center shrink-0"><FolderOpen size={18} className="text-text-muted" /></div>
                   <span className="text-text-muted text-sm">..</span>
                 </button>
@@ -965,7 +969,7 @@ export default function ApiFilesView(): JSX.Element {
                 const isLiked = mt === 'audio' && likedSet.has(apiFileTrackId(entry.path))
                 return (
                   <div key={entry.path}
-                    className={`group flex items-center gap-3 px-3 py-2 rounded-lg transition-colors cursor-default ${
+                    className={`group flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-lg transition-colors cursor-default ${
                       isSelected ? 'bg-accent/10 hover:bg-accent/15' : 'hover:bg-surface-overlay'
                     }`}
                     onClick={(e) => {
@@ -1043,7 +1047,7 @@ export default function ApiFilesView(): JSX.Element {
                         on desktop where right-click already works. */}
                     {!selectMode && (
                       <button
-                        className="shrink-0 p-2 -my-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                        className="shrink-0 p-2.5 md:p-2 -my-1 md:-my-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
                         onClick={(e) => { e.stopPropagation(); openContextMenu(entry, e.clientX, e.clientY) }}
                         title="More options"
                       >
@@ -1161,7 +1165,7 @@ export default function ApiFilesView(): JSX.Element {
                           right-click/long-press aren't discoverable on touch. */}
                       {!selectMode && (
                         <button
-                          className="shrink-0 p-1.5 -m-1 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                          className="shrink-0 p-2.5 -m-1.5 md:p-1.5 md:-m-1 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
                           onClick={(e) => { e.stopPropagation(); openContextMenu(entry, e.clientX, e.clientY) }}
                           title="More options"
                         >
@@ -1179,18 +1183,21 @@ export default function ApiFilesView(): JSX.Element {
         {/* Selection action bar */}
         {selectMode && (
           <div className="shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2">
-            <span className="text-sm text-text-primary font-medium flex-1">
+            <span className="text-sm text-text-primary font-medium shrink-0">
               {selectedPaths.size} {selectedPaths.size === 1 ? 'item' : 'items'} selected
             </span>
+            {/* Scrolls instead of squeezing/wrapping when there isn't room
+                for every action — same pattern as the header toolbar above. */}
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1 min-w-0">
             <button
               onClick={() => setSelectedPaths(new Set(filteredEntries.map(e => e.path)))}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+              className="shrink-0 text-xs text-text-muted hover:text-text-primary px-3 py-2.5 md:px-2 md:py-1 rounded transition-colors"
             >
               Select all
             </button>
             <button
               onClick={() => setSelectedPaths(new Set())}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
+              className="shrink-0 text-xs text-text-muted hover:text-text-primary px-3 py-2.5 md:px-2 md:py-1 rounded transition-colors"
             >
               Clear
             </button>
@@ -1209,7 +1216,7 @@ export default function ApiFilesView(): JSX.Element {
                   setActiveView('contributor')
                 }}
                 disabled={selectedPaths.size === 0}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] text-text-secondary hover:text-text-primary hover:border-accent/40 disabled:opacity-50 transition-colors"
+                className="shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border border-[var(--border)] text-text-secondary hover:text-text-primary hover:border-accent/40 disabled:opacity-50 transition-colors"
               >
                 <Trash2 size={13} /> Propose deletion
               </button>
@@ -1217,7 +1224,7 @@ export default function ApiFilesView(): JSX.Element {
             <button
               onClick={downloadZip}
               disabled={selectedPaths.size === 0 || zipStatus === 'starting' || zipStatus === 'zipping'}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 transition-opacity hover:opacity-90"
+              className="shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 transition-opacity hover:opacity-90"
             >
               {zipStatus === 'starting' || zipStatus === 'zipping' ? (
                 <><Loader2 size={13} className="animate-spin" /> {zipStatus === 'starting' ? 'Starting…' : 'Zipping…'}</>
@@ -1229,9 +1236,10 @@ export default function ApiFilesView(): JSX.Element {
                 <><PackageOpen size={13} /> Download ZIP</>
               )}
             </button>
+            </div>
             <button
               onClick={exitSelectMode}
-              className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
+              className="shrink-0 p-2.5 md:p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
               title="Exit selection"
             >
               <X size={15} className="text-text-muted" />
@@ -1308,7 +1316,7 @@ export default function ApiFilesView(): JSX.Element {
                           if (songId != null) addToPlaylist(p.id, songId)
                         }}
                         disabled={playlistBusyId === p.id}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
+                        className="w-full flex items-center gap-2 px-3 py-2.5 md:py-1.5 text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                       >
                         <ListMusic size={13} className="shrink-0 text-text-muted" />
                         <span className="flex-1 truncate text-xs">{p.name}</span>
@@ -1326,31 +1334,31 @@ export default function ApiFilesView(): JSX.Element {
             {getMediaType(ctxMenu.entry.name) === 'audio' && (
               <>
                 <button onClick={() => { handlePlay(ctxMenu.entry); setCtxMenu(null) }}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <Play size={14} className="text-text-muted" /> Play
                 </button>
                 <button onClick={() => { addToQueue(fileToTrack(ctxMenu.entry)); setCtxMenu(null) }}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <ListPlus size={14} className="text-text-muted" /> Add to queue
                 </button>
                 {trackerMatches.get(ctxMenu.entry.path) != null && (
                   <button
                     ref={playlistItemRef}
                     onClick={() => setPlaylistsOpen(o => !o)}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                    className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                     <Plus size={14} className="text-text-muted" /> Add to playlist
                     <ChevronRight size={13} className="ml-auto text-text-muted" />
                   </button>
                 )}
                 <button onClick={() => { toggleLike(apiFileTrackId(ctxMenu.entry.path)); setCtxMenu(null) }}
-                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <Heart size={14} fill={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'currentColor' : 'none'}
                     className={likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'text-accent' : 'text-text-muted'} />
                   {likedTrackIds.includes(apiFileTrackId(ctxMenu.entry.path)) ? 'Unlike' : 'Like'}
                 </button>
                 {trackerMatches.get(ctxMenu.entry.path) != null && (
                   <button onClick={() => { openSongInfo(ctxMenu.entry); setCtxMenu(null) }}
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                    className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                     <Info size={14} className="text-text-muted" /> Find in Tracker
                   </button>
                 )}
@@ -1363,7 +1371,7 @@ export default function ApiFilesView(): JSX.Element {
                       const id = data.results[0]?.id
                       if (id) useStore.getState().openSongEditor(id)
                     } catch {}
-                  }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                  }} className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                     <Pencil size={14} className="text-text-muted" /> Edit
                   </button>
                 )}
@@ -1371,15 +1379,15 @@ export default function ApiFilesView(): JSX.Element {
               </>
             )}
             <button onClick={() => enterSelectMode(ctxMenu.entry)}
-              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <CheckSquare2 size={14} className="text-text-muted" /> Select
             </button>
             <button onClick={() => { copyLink(ctxMenu.entry); setCtxMenu(null) }}
-              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <Link size={14} className="text-text-muted" /> Copy link
             </button>
             <button onClick={() => { copyPath(ctxMenu.entry); setCtxMenu(null) }}
-              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
               <Clipboard size={14} className="text-text-muted" /> Copy path
             </button>
             {/* Contributor actions — proposals target a file, so directories
@@ -1391,14 +1399,14 @@ export default function ApiFilesView(): JSX.Element {
                   setPendingCompProposal({ paths: [ctxMenu.entry.path], changeType: 'replace' })
                   setCtxMenu(null)
                   setActiveView('contributor')
-                }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                }} className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <Replace size={14} className="text-text-muted" /> Propose replacement
                 </button>
                 <button onClick={() => {
                   setPendingCompProposal({ paths: [ctxMenu.entry.path], changeType: 'delete' })
                   setCtxMenu(null)
                   setActiveView('contributor')
-                }} className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                }} className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                   <Trash2 size={14} className="text-text-muted" /> Propose deletion
                 </button>
                 <div className="border-t border-[var(--border)] my-1" />
@@ -1407,12 +1415,12 @@ export default function ApiFilesView(): JSX.Element {
             {ctxMenu.entry.type === 'directory' ? (
               <button onClick={() => { downloadFolder(ctxMenu.entry); setCtxMenu(null) }}
                 disabled={zipStatus === 'starting' || zipStatus === 'zipping'}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50">
+                className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50">
                 <PackageOpen size={14} className="text-text-muted" /> Download folder (ZIP)
               </button>
             ) : (
               <button onClick={() => { handleDownload(ctxMenu.entry); setCtxMenu(null) }}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                className="w-full flex items-center gap-2.5 px-3.5 py-3 md:py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
                 <Download size={14} className="text-text-muted" /> Download
               </button>
             )}

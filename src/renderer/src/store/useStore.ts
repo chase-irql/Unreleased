@@ -227,6 +227,10 @@ interface AppState {
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
   preferOgVersion: boolean
+  // Desktop (Electron/Windows) only. When disabled, the app stops publishing
+  // Media Session metadata/action handlers, which stops Windows from popping
+  // up its System Media Transport Controls overlay on media-key presses.
+  mediaOverlayEnabled: boolean
   // Last.fm scrobbling. `lastfmUser` mirrors the saved session's username
   // (null = not connected; the session key itself lives in lib/lastfm's own
   // localStorage entry). `lastfmEnabled` pauses scrobbling without
@@ -248,6 +252,10 @@ interface AppState {
   // media key) are also registered OS-wide so they work while the app is in
   // the background. See lib/hotkeys isGloballyRegistrable.
   globalHotkeysEnabled: boolean
+  // Per-action opt-out from the OS-wide registration above (actionId →
+  // false). Absence means "global" (the old, only, behavior), so this only
+  // ever narrows the set — see lib/hotkeys isActionGlobal.
+  globalHotkeyOverrides: Record<string, boolean>
 
   // Liked songs
   likedTrackIds: string[]
@@ -449,6 +457,7 @@ interface AppActions {
   setLyricsBlur: (enabled: boolean) => void
   setGradientsEnabled: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
+  setMediaOverlayEnabled: (enabled: boolean) => void
   setLastfmUser: (name: string | null) => void
   setLastfmEnabled: (enabled: boolean) => void
   setPopoutWindow: (kind: PopoutWindowKind, enabled: boolean) => void
@@ -459,6 +468,7 @@ interface AppActions {
   resetHotkeyBindings: () => void
   setHotkeySeekSeconds: (seconds: number) => void
   setGlobalHotkeysEnabled: (enabled: boolean) => void
+  setGlobalHotkeyOverride: (actionId: string, global: boolean) => void
 
   toggleLike: (trackId: string) => void
 
@@ -1112,6 +1122,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
   gradientsEnabled: ls.get<boolean>('gradientsEnabled') ?? true,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
+  mediaOverlayEnabled: ls.get<boolean>('mediaOverlayEnabled') ?? true,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
   // Merge stored overrides onto the defaults so a kind added in a later version
@@ -1120,6 +1131,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   hotkeyBindings: ls.get<Record<string, string>>('hotkeyBindings') ?? {},
   hotkeySeekSeconds: ls.get<number>('hotkeySeekSeconds') ?? 10,
   globalHotkeysEnabled: ls.get<boolean>('globalHotkeysEnabled') ?? false,
+  globalHotkeyOverrides: ls.get<Record<string, boolean>>('globalHotkeyOverrides') ?? {},
 
   setCrossfade: (enabled, duration) => {
     set({ crossfadeEnabled: enabled, crossfadeDuration: duration })
@@ -1130,6 +1142,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
+  setMediaOverlayEnabled: (enabled) => { set({ mediaOverlayEnabled: enabled }); ls.set('mediaOverlayEnabled', enabled) },
   setLastfmUser: (lastfmUser) => set({ lastfmUser }),
   setLastfmEnabled: (enabled) => { set({ lastfmEnabled: enabled }); ls.set('lastfmEnabled', enabled) },
   setPopoutWindow: (kind, enabled) => {
@@ -1168,6 +1181,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
   resetHotkeyBindings: () => { set({ hotkeyBindings: {} }); ls.set('hotkeyBindings', {}) },
   setHotkeySeekSeconds: (seconds) => { set({ hotkeySeekSeconds: seconds }); ls.set('hotkeySeekSeconds', seconds) },
   setGlobalHotkeysEnabled: (enabled) => { set({ globalHotkeysEnabled: enabled }); ls.set('globalHotkeysEnabled', enabled) },
+  setGlobalHotkeyOverride: (actionId, global) => {
+    const next = { ...get().globalHotkeyOverrides }
+    if (global) delete next[actionId]
+    else next[actionId] = false
+    set({ globalHotkeyOverrides: next })
+    ls.set('globalHotkeyOverrides', next)
+  },
 
   // ── Liked songs ───────────────────────────────────────────────────────────
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],

@@ -162,9 +162,15 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   const isElectron = navigator.userAgent.includes('Electron')
   const needsWindowControlClearance = !embedded && isElectron && !showNowPlaying && !showQueue
   const isAdmin    = !!account?.is_administrator
+  // is_manager grants no admin power beyond reviewing comp-file proposals —
+  // everything else on this page (song edits, applications, users, stats,
+  // security) stays isAdmin-only. managerOnly narrows the page down to just
+  // that one tab instead of the full admin console.
+  const isManager    = !!account?.is_manager
+  const managerOnly  = isManager && !isAdmin
   const otpEnabled = !!account?.otp_enabled
 
-  const [tab,          setTab]          = useState<Tab>('proposals')
+  const [tab,          setTab]          = useState<Tab>(managerOnly ? 'comp-proposals' : 'proposals')
   const [loading,      setLoading]      = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [refreshKey,   setRefreshKey]   = useState(0)
@@ -198,7 +204,15 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  if (!isAdmin) return (
+  // account can still be loading when this page first mounts (deep link,
+  // page refresh) — managerOnly flips from false to true once it lands, and
+  // the tab set at mount time (still 'proposals') would otherwise strand a
+  // manager on a tab their nav bar no longer offers a button for.
+  useEffect(() => {
+    if (managerOnly && tab !== 'comp-proposals') setTab('comp-proposals')
+  }, [managerOnly, tab])
+
+  if (!isAdmin && !isManager) return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
       <Shield size={28} className="text-text-muted" />
       <p className="text-text-primary font-semibold text-sm">Admins only</p>
@@ -219,7 +233,9 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   const pendingReports = tab !== 'reports' ? reports.filter(r => r.status === 'pending').length : 0
 
   type NavItem = { id: Tab; label: string; icon: React.ReactNode; badge?: number }
-  const nav: NavItem[] = [
+  const nav: NavItem[] = managerOnly ? [
+    { id: 'comp-proposals', label: 'Comp files', icon: <FileCheck size={13} /> },
+  ] : [
     { id: 'proposals',    label: 'Song edits',   icon: <FileEdit size={13} />,   badge: pendingProps || undefined },
     ...(CONTRIBUTOR_ENABLED ? [{ id: 'comp-proposals' as const, label: 'Comp files', icon: <FileCheck size={13} /> }] : []),
     { id: 'applications', label: 'Applications', icon: <Clock size={13} />,      badge: pendingApps || undefined },
@@ -242,7 +258,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
         )}
         {!embedded && (
           <div className="mb-3">
-            <span className="text-text-primary font-bold text-sm">Admin</span>
+            <span className="text-text-primary font-bold text-sm">{managerOnly ? 'Manager' : 'Admin'}</span>
             {account?.discord_username && (
               <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
             )}

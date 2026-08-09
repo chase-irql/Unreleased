@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
-import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
+import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, isActionGlobal, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -128,7 +128,8 @@ export default function Player(): JSX.Element {
   const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
   const { libraryTracks } = useStorePick('libraryTracks')
-  const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
+  const { globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'globalHotkeyOverrides', 'hotkeyBindings')
+  const { mediaOverlayEnabled } = useStorePick('mediaOverlayEnabled')
   const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
   const { reverbEnabled, reverbMix, reverbDecay, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift')
 
@@ -649,9 +650,17 @@ export default function Player(): JSX.Element {
     return () => { clearInterval(id); reset() }
   }, [skipSilence])
 
+  // Disabling this only makes sense on desktop (Electron) — it exists to stop
+  // Windows from popping up its System Media Transport Controls overlay on
+  // media-key presses. Mobile relies on Media Session staying alive to keep
+  // the background/lock-screen session from being torn down, so the toggle
+  // is a no-op there (and hidden in Settings).
+  const mediaSessionActive = mediaOverlayEnabled || !(window as any).electron
+
   // Media Session API — lock screen / notification metadata
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
+    if (!mediaSessionActive) { navigator.mediaSession.metadata = null; return }
     const title  = radioFmActive ? (radioFmNowPlaying?.title  ?? '') : (currentTrack?.title  ?? '')
     const artist = radioFmActive ? (radioFmNowPlaying?.artist ?? '') : (currentTrack?.artist ?? '')
     const rawArt = radioFmActive
@@ -675,6 +684,7 @@ export default function Player(): JSX.Element {
     radioFmNowPlaying?.title,
     radioFmNowPlaying?.artist,
     radioFmMatchedSong?.imageUrl,
+    mediaSessionActive,
   ])
 
   // Media Session playback state — mobile browsers (Android Chrome in
@@ -685,12 +695,14 @@ export default function Player(): JSX.Element {
   // the queue never advanced to the next song.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
+    if (!mediaSessionActive) return
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
-  }, [isPlaying])
+  }, [isPlaying, mediaSessionActive])
 
   // Media Session action handlers — play/pause/skip
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
+    if (!mediaSessionActive) return
     navigator.mediaSession.setActionHandler('play',  () => setIsPlaying(true))
     navigator.mediaSession.setActionHandler('pause', () => setIsPlaying(false))
     navigator.mediaSession.setActionHandler('nexttrack',     () => nextTrack())
@@ -701,11 +713,12 @@ export default function Player(): JSX.Element {
       navigator.mediaSession.setActionHandler('nexttrack',     null)
       navigator.mediaSession.setActionHandler('previoustrack', null)
     }
-  }, [setIsPlaying, nextTrack, prevTrack])
+  }, [setIsPlaying, nextTrack, prevTrack, mediaSessionActive])
 
   // Media Session position state — for lock screen seek bar
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
+    if (!mediaSessionActive) return
     const audio = getActive()
     if (!audio || !audio.duration || isNaN(audio.duration)) return
     try {
@@ -715,7 +728,7 @@ export default function Player(): JSX.Element {
         position:     Math.min(currentTime, audio.duration),
       })
     } catch {/* ignore */}
-  }, [currentTime, playbackSpeed])
+  }, [currentTime, playbackSpeed, mediaSessionActive])
 
   // Audio output device
   useEffect(() => {
@@ -1116,7 +1129,7 @@ export default function Player(): JSX.Element {
     'view-wrld':      () => setActiveView('wrld'),
     'view-admin':     () => {
       // Admin tools live in the editor profile page's Admin tab now.
-      if (account?.is_administrator || account?.is_editor) setActiveView('editor-profile')
+      if (account?.is_administrator || account?.is_editor || account?.is_manager) setActiveView('editor-profile')
     },
     'open-settings':    () => useStore.getState().setShowSettings(true),
     'open-diagnostics': () => useStore.getState().setShowDiagnostics(true),
@@ -1160,11 +1173,14 @@ export default function Player(): JSX.Element {
       // still activate it (native keyboard behavior) instead of toggling play.
       const clickable = tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || target?.getAttribute('role') === 'button'
       if (clickable && (combo === 'Space' || combo === 'Enter')) return
-      // When global shortcuts are on, the OS delivers eligible combos through
-      // the global handler instead — don't also run them here (double-fire).
-      if (useStore.getState().globalHotkeysEnabled && (window as any).electron && isGloballyRegistrable(combo)) return
       const id = resolveAction(combo, useStore.getState().hotkeyBindings)
       if (!id) return
+      // When this action is OS-globally registered, the OS delivers it through
+      // the global handler instead — don't also run it here (double-fire).
+      if (
+        useStore.getState().globalHotkeysEnabled && (window as any).electron &&
+        isGloballyRegistrable(combo) && isActionGlobal(id, useStore.getState().globalHotkeyOverrides)
+      ) return
       // Desktop-only actions are unbindable-in-practice on web — ignore them so
       // e.g. Alt+3 doesn't half-switch to a Library view web builds don't have.
       if (getAction(id)?.electronOnly && !(window as any).electron) return
@@ -1194,12 +1210,13 @@ export default function Player(): JSX.Element {
     if (!globalHotkeysEnabled) { el.registerGlobalShortcuts([]); return }
     const entries: { accelerator: string; id: string }[] = []
     for (const action of HOTKEY_ACTIONS) {
+      if (!isActionGlobal(action.id, globalHotkeyOverrides)) continue
       const accelerator = comboToAccelerator(effectiveBinding(action.id, hotkeyBindings))
       if (accelerator) entries.push({ accelerator, id: action.id })
     }
     el.registerGlobalShortcuts(entries)
     return () => { el.registerGlobalShortcuts?.([]) }
-  }, [globalHotkeysEnabled, hotkeyBindings])
+  }, [globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings])
 
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {

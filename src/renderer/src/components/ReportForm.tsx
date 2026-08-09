@@ -116,7 +116,7 @@ export default function ReportForm({ mode, onDone }: {
                 <button
                   key={c}
                   onClick={() => setCategory(c)}
-                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${active
+                  className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full text-xs border transition-colors ${active
                     ? 'bg-accent/15 text-accent border-accent/40'
                     : 'text-text-secondary border-[var(--border)] hover:bg-surface-raised'}`}
                 >
@@ -136,7 +136,7 @@ export default function ReportForm({ mode, onDone }: {
                 <button
                   key={t}
                   onClick={() => toggleIssue(t)}
-                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border text-left transition-colors ${active
+                  className={`flex items-center gap-2 px-2.5 py-2.5 md:py-2 rounded-lg text-xs border text-left transition-colors ${active
                     ? 'bg-accent/10 text-text-primary border-accent/40'
                     : 'text-text-secondary border-[var(--border)] hover:bg-surface-raised'}`}
                 >

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
 import type { CompFileProposal, CompProposalChangeType, EditorApplication } from '../lib/userApi'
 import type { ViewType } from '../types'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
@@ -139,7 +139,7 @@ export default function ContributorPage(): JSX.Element {
   // (same rule as Sidebar/BottomNav) when they deep-linked straight here.
   const backView: ViewType = previousView === 'editor-profile' || previousView === 'contributor-profile'
     ? previousView
-    : account?.is_editor || account?.is_administrator ? 'editor-profile' : 'contributor-profile'
+    : primaryProfileView(account)
 
   const reload = (): void => {
     if (!isContributor) return

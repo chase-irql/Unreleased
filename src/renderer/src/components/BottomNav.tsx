@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useRef } from 'react'
 import { Settings, ShieldCheck, Disc } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
 
 // The mobile nav bar — the counterpart to the desktop Sidebar, which it now
@@ -30,8 +30,9 @@ export default function BottomNav(): JSX.Element {
   const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
+  const isManager = !!account?.is_manager
   const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
-  const profileView = isContributor && !isEditor ? 'contributor-profile' : 'editor-profile'
+  const profileView = primaryProfileView(account)
   const atTop = sidebarPosition === 'top'
 
   // Shared with the side menu: orderedNavItems sanitizes the saved order,
@@ -54,12 +55,12 @@ export default function BottomNav(): JSX.Element {
   if ((isAdmin || isEditor) && navShown('albums-admin')) {
     extraTabs.push({ view: 'albums-admin', icon: <Disc size={24} />, label: 'Albums' })
   }
-  if ((isAdmin || isEditor || isContributor)
-    && (isContributor && !isEditor ? navShown('contributor-profile') : navShown('editor-profile'))) {
+  if ((isAdmin || isEditor || isContributor || isManager) && navShown(profileView)) {
     extraTabs.push({
       view: profileView,
       icon: <ShieldCheck size={24} />,
-      label: isAdmin ? 'Admin' : isEditor && isContributor ? 'Staff' : isEditor ? 'Editor' : 'Contributor',
+      label: isAdmin ? 'Admin' : isEditor && isContributor ? 'Staff' : isEditor ? 'Editor'
+        : isManager ? 'Manager' : 'Contributor',
     })
   }
 

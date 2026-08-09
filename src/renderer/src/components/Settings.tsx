@@ -8,7 +8,7 @@ import {
   ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
-import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
+import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable, isActionGlobal } from '../lib/hotkeys'
 import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
@@ -116,6 +116,23 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
   )
 }
 
+// ── Mobile grouped-card wrapper ───────────────────────────────────────────
+// The content panes are built from Row/ad-hoc blocks laid one after another
+// with a plain hairline between them — macOS System Settings' flat detail-
+// pane idiom, and correct to leave alone on desktop (mirrors that app). On a
+// phone that reads as a bare list of options floating on the page background
+// rather than a native settings screen — iOS/Android group related rows into
+// an inset card with its own surface. `md:contents` makes this a true no-op
+// above md (no box at all is rendered — the wrapped children lay out exactly
+// as if this wrapper weren't there), so it only ever touches mobile.
+function SettingsCard({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div className="md:contents mb-4 md:mb-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-overlay)]/60 px-3.5 overflow-hidden">
+      {children}
+    </div>
+  )
+}
+
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Element {
   return (
     // Slightly larger on touch (44px including the invisible tap padding
@@ -189,11 +206,13 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
+    mediaOverlayEnabled, setMediaOverlayEnabled,
     popoutWindows, setPopoutWindow,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
     hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
     globalHotkeysEnabled, setGlobalHotkeysEnabled,
+    globalHotkeyOverrides, setGlobalHotkeyOverride,
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
@@ -206,7 +225,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'globalHotkeyOverrides', 'setGlobalHotkeyOverride', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -825,7 +844,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Account</h3>
                 {account ? (
                   <>
-                    <div className="flex items-center gap-3 py-3 border-b border-[var(--border)]">
+                    <SettingsCard>
+                    <div className="flex items-center gap-3 py-3 border-b border-[var(--border)] last:border-b-0">
                       {account.discord_avatar
                         ? <img src={account.discord_avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
                         : <div className="w-11 h-11 rounded-full bg-accent/20 text-accent flex items-center justify-center text-base font-semibold shrink-0">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
@@ -841,6 +861,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                         Log out
                       </button>
                     </div>
+                    </SettingsCard>
 
                     <div className="mt-2 rounded-xl border border-[var(--border)] overflow-hidden">
                       <button
@@ -952,7 +973,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {tab === 'appearance' && (
               <div>
                 <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Appearance</h3>
-                <div className="py-3 border-b border-[var(--border)]">
+                <SettingsCard>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#4b5563' }}>
                       <Brush size={13} className="text-white" strokeWidth={2.25} />
@@ -1064,6 +1086,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </button>
                   </div>
                 </div>
+                </SettingsCard>
+                <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ec4899' }}>
@@ -1105,6 +1129,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 >
                   <Toggle on={gradientsEnabled} onClick={() => setGradientsEnabled(!gradientsEnabled)} />
                 </Row>
+                </SettingsCard>
+                <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#7c3aed' }}>
@@ -1183,6 +1209,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     })}
                   </div>
                 </div>
+                </SettingsCard>
+                <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ca8a04' }}>
@@ -1282,6 +1310,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 >
                   <Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />
                 </Row>
+                </SettingsCard>
+                <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0d9488' }}>
@@ -1353,6 +1383,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                   </div>
                 )}
+                </SettingsCard>
+                <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
                     <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#6366f1' }}>
@@ -1438,6 +1470,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     })}
                   </div>
                 </div>
+                </SettingsCard>
                 {/* Editor/admin-only tabs on the mobile bottom bar (Albums, and
                     the Editor/Admin profile tab). They aren't part of the
                     NAV_ITEMS registry above (which drives the desktop side
@@ -1446,6 +1479,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     shown only to editors/admins on the web build where the
                     bottom bar exists. Reuses the shared navVisibility map. */}
                 {!isElectron && (account?.is_editor || account?.is_administrator) && (
+                  <SettingsCard>
                   <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                     <div className="flex items-center gap-2.5 mb-2.5">
                       <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
@@ -1478,6 +1512,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                       })}
                     </div>
                   </div>
+                  </SettingsCard>
                 )}
                 {/* Foot-of-menu controls belong to the desktop side menu; the
                     mobile bar has no equivalent row (Settings is pinned there,
@@ -1545,6 +1580,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             {tab === 'playback' && (
               <div>
                 <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Playback</h3>
+                <SettingsCard>
                 {devices.length > 0 && (
                   <Row icon={Volume2} iconColor="#2563eb" label="Audio output">
                     <select
@@ -1620,6 +1656,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   label="Prefer OG version"
                   labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
                 />
+                </SettingsCard>
+                <SettingsCard>
                 <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
                   <div className="flex items-center gap-2">
                     {sleepTimerEnd ? (
@@ -1689,6 +1727,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     )
                   )}
                 </Row>
+                </SettingsCard>
               </div>
             )}
 
@@ -1740,12 +1779,21 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           const binding = effectiveBinding(action.id, hotkeyBindings)
                           const tokens = comboTokens(binding)
                           const recording = recordingId === action.id
-                          const isGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
+                          const eligibleForGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
+                          const isGlobal = eligibleForGlobal && isActionGlobal(action.id, globalHotkeyOverrides)
                           return (
                             <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
                               <span className="text-text-secondary text-sm truncate flex items-center gap-1.5">
                                 {action.label}
-                                {isGlobal && <Globe size={11} className="text-sky-400 shrink-0" aria-label="Works globally" />}
+                                {eligibleForGlobal && (
+                                  <button
+                                    onClick={() => setGlobalHotkeyOverride(action.id, !isGlobal)}
+                                    title={isGlobal ? 'Works globally — click to make in-app only' : 'In-app only — click to also work globally'}
+                                    className="shrink-0"
+                                  >
+                                    <Globe size={11} className={isGlobal ? 'text-sky-400' : 'text-text-muted'} aria-label={isGlobal ? 'Works globally' : 'In-app only'} />
+                                  </button>
+                                )}
                               </span>
                               <button
                                 onClick={() => setRecordingId(recording ? null : action.id)}
@@ -1977,6 +2025,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub="Ask before closing the app if a song is still playing (not when it just hides to the tray)"
                 >
                   <Toggle on={appSettings.confirmCloseWhilePlaying} onClick={() => setSetting('confirmCloseWhilePlaying', !appSettings.confirmCloseWhilePlaying)} />
+                </Row>
+                <Row
+                  icon={Volume2}
+                  iconColor="#0891b2"
+                  label="Media key overlay"
+                  sub="Show the Windows volume/media flyout when pressing media keys"
+                >
+                  <Toggle on={mediaOverlayEnabled} onClick={() => setMediaOverlayEnabled(!mediaOverlayEnabled)} />
                 </Row>
                 <div className="py-3 border-b border-[var(--border)]">
                   <div className="flex items-center gap-2.5">

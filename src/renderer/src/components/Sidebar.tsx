@@ -3,7 +3,7 @@ import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, Chevro
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible, orderedNavControls, isNavControlVisible, type NavControlId } from '../lib/navItems'
 import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
@@ -106,8 +106,8 @@ export default function Sidebar(): JSX.Element {
 
   // Full-width control row for the vertical (left/right) side menu.
   const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
-  const profileView = isContributor && !account?.is_editor ? 'contributor-profile' : 'editor-profile'
-  const showStaffProfile = !!(account?.is_administrator || account?.is_editor) || isContributor
+  const profileView = primaryProfileView(account)
+  const showStaffProfile = !!(account?.is_administrator || account?.is_editor || account?.is_manager) || isContributor
 
   const renderControl = (id: NavControlId): JSX.Element | null => {
     switch (id) {

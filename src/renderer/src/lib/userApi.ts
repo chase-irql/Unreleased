@@ -1,4 +1,4 @@
-import { Track } from '../types'
+import { Track, ViewType } from '../types'
 import { JWAPI_BASE, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from './juicewrldApi'
 import type { JWApiSong } from './juicewrldApi'
 import { peekSongPref } from './songPrefs'
@@ -21,6 +21,9 @@ export interface AccountUser {
   is_editor: boolean
   is_contributor: boolean
   is_administrator: boolean
+  // Optional per DocsPage's Auth section: reviews comp-file proposals.
+  // Not guaranteed present on every account payload — read defensively.
+  is_manager?: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —
   // per-song preferences and playlist folders (see lib/preferencesApi and
@@ -545,6 +548,20 @@ export interface OtpSetupPayload {
  *  shipped, so an untyped row is an editor row. */
 export function applicationType(app: Pick<EditorApplication, 'application_type'> | null | undefined): ApplicationType {
   return app?.application_type === 'contributor' ? 'contributor' : 'editor'
+}
+
+/** Where a signed-in account's "profile" nav item should land. Centralized
+ *  because BottomNav, Sidebar and ContributorPage all made this same
+ *  editor-vs-contributor call independently, and each one had to be kept in
+ *  sync by hand — is_manager grants no editing power but its only home is the
+ *  Admin page's "Comp files" tab, which lives behind editor-profile, so a
+ *  manager has to route there too even when they're also a contributor. */
+export function primaryProfileView(
+  account: Pick<AccountUser, 'is_editor' | 'is_administrator' | 'is_contributor' | 'is_manager'> | null | undefined,
+): ViewType {
+  const isContributor = !!account?.is_contributor
+  const staffLike = !!(account?.is_editor || account?.is_administrator || account?.is_manager)
+  return isContributor && !staffLike ? 'contributor-profile' : 'editor-profile'
 }
 
 /** The caller's application *of one kind*.
