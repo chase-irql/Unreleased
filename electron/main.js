@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard, session } = require('electron')
+﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard, session, powerMonitor } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -170,6 +170,24 @@ function downloadFile(url, dest, onProgress) {
 autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} }
 autoUpdater.autoDownload = appSettings.autoDownload
 autoUpdater.autoInstallOnAppQuit = true
+
+// Startup-only checking meant a user who left the app running (or asleep on a
+// laptop) for days never saw an update until their next full relaunch. These
+// two flags let the periodic/resume checks below skip themselves when a check
+// is already in flight or a downloaded update is already sitting there
+// waiting on "Restart now" — re-checking in either case just wastes a request.
+let updateCheckInProgress = false
+let updateDownloadedPending = false
+const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+
+function runUpdateCheck(reason) {
+  if (isDev || updateCheckInProgress || updateDownloadedPending) return
+  log(`Checking for updates (${reason})...`)
+  updateCheckInProgress = true
+  autoUpdater.checkForUpdatesAndNotify()
+    .catch(err => log('checkForUpdates error:', err.message))
+    .finally(() => { updateCheckInProgress = false })
+}
 // Beta channel — gated server-side by juicewrldapi.com, not by anything
 // baked into this app (see build/fetch-releases.ps1 for the full endpoint
 // contract). The marker file holds the *validated code itself*, used as a
@@ -2991,10 +3009,13 @@ app.whenReady().then(() => {
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
 
   if (!isDev) {
-    mainWindow.once('ready-to-show', () => {
-      log('Checking for updates on startup...')
-      autoUpdater.checkForUpdatesAndNotify().catch(err => log('checkForUpdates error:', err.message))
-    })
+    mainWindow.once('ready-to-show', () => runUpdateCheck('startup'))
+    // Covers the app being left open for a long session (periodic) and a
+    // laptop waking from sleep after the interval would've otherwise elapsed
+    // unnoticed in the background — resume fires even if the OS suspended
+    // the interval timer along with everything else while asleep.
+    setInterval(() => runUpdateCheck('periodic'), UPDATE_CHECK_INTERVAL_MS)
+    powerMonitor.on('resume', () => runUpdateCheck('resume from sleep'))
   }
 
   app.on('activate', () => {
@@ -3043,6 +3064,7 @@ autoUpdater.on('download-progress', (p) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   log('Update downloaded:', info.version)
+  updateDownloadedPending = true
   broadcastToWindows('update-status', { type: 'downloaded', version: info.version })
   dialog.showMessageBox(mainWindow, {
     type: 'info',
@@ -3095,7 +3117,10 @@ function isCorruptCacheError(msg) {
 autoUpdater.on('error', (err) => {
   const msg = err.message || String(err)
   log('Auto-updater error:', msg)
-  if (isCorruptCacheError(msg)) clearUpdaterCache()
+  if (isCorruptCacheError(msg)) {
+    clearUpdaterCache()
+    updateDownloadedPending = false
+  }
 
   // Beta feed isn't answering with a usable latest.yml → retry on stable rather
   // than surfacing a dead end the user can't clear from inside the app.

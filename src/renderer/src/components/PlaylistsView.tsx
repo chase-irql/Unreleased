@@ -25,6 +25,7 @@ import { CompactGroupRow, CompactEmptyIcon, useExpandedGroups } from './CompactG
 import { groupItemsByVersion, filterCompactGroups, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { versionsEnabled } from '../lib/versionsApi'
+import { shareOrigin } from '../lib/platform'
 import { useVirtualWindowEl } from '../hooks/useVirtualWindow'
 import PlaylistCard from './PlaylistCard'
 import { allFolderedKeys, folderOfPlaylist, parsePlaylistKey } from '../lib/playlistFolders'
@@ -1086,7 +1087,7 @@ export default function PlaylistsView(): JSX.Element {
         const updated = await userApi.updatePlaylist(selectedId, { is_public: true })
         setDetail(updated)
       }
-      await navigator.clipboard.writeText(`${window.location.origin}/playlists?id=${selectedId}&view=shared`)
+      await navigator.clipboard.writeText(`${shareOrigin()}/playlists?id=${selectedId}&view=shared`)
       setShareCopied(true)
       setTimeout(() => setShareCopied(false), 2500)
     } catch {}
@@ -1374,7 +1375,7 @@ export default function PlaylistsView(): JSX.Element {
               try {
                 const p = cardMenu.playlist as PlaylistSummary
                 if (!p.is_public) { await userApi.updatePlaylist(p.id, { is_public: true }); await refreshPlaylists() }
-                await navigator.clipboard.writeText(`${window.location.origin}/playlists?id=${p.id}&view=shared`)
+                await navigator.clipboard.writeText(`${shareOrigin()}/playlists?id=${p.id}&view=shared`)
               } catch {}
               setCardMenu(null)
             }}

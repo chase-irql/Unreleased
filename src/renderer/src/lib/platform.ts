@@ -43,6 +43,18 @@ export function runWhenIdle(fn: () => void, timeoutMs = 2000): () => void {
   return () => clearTimeout(id)
 }
 
+/**
+ * Origin to build shareable/absolute links against. The packaged desktop app
+ * loads its renderer via `win.loadFile(...)`, so `window.location.origin` is
+ * `file://` there (not `https://`) — a link built from it (e.g. a shared
+ * playlist URL) would be broken for whoever opens it. Use the real deployed
+ * site in that case; the dev server and browser/web builds already have a
+ * proper origin.
+ */
+export function shareOrigin(): string {
+  return IS_ELECTRON ? 'https://player.juicewrldapi.com' : window.location.origin
+}
+
 // True when the page is running as an installed PWA (launched from the home
 // screen / app icon) rather than in a browser tab.
 export function isStandalonePWA(): boolean {
