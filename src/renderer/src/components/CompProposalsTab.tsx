@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Loader2, CheckCircle, XCircle, RotateCcw, Download, Calendar, Hash, AlertCircle,
 } from 'lucide-react'
 import * as userApi from '../lib/userApi'
 import type { CompFileProposal, ProposalStatus } from '../lib/userApi'
 import { getToken } from '../lib/userApi'
-import { relativeTime, shortDate, StatusChip, Empty } from './adminShared'
+import { relativeTime, shortDate, StatusChip, Empty, QueueSearch, matchesQuery } from './adminShared'
 
 export default function CompProposalsTab({ embedded = false, onChanged }: { embedded?: boolean; onChanged?: () => void }): JSX.Element {
   const [status, setStatus] = useState<ProposalStatus | ''>('pending')
@@ -16,6 +16,15 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   const [reviewNotes, setReviewNotes] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+
+  // Searchable: both sides of a move, who filed it, the staged file's name,
+  // the change type as it's labelled on screen ("New file", not "create"), and
+  // the raw id so a proposal referenced by number elsewhere can be pulled up.
+  const visible = useMemo(() => proposals.filter(p => matchesQuery(
+    query, p.file_path, p.destination_path, p.contributor_username,
+    p.staging_filename, userApi.compChangeTypeLabel(p.change_type), p.id,
+  )), [proposals, query])
 
   useEffect(() => {
     setLoading(true)
@@ -31,6 +40,17 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [status, refreshKey])
+
+  // Searching can filter the selected proposal out from under the detail pane,
+  // which would otherwise leave Approve/Reject pointed at a row no longer in
+  // the list. Fall through to the first match, resetting the notes box with it
+  // for the same reason the fetch above does.
+  useEffect(() => {
+    if (selected && visible.some(v => v.id === selected.id)) return
+    setSelected(visible[0] ?? null)
+    setReviewNotes('')
+    setError(null)
+  }, [visible, selected])
 
   const reload = (): void => {
     setRefreshKey(k => k + 1)
@@ -89,18 +109,23 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   return (
     <div className={`flex-1 min-w-0 h-full flex overflow-hidden ${embedded ? '' : 'bg-[var(--surface)]'}`}>
       <div className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col">
-        <div className="shrink-0 p-3 border-b border-[var(--border)] flex gap-2">
-          {(['pending', 'approved', 'rejected', 'reversed', ''] as const).map(s => (
-            <button key={s || 'all'} onClick={() => setStatus(s)}
-              className={`px-2 py-1 rounded text-[10px] font-semibold capitalize ${status === s ? 'bg-accent/15 text-accent' : 'text-text-muted'}`}>
-              {s || 'all'}
-            </button>
-          ))}
+        <div className="shrink-0 p-3 border-b border-[var(--border)] flex flex-col gap-2">
+          <div className="flex gap-2">
+            {(['pending', 'approved', 'rejected', 'reversed', ''] as const).map(s => (
+              <button key={s || 'all'} onClick={() => setStatus(s)}
+                className={`px-2 py-1 rounded text-[10px] font-semibold capitalize ${status === s ? 'bg-accent/15 text-accent' : 'text-text-muted'}`}>
+                {s || 'all'}
+              </button>
+            ))}
+          </div>
+          <QueueSearch value={query} onChange={setQuery} placeholder="Search path, contributor…"
+            matches={visible.length} total={proposals.length} />
         </div>
         <div className="flex-1 overflow-y-auto">
           {loading && <div className="flex justify-center py-8"><Loader2 className="animate-spin text-text-muted" size={18} /></div>}
           {!loading && proposals.length === 0 && <Empty label="No comp proposals" />}
-          {proposals.map(item => (
+          {!loading && proposals.length > 0 && visible.length === 0 && <Empty label="No matches" />}
+          {visible.map(item => (
             <button key={item.id} onClick={() => { setSelected(item); setReviewNotes(''); setError(null) }}
               className={`w-full text-left px-3 py-3 border-b border-[var(--border)] transition-colors ${selected?.id === item.id ? 'bg-accent/10' : 'hover:bg-surface-raised'}`}>
               <div className="flex items-center gap-1.5 mb-1">
