@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Vite builds with base './' so the Electron build can find its assets
+         over file://. On the web that relative base is resolved against the
+         current path, which breaks every nested route: from
+         /auth/discord/callback the browser asks for
+         /auth/discord/assets/index-*.js, gets a 404, and renders nothing —
+         a blank page right after Discord login (same for /shared/<id>).
+         Over http(s) repoint the base at the origin root before the parser
+         reaches the injected module script; file:// keeps the relative base. -->
+    <base href="./" />
+    <script>if(/^https?:/.test(location.protocol))document.querySelector('base').href='/'</script>
+    <!-- maximum-scale=1 stops iOS Safari's auto-zoom when focusing inputs
+         under 16px (all our text-xs fields); deliberate pinch-zoom still
+         works — iOS ignores the cap for user gestures. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+
+    <!-- SEO. These are the crawler's first impression and the values every
+         non-JS scraper (Discord/Twitter/iMessage unfurls) will use, so they
+         describe the site as a whole. Once React boots, lib/seo.ts rewrites
+         title/description/canonical/robots per route — see applySeo(). Kept
+         inert in Electron: applySeo() bails on file://, and no crawler ever
+         sees the packaged HTML. -->
+    <meta name="description" content="Stream Juice WRLD's full catalog — every released and unreleased song — free in your browser. Search by era, producer or engineer, build playlists, listen to 999 FM radio, and read synced lyrics." />
+    <link rel="canonical" href="https://player.juicewrldapi.com/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+
+    <meta property="og:site_name" content="unreleased" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://player.juicewrldapi.com/" />
+    <meta property="og:title" content="unreleased — Juice WRLD music player" />
+    <meta property="og:description" content="Stream Juice WRLD's full catalog — every released and unreleased song — free in your browser. Search by era, producer or engineer, build playlists, listen to 999 FM radio, and read synced lyrics." />
+    <meta property="og:image" content="https://player.juicewrldapi.com/icon-512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:image:alt" content="unreleased — Juice WRLD music player" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="unreleased — Juice WRLD music player" />
+    <meta name="twitter:description" content="Stream Juice WRLD's full catalog — every released and unreleased song — free in your browser. Search by era, producer or engineer, build playlists, listen to 999 FM radio, and read synced lyrics." />
+    <meta name="twitter:image" content="https://player.juicewrldapi.com/icon-512.png" />
+
+    <!-- PWA / installability. These are inert in the Electron build (it loads
+         over file://, never installs, and the service worker is not registered
+         there — see main.tsx). -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#121212" />
+    <!-- iOS ignores the web manifest for "Add to Home Screen" — it reads these
+         Apple-specific tags instead to launch fullscreen with our own icon. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Unreleased" />
+    <link rel="apple-touch-icon" href="./icon-512.png" />
+
+    <title>unreleased — Juice WRLD music player</title>
+
+    <!-- Structured data. WebSite carries the SearchAction so a Google sitelinks
+         search box can deep-link into the tracker's ?q= param (the tracker
+         already reflects each settled search there). WebApplication describes
+         the player itself — free, browser-based, no install. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://player.juicewrldapi.com/#website",
+          "url": "https://player.juicewrldapi.com/",
+          "name": "unreleased",
+          "description": "A music player for Juice WRLD — stream the full catalog of released and unreleased songs.",
+          "inLanguage": "en",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+              "@type": "EntryPoint",
+              "urlTemplate": "https://player.juicewrldapi.com/tracker?q={search_term_string}"
+            },
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "WebApplication",
+          "@id": "https://player.juicewrldapi.com/#app",
+          "name": "unreleased",
+          "url": "https://player.juicewrldapi.com/",
+          "applicationCategory": "MultimediaApplication",
+          "operatingSystem": "Web, Windows, macOS, Linux",
+          "browserRequirements": "Requires JavaScript",
+          "isPartOf": { "@id": "https://player.juicewrldapi.com/#website" },
+          "about": { "@type": "MusicGroup", "name": "Juice WRLD" },
+          "featureList": [
+            "Search the full released and unreleased catalog",
+            "Filter by era, category, producer and engineer",
+            "Gapless playback and radio mode",
+            "Synced lyrics",
+            "Playlists, folders and liked songs",
+            "999 FM live radio",
+            "10-band equalizer and audio effects",
+            "Last.fm scrobbling"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          }
+        }
+      ]
+    }
+    </script>
+    <!-- Apply saved theme before React renders to prevent flash -->
+    <script>
+      try {
+        const t = localStorage.getItem('wavelength-theme')
+        if (t !== 'light') document.documentElement.classList.add('dark')
+      } catch(_) {
+        document.documentElement.classList.add('dark')
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-CQWK6wHm.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Bp59pfk0.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Crawlers that don't execute JS (and the ones that do, before the bundle
+         resolves) otherwise see an empty <div id="root">. This gives them real
+         text and crawlable links to the public routes. Hidden the moment
+         scripting is on, so it never reaches a real visitor. -->
+    <noscript>
+      <h1>unreleased — a Juice WRLD music player</h1>
+      <p>
+        Stream Juice WRLD's full catalog — every released and unreleased song — free in your
+        browser. Search by era, producer or engineer, build playlists, listen to 999 FM radio,
+        and read synced lyrics. Powered by the
+        <a href="https://juicewrldapi.com">Juice WRLD API</a>.
+      </p>
+      <p>This player needs JavaScript enabled.</p>
+      <ul>
+        <li><a href="/tracker">Tracker — search the catalog</a></li>
+        <li><a href="/files">Files — browse the API filesystem</a></li>
+        <li><a href="/wrld">WRLD — 999 FM live radio</a></li>
+        <li><a href="/heardle">Heardle — the daily song guessing game</a></li>
+        <li><a href="/docs">Docs</a></li>
+        <li><a href="/download">Download the desktop app</a></li>
+      </ul>
+    </noscript>
+  </body>
+</html>
