@@ -717,7 +717,7 @@ export default function LibraryTab(): JSX.Element {
              regions as flat rect math (drag minus no-drag, stacking ignored), so a
              full-width no-drag bar here erased App's titlebar drag strip and made
              the window unmovable on this view. Only the controls punch holes. */
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]" style={{ paddingRight: (window as any).electron ? 188 : undefined }}>
+          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]">
             <h2 className="text-text-primary text-xl font-bold shrink-0">{title}</h2>
             <div className="relative flex-1 min-w-[120px] max-w-xs ml-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />

@@ -21,9 +21,7 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Elem
 
 // The equalizer popover's contents. Positioning (portal + backdrop) is owned
 // by the caller (Player), matching how the output-device picker works.
-// `floating` = rendered as its own pop-out window (FloatApp) — hides the
-// pop-out button since it's already popped out.
-export default function EqualizerPanel({ floating = false }: { floating?: boolean }): JSX.Element {
+export default function EqualizerPanel(): JSX.Element {
   const {
     eqEnabled, setEqEnabled,
     eqGains, setEqBand,
@@ -72,22 +70,10 @@ export default function EqualizerPanel({ floating = false }: { floating?: boolea
 
   return (
     <div className="w-[340px] select-none">
-      {/* Header: title + pop-out + enable toggle */}
+      {/* Header: title + enable toggle */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">Equalizer</p>
         <div className="flex items-center gap-2.5">
-          {!floating && (window as any).electron?.openFloatWindow && (
-            <button
-              // Detach: the pop-out replaces this in-app copy (the
-              // float-windows broadcast closes it too, but do it here so the
-              // panel disappears on click rather than on the round trip).
-              onClick={() => { (window as any).electron.openFloatWindow('equalizer'); setShowEqPanel(false) }}
-              title="Pop out equalizer"
-              className="text-text-muted hover:text-text-primary transition-colors"
-            >
-              <PictureInPicture2 size={13} />
-            </button>
-          )}
           <Toggle on={eqEnabled && EFFECTS_SUPPORTED} onClick={() => { if (EFFECTS_SUPPORTED) setEqEnabled(!eqEnabled) }} />
         </div>
       </div>

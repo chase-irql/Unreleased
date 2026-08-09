@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Link2, Loader2, Check, AlertCircle, Folder, Wrench, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 
 // "Import from URL" dialog. Takes any http(s) link and hands it to the main
@@ -184,7 +183,6 @@ export default function UrlImportModal(): JSX.Element | null {
       }
       if (result?.track) {
         addLibraryTrack(result.track as LibraryTrack)
-        broadcastLibraryTrackAdd(result.track as LibraryTrack)
       }
       setProgress(100)
       setDone({ outPath: result?.outPath || '', title: result?.track?.title || fileName(result?.outPath || '') })

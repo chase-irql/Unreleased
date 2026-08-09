@@ -241,73 +241,6 @@ export default function ApiFilesView(): JSX.Element {
   const [zipStatus, setZipStatus] = useState<ZipStatus>('idle')
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Local files mode (Electron only)
-  const isElectron = navigator.userAgent.includes('Electron')
-  const [localMode, setLocalMode] = useState(false)
-  const [localPath, setLocalPath] = useState('')
-  const [localEntries, setLocalEntries] = useState<Array<{ name: string; path: string; type: 'file' | 'directory'; size: number | null }>>([])
-  const [localLoading, setLocalLoading] = useState(false)
-  const [localError, setLocalError] = useState<string | null>(null)
-
-  const browseLocal = async (dirPath: string): Promise<void> => {
-    const el = (window as any).electron
-    if (!el) return
-    setLocalLoading(true)
-    setLocalError(null)
-    try {
-      const result = await el.browseLocal(dirPath)
-      if (result.error) { setLocalError(result.error); return }
-      setLocalPath(result.path)
-      setLocalEntries(result.entries)
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Failed to browse')
-    } finally {
-      setLocalLoading(false)
-    }
-  }
-
-  const openLocalFile = async (filePath: string): Promise<void> => {
-    const el = (window as any).electron
-    if (!el) return
-    await el.openPath(filePath)
-  }
-
-  const handleLocalPlay = (entry: { name: string; path: string; type: string; size: number | null }): void => {
-    const track = localFileToTrack(entry)
-    const queue = localEntries
-      .filter(e => e.type === 'file' && getMediaType(e.name) === 'audio')
-      .map(localFileToTrack)
-    playTrack(track, queue.length > 0 ? queue : [track])
-  }
-
-  const openLocalLightbox = (entry: { name: string; path: string; type: string; size: number | null }): void => {
-    const mediaEntries = localEntries.filter(e => {
-      const mt = getMediaType(e.name)
-      return e.type === 'file' && (mt === 'image' || mt === 'video')
-    })
-    const items: LightboxItem[] = mediaEntries.map(e => ({
-      url: toFileUrl(e.path),
-      type: getMediaType(e.name) as 'image' | 'video',
-      name: e.name,
-    }))
-    const idx = mediaEntries.findIndex(e => e.path === entry.path)
-    setLightboxItems(items)
-    setLightboxIndex(idx >= 0 ? idx : 0)
-  }
-
-  const pickLocalFolder = async (): Promise<void> => {
-    const el = (window as any).electron
-    if (!el) return
-    const picked = await el.pickFolder()
-    if (picked) browseLocal(picked)
-  }
-
-  // Init local browse when switching to local mode
-  useEffect(() => {
-    if (localMode && localEntries.length === 0) {
-      browseLocal('')
-    }
-  }, [localMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persisted view settings
   const [viewMode, setViewModeState] = useState<ViewMode>(
@@ -634,13 +567,6 @@ export default function ApiFilesView(): JSX.Element {
     [sortedEntries, typeFilter]
   )
 
-  const filteredLocalEntries = useMemo(
-    () => typeFilter === 'all'
-      ? localEntries
-      : localEntries.filter((e) => e.type === 'directory' || getMediaType(e.name) === typeFilter),
-    [localEntries, typeFilter]
-  )
-
   const crumbs = breadcrumbs(currentPath)
 
   const SortIcon = ({ by }: { by: SortBy }): JSX.Element => {
@@ -652,7 +578,7 @@ export default function ApiFilesView(): JSX.Element {
     <>
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Header */}
-        <div className={`px-5 pb-3 shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
+        <div className="px-5 pb-3 shrink-0 pt-5">
           <div className="flex items-center justify-between mb-3 gap-2">
             <div className="flex items-center gap-2 shrink-0">
               <HardDrive size={18} className="text-text-muted" />
@@ -705,28 +631,13 @@ export default function ApiFilesView(): JSX.Element {
                   title="Grid view"
                 ><LayoutGrid size={15} /></button>
               </div>
-              {/* API / Local toggle (Electron only) */}
-              {isElectron && (
-                <div className="flex items-center bg-surface-overlay rounded-lg p-1 gap-1 shrink-0">
-                  <button
-                    onClick={() => setLocalMode(false)}
-                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${!localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
-                    title="Browse API files"
-                  ><Globe size={12} /> API</button>
-                  <button
-                    onClick={() => setLocalMode(true)}
-                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${localMode ? 'bg-surface-raised text-text-primary shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
-                    title="Browse local files"
-                  ><MonitorSmartphone size={12} /> Local</button>
-                </div>
-              )}
             </div>
           </div>
 
           {/* Search — API mode. Recursive across the whole file tree (same
               /files/browse/ `search` param the session-ZIP lookup uses),
               not scoped to the current folder. */}
-          {!localMode && (
+          {(
             <div className="relative mb-2">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
               <input
@@ -749,7 +660,7 @@ export default function ApiFilesView(): JSX.Element {
           )}
 
           {/* Nav bar — API mode */}
-          {!localMode && (
+          {(
             isSearching ? (
               <div className="flex items-center gap-1.5 text-xs text-text-muted">
                 {searchLoading
@@ -790,148 +701,8 @@ export default function ApiFilesView(): JSX.Element {
           )}
         </div>
 
-        {/* Local files browser */}
-        {localMode && (
-          <div className="flex-1 overflow-y-auto px-5 pb-4">
-            {/* Local nav bar */}
-            <div className="flex items-center gap-1.5 mb-3">
-              <button
-                onClick={pickLocalFolder}
-                className="flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
-              ><FolderOpen size={13} /> Change folder</button>
-              {localPath && (
-                <span className="text-text-muted text-xs truncate flex-1" title={localPath}>{localPath}</span>
-              )}
-            </div>
-            {localLoading ? (
-              <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
-                <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading…</span>
-              </div>
-            ) : localError ? (
-              <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <p className="text-text-muted text-sm">{localError}</p>
-                <button onClick={() => browseLocal(localPath)} className="text-accent text-sm underline">Retry</button>
-              </div>
-            ) : localEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <MonitorSmartphone size={32} className="text-text-muted opacity-30" />
-                <p className="text-text-muted text-sm">No files found</p>
-                <button onClick={pickLocalFolder} className="text-accent text-sm underline">Pick a folder</button>
-              </div>
-            ) : filteredLocalEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <Filter size={32} className="text-text-muted opacity-30" />
-                <p className="text-text-muted text-sm">No {typeFilter} files here</p>
-              </div>
-            ) : viewMode === 'list' ? (
-              <div className="space-y-0.5">
-                {localPath && (
-                  <button
-                    onClick={() => {
-                      const parent = localPath.replace(/[/\\][^/\\]+$/, '')
-                      if (parent && parent !== localPath) browseLocal(parent)
-                    }}
-                    className="flex items-center gap-3 w-full px-3 py-2.5 md:py-2 rounded-lg hover:bg-surface-overlay transition-colors text-left"
-                  >
-                    <div className="w-9 h-9 flex items-center justify-center shrink-0"><FolderOpen size={18} className="text-text-muted" /></div>
-                    <span className="text-text-muted text-sm">..</span>
-                  </button>
-                )}
-                {filteredLocalEntries.map((entry) => {
-                  const isDir = entry.type === 'directory'
-                  const mt = isDir ? 'folder' : getMediaType(entry.name)
-                  const ext = getFileExt(entry.name).slice(1).toUpperCase()
-                  return (
-                    <div
-                      key={entry.path}
-                      className="group flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-lg hover:bg-surface-overlay transition-colors cursor-default"
-                      onClick={() => {
-                        if (isDir) browseLocal(entry.path)
-                        else if (mt === 'audio') handleLocalPlay(entry)
-                        else if (mt === 'image' || mt === 'video') openLocalLightbox(entry)
-                      }}
-                    >
-                      <div className="w-9 h-9 flex items-center justify-center shrink-0">
-                        {isDir
-                          ? <FolderOpen size={18} className="text-text-muted" />
-                          : mt === 'audio' ? <Music2 size={18} className="text-text-muted opacity-40" /> : mt === 'video' ? <Video size={18} className="text-text-muted" /> : mt === 'image' ? <ImageIcon size={18} className="text-text-muted" /> : <Music2 size={18} className="text-text-muted opacity-20" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-text-primary text-sm truncate">{entry.name}</p>
-                        {entry.size != null && !isDir && (
-                          <p className="text-text-muted text-xs">{(entry.size / 1_048_576).toFixed(1)} MB</p>
-                        )}
-                      </div>
-                      {mt === 'audio' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleLocalPlay(entry) }}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full hover:bg-accent/15 text-accent transition-all"
-                          title="Play"
-                        ><Play size={14} /></button>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="grid gap-3 pt-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
-                {localPath && (
-                  <button
-                    onClick={() => {
-                      const parent = localPath.replace(/[/\\][^/\\]+$/, '')
-                      if (parent && parent !== localPath) browseLocal(parent)
-                    }}
-                    className="flex flex-col items-center gap-2 p-3 rounded-xl bg-surface-overlay hover:bg-surface-raised transition-colors"
-                  >
-                    <div className="w-full aspect-square flex items-center justify-center"><FolderOpen size={40} className="text-text-muted" /></div>
-                    <span className="text-text-muted text-xs">..</span>
-                  </button>
-                )}
-                {filteredLocalEntries.map((entry) => {
-                  const isDir = entry.type === 'directory'
-                  const mt = isDir ? 'folder' : getMediaType(entry.name)
-                  const ext = getFileExt(entry.name).slice(1).toUpperCase()
-                  return (
-                    <div
-                      key={entry.path}
-                      className="group flex flex-col rounded-xl overflow-hidden transition-colors cursor-default bg-surface-overlay hover:bg-surface-raised"
-                      onClick={() => {
-                        if (isDir) browseLocal(entry.path)
-                        else if (mt === 'audio') handleLocalPlay(entry)
-                        else if (mt === 'image' || mt === 'video') openLocalLightbox(entry)
-                      }}
-                    >
-                      <div className="relative w-full aspect-square bg-surface-raised flex items-center justify-center overflow-hidden">
-                        {isDir
-                          ? <Folder size={40} className="text-text-secondary group-hover:text-accent transition-colors" />
-                          : mt === 'audio' ? (
-                            <>
-                              <Music2 size={36} className="text-text-muted opacity-30" />
-                              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Play size={24} fill="white" className="text-white ml-0.5" />
-                              </div>
-                            </>
-                          ) : mt === 'image' ? (
-                            <ImageIcon size={36} className="text-text-muted" />
-                          ) : mt === 'video' ? (
-                            <Video size={36} className="text-text-muted" />
-                          ) : (
-                            <span className="text-xs uppercase text-text-muted">{ext}</span>
-                          )}
-                      </div>
-                      <div className="px-2 py-2">
-                        <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
-                        {!isDir && <p className="text-text-muted text-[10px] uppercase tracking-wide mt-0.5">{ext}</p>}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
         {/* Content */}
-        {!localMode && <div className="flex-1 overflow-y-auto px-5 pb-4">
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
           {(isSearching ? searchLoading : loading) ? (
             <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
               <Loader2 size={18} className="animate-spin" /><span className="text-sm">{isSearching ? 'Searching…' : 'Loading…'}</span>
@@ -1178,7 +949,7 @@ export default function ApiFilesView(): JSX.Element {
               })}
             </div>
           )}
-        </div>}
+        </div>
 
         {/* Selection action bar */}
         {selectMode && (
@@ -1278,7 +1049,7 @@ export default function ApiFilesView(): JSX.Element {
         />
       )}
 
-      {!localMode && ctxMenu && (
+      {ctxMenu && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setCtxMenu(null)} />
           <div

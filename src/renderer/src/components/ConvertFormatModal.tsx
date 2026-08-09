@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
 
 // "Convert format" dialog for a local file, driven by the store's `convertModal`
@@ -146,11 +145,7 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
       })
       if (result?.error) { setError(result.error); return }
       if (result?.track) {
-        // Apply locally, then tell the other windows — libraryTracks isn't in
-        // the blanket sync mirror, so without this a converted file made in the
-        // pop-out wouldn't show up in the main window's Library until a rescan.
         addLibraryTrack(result.track as LibraryTrack)
-        broadcastLibraryTrackAdd(result.track as LibraryTrack)
       }
       setProgress(100)
       setDone({ outPath: result?.outPath || '' })

@@ -162,11 +162,6 @@ export default function NowPlaying(): JSX.Element {
   const [artCollapsed, setArtCollapsed] = useState(false)
   const [panelWidth, dragHandle] = useResizablePanel(360, 280, 520)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
-  const isElectron = navigator.userAgent.includes('Electron')
-  // When the Queue panel is also open it sits to the right of this one and
-  // is the one that needs to clear the custom window controls (see its own
-  // header) — this panel only needs the clearance when it's the rightmost.
-  const needsWindowControlClearance = isElectron && !isMobile && !showQueue
   const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [loadingInfo, setLoadingInfo] = useState(false)
 
@@ -212,8 +207,7 @@ export default function NowPlaying(): JSX.Element {
           className="flex items-center justify-between px-5 pb-3 shrink-0"
           style={{
             // Clears the status bar when running edge-to-edge on Android.
-            paddingTop: isMobile ? 'max(20px, env(safe-area-inset-top, 0px))' : (needsWindowControlClearance ? 36 : 20),
-            paddingRight: needsWindowControlClearance ? 148 : undefined,
+            paddingTop: isMobile ? 'max(20px, env(safe-area-inset-top, 0px))' : 20,
           }}
         >
           <h2 className="text-text-primary font-semibold text-sm uppercase tracking-widest truncate min-w-0">Now Playing</h2>

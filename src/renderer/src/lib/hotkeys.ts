@@ -17,7 +17,7 @@
  * active keyboard layout) while punctuation maps to its US-key symbol.
  */
 
-export type HotkeyCategory = 'Playback' | 'Volume' | 'Navigation' | 'App'
+export type HotkeyCategory = 'Playback' | 'Volume' | 'Navigation'
 
 export interface HotkeyAction {
   id: string
@@ -25,8 +25,6 @@ export interface HotkeyAction {
   category: HotkeyCategory
   /** Canonical combo, or '' for "no default binding". */
   defaultBinding: string
-  /** Only meaningful in the desktop (Electron) build — hidden on web. */
-  electronOnly?: boolean
   /** Still active with its default binding for everyone, but only listed (and
    *  therefore rebindable) in Settings when Developer mode is on — keeps the
    *  shortcut list from bloating with power-user-only entries. */
@@ -75,7 +73,6 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   // ── Navigation ────────────────────────────────────────────────────────────
   { id: 'view-tracker',     label: 'Go to Tracker',             category: 'Navigation', defaultBinding: 'Alt+1' },
   { id: 'view-playlists',   label: 'Go to Playlists',           category: 'Navigation', defaultBinding: 'Alt+2' },
-  { id: 'view-library',     label: 'Go to Library',             category: 'Navigation', defaultBinding: 'Alt+3', electronOnly: true },
   { id: 'view-wrld',        label: 'Go to WRLD',                category: 'Navigation', defaultBinding: 'Alt+4' },
   { id: 'view-admin',       label: 'Go to Admin / Editor profile', category: 'Navigation', defaultBinding: 'Alt+5' },
   { id: 'open-settings',    label: 'Open settings',             category: 'Navigation', defaultBinding: 'Ctrl+,' },
@@ -83,16 +80,9 @@ export const HOTKEY_ACTIONS: readonly HotkeyAction[] = [
   { id: 'toggle-queue',     label: 'Toggle queue panel',        category: 'Navigation', defaultBinding: 'Q' },
   { id: 'focus-search',     label: 'Focus search box',          category: 'Navigation', defaultBinding: 'Ctrl+F' },
 
-  // ── App / windows ─────────────────────────────────────────────────────────
-  { id: 'mini-player',          label: 'Open mini player',            category: 'App', defaultBinding: 'Ctrl+M', electronOnly: true },
-  { id: 'close-float-windows',  label: 'Close all pop-out windows',   category: 'App', defaultBinding: 'Ctrl+Shift+W', electronOnly: true },
-  { id: 'restart-app',          label: 'Restart app',                 category: 'App', defaultBinding: '', electronOnly: true },
-  { id: 'rescan-library',       label: 'Rescan library',              category: 'App', defaultBinding: '', electronOnly: true },
-  { id: 'discord-status',       label: 'Toggle Discord status',       category: 'App', defaultBinding: '', electronOnly: true },
-  { id: 'toggle-devtools',      label: 'Toggle DevTools',              category: 'App', defaultBinding: 'F12', electronOnly: true, devModeOnly: true },
 ] as const
 
-export const HOTKEY_CATEGORIES: readonly HotkeyCategory[] = ['Playback', 'Volume', 'Navigation', 'App']
+export const HOTKEY_CATEGORIES: readonly HotkeyCategory[] = ['Playback', 'Volume', 'Navigation']
 
 // actionId → action, for O(1) lookups from both the dispatcher and the UI.
 const ACTIONS_BY_ID = new Map(HOTKEY_ACTIONS.map((a) => [a.id, a]))
@@ -207,64 +197,4 @@ const DISPLAY: Record<string, string> = {
 export function comboTokens(combo: string): string[] {
   if (!combo) return []
   return combo.split('+').map((p) => DISPLAY[p] ?? p)
-}
-
-// ─── Global (OS-wide) shortcuts ──────────────────────────────────────────────
-// A combo can only be registered as an OS-global shortcut (Electron's
-// globalShortcut) when it carries a modifier or is a media key — a bare letter
-// registered globally would swallow that key in every application, so we refuse
-// to. These helpers translate our combo strings into Electron accelerators.
-
-const MODIFIER_TOKENS = new Set(['Ctrl', 'Alt', 'Shift', 'Meta'])
-
-// Combo main-key token → Electron accelerator key. Only keys that differ from
-// their combo token need an entry; anything else (A-Z, 0-9, punctuation, F-keys)
-// passes through unchanged.
-const ACCEL_KEY: Record<string, string> = {
-  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
-  Enter: 'Return',
-  MediaPlayPause: 'MediaPlayPause',
-  MediaTrackNext: 'MediaNextTrack',
-  MediaTrackPrevious: 'MediaPreviousTrack',
-  MediaStop: 'MediaStop',
-}
-
-const MEDIA_TOKENS = new Set(Object.keys(ACCEL_KEY).filter((k) => k.startsWith('Media')))
-
-/** True when `combo` is eligible for OS-global registration (has a modifier, or
- *  is a media key). Bare single keys are in-app only. */
-export function isGloballyRegistrable(combo: string): boolean {
-  if (!combo) return false
-  const parts = combo.split('+')
-  const key = parts[parts.length - 1]
-  if (MEDIA_TOKENS.has(key)) return true
-  return parts.slice(0, -1).some((p) => MODIFIER_TOKENS.has(p))
-}
-
-/** Whether `id` should be OS-globally registered when global shortcuts are on.
- *  Per-action opt-out: absence in `overrides` defaults to true (global), so
- *  existing installs that already had global shortcuts enabled keep every
- *  eligible action global until the user explicitly turns one off. */
-export function isActionGlobal(id: string, overrides: Record<string, boolean>): boolean {
-  if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id]
-  return true
-}
-
-/** Convert a combo to an Electron accelerator string, or null if it can't be a
- *  global shortcut. "Ctrl" maps to CommandOrControl so it's Cmd on macOS. */
-export function comboToAccelerator(combo: string): string | null {
-  if (!isGloballyRegistrable(combo)) return null
-  const parts = combo.split('+')
-  const key = parts[parts.length - 1]
-  const out: string[] = []
-  for (const p of parts.slice(0, -1)) {
-    if (p === 'Ctrl') out.push('CommandOrControl')
-    else if (p === 'Alt') out.push('Alt')
-    else if (p === 'Shift') out.push('Shift')
-    else if (p === 'Meta') out.push('Super')
-    else return null
-  }
-  if (/^Num[0-9]$/.test(key)) out.push('num' + key.slice(3))
-  else out.push(ACCEL_KEY[key] ?? key)
-  return out.join('+')
 }

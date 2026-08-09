@@ -5,8 +5,7 @@ import {
   FolderOpen,
 } from 'lucide-react'
 import FilePickerModal from './FilePickerModal'
-import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
-import { attachToMainWindow } from '../lib/windowSync'
+import { useStore, useStorePick } from '../store/useStore'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
 import { invalidateLyricsCache } from './Player'
@@ -726,7 +725,6 @@ export default function EditorPage({ initialSongId = null }: {
     // "maximum update depth exceeded". It shows "No song selected" instead.
     // backView is read from a ref for the same reason: it must not be able to
     // re-trigger the very effect that changes it.
-    if (IS_FLOAT_WINDOW) return
     if (!canEdit || loading || song || isNewSongDraft || pendingEditorSongId || pendingEditProposal || loadError || manualLoadRef.current) return
     setActiveView(wasEditingRef.current ? backViewRef.current : 'editor-profile')
   }, [canEdit, loading, song, isNewSongDraft, pendingEditorSongId, pendingEditProposal, loadError, setActiveView])
@@ -953,54 +951,15 @@ export default function EditorPage({ initialSongId = null }: {
     <div className="flex-1 flex flex-col min-h-0">
 
       {/* Top bar */}
-      {/* 188px clears the window controls (132px) plus the fixed downloads
-          trigger next to them (right: 144px + 36px wide — see DownloadManager) */}
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]" style={(window as any).electron ? { paddingRight: '188px' } : undefined}>
-        {/* Back — only in the in-app editor; the pop-out window has nowhere to go back to */}
-        {!IS_FLOAT_WINDOW && (
-          <button
-            onClick={() => setActiveView(backView)}
-            title="Back"
-            className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0"
-          >
-            <ChevronLeft size={16} />
-          </button>
-        )}
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]">
+        <button
+          onClick={() => setActiveView(backView)}
+          title="Back"
+          className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0"
+        >
+          <ChevronLeft size={16} />
+        </button>
         <span className="font-bold text-[15px] text-text-primary">Song editor</span>
-        {/* Manual pop-out — detach the in-app editor into its own window.
-            Hidden inside the float window itself and when there's no saved
-            song to hand off (e.g. a brand-new draft). */}
-        {!IS_FLOAT_WINDOW && (window as any).electron?.openFloatWindow && song?.id != null && (
-          <button
-            onClick={() => {
-              if (!song) return
-              const el = (window as any).electron
-              el.openFloatWindow('editor', { songId: song.id })
-              // Clear the in-app editor so the song isn't open in two places.
-              setSong(null); setEditingPropId(null); setIsNewSongDraft(false)
-              setDeleteState('idle'); setDeleteError(null)
-            }}
-            title="Open in a separate window"
-            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
-          >
-            <PictureInPicture2 size={15} />
-          </button>
-        )}
-        {/* Manual attach — from the pop-out editor window, dock back into the
-            main window (opens its in-app editor for this song), then close. */}
-        {IS_FLOAT_WINDOW && song?.id != null && (
-          <button
-            onClick={() => {
-              if (!song) return
-              attachToMainWindow({ view: 'editor', songId: song.id })
-              ;(window as any).electron?.closeSelf?.()
-            }}
-            title="Dock into main window"
-            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
-          >
-            <Minimize2 size={15} />
-          </button>
-        )}
         <span className="flex-1" />
         {/* Layout switch — full cards vs. the flat basic form */}
         <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-overlay border border-[var(--border)]">

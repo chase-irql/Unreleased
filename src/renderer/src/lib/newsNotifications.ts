@@ -115,8 +115,8 @@ export async function ensureNotifyPermission(): Promise<boolean> {
   }
 }
 
-// Fires a single OS notification for a post. Clicking it focuses the app (in
-// Electron) and routes to News via the callback.
+// Fires a single OS notification for a post. Clicking it focuses the app and
+// routes to News via the callback.
 export function fireNewsNotification(item: NewsItem, onOpen: (item: NewsItem) => void): void {
   if (!notificationsSupported() || Notification.permission !== 'granted') return
   try {
@@ -126,8 +126,6 @@ export function fireNewsNotification(item: NewsItem, onOpen: (item: NewsItem) =>
       tag: `news-${item.id}`, // dedupes if the same post somehow fires twice
     })
     n.onclick = () => {
-      const el = (window as unknown as { electron?: { focusMainWindow?: () => void } }).electron
-      el?.focusMainWindow?.()
       window.focus()
       onOpen(item)
       n.close()

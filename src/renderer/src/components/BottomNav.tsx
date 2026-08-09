@@ -27,7 +27,6 @@ interface Tab { view: ViewType; icon: ReactNode; label: string }
 export default function BottomNav(): JSX.Element {
   const { activeView, setActiveView, toggleSettings, account, navVisibility, navOrder, sidebarPosition } =
     useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility', 'navOrder', 'sidebarPosition')
-  const isElectron = navigator.userAgent.includes('Electron')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
   const isManager = !!account?.is_manager
@@ -36,11 +35,11 @@ export default function BottomNav(): JSX.Element {
   const atTop = sidebarPosition === 'top'
 
   // Shared with the side menu: orderedNavItems sanitizes the saved order,
-  // isNavItemVisible drops desktop-only tabs and anything toggled off.
+  // isNavItemVisible drops anything toggled off.
   // NAV_ITEMS icons are sized for the 18px side menu; scale them up to a
   // touch-appropriate 24 without forking the definitions.
   const navItemTabs: Tab[] = orderedNavItems(navOrder)
-    .filter((i) => isNavItemVisible(i, navVisibility, isElectron))
+    .filter((i) => isNavItemVisible(i, navVisibility))
     .map((item) => ({
       view: item.view,
       label: item.label,

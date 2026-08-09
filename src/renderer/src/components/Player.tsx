@@ -24,8 +24,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
-import { registerPlayerCommandHandler } from '../lib/windowSync'
-import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, isActionGlobal, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
+import { eventToCombo, resolveAction, registerHotkeyDispatch } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -114,7 +113,7 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows, sidebarPosition } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows', 'sidebarPosition')
+    playNext, account, updateLibraryTrack, setPendingEditorSongId, sidebarPosition } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'sidebarPosition')
   const canEditSong = !!(account?.is_editor || account?.is_administrator)
 
   const [showContextMenu, setShowContextMenu] = useState(false)
@@ -128,7 +127,6 @@ export default function Player(): JSX.Element {
   const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
   const { libraryTracks } = useStorePick('libraryTracks')
-  const { globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'globalHotkeyOverrides', 'hotkeyBindings')
   const { mediaOverlayEnabled } = useStorePick('mediaOverlayEnabled')
   const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
   const { reverbEnabled, reverbMix, reverbDecay, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift')
@@ -650,12 +648,10 @@ export default function Player(): JSX.Element {
     return () => { clearInterval(id); reset() }
   }, [skipSilence])
 
-  // Disabling this only makes sense on desktop (Electron) — it exists to stop
-  // Windows from popping up its System Media Transport Controls overlay on
-  // media-key presses. Mobile relies on Media Session staying alive to keep
-  // the background/lock-screen session from being torn down, so the toggle
-  // is a no-op there (and hidden in Settings).
-  const mediaSessionActive = mediaOverlayEnabled || !(window as any).electron
+  // Media Session must stay alive on Android to keep the background /
+  // lock-screen session from being torn down, so the overlay toggle is a
+  // no-op here (and hidden in Settings).
+  const mediaSessionActive = true
 
   // Media Session API — lock screen / notification metadata
   useEffect(() => {
@@ -1003,32 +999,6 @@ export default function Player(): JSX.Element {
     nextTrack()
   }
 
-  // Tray — mirror playback state so the tray menu shows now-playing info and
-  // the right Play/Pause + Like labels. `hasTrack` gates the tray controls,
-  // matching the disabled state of the on-screen buttons during FM radio.
-  useEffect(() => {
-    const el = (window as any).electron
-    if (!el?.setTrayPlayback) return
-    const title  = radioFmActive ? (radioFmNowPlaying?.title  ?? '') : (currentTrack?.title  ?? '')
-    const artist = radioFmActive ? (radioFmNowPlaying?.artist ?? '') : (currentTrack?.artist ?? '')
-    el.setTrayPlayback({
-      hasTrack: !!currentTrack && !radioFmActive,
-      isPlaying,
-      title,
-      artist,
-      liked: !!currentTrack && likedTrackIds.includes(currentTrack.id),
-    })
-  }, [
-    isPlaying,
-    currentTrack?.id,
-    currentTrack?.title,
-    currentTrack?.artist,
-    radioFmActive,
-    radioFmNowPlaying?.title,
-    radioFmNowPlaying?.artist,
-    likedTrackIds,
-  ])
-
   // Remote media commands — the tray menu and the mini-player pop-out both
   // route through the same handlers as the on-screen controls (handleNext/
   // handlePrev carry the repeat-one and radio-mode special cases). Handlers
@@ -1051,13 +1021,6 @@ export default function Player(): JSX.Element {
     'remove-queue': (arg) => { if (typeof arg === 'number') useStore.getState().removeFromQueue(arg) },
     'clear-queue': () => useStore.getState().clearQueue(),
   }
-  useEffect(() => {
-    const el = (window as any).electron
-    if (!el?.onTrayCommand) return
-    return el.onTrayCommand((cmd: string) => remoteCommandsRef.current[cmd]?.())
-  }, [])
-  // Same dispatch table, fed by pop-out windows over the window-sync channel.
-  useEffect(() => registerPlayerCommandHandler((cmd, arg) => remoteCommandsRef.current[cmd]?.(arg)), [])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   // What each hotkey action *does*. Keyed by the ids in lib/hotkeys.ts (which
@@ -1139,19 +1102,6 @@ export default function Player(): JSX.Element {
       input?.focus()
       input?.select()
     },
-    'mini-player':         () => { if (useStore.getState().popoutWindows.miniPlayer) (window as any).electron?.openFloatWindow?.('mini-player') },
-    'close-float-windows': () => (window as any).electron?.closeFloatWindows?.(),
-    'restart-app':         () => (window as any).electron?.relaunchApp?.(),
-    'rescan-library':      () => useStore.getState().scanLibrary(),
-    'discord-status': async () => {
-      const el = (window as any).electron
-      if (!el?.getAppSettings) return
-      try {
-        const s = await el.getAppSettings()
-        await el.setAppSetting('discordRpcEnabled', !s.discordRpcEnabled)
-      } catch { /* ignore */ }
-    },
-    'toggle-devtools': () => (window as any).electron?.toggleDevTools?.(),
   }
   // Same table, exposed to UI that triggers actions by id (the app menu) — a
   // stable subscription dispatching into the ref's fresh closures.
@@ -1175,15 +1125,6 @@ export default function Player(): JSX.Element {
       if (clickable && (combo === 'Space' || combo === 'Enter')) return
       const id = resolveAction(combo, useStore.getState().hotkeyBindings)
       if (!id) return
-      // When this action is OS-globally registered, the OS delivers it through
-      // the global handler instead — don't also run it here (double-fire).
-      if (
-        useStore.getState().globalHotkeysEnabled && (window as any).electron &&
-        isGloballyRegistrable(combo) && isActionGlobal(id, useStore.getState().globalHotkeyOverrides)
-      ) return
-      // Desktop-only actions are unbindable-in-practice on web — ignore them so
-      // e.g. Alt+3 doesn't half-switch to a Library view web builds don't have.
-      if (getAction(id)?.electronOnly && !(window as any).electron) return
       const fn = hotkeyActionsRef.current[id]
       if (!fn) return
       e.preventDefault()
@@ -1192,31 +1133,6 @@ export default function Player(): JSX.Element {
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [])
-
-  // Global (OS-wide) shortcuts — a fired accelerator arrives here as an action
-  // id and runs through the same dispatch table as the in-app keys.
-  useEffect(() => {
-    const el = (window as any).electron
-    if (!el?.onGlobalShortcut) return
-    return el.onGlobalShortcut((id: string) => hotkeyActionsRef.current[id]?.())
-  }, [])
-
-  // (Re)register the OS-global set whenever it's toggled or a binding changes.
-  // Only the main window runs this (Player is main-only); pop-outs just flip the
-  // synced `globalHotkeysEnabled` and let this window own the registration.
-  useEffect(() => {
-    const el = (window as any).electron
-    if (!el?.registerGlobalShortcuts) return
-    if (!globalHotkeysEnabled) { el.registerGlobalShortcuts([]); return }
-    const entries: { accelerator: string; id: string }[] = []
-    for (const action of HOTKEY_ACTIONS) {
-      if (!isActionGlobal(action.id, globalHotkeyOverrides)) continue
-      const accelerator = comboToAccelerator(effectiveBinding(action.id, hotkeyBindings))
-      if (accelerator) entries.push({ accelerator, id: action.id })
-    }
-    el.registerGlobalShortcuts(entries)
-    return () => { el.registerGlobalShortcuts?.([]) }
-  }, [globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings])
 
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {
@@ -1273,16 +1189,7 @@ export default function Player(): JSX.Element {
   // Equalizer popover (also hosts balance/mono/skip-silence + playback speed).
   // Visibility lives in the store so the 'equalizer' hotkey and the WRLD tab's
   // button can open it too — this always-mounted component owns the portal.
-  const { showEqPanel, setShowEqPanel, toggleEqPanel, openFloatViews } = useStorePick('showEqPanel', 'setShowEqPanel', 'toggleEqPanel', 'openFloatViews')
-  // Track which pop-outs are open so the EQ button can route to an existing
-  // equalizer window instead of opening a duplicate panel in-app.
-  useEffect(() => {
-    const el = (window as any).electron
-    if (!el?.onFloatWindows) return
-    el.getFloatWindows?.().then((views: string[]) => useStore.getState().setOpenFloatViews(views)).catch(() => {})
-    return el.onFloatWindows((views: string[]) => useStore.getState().setOpenFloatViews(views))
-  }, [])
-  const eqPoppedOut = openFloatViews.includes('equalizer')
+  const { showEqPanel, setShowEqPanel, toggleEqPanel } = useStorePick('showEqPanel', 'setShowEqPanel', 'toggleEqPanel')
   const eqBtnRef = useRef<HTMLButtonElement>(null)
   const [eqPos, setEqPos] = useState({ bottom: 0, right: 0 })
   // Anchor above the bar button when it's on screen; openers without an
@@ -1361,7 +1268,7 @@ export default function Player(): JSX.Element {
 
       {/* Equalizer popover — outside the WRLD-page conditional below so the
           hotkey and the WRLD tab's own button can open it on any view. */}
-      {showEqPanel && !eqPoppedOut && createPortal(
+      {showEqPanel && createPortal(
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowEqPanel(false)} />
           <div
@@ -1767,7 +1674,7 @@ export default function Player(): JSX.Element {
           <button
             ref={eqBtnRef}
             onClick={toggleEqPanel}
-            title={eqPoppedOut ? 'Equalizer (open in its own window)' : 'Equalizer'}
+            title="Equalizer"
             className={`transition-colors ${eqActive ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
           >
             <SlidersHorizontal size={16} />
@@ -1790,18 +1697,6 @@ export default function Player(): JSX.Element {
             <Maximize2 size={16} />
           </button>}
 
-          {/* Desktop only: pop the compact always-on-top mini player window.
-              Hidden when the user turned this pop-out off (it has no in-app
-              equivalent, so there's nothing to fall back to). */}
-          {(window as any).electron?.openFloatWindow && popoutWindows.miniPlayer && (
-            <button
-              onClick={() => (window as any).electron.openFloatWindow('mini-player')}
-              className="text-text-secondary hover:text-text-primary transition-colors"
-              title="Pop out mini player"
-            >
-              <PictureInPicture2 size={16} />
-            </button>
-          )}
 
           {/* Volume: mute + slider + output picker */}
           <div className="flex items-center gap-1.5">

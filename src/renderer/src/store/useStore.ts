@@ -45,12 +45,6 @@ import { runWhenIdle } from '../lib/platform'
 // resyncs and get deleted out from under the user.
 const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
 
-// True when this renderer is a pop-out window (FloatApp, ?float=<view>).
-// Pop-outs share localStorage with the main window, so only the main window
-// may flush the report outbox — the live endpoints have no idempotency key,
-// so two windows flushing the same queue would double-send every report.
-export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
-
 // Lightweight localStorage persistence helper — see lib/persist.ts (it lives
 // there so queueSlice can share it without importing this module back).
 
@@ -93,14 +87,6 @@ export type SettingsTab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 
 // rendering a view inline (see FloatApp). Each can be turned off individually:
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
 // miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
-export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer' | 'convert' | 'equalizer'
-// `equalizer` defaults OFF — unlike the others (which start life as pop-outs
-// and fall back to inline when disabled), the equalizer's normal home is the
-// in-app popover; turning it on makes the panel open as its own window.
-const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
-  settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true, convert: true, equalizer: false,
-}
-
 // ─── Non-queue state ──────────────────────────────────────────────────────────
 
 interface AppState {
@@ -153,10 +139,6 @@ interface AppState {
   // tab's button and the 'equalizer' hotkey can open it from anywhere — the
   // always-mounted Player owns the actual portal.
   showEqPanel: boolean
-  // Pop-out views currently open (from main's 'float-windows' broadcast).
-  // Per-window state, deliberately NOT synced: it's pushed to every window
-  // already, and mirroring it would fight that.
-  openFloatViews: string[]
   // Song whose info modal is shown by the main window's global host (App's
   // <GlobalSongInfoHost>). Only used to "attach" a floating song-info window
   // back into the main window — the per-view list modals keep their own local
@@ -227,9 +209,9 @@ interface AppState {
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
   preferOgVersion: boolean
-  // Desktop (Electron/Windows) only. When disabled, the app stops publishing
-  // Media Session metadata/action handlers, which stops Windows from popping
-  // up its System Media Transport Controls overlay on media-key presses.
+  // When disabled, the app stops publishing Media Session metadata/action
+  // handlers. Kept on for Android — the background / lock-screen session
+  // depends on it.
   mediaOverlayEnabled: boolean
   // Last.fm scrobbling. `lastfmUser` mirrors the saved session's username
   // (null = not connected; the session key itself lives in lib/lastfm's own
@@ -237,10 +219,6 @@ interface AppState {
   // disconnecting the account.
   lastfmUser: string | null
   lastfmEnabled: boolean
-  // Per-kind toggles for the detached pop-out windows (desktop only). Disabling
-  // one keeps the feature working — it just renders inline in the main window
-  // instead (or, for the mini player, hides the pop-out button).
-  popoutWindows: Record<PopoutWindowKind, boolean>
 
   // Keyboard shortcuts. `hotkeyBindings` holds only user *overrides* of the
   // defaults in lib/hotkeys.ts (actionId → combo; an explicit '' means the
@@ -248,14 +226,7 @@ interface AppState {
   // skip-forward / skip-backward shortcuts.
   hotkeyBindings: Record<string, string>
   hotkeySeekSeconds: number
-  // When on (desktop only), eligible shortcuts (those with a modifier or a
-  // media key) are also registered OS-wide so they work while the app is in
-  // the background. See lib/hotkeys isGloballyRegistrable.
-  globalHotkeysEnabled: boolean
-  // Per-action opt-out from the OS-wide registration above (actionId →
-  // false). Absence means "global" (the old, only, behavior), so this only
-  // ever narrows the set — see lib/hotkeys isActionGlobal.
-  globalHotkeyOverrides: Record<string, boolean>
+
 
   // Liked songs
   likedTrackIds: string[]
@@ -422,7 +393,6 @@ interface AppActions {
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
   setShowEqPanel: (show: boolean) => void
-  setOpenFloatViews: (views: string[]) => void
   /** Single entry point for every equalizer opener (player bar, WRLD tab,
    *  hotkey): focuses the pop-out when one is open instead of showing a
    *  second copy of the same panel in-app. */
@@ -460,15 +430,12 @@ interface AppActions {
   setMediaOverlayEnabled: (enabled: boolean) => void
   setLastfmUser: (name: string | null) => void
   setLastfmEnabled: (enabled: boolean) => void
-  setPopoutWindow: (kind: PopoutWindowKind, enabled: boolean) => void
   // Bind (or, with combo === '', clear) a shortcut. Passing a combo already in
   // use elsewhere transfers it — the previous owner is cleared — so bindings
   // stay unique. Resets restore every action to its default.
   setHotkeyBinding: (actionId: string, combo: string) => void
   resetHotkeyBindings: () => void
   setHotkeySeekSeconds: (seconds: number) => void
-  setGlobalHotkeysEnabled: (enabled: boolean) => void
-  setGlobalHotkeyOverride: (actionId: string, global: boolean) => void
 
   toggleLike: (trackId: string) => void
 
@@ -581,13 +548,11 @@ interface AppActions {
 
   setPendingCompProposal: (v: { paths: string[]; changeType: 'delete' | 'replace' } | null) => void
   setPendingEditorSongId: (id: number | null) => void
-  // "Edit this song" from anywhere — desktop opens the pop-out editor
-  // window, web navigates to the in-app editor view.
+  // "Edit this song" from anywhere — navigates to the in-app editor view.
   openSongEditor: (songId: number) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
   setPendingLocalEditTrack: (track: LibraryTrack | null) => void
-  // "Edit metadata" on a local track from anywhere — desktop opens the
-  // pop-out local editor window, web navigates to the in-app view.
+  // "Edit metadata" on a local track from anywhere — navigates to the in-app view.
   openLocalEditor: (track: LibraryTrack) => void
   // "Edit" on a multi-song selection — opens the bulk editor dialog, which
   // submits one update proposal per song.
@@ -764,27 +729,6 @@ function hydrateCustomSkins(): Skin[] {
 // be POSTed twice before the first response removed it.
 let _reportsFlushing = false
 
-// A pop-out's own _flushReports call is always a no-op (see IS_FLOAT_WINDOW
-// above) — delivery actually happens in the main window after `pendingReports`
-// syncs over (see windowSync.ts), and the outcome syncs back the same way. So
-// instead of claiming "queued" the instant a pop-out enqueues (true then, but
-// misleading seconds later once it's actually gone through), wait briefly for
-// that round trip to land before answering. Falls back to "still queued" if
-// nothing comes back in time (main window closed, sync hiccup, etc.).
-function waitForReportSettled(id: string, timeoutMs = 8000): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (!useStore.getState().pendingReports.some((r) => r.id === id)) { resolve(true); return }
-    const unsub = useStore.subscribe((state) => {
-      if (!state.pendingReports.some((r) => r.id === id)) {
-        clearTimeout(timer)
-        unsub()
-        resolve(true)
-      }
-    })
-    const timer = setTimeout(() => { unsub(); resolve(false) }, timeoutMs)
-  })
-}
-
 // ─── Profile-blob push debounce ───────────────────────────────────────────────
 
 // Preferences and folders each live as one JSON field on /account/me/, PATCHed
@@ -946,7 +890,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showDiagnostics: false,
   showQueue: false,
   showEqPanel: false,
-  openFloatViews: [],
   infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
   wrldFullscreen: false,
@@ -994,7 +937,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'news': '/news',
       'heardle': '/heardle',
       'stats': '/stats',
-      'download': '/download',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
     set((s) => ({ activeView: view, previousView: view === s.activeView ? s.previousView : s.activeView }))
@@ -1007,68 +949,17 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmUpNext: (radioFmUpNext) => set({ radioFmUpNext }),
   setRadioFmQueuePreview: (radioFmQueuePreview) => set({ radioFmQueuePreview }),
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
-  setShowSettings: (showSettings) => {
-    // Desktop: Settings lives in its own pop-out window (see FloatApp) — every
-    // "open settings" path routes there, unless the user turned that pop-out
-    // off. The in-app overlay is the fallback (and the only path on the web
-    // build, where there are no extra OS windows).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    if (showSettings && el?.openFloatWindow && get().popoutWindows.settings) {
-      el.openFloatWindow('settings')
-      return
-    }
-    set({ showSettings })
-  },
+  setShowSettings: (showSettings) => set({ showSettings }),
   setSettingsTab: (settingsTab) => set({ settingsTab }),
-  // Set the target tab BEFORE opening so a freshly-spawned pop-out Settings
-  // window picks it up in its boot snapshot; if one's already open, the change
-  // reaches it over windowSync and Settings switches tabs in response.
   openSettings: (tab) => {
     if (tab) set({ settingsTab: tab })
     get().setShowSettings(true)
   },
-  toggleSettings: () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    if (el?.toggleFloatWindow && get().popoutWindows.settings) {
-      // The pop-out's open/closed state lives in the main process (it's a
-      // separate window), not in this renderer's `showSettings` — which
-      // never flips true in pop-out mode — so main decides open vs. close.
-      el.toggleFloatWindow('settings')
-      return
-    }
-    set((s) => ({ showSettings: !s.showSettings }))
-  },
+  toggleSettings: () => set((s) => ({ showSettings: !s.showSettings })),
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
   setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
-  setOpenFloatViews: (openFloatViews) => {
-    // The equalizer just popped out — retire the in-app copy so the two can
-    // never be on screen at once (they drive the same synced state).
-    const dismissInApp = openFloatViews.includes('equalizer') && get().showEqPanel
-    set(dismissInApp ? { openFloatViews, showEqPanel: false } : { openFloatViews })
-  },
-  toggleEqPanel: () => {
-    const { openFloatViews, showEqPanel, popoutWindows } = get()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    // "Open equalizer as a pop-out by default" is on — the button opens/closes
-    // its own window instead of the in-app popover.
-    if (popoutWindows.equalizer && el?.toggleFloatWindow) {
-      el.toggleFloatWindow('equalizer')
-      if (showEqPanel) set({ showEqPanel: false })
-      return
-    }
-    // Popover mode, but a pop-out window is already open (opened manually via
-    // the panel's detach button) — focus it rather than duplicating the panel.
-    if (openFloatViews.includes('equalizer')) {
-      el?.openFloatWindow?.('equalizer')
-      if (showEqPanel) set({ showEqPanel: false })
-      return
-    }
-    set({ showEqPanel: !showEqPanel })
-  },
+  toggleEqPanel: () => set((s) => ({ showEqPanel: !s.showEqPanel })),
   setInfoSongId: (infoSongId) => set({ infoSongId }),
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
@@ -1125,13 +1016,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   mediaOverlayEnabled: ls.get<boolean>('mediaOverlayEnabled') ?? true,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
-  // Merge stored overrides onto the defaults so a kind added in a later version
-  // is enabled by default even for installs whose saved object predates it.
-  popoutWindows: { ...POPOUT_WINDOW_DEFAULTS, ...(ls.get<Partial<Record<PopoutWindowKind, boolean>>>('popoutWindows') ?? {}) },
   hotkeyBindings: ls.get<Record<string, string>>('hotkeyBindings') ?? {},
   hotkeySeekSeconds: ls.get<number>('hotkeySeekSeconds') ?? 10,
-  globalHotkeysEnabled: ls.get<boolean>('globalHotkeysEnabled') ?? false,
-  globalHotkeyOverrides: ls.get<Record<string, boolean>>('globalHotkeyOverrides') ?? {},
 
   setCrossfade: (enabled, duration) => {
     set({ crossfadeEnabled: enabled, crossfadeDuration: duration })
@@ -1145,11 +1031,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setMediaOverlayEnabled: (enabled) => { set({ mediaOverlayEnabled: enabled }); ls.set('mediaOverlayEnabled', enabled) },
   setLastfmUser: (lastfmUser) => set({ lastfmUser }),
   setLastfmEnabled: (enabled) => { set({ lastfmEnabled: enabled }); ls.set('lastfmEnabled', enabled) },
-  setPopoutWindow: (kind, enabled) => {
-    const popoutWindows = { ...get().popoutWindows, [kind]: enabled }
-    set({ popoutWindows })
-    ls.set('popoutWindows', popoutWindows)
-  },
   setAccentColor: (color) => { set({ accentColor: color }); ls.set('accentColor', color) },
   setAppTextScale: (appTextScale) => { set({ appTextScale }); ls.set('appTextScale', appTextScale) },
   setAppFont: (appFont) => { set({ appFont }); ls.set('appFont', appFont) },
@@ -1180,14 +1061,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   resetHotkeyBindings: () => { set({ hotkeyBindings: {} }); ls.set('hotkeyBindings', {}) },
   setHotkeySeekSeconds: (seconds) => { set({ hotkeySeekSeconds: seconds }); ls.set('hotkeySeekSeconds', seconds) },
-  setGlobalHotkeysEnabled: (enabled) => { set({ globalHotkeysEnabled: enabled }); ls.set('globalHotkeysEnabled', enabled) },
-  setGlobalHotkeyOverride: (actionId, global) => {
-    const next = { ...get().globalHotkeyOverrides }
-    if (global) delete next[actionId]
-    else next[actionId] = false
-    set({ globalHotkeyOverrides: next })
-    ls.set('globalHotkeyOverrides', next)
-  },
 
   // ── Liked songs ───────────────────────────────────────────────────────────
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],
@@ -1352,18 +1225,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   openReport: (target) => set({ reportModal: target }),
   closeReport: () => set({ reportModal: null }),
-  openConvert: (target) => {
-    // Same pop-out-or-dock branch the editors use: with the "Convert format"
-    // pop-out enabled, this opens its own window instead of an in-app dialog.
-    // Only the three plain fields ride the URL params (see ConvertTarget).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    if (el?.openFloatWindow && get().popoutWindows.convert) {
-      el.openFloatWindow('convert', { trackId: target.id, filePath: target.path, title: target.title })
-      return
-    }
-    set({ convertModal: { id: target.id, path: target.path, title: target.title } })
-  },
+  openConvert: (target) => set({ convertModal: { id: target.id, path: target.path, title: target.title } }),
   closeConvert: () => set({ convertModal: null }),
   openUrlImport: () => set({ urlImportModal: true }),
   closeUrlImport: () => set({ urlImportModal: false }),
@@ -1372,12 +1234,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = [...get().pendingReports, report]
     set({ pendingReports: next })
     ls.set('pendingReports', next)
-    // This window's own flush is a no-op in a pop-out (only the main window
-    // sends) — the enqueue above syncs to it over windowSync, which flushes on
-    // receipt and syncs the outcome back. Wait for that instead of the local
-    // (always-empty) flush, so the pop-out doesn't report "queued" instantly
-    // even for one about to be delivered a moment later.
-    if (IS_FLOAT_WINDOW) return waitForReportSettled(report.id)
     // Wait for this round of delivery so the caller can tell the user whether
     // it actually reached the server or is just sitting in the outbox.
     await get()._flushReports()
@@ -1416,9 +1272,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   _flushReports: async () => {
     if (_reportsFlushing) return
     if (!reportsApi.reportsApiEnabled) return
-    // Pop-outs share this outbox through localStorage; without an idempotency
-    // key on the live endpoints, only the main window may deliver it.
-    if (IS_FLOAT_WINDOW) return
     const queue = get().pendingReports.filter(isDeliverable)
     if (queue.length === 0) return
     _reportsFlushing = true
@@ -1633,17 +1486,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   loginWithDiscord: async () => {
     const redirectUri = userApi.discordRedirectUri()
     const { authorize_url } = await userApi.getDiscordAuthUrl(redirectUri)
-    const el = (window as any).electron
-    if (el?.openDiscordLogin) {
-      // Electron: open a popup BrowserWindow — intercepts the OAuth callback
-      const result = await el.openDiscordLogin(authorize_url) as { code: string; state: string } | null
-      if (result?.code && result?.state) {
-        await get().completeDiscordLogin(result.code, result.state)
-      }
-    } else {
-      // Web: standard redirect
-      window.location.href = authorize_url
-    }
+    window.location.href = authorize_url
   },
 
   completeDiscordLogin: async (code, state) => {
@@ -1775,41 +1618,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setPendingCompProposal: (pendingCompProposal) => set({ pendingCompProposal }),
   setPendingEditorSongId: (pendingEditorSongId) => set({ pendingEditorSongId }),
   openSongEditor: (songId) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    if (el?.openFloatWindow && get().popoutWindows.editor) {
-      el.openFloatWindow('editor', { songId })
-      return
-    }
-    // Pop-outs render whichever view their URL names — they have no in-app
-    // router, so setting activeView here would silently do nothing (this is
-    // how "Edit" in a pop-out song-info window used to be a dead button).
-    // Hand it to the main window instead, same as the attach button does.
-    if (IS_FLOAT_WINDOW) {
-      el?.windowSyncSend?.({ type: 'attach', target: { view: 'editor', songId } })
-      el?.focusMainWindow?.()
-      return
-    }
     set({ pendingEditorSongId: songId })
     get().setActiveView('editor')
   },
   setPendingEditProposal: (pendingEditProposal) => set({ pendingEditProposal }),
   setPendingLocalEditTrack: (pendingLocalEditTrack) => set({ pendingLocalEditTrack }),
   openLocalEditor: (track) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (window as any).electron
-    if (el?.openFloatWindow && get().popoutWindows.localEditor) {
-      el.openFloatWindow('local-editor', { trackId: track.id })
-      return
-    }
-    // Same dead-button problem as openSongEditor above — a pop-out can't
-    // navigate itself, so the main window opens the editor instead. It looks
-    // the track up by id from its own library rather than taking this object.
-    if (IS_FLOAT_WINDOW) {
-      el?.windowSyncSend?.({ type: 'attach', target: { view: 'local-editor', trackId: track.id } })
-      el?.focusMainWindow?.()
-      return
-    }
     set({ pendingLocalEditTrack: track })
     get().setActiveView('local-editor')
   },

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Loader2, Check, AlertCircle, ChevronLeft, Music2, Upload, Trash2, PictureInPicture2, Minimize2, ImageIcon } from 'lucide-react'
-import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
-import { attachToMainWindow, broadcastLibraryTrackUpdate } from '../lib/windowSync'
+import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
 import { Card, FieldGrid, FieldRow, TextareaRow } from './EditorPage'
 import FilePickerModal from './FilePickerModal'
@@ -80,7 +79,6 @@ export default function LocalEditorPage(): JSX.Element {
   // whole window is the equivalent of "back" (mirrors EditorPage's pop-out).
   const goBack = (): void => {
     setPendingLocalEditTrack(null)
-    if (IS_FLOAT_WINDOW) { el?.closeSelf?.(); return }
     setActiveView(backView)
   }
 
@@ -203,7 +201,6 @@ export default function LocalEditorPage(): JSX.Element {
     // in the in-memory index so the UI reflects it, but warn it wasn't persisted.
     if (track.ext !== 'mp3') {
       updateLibraryTrack(track.id, common)
-      broadcastLibraryTrackUpdate(track.id, common)
       setError('Metadata writing is only supported for MP3 files. The change is shown here but was not written to disk.')
       return
     }
@@ -231,7 +228,6 @@ export default function LocalEditorPage(): JSX.Element {
       if (result.error) { setError(result.error); return }
       const updates = { ...common, hasAlbumArt: !!fields.albumArt }
       updateLibraryTrack(track.id, updates)
-      broadcastLibraryTrackUpdate(track.id, updates)
       goBack()
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save metadata')
@@ -246,42 +242,10 @@ export default function LocalEditorPage(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0">
 
       {/* Top bar */}
-      {/* 188px clears the window controls plus the fixed downloads trigger */}
-      <div className="shrink-0 flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]" style={el ? { paddingRight: '188px' } : undefined}>
-        {/* Back — only in the in-app editor; the pop-out window has nowhere to go back to */}
-        {!IS_FLOAT_WINDOW && (
-          <button onClick={goBack} className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0">
-            <ChevronLeft size={16} />
-          </button>
-        )}
-        {/* Manual pop-out — detach the in-app editor into its own window. */}
-        {!IS_FLOAT_WINDOW && el?.openFloatWindow && (
-          <button
-            onClick={() => {
-              el.openFloatWindow('local-editor', { trackId: track.id })
-              // Clear the in-app editor so the track isn't open in two places.
-              setPendingLocalEditTrack(null)
-            }}
-            title="Open in a separate window"
-            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
-          >
-            <PictureInPicture2 size={15} />
-          </button>
-        )}
-        {/* Manual attach — from the pop-out window, dock back into the main
-            window (opens its in-app editor for this track), then close. */}
-        {IS_FLOAT_WINDOW && (
-          <button
-            onClick={() => {
-              attachToMainWindow({ view: 'local-editor', trackId: track.id })
-              el?.closeSelf?.()
-            }}
-            title="Dock into main window"
-            className="text-text-muted opacity-65 hover:opacity-100 transition-colors"
-          >
-            <Minimize2 size={15} />
-          </button>
-        )}
+      <div className="shrink-0 flex items-center gap-2 px-5 py-3 border-b border-[var(--border)]">
+        <button onClick={goBack} className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0">
+          <ChevronLeft size={16} />
+        </button>
         <span className="flex-1 font-bold text-[15px] text-text-primary">Edit metadata</span>
         {changedCount > 0 && (
           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-accent/20 text-accent shrink-0">

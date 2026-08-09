@@ -17,7 +17,6 @@ export default function QueuePanel(): JSX.Element {
   } = useStorePick('queue', 'queueIndex', 'currentTrack', 'isPlaying', 'shuffle', 'queueFilter', 'queueLoadingMore', 'radioMode', 'radioNext', 'setShowQueue', 'removeFromQueue', 'clearQueue', 'reorderQueue', 'jumpToTrack', '_loadMore')
 
   const [panelWidth, dragHandle] = useResizablePanel(300, 240, 480)
-  const isElectron = navigator.userAgent.includes('Electron')
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [historyOpen, setHistoryOpen] = useState(false)
   // How many upcoming rows to render — grows when the user clicks "+N more".
@@ -88,8 +87,7 @@ export default function QueuePanel(): JSX.Element {
           style={{
             // Clears the status bar when running edge-to-edge on Android —
             // this panel is fixed, so the shell's inset doesn't reach it.
-            paddingTop: isMobile ? 'max(20px, env(safe-area-inset-top, 0px))' : (isElectron ? 36 : 20),
-            paddingRight: isElectron && !isMobile ? 148 : undefined,
+            paddingTop: isMobile ? 'max(20px, env(safe-area-inset-top, 0px))' : 20,
           }}
         >
           <div className="flex items-center gap-2">

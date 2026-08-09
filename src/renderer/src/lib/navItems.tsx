@@ -3,17 +3,15 @@ import type { ReactNode } from 'react'
 import logo from '../assets/logo.png'
 import type { ViewType } from '../types'
 
-// The primary nav destinations available to the desktop side menu (Sidebar).
+// The primary nav destinations available to the side menu (Sidebar).
 // `view` doubles as the stable id persisted in the saved order/visibility —
-// don't rename these. `electronOnly` items (Library) are hidden on the web
-// build. `defaultHidden` items ship off — they're the extras the user can add
+// don't rename these. `defaultHidden` items ship off — they're the extras the user can add
 // to the menu from Settings. The mobile BottomNav uses its own curated set and
 // is unaffected.
 export interface NavItemDef {
   view: ViewType
   label: string
   icon: ReactNode
-  electronOnly?: boolean
   defaultHidden?: boolean
 }
 
@@ -21,7 +19,7 @@ export const NAV_ITEMS: NavItemDef[] = [
   { view: 'wrld', label: 'WRLD', icon: <img src={logo} alt="WRLD" className="w-[24px] h-[24px] object-contain" /> },
   { view: 'api-tracker', label: 'Tracker', icon: <SearchCode size={18} /> },
   { view: 'api-files', label: 'Files', icon: <HardDrive size={18} /> },
-  { view: 'library', label: 'Library', icon: <Library size={18} />, electronOnly: true },
+  { view: 'library', label: 'Library', icon: <Library size={18} /> },
   { view: 'playlists', label: 'Playlists', icon: <ListMusic size={18} /> },
   { view: 'heardle', label: 'Heardle', icon: <Music4 size={18} /> },
   { view: 'stats', label: 'Wrapped', icon: <BarChart3 size={18} /> },
@@ -56,10 +54,9 @@ export function orderedNavItems(order: ViewType[]): NavItemDef[] {
   return out
 }
 
-// True when an item should render in the side menu: platform-eligible and not
-// toggled off. `visibility` is the merged map (defaults + user overrides).
-export function isNavItemVisible(item: NavItemDef, visibility: Record<string, boolean>, isElectron: boolean): boolean {
-  if (item.electronOnly && !isElectron) return false
+// True when an item should render in the side menu — i.e. not toggled off.
+// `visibility` is the merged map (defaults + user overrides).
+export function isNavItemVisible(item: NavItemDef, visibility: Record<string, boolean>): boolean {
   return visibility[item.view] ?? !item.defaultHidden
 }
 
@@ -103,7 +100,7 @@ export function orderedNavControls(order: string[]): NavControlDef[] {
   return out
 }
 
-export interface NavControlCtx { account: boolean; isElectron: boolean; developerMode: boolean }
+export interface NavControlCtx { account: boolean; developerMode: boolean }
 
 // Whether a control applies to the current session at all (regardless of the
 // user's show/hide choice): profile/logout need an account, diagnostics needs

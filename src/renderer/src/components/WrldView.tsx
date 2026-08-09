@@ -124,59 +124,30 @@ export default function WrldView(): JSX.Element {
   // The portal root, so the Escape handler below can tell "the fullscreen view
   // is the top layer" from "a modal/popover is stacked on top of it".
   const fsOverlayRef = useRef<HTMLDivElement>(null)
-  const isElectronApp = navigator.userAgent.includes('Electron')
-  const elFullscreen = (window as any).electron
-
   const enterFullscreen = (): void => {
-    if (isElectronApp) elFullscreen?.setFullscreen?.(true)
-    else document.documentElement.requestFullscreen?.().catch(() => {})
+    document.documentElement.requestFullscreen?.().catch(() => {})
     setFullscreen(true)
   }
   const exitFullscreen = (): void => {
-    if (isElectronApp) elFullscreen?.setFullscreen?.(false)
-    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
     setFullscreen(false)
   }
 
   // Keep React state in sync when fullscreen is entered/exited by something
-  // other than our own button — F11 (Electron, see main.js), OS window-manager
-  // gestures, or the browser's native Escape-exits-fullscreen behavior (web).
+  // other than our own button — the WebView's own Escape-exits-fullscreen
+  // behavior, or an OS gesture.
   useEffect(() => {
-    if (isElectronApp) {
-      const off = elFullscreen?.onFullscreenChange?.((v: boolean) => setFullscreen(v))
-      return off
-    }
     const onChange = (): void => setFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [isElectronApp])
-
-  // The web Fullscreen API exits on Escape by itself (caught by the listener
-  // above). Electron's setFullScreen has no built-in Escape binding though,
-  // so handle it ourselves there.
-  useEffect(() => {
-    if (!fullscreen || !isElectronApp) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      // Don't yank the whole view out from under an overlay that's stacked on
-      // top of it — Escape belongs to whatever is frontmost. Every overlay in
-      // the app lays down a full-screen backdrop, so "is something else on
-      // top" is just "what's painted at the centre of the screen".
-      const top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
-      if (top && fsOverlayRef.current && !fsOverlayRef.current.contains(top)) return
-      exitFullscreen()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [fullscreen, isElectronApp])
+  }, [])
 
   // If this page unmounts (navigating away) while still fullscreen, leave
   // real OS/browser fullscreen too — otherwise the window would be stuck
   // fullscreen with no obvious way back once the WRLD-specific toggle is gone.
   useEffect(() => () => {
     if (!fullscreenRef.current) return
-    if (isElectronApp) elFullscreen?.setFullscreen?.(false)
-    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
   }, [])
 
   // Mirror fullscreen into the global store so App.tsx can hide the
@@ -869,12 +840,6 @@ export default function WrldView(): JSX.Element {
   const inner = (
     <div className="relative flex flex-col md:flex-row flex-1 h-full w-full overflow-hidden">
 
-      {/* Lets the OS window be dragged from the top of the fullscreen overlay,
-          since it now covers the normal draggable title-bar strip underneath. */}
-      {fullscreen && isElectronApp && (
-        <div className="absolute top-0 left-0 right-0 h-7 z-20 select-none mr-[132px]" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
-      )}
-
       {/* 999 FM toggle + fullscreen toggle, grouped together so they move as
           one unit — 999FM sits top-right on mobile, top-left on desktop
           (md:), and fullscreen now rides along right next to it instead of
@@ -933,17 +898,6 @@ export default function WrldView(): JSX.Element {
           <LayoutGrid size={16} />
         </button>
 
-        {/* Desktop only: pop the compact always-on-top mini player window */}
-        {isElectronApp && (
-          <button
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            onClick={() => (window as any).electron?.openFloatWindow?.('mini-player')}
-            className="w-8 h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
-            title="Pop out mini player"
-          >
-            <PictureInPicture2 size={13} />
-          </button>
-        )}
       </div>
 
       <>

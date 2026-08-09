@@ -157,10 +157,6 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   // The header's rightmost controls (refresh + tabs) sit at the same corner
   // as the custom frameless-window buttons (see WindowControls in App.tsx,
   // fixed top-right). Without extra clearance they render underneath them —
-  // only needed when this page actually reaches the window's right edge, i.e.
-  // no side panel is open to its right (mirrors NowPlaying's same check).
-  const isElectron = navigator.userAgent.includes('Electron')
-  const needsWindowControlClearance = !embedded && isElectron && !showNowPlaying && !showQueue
   const isAdmin    = !!account?.is_administrator
   // is_manager grants no admin power beyond reviewing comp-file proposals —
   // everything else on this page (song edits, applications, users, stats,
@@ -249,7 +245,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className={`shrink-0 flex items-center gap-3 pb-0 border-b border-[var(--border)] ${embedded ? 'px-4' : 'px-6'}`}
-        style={{ paddingTop: needsWindowControlClearance ? 36 : embedded ? 4 : 16, paddingRight: needsWindowControlClearance ? 148 : undefined }}>
+        style={{ paddingTop: embedded ? 4 : 16 }}>
         {!embedded && (
           <button onClick={() => setActiveView('api-tracker')}
             className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">

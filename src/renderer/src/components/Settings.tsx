@@ -7,8 +7,8 @@ import {
   ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
   ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
 } from 'lucide-react'
-import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
-import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable, isActionGlobal } from '../lib/hotkeys'
+import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
+import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo } from '../lib/hotkeys'
 import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
@@ -20,7 +20,6 @@ import {
 } from '../lib/lastfm'
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
-import { navigateMainWindow, attachToMainWindow } from '../lib/windowSync'
 import { registerBackHandler } from '../lib/backHandlers'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
@@ -54,26 +53,7 @@ const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[]
   { id: 'bottom', label: 'Bottom', icon: PanelBottom },
 ]
 
-const APP_MENU_POSITIONS: { id: AppMenuPosition; label: string; icon: ElementType }[] = [
-  { id: 'sidebar', label: 'Side menu', icon: PanelLeft },
-  { id: 'title-bar', label: 'Title bar', icon: PanelTop },
-  { id: 'hidden', label: 'Hidden', icon: EyeOff },
-]
-
-// The detached pop-out windows the user can turn on/off individually. Order =
-// display order. `sub` only where a kind behaves differently from the default
-// "opens in the main window when off" — the mini player has no in-app version.
-const POPOUT_KINDS: { key: PopoutWindowKind; label: string; sub?: string }[] = [
-  { key: 'settings', label: 'Settings' },
-  { key: 'songInfo', label: 'Song info' },
-  { key: 'editor', label: 'Song editor' },
-  { key: 'localEditor', label: 'Local metadata editor' },
-  { key: 'convert', label: 'Convert format' },
-  { key: 'miniPlayer', label: 'Mini player', sub: 'No in-app version — off hides the pop-out button' },
-]
-
-type UpdateState = 'idle' | 'checking' | 'available' | 'latest' | 'downloading' | 'downloaded' | 'error'
-type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
+type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'feedback' | 'about'
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -171,11 +151,7 @@ interface AppSettings {
   windowTitleNowPlaying: boolean
 }
 
-// `floating` — rendered as the sole content of a pop-out BrowserWindow (see
-// FloatApp) rather than as an in-app overlay: the panel fills the window, the
-// header doubles as the window's drag handle, closing closes the OS window,
-// and view links (Docs, Editor) navigate the MAIN window instead.
-export default function Settings({ floating = false }: { floating?: boolean }): JSX.Element {
+export default function Settings(): JSX.Element {
   const [showToken, setShowToken] = useState(false)
   const [tokenCopied, setTokenCopied] = useState(false)
   // Paste-a-token fallback (Account tab) — for platforms where the Discord
@@ -197,7 +173,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     accentColor, setAccentColor,
     settingsTab, setSettingsTab,
     sidebarPosition, setSidebarPosition,
-    appMenuPosition, setAppMenuPosition,
     navOrder, setNavOrder,
     navVisibility, setNavItemVisible,
     navControlOrder, setNavControlOrder,
@@ -207,13 +182,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
     mediaOverlayEnabled, setMediaOverlayEnabled,
-    popoutWindows, setPopoutWindow,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
     hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
-    globalHotkeysEnabled, setGlobalHotkeysEnabled,
-    globalHotkeyOverrides, setGlobalHotkeyOverride,
-    updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
@@ -225,7 +196,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'globalHotkeyOverrides', 'setGlobalHotkeyOverride', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -237,14 +208,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   const [ctrlDragIdx, setCtrlDragIdx] = useState<number | null>(null)
   const [ctrlOverIdx, setCtrlOverIdx] = useState<number | null>(null)
   const [sleepMinutes, setSleepMinutes] = useState(30)
-  const [updateState, setUpdateState] = useState<UpdateState>('idle')
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
-  const [updatePercent, setUpdatePercent] = useState(0)
-  // Sticky companion to updateState === 'error': that state self-clears back to
-  // 'idle' after a few seconds, which is fine for the red flash but useless as a
-  // gate for the recovery button. This stays set until a check actually succeeds,
-  // so someone whose updater is wedged keeps a visible way out.
-  const [updateFailed, setUpdateFailed] = useState(false)
   const accentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   // Custom skins — which one the editor modal is open on (null = closed), the
@@ -273,17 +236,11 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
     setEditingSkinId(skin.id)
   }
-  const isElectron = navigator.userAgent.includes('Electron')
-  const el = (window as any).electron
-  // Master pop-out switch reflects "any kind still on"; flipping it turns them
-  // all off (or, from all-off, back on).
-  const anyPopout = POPOUT_KINDS.some((k) => popoutWindows[k.key])
-
   // ── Menu items (Appearance) ──────────────────────────────────────────────
   // Every platform-eligible nav item in saved order — visible ones and the
   // toggled-off extras alike — so the list is where you both reorder and
-  // show/hide. Web-only tabs (Library) are dropped on web.
-  const navRows = orderedNavItems(navOrder).filter((i) => isElectron || !i.electronOnly)
+  // show/hide.
+  const navRows = orderedNavItems(navOrder)
   const navOrderIsDefault = navOrder.length === DEFAULT_NAV_ORDER.length && navOrder.every((v, i) => v === DEFAULT_NAV_ORDER[i])
   const navVisIsDefault = navRows.every((i) => (navVisibility[i.view] ?? true) === (DEFAULT_NAV_VISIBILITY[i.view] ?? true))
   const navIsDefault = navOrderIsDefault && navVisIsDefault
@@ -313,7 +270,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   // ── Menu controls — the foot-of-menu buttons (Profile, Log out, Diagnostics,
   // Download, Settings). Same reorder/hide model, filtered to the controls
   // that actually apply to this session (account state, platform, dev mode).
-  const controlCtx = { account: !!account, isElectron, developerMode }
+  const controlCtx = { account: !!account, developerMode }
   const ctrlRows = orderedNavControls(navControlOrder).filter((c) => isNavControlAvailable(c.id, controlCtx))
   const ctrlOrderIsDefault = navControlOrder.length === DEFAULT_NAV_CONTROL_ORDER.length && navControlOrder.every((v, i) => v === DEFAULT_NAV_CONTROL_ORDER[i])
   const ctrlVisIsDefault = ctrlRows.every((c) => (navControlVisibility[c.id] ?? true) === (DEFAULT_NAV_CONTROL_VISIBILITY[c.id] ?? true))
@@ -338,35 +295,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     setNavControlOrder(next)
   }
 
-  const closeSettings = (): void => {
-    if (floating) el?.closeSelf?.()
-    else setShowSettings(false)
-  }
-  const openMainView = (view: ViewType): void => {
-    if (floating) navigateMainWindow(view)
-    else { setShowSettings(false); setActiveView(view) }
-  }
-  // Interactive elements inside the floating header must opt back out of the
-  // drag region or they'd be unclickable.
-  const noDrag = floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined
-
-  const [appSettings, setAppSettings] = useState<AppSettings>({
-    downloadPath: '',
-    autoDownload: true,
-    minimizeToTray: false,
-    minimizeTo: 'taskbar',
-    startupView: 'api-tracker',
-    discordRpcEnabled: true,
-    offlineLibraryPath: '',
-    miniPlayerHidesWindows: false,
-    confirmCloseWhilePlaying: true,
-    windowTitleNowPlaying: true,
-  })
-  const [movingOfflinePath, setMovingOfflinePath] = useState(false)
-  const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
-  const [cacheCleared, setCacheCleared] = useState<number | null>(null)
-  const [offlineStats, setOfflineStats] = useState<{ count: number; totalSize: number } | null>(null)
-  const [offlineStatsLoading, setOfflineStatsLoading] = useState(false)
+  const closeSettings = (): void => setShowSettings(false)
+  const openMainView = (view: ViewType): void => { setShowSettings(false); setActiveView(view) }
 
   // ── Last.fm connect flow (desktop token auth): fetch a token, send the user
   // to last.fm to approve it, then poll getSession until approval lands (it
@@ -471,9 +401,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     // there (the bindings themselves stay live — a paired Bluetooth keyboard
     // still works off the defaults).
     ...(isMobile ? [] : [{ id: 'shortcuts' as Tab, label: 'Shortcuts', icon: Keyboard, color: '#4b5563', sub: 'Keyboard bindings' }]),
-    ...(isElectron ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen, color: '#ea580c', sub: 'Folders and scanning' }] : []),
-    ...(isElectron ? [{ id: 'app' as Tab, label: 'App', icon: Monitor, color: '#059669', sub: 'Downloads, tray, windows' }] : []),
-    ...(isElectron && developerMode ? [{ id: 'developer' as Tab, label: 'Developer', icon: Wrench, color: '#dc2626', sub: 'Diagnostics and caches' }] : []),
     { id: 'feedback', label: 'Feedback', icon: MessageCircle, color: '#db2777', sub: 'Report a problem or idea' },
     { id: 'about', label: 'About', icon: Info, color: '#6b7280', sub: 'Version, links, legal' },
   ]
@@ -489,10 +416,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     if (!isMobile || !mobileDetail) return
     return registerBackHandler(() => { setMobileDetail(false); return true })
   }, [isMobile, mobileDetail])
-
-  useEffect(() => {
-    if (tab === 'developer' && !developerMode) setTab('app')
-  }, [tab, developerMode])
 
   // Shrinking a desktop window past the breakpoint (or a deep link) can leave
   // `tab` pointing at a category that no longer exists on mobile.
@@ -517,124 +440,22 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     }).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    if (!isElectron || !el) return
-    el.getAppSettings().then((s: AppSettings) => setAppSettings(s)).catch(() => {})
-  }, [isElectron, el])
-
-  const loadOfflineStats = (): void => {
-    if (!isElectron || !el?.offlineGetStats) return
-    setOfflineStatsLoading(true)
-    el.offlineGetStats().then((s: { count: number; totalSize: number }) => setOfflineStats(s)).catch(() => {}).finally(() => setOfflineStatsLoading(false))
-  }
-
-  useEffect(() => {
-    loadOfflineStats()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isElectron, el])
-
-  useEffect(() => {
-    if (!isElectron || !el) return
-    const off = el.onUpdateStatus?.((d: { type: string; version?: string; percent?: number; message?: string }) => {
-      if (d.type === 'checking') { setUpdateState('checking'); setUpdateVersion(null) }
-      else if (d.type === 'available') { setUpdateState('available'); setUpdateVersion(d.version ?? null); setUpdateFailed(false) }
-      else if (d.type === 'not-available') { setUpdateState('latest'); setUpdateVersion(d.version ?? null); setUpdateFailed(false); setTimeout(() => setUpdateState('idle'), 5000) }
-      else if (d.type === 'downloading') { setUpdateState('downloading'); setUpdatePercent(d.percent ?? 0) }
-      else if (d.type === 'downloaded') { setUpdateState('downloaded'); setUpdateVersion(d.version ?? null); setUpdateFailed(false) }
-      else if (d.type === 'error') { setUpdateState('error'); setUpdateFailed(true); setTimeout(() => setUpdateState('idle'), 5000) }
-    })
-    return () => off?.()
-  }, [isElectron, el])
-
-  useEffect(() => {
-    if (!updateStatus) return
-    if (updateStatus.type === 'downloading') { setUpdateState('downloading'); setUpdatePercent(updateStatus.percent ?? 0) }
-    else if (updateStatus.type === 'downloaded') { setUpdateState('downloaded'); setUpdateVersion(updateStatus.version ?? null) }
-    else if (updateStatus.type === 'available') { setUpdateState('available'); setUpdateVersion(updateStatus.version ?? null) }
-    else if (updateStatus.type === 'checking') setUpdateState('checking')
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const setSetting = async (key: keyof AppSettings, value: unknown) => {
-    if (!el) return
-    setAppSettings((prev) => ({ ...prev, [key]: value }))
-    await el.setAppSetting(key, value)
-  }
-
-  // ── Beta channel — join needs a valid access code (verified in main.js
-  // against the same hash list the installer uses); leaving is always free ──
-  const [betaEnabled, setBetaEnabled] = useState(false)
-  const [betaCode, setBetaCode] = useState('')
-  const [betaMsg, setBetaMsg] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!isElectron || !el?.betaGetStatus) return
-    el.betaGetStatus().then((on: boolean) => setBetaEnabled(!!on)).catch(() => {})
-  }, [isElectron, el])
-
-  const joinBeta = async () => {
-    if (!el?.betaJoin || !betaCode.trim()) return
-    const ok = await el.betaJoin(betaCode)
-    if (ok === 'unavailable') setBetaMsg("Beta signup is unavailable right now — the server didn't respond properly")
-    else if (ok) { setBetaEnabled(true); setBetaCode(''); setBetaMsg(null) }
-    else setBetaMsg('Invalid code — double-check it and try again')
-  }
-
-  const leaveBeta = async () => {
-    if (!el?.betaLeave) return
-    await el.betaLeave()
-    setBetaEnabled(false)
-    setBetaMsg(null)
-  }
-
-  const pickDownloadFolder = async () => {
-    if (!el) return
-    const picked = await el.pickFolder()
-    if (picked) setSetting('downloadPath', picked)
-  }
-
-  const pickOfflineFolder = async () => {
-    if (!el) return
-    const picked = await el.pickFolder()
-    if (!picked || picked === appSettings.offlineLibraryPath) return
-    setMovingOfflinePath(true)
-    setOfflinePathError(null)
-    try {
-      const result = await el.offlineSetLibraryPath(picked)
-      if (result?.error) { setOfflinePathError(result.error); return }
-      setAppSettings((prev) => ({ ...prev, offlineLibraryPath: result.path }))
-      if (result?.failedCount) setOfflinePathError(`${result.failedCount} file(s) couldn't be moved and will re-download on next sync`)
-      loadOfflineStats()
-    } finally {
-      setMovingOfflinePath(false)
-    }
-  }
-
   const toggleSleepTimer = (): void => {
     if (sleepTimerEnd) setSleepTimer(null)
     else setSleepTimer(Date.now() + sleepMinutes * 60 * 1000)
   }
 
-  const updateBtnTitle = updateState === 'checking' ? 'Checking...'
-    : updateState === 'available' ? `v${updateVersion} available`
-    : updateState === 'downloading' ? `Downloading ${updatePercent}%`
-    : updateState === 'downloaded' ? 'Ready to install'
-    : updateState === 'latest' ? 'Up to date'
-    : updateState === 'error' ? 'Check failed — use Reinstall latest release'
-    : updateFailed ? 'Check for updates (last check failed)'
-    : 'Check for updates'
-
   return (
     <div
       ref={overlayRef}
-      className={`fixed z-50 flex items-center justify-center ${isMobile && !floating ? 'inset-x-0' : 'inset-0'} ${floating || isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
+      className={`fixed z-50 flex items-center justify-center ${isMobile ? 'inset-x-0' : 'inset-0'} ${isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
       // The mobile page fills the viewport minus the bottom-nav strip (see
       // BottomNav's --bottom-nav-height, or the top strip when the nav is
       // pinned to the top instead) — it used to cover the whole screen and
       // hide the nav bar entirely while Settings was open. Click-outside-to-
       // close only exists where there IS an outside; the mobile page's
       // header X/back is the only exit either way.
-      style={isMobile && !floating
+      style={isMobile
         ? (sidebarPosition === 'top'
           ? { top: 'var(--bottom-nav-height, 0px)', bottom: 0 }
           : { top: 0, bottom: 'var(--bottom-nav-height, 0px)' })
@@ -649,20 +470,18 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
           onEditSkin={setEditingSkinId}
         />
       )}
-      <div className={`bg-surface flex flex-col overflow-hidden ${floating || isMobile
+      <div className={`bg-surface flex flex-col overflow-hidden ${isMobile
         ? 'w-full h-full'
         : 'border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh]'}`}
       >
-        {/* Header — in a pop-out it doubles as the frameless window's drag strip */}
         <div
           className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0 select-none"
           style={{
-            ...(floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : {}),
             // Clear the status bar / notch — the mobile page runs edge to edge.
             ...(isMobile ? { paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' } : {}),
           }}
         >
-          <div className="flex items-center gap-2 min-w-0" style={noDrag}>
+          <div className="flex items-center gap-2 min-w-0">
             {isMobile && mobileDetail && (
               <button
                 onClick={() => setMobileDetail(false)}
@@ -675,78 +494,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
             <h2 className="text-text-primary font-black text-xl tracking-tight truncate">
               {isMobile && mobileDetail ? (tabs.find((t) => t.id === tab)?.label ?? 'Settings') : 'Settings'}
             </h2>
-            {isElectron && (
-              <button
-                disabled={updateState === 'checking' || updateState === 'downloading'}
-                title={updateBtnTitle}
-                onClick={async () => {
-                  if (updateState === 'downloaded') { (el as any)?.installUpdate?.(); return }
-                  setUpdateState('checking')
-                  try {
-                    await el?.checkForUpdates()
-                    setUpdateState((s: UpdateState) => s === 'checking' ? 'latest' : s)
-                    setUpdateFailed(false)
-                    setTimeout(() => setUpdateState((s: UpdateState) => s === 'latest' ? 'idle' : s), 4000)
-                  } catch {
-                    setUpdateState('error')
-                    setUpdateFailed(true)
-                    setTimeout(() => setUpdateState('idle'), 4000)
-                  }
-                }}
-                className={`p-1 rounded transition-colors disabled:opacity-50 ${
-                  updateState === 'latest' || updateState === 'downloaded' ? 'text-emerald-400' :
-                  updateState === 'available' ? 'text-yellow-400' :
-                  updateState === 'error' ? 'text-red-400' :
-                  'text-text-muted hover:text-text-primary'
-                }`}
-              >
-                <RefreshCw size={14} className={updateState === 'checking' || updateState === 'downloading' ? 'animate-spin' : ''} />
-              </button>
-            )}
-            {/* Normally a developer-mode affordance, but it's also the only exit
-                from a wedged updater — so unhide it once a check has failed. */}
-            {isElectron && (developerMode || updateFailed) && updateState !== 'downloading' && updateState !== 'checking' && (
-              <button
-                title={updateFailed ? 'Update check failed — reinstall the latest release' : 'Force reinstall latest release'}
-                onClick={() => el?.forceUpdate?.()}
-                className={`p-1 rounded transition-colors ${updateFailed ? 'text-red-400 hover:text-red-300' : 'text-text-muted hover:text-text-primary'}`}
-              >
-                <DownloadCloud size={14} />
-              </button>
-            )}
-            {updateState === 'downloading' && (
-              <span className="text-[10px] text-accent font-medium">{updatePercent}%</span>
-            )}
-            {updateState === 'available' && updateVersion && (
-              <span className="text-[10px] text-yellow-400">v{updateVersion}</span>
-            )}
-            {updateState === 'downloaded' && (
-              <span className="text-[10px] text-emerald-400">Restart to update</span>
-            )}
           </div>
-          <div className="flex items-center gap-3" style={noDrag}>
-            {/* Manual pop-out — only when shown in-app on desktop (i.e. the
-                Settings pop-out was turned off); detaches into its own window. */}
-            {!floating && isElectron && el?.openFloatWindow && (
-              <button
-                onClick={() => { el.openFloatWindow('settings'); setShowSettings(false) }}
-                title="Open in a separate window"
-                className="text-text-muted hover:text-text-primary transition-colors"
-              >
-                <PictureInPicture2 size={18} />
-              </button>
-            )}
-            {/* Manual attach — from the pop-out window, dock back into the
-                main window's in-app settings overlay, then close this window. */}
-            {floating && (
-              <button
-                onClick={() => { attachToMainWindow({ view: 'settings' }); el?.closeSelf?.() }}
-                title="Dock into main window"
-                className="text-text-muted hover:text-text-primary transition-colors"
-              >
-                <Minimize2 size={18} />
-              </button>
-            )}
+          <div className="flex items-center gap-3">
             <button onClick={closeSettings} className="text-text-muted hover:text-text-primary transition-colors">
               <X size={20} />
             </button>
@@ -1351,38 +1100,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     })}
                   </div>
                 </div>
-                {isElectron && (
-                  <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                    <div className="flex items-center gap-2.5 mb-2.5">
-                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
-                        <Menu size={13} className="text-white" strokeWidth={2.25} />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-text-primary text-sm">App menu button</span>
-                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">Where the File / Edit / View… menu opens from</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
-                      {APP_MENU_POSITIONS.map(({ id, label, icon: MenuIcon }) => {
-                        const active = appMenuPosition === id
-                        return (
-                          <button
-                            key={id}
-                            onClick={() => setAppMenuPosition(id)}
-                            className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                              active
-                                ? 'bg-accent/15 text-accent border-[var(--accent)]'
-                                : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                            }`}
-                          >
-                            <MenuIcon size={14} className="shrink-0" />
-                            {label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
                 </SettingsCard>
                 <SettingsCard>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
@@ -1410,7 +1127,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   </div>
                   <div className="pl-0 md:pl-[34px] space-y-1.5">
                     {navRows.map((item, idx) => {
-                      const shown = isNavItemVisible(item, navVisibility, isElectron)
+                      const shown = isNavItemVisible(item, navVisibility)
                       return (
                         <div
                           key={item.view}
@@ -1474,11 +1191,9 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 {/* Editor/admin-only tabs on the mobile bottom bar (Albums, and
                     the Editor/Admin profile tab). They aren't part of the
                     NAV_ITEMS registry above (which drives the desktop side
-                    menu) — desktop reaches those views via the profile avatar /
-                    "Edit albums" button — so they get their own toggle here,
-                    shown only to editors/admins on the web build where the
-                    bottom bar exists. Reuses the shared navVisibility map. */}
-                {!isElectron && (account?.is_editor || account?.is_administrator) && (
+                    menu) — so they get their own toggle here, shown only to
+                    editors/admins. Reuses the shared navVisibility map. */}
+                {(account?.is_editor || account?.is_administrator) && (
                   <SettingsCard>
                   <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                     <div className="flex items-center gap-2.5 mb-2.5">
@@ -1758,18 +1473,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   </select>
                 </Row>
 
-                {isElectron && (
-                  <Row
-                    icon={Globe}
-                    iconColor="#0ea5e9"
-                    label="Global shortcuts"
-                    sub="Also trigger shortcuts when the app is in the background. Only shortcuts that use a modifier (Ctrl, Alt…) or a media key can be global — plain keys can't be captured system-wide."
-                    labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={globalHotkeysEnabled} onClick={() => setGlobalHotkeysEnabled(!globalHotkeysEnabled)} /></div>}
-                  />
-                )}
-
                 {HOTKEY_CATEGORIES.map((category) => {
-                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (isElectron || !a.electronOnly) && (developerMode || !a.devModeOnly))
+                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (developerMode || !a.devModeOnly))
                   if (actions.length === 0) return null
                   return (
                     <div key={category} className="mt-4 first:mt-3">
@@ -1779,21 +1484,10 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           const binding = effectiveBinding(action.id, hotkeyBindings)
                           const tokens = comboTokens(binding)
                           const recording = recordingId === action.id
-                          const eligibleForGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
-                          const isGlobal = eligibleForGlobal && isActionGlobal(action.id, globalHotkeyOverrides)
                           return (
                             <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
                               <span className="text-text-secondary text-sm truncate flex items-center gap-1.5">
                                 {action.label}
-                                {eligibleForGlobal && (
-                                  <button
-                                    onClick={() => setGlobalHotkeyOverride(action.id, !isGlobal)}
-                                    title={isGlobal ? 'Works globally — click to make in-app only' : 'In-app only — click to also work globally'}
-                                    className="shrink-0"
-                                  >
-                                    <Globe size={11} className={isGlobal ? 'text-sky-400' : 'text-text-muted'} aria-label={isGlobal ? 'Works globally' : 'In-app only'} />
-                                  </button>
-                                )}
                               </span>
                               <button
                                 onClick={() => setRecordingId(recording ? null : action.id)}
@@ -1825,307 +1519,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     </div>
                   )
                 })}
-              </div>
-            )}
-
-            {/* ── Library ── */}
-            {tab === 'library' && isElectron && (
-              <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Library Folders</h3>
-                <div className="space-y-2 mb-3">
-                  {libraryFolders.length === 0 && (
-                    <p className="text-text-muted text-xs">No folders added yet.</p>
-                  )}
-                  {libraryFolders.map((folder) => (
-                    <div key={folder} className="flex items-center gap-2 bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]">
-                      <FolderOpen size={13} className="text-text-muted shrink-0" />
-                      <span className="flex-1 text-text-primary text-xs truncate" title={folder}>{folder}</span>
-                      <button
-                        onClick={() => removeLibraryFolder(folder)}
-                        className="text-text-muted hover:text-red-400 transition-colors text-xs px-1"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={async () => { if (!el) return; const p = await el.pickFolder(); if (p) addLibraryFolder(p) }}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
-                  >
-                    <FolderPlus size={13} /> Add Folder
-                  </button>
-                  <button
-                    onClick={() => scanLibrary()}
-                    disabled={libraryScanning || libraryFolders.length === 0}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-40 transition-colors"
-                  >
-                    {libraryScanning ? <Loader2 size={13} className="animate-spin" /> : null}
-                    {libraryScanning ? 'Scanning…' : 'Scan Now'}
-                  </button>
-                </div>
-                {libraryLastScanned && (
-                  <p className="text-text-muted text-[10px] mt-2">
-                    Last scanned: {new Date(libraryLastScanned).toLocaleString()} · {libraryTracks.length} tracks
-                  </p>
-                )}
-                <div className="flex items-center justify-between py-3 mt-2 border-t border-[var(--border)]">
-                  <div>
-                    <span className="text-text-primary text-sm block">Auto-refresh changed files</span>
-                    <span className="text-text-muted text-xs">Reload tags automatically when a file changes on disk (e.g. edited externally)</span>
-                  </div>
-                  <Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} />
-                </div>
-              </div>
-            )}
-
-            {/* ── App ── */}
-            {tab === 'app' && isElectron && (
-              <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">App</h3>
-                <div className="py-3 border-b border-[var(--border)]">
-                  <div className="flex items-center gap-2.5 mb-2">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0891b2' }}>
-                      <FolderOpen size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <span className="text-text-primary text-sm">Download folder</span>
-                  </div>
-                  <div className="flex items-center gap-2 pl-0 md:pl-[34px]">
-                    <span className="flex-1 text-text-muted text-xs truncate bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]" title={appSettings.downloadPath}>
-                      {appSettings.downloadPath || 'Default Downloads folder'}
-                    </span>
-                    <button
-                      onClick={pickDownloadFolder}
-                      className="shrink-0 px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors"
-                    >
-                      Change
-                    </button>
-                  </div>
-                </div>
-                <div className="py-3 border-b border-[var(--border)]">
-                  <div className="flex items-center gap-2.5 mb-2">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#7c3aed' }}>
-                      <FolderOpen size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <span className="text-text-primary text-sm">Offline songs folder</span>
-                  </div>
-                  <div className="flex items-center gap-2 pl-0 md:pl-[34px]">
-                    <span className="flex-1 text-text-muted text-xs truncate bg-[var(--surface-overlay)] rounded-lg px-3 py-2 border border-[var(--border)]" title={appSettings.offlineLibraryPath}>
-                      {appSettings.offlineLibraryPath || 'Default app data folder'}
-                    </span>
-                    <button
-                      onClick={pickOfflineFolder}
-                      disabled={movingOfflinePath}
-                      className="shrink-0 px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                    >
-                      {movingOfflinePath && <Loader2 size={12} className="animate-spin" />}
-                      {movingOfflinePath ? 'Moving…' : 'Change'}
-                    </button>
-                  </div>
-                  {offlinePathError && (
-                    <p className="text-red-400 text-[10px] mt-1.5 pl-0 md:pl-[34px]">{offlinePathError}</p>
-                  )}
-                </div>
-                <Row
-                  icon={DownloadCloud}
-                  iconColor="#7c3aed"
-                  label="Offline downloads"
-                  sub={offlineStatsLoading ? 'Calculating…' : offlineStats ? `${offlineStats.count} file${offlineStats.count === 1 ? '' : 's'} · ${formatBytes(offlineStats.totalSize)}` : undefined}
-                >
-                  <button
-                    onClick={loadOfflineStats}
-                    disabled={offlineStatsLoading}
-                    title="Refresh"
-                    className="shrink-0 p-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50"
-                  >
-                    <RefreshCw size={12} className={offlineStatsLoading ? 'animate-spin' : ''} />
-                  </button>
-                </Row>
-                <Row icon={Monitor} iconColor="#6b7280" label="Start on">
-                  <select
-                    value={appSettings.startupView}
-                    onChange={(e) => setSetting('startupView', e.target.value)}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
-                  >
-                    <option value="api-tracker">Tracker</option>
-                    <option value="api-files">Files</option>
-                    <option value="liked">Liked Songs</option>
-                    <option value="playlists">Playlists</option>
-                  </select>
-                </Row>
-                <Row icon={BellOff} iconColor="#16a34a" label="Auto-download updates">
-                  <Toggle on={appSettings.autoDownload} onClick={() => setSetting('autoDownload', !appSettings.autoDownload)} />
-                </Row>
-                {isElectron && (
-                  <Row
-                    icon={FlaskConical}
-                    iconColor="#f59e0b"
-                    label="Beta updates"
-                    sub={betaEnabled
-                      ? 'This install receives beta (pre-release) builds'
-                      : betaMsg ?? 'Have an access code? Enter it to receive beta builds'}
-                  >
-                    {betaEnabled ? (
-                      <Toggle on={betaEnabled} onClick={leaveBeta} />
-                    ) : (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <input
-                          type="text"
-                          value={betaCode}
-                          onChange={(e) => { setBetaCode(e.target.value); setBetaMsg(null) }}
-                          onKeyDown={(e) => { if (e.key === 'Enter') joinBeta() }}
-                          placeholder="Access code"
-                          className="w-32 bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)] placeholder:text-text-muted"
-                        />
-                        <button
-                          onClick={joinBeta}
-                          disabled={!betaCode.trim()}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] text-text-secondary transition-colors disabled:opacity-50"
-                        >
-                          Join
-                        </button>
-                      </div>
-                    )}
-                  </Row>
-                )}
-                <Row
-                  icon={Minus}
-                  iconColor="#6b7280"
-                  label="Minimize to"
-                  sub={{
-                    taskbar: 'Minimize keeps the window on the taskbar',
-                    tray: 'Minimize hides the window to the tray icon',
-                  }[appSettings.minimizeTo]}
-                >
-                  <select
-                    value={appSettings.minimizeTo}
-                    onChange={(e) => setSetting('minimizeTo', e.target.value)}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
-                  >
-                    <option value="taskbar">Taskbar</option>
-                    <option value="tray">Tray</option>
-                  </select>
-                </Row>
-                <Row icon={Minus} iconColor="#6b7280" label="Minimize to tray on close">
-                  <Toggle on={appSettings.minimizeToTray} onClick={() => setSetting('minimizeToTray', !appSettings.minimizeToTray)} />
-                </Row>
-                <Row
-                  icon={AppWindow}
-                  iconColor="#8b5cf6"
-                  label="Show current song in the window title"
-                  sub="The taskbar and alt-tab label follows what's playing instead of just saying Unreleased"
-                >
-                  <Toggle on={appSettings.windowTitleNowPlaying} onClick={() => setSetting('windowTitleNowPlaying', !appSettings.windowTitleNowPlaying)} />
-                </Row>
-                <Row
-                  icon={Minus}
-                  iconColor="#6b7280"
-                  label="Confirm before quitting while playing"
-                  sub="Ask before closing the app if a song is still playing (not when it just hides to the tray)"
-                >
-                  <Toggle on={appSettings.confirmCloseWhilePlaying} onClick={() => setSetting('confirmCloseWhilePlaying', !appSettings.confirmCloseWhilePlaying)} />
-                </Row>
-                <Row
-                  icon={Volume2}
-                  iconColor="#0891b2"
-                  label="Media key overlay"
-                  sub="Show the Windows volume/media flyout when pressing media keys"
-                >
-                  <Toggle on={mediaOverlayEnabled} onClick={() => setMediaOverlayEnabled(!mediaOverlayEnabled)} />
-                </Row>
-                <div className="py-3 border-b border-[var(--border)]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#8b5cf6' }}>
-                      <AppWindow size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-text-primary text-sm">Pop-out windows</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Open these in their own separate window. Turn one off to keep it inside the main window instead.</p>
-                    </div>
-                    <div className="ml-2 shrink-0">
-                      <Toggle on={anyPopout} onClick={() => { const next = !anyPopout; POPOUT_KINDS.forEach((k) => setPopoutWindow(k.key, next)) }} />
-                    </div>
-                  </div>
-                  {anyPopout && (
-                    <div className="pl-0 md:pl-[34px] mt-2.5 space-y-2.5">
-                      {POPOUT_KINDS.map(({ key, label, sub }) => (
-                        <div key={key} className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-text-secondary text-sm truncate">{label}</p>
-                            {sub && <p className="text-text-muted text-[11px] truncate">{sub}</p>}
-                          </div>
-                          <Toggle on={popoutWindows[key]} onClick={() => setPopoutWindow(key, !popoutWindows[key])} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Equalizer is the inverse of the group above — normally an
-                      in-app popover, so this opts INTO a pop-out. Shown
-                      independently of the master toggle for that reason. */}
-                  <div className="pl-0 md:pl-[34px] mt-2.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-text-secondary text-sm truncate">Equalizer as pop-out</p>
-                      <p className="text-text-muted text-[11px] truncate">Open the equalizer in its own window instead of an in-app panel</p>
-                    </div>
-                    <Toggle on={popoutWindows.equalizer} onClick={() => setPopoutWindow('equalizer', !popoutWindows.equalizer)} />
-                  </div>
-                </div>
-                {popoutWindows.miniPlayer && (
-                  <Row
-                    icon={PictureInPicture2}
-                    iconColor="#8b5cf6"
-                    label="Solo mini player"
-                    sub="Hide the main window and other pop-outs while the mini player is open — restored when it closes"
-                  >
-                    <Toggle on={appSettings.miniPlayerHidesWindows} onClick={() => setSetting('miniPlayerHidesWindows', !appSettings.miniPlayerHidesWindows)} />
-                  </Row>
-                )}
-                <Row icon={MessageCircle} iconColor="#5865f2" label="Show Discord Status">
-                  <Toggle on={appSettings.discordRpcEnabled} onClick={() => setSetting('discordRpcEnabled', !appSettings.discordRpcEnabled)} />
-                </Row>
-                <Row icon={Wrench} iconColor="#6b7280" label="Developer options" sub="Shows a Developer tab with cache & diagnostics tools">
-                  <Toggle on={developerMode} onClick={() => setDeveloperMode(!developerMode)} />
-                </Row>
-              </div>
-            )}
-
-            {/* ── Developer ── */}
-            {tab === 'developer' && isElectron && developerMode && (
-              <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Developer</h3>
-                <Row icon={FileText} iconColor="#6b7280" label="Diagnostic logs" sub="Opens the folder with current-run.log & previous-run.log">
-                  <button
-                    onClick={() => el?.openLogsFolder?.()}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
-                  >
-                    <FolderOpen size={13} />
-                    Open logs
-                  </button>
-                </Row>
-                <Row icon={Trash2} iconColor="#dc2626" label="Clear cache" sub="Removes cached API responses and cover art used for offline browsing">
-                  <button
-                    onClick={() => {
-                      // Cover art is cached by Chromium, not apiCache — clear both.
-                      setCacheCleared(cacheClearAll())
-                      el?.clearImageCache?.()
-                      setTimeout(() => setCacheCleared(null), 3000)
-                    }}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
-                  >
-                    <Trash2 size={13} />
-                    {cacheCleared !== null ? `Cleared ${cacheCleared}` : 'Clear cache'}
-                  </button>
-                </Row>
-                <Row icon={DownloadCloud} iconColor="#0ea5e9" label="Online installer" sub="Ships with the app — repairs or reinstalls even if the app won't launch">
-                  <button
-                    onClick={() => el?.openOnlineInstaller?.()}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
-                  >
-                    <DownloadCloud size={13} />
-                    Open
-                  </button>
-                </Row>
               </div>
             )}
 

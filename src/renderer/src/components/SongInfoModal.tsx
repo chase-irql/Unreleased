@@ -7,7 +7,6 @@ import {
   GitBranch, Info, StickyNote, Quote, LucideIcon
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
-import { attachToMainWindow } from '../lib/windowSync'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
@@ -69,38 +68,14 @@ interface Props {
   song: JWApiSong | null
   onClose: () => void
   onEdit?: (songId: number) => void
-  // Rendered as the sole content of a pop-out BrowserWindow (see FloatApp):
-  // the panel fills the window, the hero doubles as the drag handle, and
-  // closing closes the OS window (via the caller's onClose).
-  floating?: boolean
-  // Explicitly render in-app and never auto-redirect to a float window, even
-  // when the song-info pop-out is enabled. Used by the main window's global
-  // host so "attach" docks here instead of bouncing straight back out.
-  docked?: boolean
 }
 
-export default function SongInfoModal({ song, onClose, onEdit, floating = false, docked = false }: Props): JSX.Element | null {
-  useBackToClose(onClose, !floating && !docked)
+export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Element | null {
+  useBackToClose(onClose, true)
   const overlayRef = useRef<HTMLDivElement>(null)
 
-  // Desktop: song info lives in its own pop-out window — every existing
-  // in-app <SongInfoModal> caller redirects there instead of rendering the
-  // overlay, unless the user disabled that pop-out. The overlay is the
-  // fallback (and the only path on the web build, and for the pop-out itself,
-  // which mounts this with floating=true).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const el = (window as any).electron
-  const popoutSongInfo = useStore((s) => s.popoutWindows.songInfo)
   const songPrefs = useStore((s) => s.songPrefs)
   const openReport = useStore((s) => s.openReport)
-  const redirectToFloat = !floating && !docked && !!el?.openFloatWindow && popoutSongInfo
-  useEffect(() => {
-    if (redirectToFloat && song) {
-      el.openFloatWindow('song-info', { songId: song.id })
-      onClose()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [redirectToFloat, song?.id])
 
   // Clicking a linked version swaps the displayed song in place, without the
   // caller needing to manage that — falls back to the `song` prop otherwise.
@@ -140,7 +115,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
     } catch {}
   }
 
-  if (redirectToFloat || !displaySong) return null
+  if (!displaySong) return null
 
   // The user's per-song override (custom name/cover). Subscribing to the whole
   // map keeps the hero in step when it's edited from the Personalize section
@@ -183,22 +158,15 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
   return createPortal(
     <div
       ref={overlayRef}
-      className={`fixed inset-0 z-[160] flex ${floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'}`}
+      className="fixed inset-0 z-[160] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
       <div
-        className={`select-text bg-surface flex flex-col overflow-hidden ${floating
-          ? 'w-full h-full'
-          : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh]'}`}
+        className="select-text bg-surface flex flex-col overflow-hidden border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-lg max-h-[92svh] md:max-h-[86vh]"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
 
-        {/* Hero — in a pop-out it doubles as the frameless window's drag
-            handle; the buttons opt back out below or they'd be undraggable. */}
-        <div
-          className="relative shrink-0 overflow-hidden"
-          style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
-        >
+        <div className="relative shrink-0 overflow-hidden">
           {coverUrl && (
             <div
               className="absolute inset-0 bg-cover bg-center scale-110"
@@ -208,30 +176,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-surface" />
           <div
             className="absolute top-3 right-3 z-10 flex items-center gap-1.5"
-            style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
           >
-            {/* Manual pop-out — only when shown in-app on desktop (i.e. the
-                Song-info pop-out was turned off); detaches into its own window. */}
-            {!floating && el?.openFloatWindow && (
-              <button
-                onClick={() => { el.openFloatWindow('song-info', { songId: displaySong.id }); onClose() }}
-                className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
-                title="Open in a separate window"
-              >
-                <PictureInPicture2 size={13} />
-              </button>
-            )}
-            {/* Manual attach — from the pop-out window, dock back into the main
-                window (the main window opens its in-app song info). */}
-            {floating && (
-              <button
-                onClick={() => { attachToMainWindow({ view: 'song-info', songId: displaySong.id }); onClose() }}
-                className="w-7 h-7 flex items-center justify-center rounded-full bg-black/40 text-white/70 hover:text-white transition-colors"
-                title="Dock into main window"
-              >
-                <Minimize2 size={13} />
-              </button>
-            )}
             {onEdit && (
               <button
                 onClick={() => { onEdit(displaySong.id); onClose() }}
@@ -420,11 +365,8 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
   )
 }
 
-// Main-window-only host for the docked song-info modal. Renders nothing until
-// something sets `infoSongId` (only the "attach" flow does — a floating
-// song-info window asking to dock back in), then fetches that song and shows
-// the modal in-app. `docked` keeps it from bouncing straight back out to a
-// float window when the song-info pop-out is enabled.
+// Global host for the song-info modal — renders nothing until something sets
+// `infoSongId`, then fetches that song and shows the modal.
 export function GlobalSongInfoHost(): JSX.Element | null {
   const { infoSongId, setInfoSongId, account } = useStorePick('infoSongId', 'setInfoSongId', 'account')
   const [song, setSong] = useState<JWApiSong | null>(null)
@@ -440,7 +382,6 @@ export function GlobalSongInfoHost(): JSX.Element | null {
   const canEdit = !!account && (account.is_editor || account.is_administrator)
   return (
     <SongInfoModal
-      docked
       song={song}
       onClose={() => setInfoSongId(null)}
       onEdit={canEdit ? (id) => useStore.getState().openSongEditor(id) : undefined}

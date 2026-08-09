@@ -247,17 +247,6 @@ export default function PlaylistContextMenu({ state, onClose }: {
               disabled={zipState === 'loading'}
               onClick={downloadZip}
             />
-            {!!(window as any).electron && (
-              <MenuItem
-                icon={offlineSyncState?.state === 'syncing' ? Loader2 : Download}
-                label={
-                  offlineSyncState?.state === 'syncing' ? `Downloading… ${offlineSyncState.current}/${offlineSyncState.total}`
-                    : isOffline ? 'Remove offline download' : 'Download for offline'
-                }
-                disabled={offlineSyncState?.state === 'syncing'}
-                onClick={toggleOffline}
-              />
-            )}
             <div className="border-t border-[var(--border)] my-1" />
             <MenuItem icon={shareCopied ? Check : Link} label={shareCopied ? 'Link copied!' : 'Copy share link'} onClick={copyShare} />
             <MenuItem icon={playlist.is_public ? Globe : Lock} label={playlist.is_public ? 'Make private' : 'Make public'} disabled={busy} onClick={togglePublic} />

@@ -387,7 +387,6 @@ function changeTypeLabel(type: string): string {
 }
 
 export default function EditorProfileView(): JSX.Element {
-  const isElectron = navigator.userAgent.includes('Electron')
   const { account, setActiveView, setPendingEditorSongId, setPendingEditProposal } = useStore(useShallow(s => ({
     account: s.account,
     setActiveView: s.setActiveView,
@@ -514,13 +513,7 @@ export default function EditorProfileView(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
 
       {/* ── Header ── */}
-      {/* The "Edit albums"/"New song" buttons are right-aligned here, which in
-          Electron sits directly under the fixed window-control buttons
-          (minimize/maximize/close, 28px tall) — the app's `main` element
-          doesn't otherwise reserve space for them, it just draws a drag
-          region behind the content. Extra top padding pushes this row
-          below that band instead of overlapping it. */}
-      <div className={`px-6 pb-5 border-b border-[var(--border)] shrink-0 ${isElectron ? 'pt-9' : 'pt-5'}`}>
+      <div className="px-6 pb-5 border-b border-[var(--border)] shrink-0 pt-5">
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => setActiveView('api-tracker')}

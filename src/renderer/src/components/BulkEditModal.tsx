@@ -10,7 +10,6 @@ import { apiFetch, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import type { JWApiSong, JWApiEra } from '../lib/juicewrldApi'
 import type { LibraryTrack } from '../types'
 import * as userApi from '../lib/userApi'
-import { broadcastLibraryTrackUpdate } from '../lib/windowSync'
 import { getVersionMetaForSongs, getOwnVersionMeta, setGroupVersionTitle, setSongVersion } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { invalidateCompactGroupsCache } from '../lib/compactGroups'
@@ -423,7 +422,6 @@ export default function BulkEditModal(): JSX.Element | null {
         const res = await el.writeTrackMetadata(track.filePath, meta)
         if (res?.error) throw new Error(res.error)
         updateLibraryTrack(track.id, updates)
-        broadcastLibraryTrackUpdate(track.id, updates)
       },
     }
   }, [target, updateLibraryTrack])

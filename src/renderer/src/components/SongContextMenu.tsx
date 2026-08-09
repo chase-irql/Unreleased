@@ -160,7 +160,6 @@ export default function SongContextMenu({
   const [zipLoading, setZipLoading] = useState(false)
   const [zipCandidates, setZipCandidates] = useState<JWApiFileEntry[] | null>(null)
   const [downloadingOffline, setDownloadingOffline] = useState(false)
-  const el = (window as any).electron
 
   useEffect(() => {
     const handle = (e: MouseEvent): void => {
@@ -474,9 +473,6 @@ export default function SongContextMenu({
           {/* Actions on the local file itself. Copy/move prompt for a
               destination in the main process; delete goes to the OS trash. */}
           <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
-          <MenuItem icon={<ClipboardCopy size={14} />} label="Copy file" onClick={() => { el.copyFileToClipboard(track.path); onClose() }} />
-          <MenuItem icon={<Clipboard size={14} />} label="Copy path" onClick={() => { el.copyTextToClipboard(track.path); onClose() }} />
-          <MenuItem icon={<Copy size={14} />} label="Copy to folder…" onClick={() => { el.copyLibraryFile(track.path); onClose() }} />
           <MenuItem icon={<FolderInput size={14} />} label="Move to folder…" onClick={() => { useStore.getState().moveLibraryTrack(track.id); onClose() }} />
           <Divider />
           {/* Deletes the user's actual file (to the OS trash) rather than just
@@ -566,7 +562,7 @@ export default function SongContextMenu({
           )}
           {/* Everything that touches the user's actual file lives in its own
               flyout, so the destructive entries aren't one stray click away. */}
-          {isLocalOnly && !!track.path && el && (
+          {isLocalOnly && !!track.path && (
             <MenuItem
               innerRef={fileItemRef}
               icon={<FileCog size={14} />}
@@ -607,27 +603,7 @@ export default function SongContextMenu({
             <>
               <Divider />
               <MenuItem icon={<Download size={14} />} label="Download" onClick={() => { downloadTrack(track); onClose() }} />
-              {el && hasValidSong && (
-                <MenuItem
-                  icon={addingToLib ? <Loader2 size={14} className="animate-spin" /> : addedToLib ? <Check size={14} className="text-accent" /> : <HardDrive size={14} />}
-                  label={addedToLib ? 'Added to library' : addingToLib ? 'Adding...' : 'Add to library'}
-                  onClick={async () => {
-                    if (addingToLib || addedToLib) return
-                    setAddingToLib(true)
-                    try {
-                      const url = 'https://juicewrldapi.com/juicewrld/files/download/?path=' + encodeURIComponent(track.path)
-                      const result = await el.downloadToLibrary({
-                        url, songName: track.title, artist: track.artist, songPath: track.path,
-                      })
-                      if (!result.error) {
-                        if (result.track) addLibraryTrack(result.track)
-                        setAddedToLib(true)
-                      }
-                    } finally { setAddingToLib(false) }
-                  }}
-                />
-              )}
-              {el && hasValidSong && !offlineTracks[track.id] && (
+              {hasValidSong && !offlineTracks[track.id] && (
                 <MenuItem
                   icon={downloadingOffline ? <Loader2 size={14} className="animate-spin" /> : <CircleArrowDown size={14} />}
                   label={downloadingOffline ? 'Downloading…' : 'Download offline'}
