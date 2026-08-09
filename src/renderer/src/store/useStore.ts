@@ -252,6 +252,10 @@ interface AppState {
   // media key) are also registered OS-wide so they work while the app is in
   // the background. See lib/hotkeys isGloballyRegistrable.
   globalHotkeysEnabled: boolean
+  // Per-action opt-out from the OS-wide registration above (actionId →
+  // false). Absence means "global" (the old, only, behavior), so this only
+  // ever narrows the set — see lib/hotkeys isActionGlobal.
+  globalHotkeyOverrides: Record<string, boolean>
 
   // Liked songs
   likedTrackIds: string[]
@@ -459,6 +463,7 @@ interface AppActions {
   resetHotkeyBindings: () => void
   setHotkeySeekSeconds: (seconds: number) => void
   setGlobalHotkeysEnabled: (enabled: boolean) => void
+  setGlobalHotkeyOverride: (actionId: string, global: boolean) => void
 
   toggleLike: (trackId: string) => void
 
@@ -1104,6 +1109,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   hotkeyBindings: ls.get<Record<string, string>>('hotkeyBindings') ?? {},
   hotkeySeekSeconds: ls.get<number>('hotkeySeekSeconds') ?? 10,
   globalHotkeysEnabled: ls.get<boolean>('globalHotkeysEnabled') ?? false,
+  globalHotkeyOverrides: ls.get<Record<string, boolean>>('globalHotkeyOverrides') ?? {},
 
   setCrossfade: (enabled, duration) => {
     set({ crossfadeEnabled: enabled, crossfadeDuration: duration })
@@ -1152,6 +1158,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
   resetHotkeyBindings: () => { set({ hotkeyBindings: {} }); ls.set('hotkeyBindings', {}) },
   setHotkeySeekSeconds: (seconds) => { set({ hotkeySeekSeconds: seconds }); ls.set('hotkeySeekSeconds', seconds) },
   setGlobalHotkeysEnabled: (enabled) => { set({ globalHotkeysEnabled: enabled }); ls.set('globalHotkeysEnabled', enabled) },
+  setGlobalHotkeyOverride: (actionId, global) => {
+    const next = { ...get().globalHotkeyOverrides }
+    if (global) delete next[actionId]
+    else next[actionId] = false
+    set({ globalHotkeyOverrides: next })
+    ls.set('globalHotkeyOverrides', next)
+  },
 
   // ── Liked songs ───────────────────────────────────────────────────────────
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],

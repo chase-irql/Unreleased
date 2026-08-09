@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useDeferredValue, memo } from 'react'
 import {
   ChevronLeft, Users, Clock, CheckCircle, XCircle, ShieldCheck, BarChart2,
   Loader2, RefreshCw, FileEdit, KeyRound, Check, AlertCircle, RotateCcw,
@@ -14,7 +14,7 @@ import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } f
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import { invalidateLyricsCache } from './Player'
-import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection, QueueSearch, matchesQuery } from './adminShared'
+import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection, QueueSearch, buildHaystack, matchesHaystack } from './adminShared'
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
@@ -135,7 +135,10 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
   )
 }
 
-function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element {
+// Memoized: a proposal touching lyrics renders two full lyric bodies side by
+// side, and this sits in the same component as the search box — so without it
+// every keystroke re-rendered the entire diff of whatever was selected.
+const ProposalDiff = memo(function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element {
   const entries = Object.entries(proposal.proposed_data || {})
   if (!entries.length) return <p className="text-text-muted text-xs italic p-4">No field data.</p>
   const snap = proposal.original_snapshot || {}
@@ -147,7 +150,7 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
       {entries.map(([k, v]) => <FieldDiff key={k} fieldKey={k} before={snap[k]} after={v} />)}
     </div>
   )
-}
+})
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
@@ -515,6 +518,54 @@ function sortProposals(rows: SongEditProposal[], sortBy: ProposalSort): SongEdit
   })
 }
 
+/** How many proposal rows to mount at once (see `shown` in ProposalsTab). */
+const PROPOSAL_PAGE = 400
+
+// Memoized because the list isn't windowed: with the status filter on "All"
+// it holds the whole proposal archive, and without this every keystroke in the
+// search box re-rendered every row that survived the filter. `onSelect` is
+// setSelected straight from useState, so its identity is stable and the memo
+// actually holds.
+const ProposalRow = memo(function ProposalRow({ item, active, showUserHeader, onSelect }: {
+  item: SongEditProposal
+  active: boolean
+  showUserHeader: boolean
+  onSelect: (p: SongEditProposal) => void
+}): JSX.Element {
+  const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
+  return (
+    <div>
+      {showUserHeader && (
+        <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface-overlay border-b border-[var(--border)] sticky top-0 z-[1]">
+          {item.editor_username}
+        </div>
+      )}
+      <button onClick={() => onSelect(item)}
+        className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors ${
+          active ? 'bg-accent/10' : 'hover:bg-surface-raised'
+        }`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <StatusChip status={item.status} />
+          <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
+            {item.change_type}
+          </span>
+          {item.song_public_id != null && (
+            <span className="text-[9px] text-text-muted ml-auto flex items-center gap-0.5">
+              <Hash size={8} />{item.song_public_id}
+            </span>
+          )}
+        </div>
+        <p className="text-[12px] font-semibold truncate leading-snug mb-0.5 text-text-primary">
+          {item.title || `Proposal #${item.id}`}
+        </p>
+        <p className="text-[10px] text-text-muted truncate">
+          {item.editor_username} · {relativeTime(item.created_at)}
+        </p>
+      </button>
+    </div>
+  )
+})
+
 function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   proposals: SongEditProposal[]
   status: ProposalStatus | ''
@@ -544,11 +595,28 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   // Searchable: the song title, who filed it, the change type, and both ids —
   // the public song id is what reports and Discord threads cite, so pasting
-  // one should land on its proposal.
+  // one should land on its proposal. Built once per fetch: under the "All"
+  // filter this list is the entire archive, and doing it inline in the filter
+  // meant re-flattening every row on every keystroke.
+  const haystacks = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const p of proposals) {
+      m.set(p.id, buildHaystack(p.title, p.editor_username, p.change_type, p.song_public_id, p.id))
+    }
+    return m
+  }, [proposals])
+
+  // The filter runs against a deferred copy of the query, so a keystroke
+  // repaints the input immediately and React re-runs the list at a lower
+  // priority — typing stays smooth even when the match set is huge.
+  const deferredQuery = useDeferredValue(query)
+
   const sortedProposals = useMemo(() => sortProposals(
-    proposals.filter(p => matchesQuery(query, p.title, p.editor_username, p.change_type, p.song_public_id, p.id)),
+    deferredQuery.trim()
+      ? proposals.filter(p => matchesHaystack(deferredQuery, haystacks.get(p.id)))
+      : proposals,
     sortBy,
-  ), [proposals, sortBy, query])
+  ), [proposals, haystacks, sortBy, deferredQuery])
 
   // Auto-select first item, and keep the selection inside the visible list —
   // searching can otherwise filter out the proposal the detail pane's
@@ -647,6 +715,15 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   // Both are about the proposal on screen, so neither should outlive it.
   useEffect(() => { setExpandedPast(null); setPlayError(null) }, [p?.id])
 
+  // The list isn't windowed, and "All" can be the entire archive — mounting
+  // every row costs ~8 DOM nodes each before the user has even typed. Render a
+  // page at a time and let them ask for more; searching normally narrows the
+  // set well below the cap anyway.
+  const [shown, setShown] = useState(PROPOSAL_PAGE)
+  useEffect(() => { setShown(PROPOSAL_PAGE) }, [proposals, deferredQuery, sortBy])
+  const pageOf = sortedProposals.slice(0, shown)
+  const remaining = sortedProposals.length - pageOf.length
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Left: list */}
@@ -685,42 +762,21 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
         <div className="flex-1 overflow-y-auto">
           {proposals.length === 0 && <Empty label="No proposals" />}
           {proposals.length > 0 && sortedProposals.length === 0 && <Empty label="No matches" />}
-          {sortedProposals.map((item, idx) => {
-            const showUserHeader = sortBy === 'user' && (idx === 0 || sortedProposals[idx - 1].editor_username !== item.editor_username)
-            const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
-            const isActive = selected?.id === item.id
-            return (
-              <div key={item.id}>
-                {showUserHeader && (
-                  <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface-overlay border-b border-[var(--border)] sticky top-0 z-[1]">
-                    {item.editor_username}
-                  </div>
-                )}
-              <button onClick={() => setSelected(item)}
-                className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors ${
-                  isActive ? 'bg-accent/10' : 'hover:bg-surface-raised'
-                }`}>
-                <div className="flex items-center gap-1.5 mb-1">
-                  <StatusChip status={item.status} />
-                  <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
-                    {item.change_type}
-                  </span>
-                  {item.song_public_id != null && (
-                    <span className="text-[9px] text-text-muted ml-auto flex items-center gap-0.5">
-                      <Hash size={8} />{item.song_public_id}
-                    </span>
-                  )}
-                </div>
-                <p className={`text-[12px] font-semibold truncate leading-snug mb-0.5 text-text-primary`}>
-                  {item.title || `Proposal #${item.id}`}
-                </p>
-                <p className="text-[10px] text-text-muted truncate">
-                  {item.editor_username} · {relativeTime(item.created_at)}
-                </p>
-              </button>
-              </div>
-            )
-          })}
+          {pageOf.map((item, idx) => (
+            <ProposalRow
+              key={item.id}
+              item={item}
+              active={selected?.id === item.id}
+              showUserHeader={sortBy === 'user' && (idx === 0 || pageOf[idx - 1].editor_username !== item.editor_username)}
+              onSelect={setSelected}
+            />
+          ))}
+          {remaining > 0 && (
+            <button onClick={() => setShown(s => s + PROPOSAL_PAGE)}
+              className="w-full px-3 py-3 text-[11px] font-semibold text-accent hover:bg-surface-raised transition-colors">
+              Show {Math.min(remaining, PROPOSAL_PAGE)} more · {remaining} left
+            </button>
+          )}
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 {
   "name": "unreleased",
-  "version": "1.20.4",
+  "version": "1.20.5",
   "description": "A music player for Juice WRLD",
   "main": "electron/main.js",
   "scripts": {
@@ -77,6 +77,8 @@
       "!tailwind.config.js",
       "!vite.config.ts",
       "!icons/**/*",
+      "!dist/robots.txt",
+      "!dist/sitemap.xml",
       "!**/.DS_Store",
       "!**/Thumbs.db"
     ],

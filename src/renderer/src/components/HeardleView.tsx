@@ -1238,35 +1238,35 @@ export default function HeardleView(): JSX.Element {
         <button
           onClick={() => setActiveView('wrld')}
           title="Back"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          className="p-2.5 rounded-xl text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
         >
-          <ChevronLeft size={18} />
+          <ChevronLeft size={22} />
         </button>
       </div>
       <div
-        className="absolute top-4 right-4 z-20 flex items-center gap-1"
+        className="absolute top-4 right-4 z-20 flex items-center gap-1.5"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <button
           onClick={() => setShowSettings(true)}
           title="Game settings"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)]/60 text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
         >
-          <SlidersHorizontal size={16} />
+          <SlidersHorizontal size={20} />
         </button>
         <button
           onClick={() => setShowLeaderboard(true)}
           title="Leaderboard"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)]/60 text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
         >
-          <Trophy size={16} />
+          <Trophy size={20} />
         </button>
         <button
           onClick={() => setShowStats(true)}
           title="Statistics"
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+          className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-raised)]/60 text-text-muted hover:text-text-primary hover:border-accent/40 transition-colors"
         >
-          <BarChart3 size={16} />
+          <BarChart3 size={20} />
         </button>
       </div>
 

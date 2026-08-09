@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { registerPlayerCommandHandler } from '../lib/windowSync'
-import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
+import { eventToCombo, resolveAction, getAction, effectiveBinding, isGloballyRegistrable, isActionGlobal, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId, showStaffProfile, staffProfileView } from '../lib/userApi'
@@ -128,7 +128,7 @@ export default function Player(): JSX.Element {
   const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
   const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong } = useStorePick('radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong')
   const { libraryTracks } = useStorePick('libraryTracks')
-  const { globalHotkeysEnabled, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'hotkeyBindings')
+  const { globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings } = useStorePick('globalHotkeysEnabled', 'globalHotkeyOverrides', 'hotkeyBindings')
   const { eqEnabled, eqGains, eqBalance, eqMono, skipSilence } = useStorePick('eqEnabled', 'eqGains', 'eqBalance', 'eqMono', 'skipSilence')
   const { reverbEnabled, reverbMix, reverbDecay, pitchShift } = useStorePick('reverbEnabled', 'reverbMix', 'reverbDecay', 'pitchShift')
 
@@ -1171,11 +1171,14 @@ export default function Player(): JSX.Element {
       // still activate it (native keyboard behavior) instead of toggling play.
       const clickable = tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || target?.getAttribute('role') === 'button'
       if (clickable && (combo === 'Space' || combo === 'Enter')) return
-      // When global shortcuts are on, the OS delivers eligible combos through
-      // the global handler instead — don't also run them here (double-fire).
-      if (useStore.getState().globalHotkeysEnabled && (window as any).electron && isGloballyRegistrable(combo)) return
       const id = resolveAction(combo, useStore.getState().hotkeyBindings)
       if (!id) return
+      // When this action is OS-globally registered, the OS delivers it through
+      // the global handler instead — don't also run it here (double-fire).
+      if (
+        useStore.getState().globalHotkeysEnabled && (window as any).electron &&
+        isGloballyRegistrable(combo) && isActionGlobal(id, useStore.getState().globalHotkeyOverrides)
+      ) return
       // Desktop-only actions are unbindable-in-practice on web — ignore them so
       // e.g. Alt+3 doesn't half-switch to a Library view web builds don't have.
       if (getAction(id)?.electronOnly && !(window as any).electron) return
@@ -1205,12 +1208,13 @@ export default function Player(): JSX.Element {
     if (!globalHotkeysEnabled) { el.registerGlobalShortcuts([]); return }
     const entries: { accelerator: string; id: string }[] = []
     for (const action of HOTKEY_ACTIONS) {
+      if (!isActionGlobal(action.id, globalHotkeyOverrides)) continue
       const accelerator = comboToAccelerator(effectiveBinding(action.id, hotkeyBindings))
       if (accelerator) entries.push({ accelerator, id: action.id })
     }
     el.registerGlobalShortcuts(entries)
     return () => { el.registerGlobalShortcuts?.([]) }
-  }, [globalHotkeysEnabled, hotkeyBindings])
+  }, [globalHotkeysEnabled, globalHotkeyOverrides, hotkeyBindings])
 
   // Seek: buffer visually while dragging, only commit on mouse release
   const handleSeekMouseDown = (): void => {

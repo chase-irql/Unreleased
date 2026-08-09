@@ -8,7 +8,7 @@ import {
   ScrollText, ShieldCheck, Disc,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition, type AppMenuPosition, type PopoutWindowKind } from '../store/useStore'
-import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable } from '../lib/hotkeys'
+import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo, isGloballyRegistrable, isActionGlobal } from '../lib/hotkeys'
 import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
@@ -139,6 +139,7 @@ interface AppSettings {
   miniPlayerHidesWindows: boolean
   confirmCloseWhilePlaying: boolean
   windowTitleNowPlaying: boolean
+  rememberWindowSizes: boolean
 }
 
 // `floating` — rendered as the sole content of a pop-out BrowserWindow (see
@@ -172,6 +173,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     sleepTimerEnd, setSleepTimer,
     hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
     globalHotkeysEnabled, setGlobalHotkeysEnabled,
+    globalHotkeyOverrides, setGlobalHotkeyOverride,
     updateStatus,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
@@ -184,7 +186,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'appMenuPosition', 'setAppMenuPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'popoutWindows', 'setPopoutWindow', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'globalHotkeysEnabled', 'setGlobalHotkeysEnabled', 'globalHotkeyOverrides', 'setGlobalHotkeyOverride', 'updateStatus', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -320,6 +322,7 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     miniPlayerHidesWindows: false,
     confirmCloseWhilePlaying: true,
     windowTitleNowPlaying: true,
+    rememberWindowSizes: true,
   })
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
@@ -1428,36 +1431,56 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           const binding = effectiveBinding(action.id, hotkeyBindings)
                           const tokens = comboTokens(binding)
                           const recording = recordingId === action.id
-                          const isGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
+                          const eligibleForGlobal = isElectron && globalHotkeysEnabled && isGloballyRegistrable(binding)
+                          const isGlobal = eligibleForGlobal && isActionGlobal(action.id, globalHotkeyOverrides)
                           return (
                             <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
                               <span className="text-text-secondary text-sm truncate flex items-center gap-1.5">
                                 {action.label}
-                                {isGlobal && <Globe size={11} className="text-sky-400 shrink-0" aria-label="Works globally" />}
-                              </span>
-                              <button
-                                onClick={() => setRecordingId(recording ? null : action.id)}
-                                className={`shrink-0 min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                  recording
-                                    ? 'border-accent text-accent bg-accent/10 animate-pulse'
-                                    : tokens.length > 0
-                                      ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
-                                      : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                                }`}
-                                title={recording ? 'Press a key combination…' : 'Click to change'}
-                              >
-                                {recording ? (
-                                  'Press keys…'
-                                ) : tokens.length > 0 ? (
-                                  tokens.map((t, i) => (
-                                    <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
-                                      {t}
-                                    </kbd>
-                                  ))
-                                ) : (
-                                  'Not set'
+                                {eligibleForGlobal && (
+                                  <button
+                                    onClick={() => setGlobalHotkeyOverride(action.id, !isGlobal)}
+                                    title={isGlobal ? 'Works globally — click to make in-app only' : 'In-app only — click to also work globally'}
+                                    className="shrink-0"
+                                  >
+                                    <Globe size={11} className={isGlobal ? 'text-sky-400' : 'text-text-muted'} aria-label={isGlobal ? 'Works globally' : 'In-app only'} />
+                                  </button>
                                 )}
-                              </button>
+                              </span>
+                              <div className="shrink-0 flex items-center gap-1">
+                                <button
+                                  onClick={() => setRecordingId(recording ? null : action.id)}
+                                  className={`min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                    recording
+                                      ? 'border-accent text-accent bg-accent/10 animate-pulse'
+                                      : tokens.length > 0
+                                        ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
+                                        : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                                  }`}
+                                  title={recording ? 'Press a key combination…' : 'Click to change'}
+                                >
+                                  {recording ? (
+                                    'Press keys…'
+                                  ) : tokens.length > 0 ? (
+                                    tokens.map((t, i) => (
+                                      <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
+                                        {t}
+                                      </kbd>
+                                    ))
+                                  ) : (
+                                    'Not set'
+                                  )}
+                                </button>
+                                {tokens.length > 0 && !recording && (
+                                  <button
+                                    onClick={() => { setHotkeyBinding(action.id, ''); if (recording) setRecordingId(null) }}
+                                    title="Clear shortcut"
+                                    className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-[var(--surface-overlay)] transition-colors"
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )
                         })}
@@ -1657,6 +1680,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub="The taskbar and alt-tab label follows what's playing instead of just saying Unreleased"
                 >
                   <Toggle on={appSettings.windowTitleNowPlaying} onClick={() => setSetting('windowTitleNowPlaying', !appSettings.windowTitleNowPlaying)} />
+                </Row>
+                <Row
+                  icon={AppWindow}
+                  iconColor="#8b5cf6"
+                  label="Remember window sizes"
+                  sub="Reopen the main window and every pop-out at the size you last left it. Turning this off restores the default sizes."
+                >
+                  <Toggle on={appSettings.rememberWindowSizes} onClick={() => setSetting('rememberWindowSizes', !appSettings.rememberWindowSizes)} />
                 </Row>
                 <Row
                   icon={Minus}
