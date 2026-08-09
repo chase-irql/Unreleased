@@ -49,15 +49,39 @@ export function Empty({ label }: { label: string }): JSX.Element {
   return <div className="flex items-center justify-center h-full text-text-muted text-sm">{label}</div>
 }
 
+/** Flattens a row's searchable fields into one lowercase string.
+ *
+ *  Kept separate from the matching so callers can build it once per row when
+ *  the data changes, instead of re-lowercasing every field of every row on
+ *  every keystroke — on the unfiltered "All" proposals list that was thousands
+ *  of string allocations per character typed. */
+export function buildHaystack(...fields: (string | number | null | undefined)[]): string {
+  let out = ''
+  for (const f of fields) {
+    if (f == null || f === '') continue
+    out += (out ? ' ' : '') + String(f).toLowerCase()
+  }
+  return out
+}
+
 /** Case-insensitive match of every whitespace-separated term in `query`
- *  against any of `fields`. Terms are AND-ed, not OR-ed, so "jane move"
- *  narrows to jane's move proposals instead of returning both sets. An empty
- *  query matches everything. */
-export function matchesQuery(query: string, ...fields: (string | number | null | undefined)[]): boolean {
+ *  against a haystack from buildHaystack. Terms are AND-ed, not OR-ed, so
+ *  "jane move" narrows to jane's move proposals instead of returning both
+ *  sets. An empty query matches everything. */
+export function matchesHaystack(query: string, hay: string | undefined): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  const hay = fields.filter(f => f != null && f !== '').map(f => String(f).toLowerCase())
-  return q.split(/\s+/).every(term => hay.some(h => h.includes(term)))
+  if (!hay) return false
+  // Single-term is the overwhelmingly common case — skip the split/allocation.
+  if (!/\s/.test(q)) return hay.includes(q)
+  return q.split(/\s+/).every(term => hay.includes(term))
+}
+
+/** buildHaystack + matchesHaystack in one call, for lists small enough that
+ *  caching the haystack isn't worth the bookkeeping. */
+export function matchesQuery(query: string, ...fields: (string | number | null | undefined)[]): boolean {
+  if (!query.trim()) return true
+  return matchesHaystack(query, buildHaystack(...fields))
 }
 
 /** Search box for the review queues' left column. Filtering is client-side

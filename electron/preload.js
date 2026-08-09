@@ -71,6 +71,13 @@ contextBridge.exposeInMainWorld('electron', {
   browseLocal: (dirPath) => ipcRenderer.invoke('browse-local', dirPath),
   pickFolder:  ()        => ipcRenderer.invoke('pick-folder'),
   openPath:    (p)       => ipcRenderer.invoke('open-path', p),
+  // Local file management, used by Files > Local. The name is validated and
+  // resolved against its parent in main, so it can't escape the folder.
+  // localCreate/localRename resolve { ok, path } | { error }; localDelete
+  // prompts and trashes, resolving { ok } | { canceled } | { error }.
+  localCreate: (dirPath, name, kind) => ipcRenderer.invoke('local-create', dirPath, name, kind),
+  localRename: (filePath, name)      => ipcRenderer.invoke('local-rename', filePath, name),
+  localDelete: (filePath)            => ipcRenderer.invoke('local-delete', filePath),
   selectImageFile: ()    => ipcRenderer.invoke('select-image-file'),
   fetchImageAsDataUrl: (url) => ipcRenderer.invoke('fetch-image-as-data-url', url),
   openDiscordLogin: (url) => ipcRenderer.invoke('open-discord-login', url),

@@ -23,6 +23,7 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 - **Files** — navigate the API filesystem directly, stream audio, and download files
 - **Song info** — full metadata for every track: titles, artists, producers, engineers, era, recording details, dates, and lyrics
 - **Bulk edit** — multi-select songs in the Tracker and edit shared fields (era, category, credits, and more) across all of them at once, with per-field replace/add/remove/append/fill/clear
+- **Changes feed** — a live stream of recent Tracker edits and comp-file changes, in the optional News tab (enable it in Settings → Appearance → Menu items)
 - **Context menus everywhere** — right-click any song, playlist, or the player bar for play, queue, playlist, download, and edit actions
 
 ### Playback
@@ -45,12 +46,13 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 
 ### Games & stats
 
-- **Heardle** — name the song from its opening seconds. Daily mode shares one puzzle a day with everyone; Personal replays the same rules on demand; Unlimited is fully configurable (guess count, reveal speed, start point, era/category filters). Share your result to the clipboard, Wordle-style
-- **Wrapped** — an all-time listening summary built from your play counts: top songs, totals, and more
+- **Heardle** — name the song from its opening seconds. Daily mode shares one puzzle a day with everyone; Personal replays the same rules on demand; Unlimited is fully configurable (guess count, reveal speed, start point, era/category filters); **1v1** matches you live against another player. Live leaderboards for Today, Streaks, and 1v1. Share your result to the clipboard, Wordle-style
+- **Wrapped** — a listening summary built from your play counts, filterable by All time / 30 days / 7 days, with a recent-plays timeline
 
 ### Personalization
 
 - **Skins** — 9 built-in looks (including a dynamic "Now Playing" skin that recolors the app to match the current cover art), or build your own in a live color editor and import/export skins as files to share
+- **Gradient surfaces** — an optional accent-tinted gradient background behind the app, sidebar, and player
 - **Fonts** — 7 selectable typefaces for the app, with a separate one for lyrics; independently adjustable text size for each
 - **Configurable layout** — sidebar position, a reorderable and hideable side menu (and account-control row), and fully rebindable keyboard shortcuts (with optional global/OS-wide bindings on desktop)
 - **Song personalization** — set a custom name, cover art, and preferred version for any song, and track your own play count for it
@@ -60,15 +62,16 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 
 - **Discord sign-in** — liked songs and playlists sync to the API across devices
 - **Editor tools** — submit song edits (a full form or a streamlined Basic layout) and propose new songs for admin review, link song versions, track proposal status, climb the leaderboard, earn badges
-- **Admin tools** — review proposals and reports, and manage albums, versions, and tracklists
+- **Contributor role** — apply to contribute file changes (upload, replace, move, delete, new folders) to the compilation; propose right from the Files browser or a dedicated Contributor page, track status from your Contributor Profile, and withdraw a pending proposal any time
+- **Admin & Manager tools** — review song-edit and comp-file proposals (searchable, sortable), reports, and applications; manage albums, versions, and tracklists. Managers share the same review powers as Admins, short of full account/security access
 
 ### Desktop app
 
 - **Local library** — point the app at your music folders; it reads tags and cover art, supports synced lyrics, and plays everything alongside the API catalog. Multi-select tracks to bulk-edit their tags
 - **Metadata editor** — edit tags, cover art, and plain or line-by-line synced lyrics on your local files
-- **Import from URL** — paste a link from YouTube, SoundCloud, Bandcamp, a direct audio file, or ~1800 other sites (via yt-dlp) to add it straight to your library
-- **Convert format** — transcode local files to MP3, M4A, Opus, OGG, FLAC, or WAV using bundled ffmpeg
-- **M3U playlists** — import an `.m3u`/`.m3u8` into a new local playlist, or export any local playlist back out
+- **Import from URL** — paste a link from YouTube, SoundCloud, Bandcamp, a direct audio file, or ~1800 other sites (via yt-dlp, downloaded on first use) to add it straight to your library
+- **Convert format** — transcode local files to MP3, M4A, Opus, OGG, FLAC, or WAV using ffmpeg, downloaded on first use
+- **M3U playlists & Import Titles** — import an `.m3u`/`.m3u8`, or a plain-text list of song titles matched against the catalog, into a new local playlist — drag the file onto the app window, or use the Import buttons; export any local playlist back out as M3U
 - **Add to Library** — download any API song, or an entire playlist, for offline playback
 - **Discord Rich Presence** — show what you're playing (or the 999 FM stream) on your Discord profile with a live progress bar and real cover art, even for matching local files
 - **Application menu** — File/Edit/View/Playback/Help, dockable to the title bar or the side menu
@@ -88,7 +91,7 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 | macOS | `.dmg` — Apple Silicon and Intel |
 | Linux | `.AppImage` |
 
-All builds are on the [releases page](https://github.com/leanwrldd/unreleased/releases), or use the in-app "Download the app" page from the web player. Or skip the install entirely and use the [web player](https://player.juicewrldapi.com).
+All builds are on the [releases page](https://github.com/leanwrldd/unreleased/releases). Or skip the install entirely and use the [web player](https://player.juicewrldapi.com).
 
 ---
 

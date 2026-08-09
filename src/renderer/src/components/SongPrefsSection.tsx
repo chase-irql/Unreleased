@@ -249,6 +249,27 @@ export default function SongPrefsSection({
           </button>
         )}
       </div>
+      {/* The song's other known titles, one click away — renaming to an alt
+          name is the common case, and retyping one by hand is needless. */}
+      {altTitles.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-1.5">
+          {altTitles.map((alt) => {
+            const active = pref?.name === alt
+            return (
+              <button
+                key={alt}
+                onClick={() => { setNameDraft(alt); setSongName(songId, alt) }}
+                title={`Use "${alt}" as the custom name`}
+                className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${active
+                  ? 'bg-accent/15 text-accent border-accent/40'
+                  : 'text-text-secondary border-[var(--border)] hover:bg-surface'}`}
+              >
+                {alt}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* ── Cover ── */}
       <GroupLabel>Custom cover</GroupLabel>

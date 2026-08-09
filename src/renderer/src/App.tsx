@@ -3,6 +3,7 @@ import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
 import { useThemeEffects } from './lib/themeEffects'
 import { runWhenIdle } from './lib/platform'
+import { applySeo } from './lib/seo'
 import { ViewType } from './types'
 
 function getViewFromPath(pathname: string): ViewType {
@@ -127,6 +128,10 @@ export default function App(): JSX.Element {
     window.addEventListener('popstate', syncFromPath)
     return () => window.removeEventListener('popstate', syncFromPath)
   }, [])
+
+  // Give each route its own title/description/canonical. Web only — no-op in
+  // the desktop app, including electron:dev (see lib/seo.ts).
+  useEffect(() => { applySeo(activeView) }, [activeView])
 
   // Complete Discord OAuth redirect, then load the public account
   useEffect(() => {

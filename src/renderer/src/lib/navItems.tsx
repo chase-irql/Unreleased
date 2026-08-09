@@ -1,4 +1,4 @@
-import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, Newspaper, Music4, BarChart3, User, LogOut, Info, Settings } from 'lucide-react'
+import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, Newspaper, Gamepad2, BarChart3, User, LogOut, Info, Settings } from 'lucide-react'
 import type { ReactNode } from 'react'
 import logo from '../assets/logo.png'
 import type { ViewType } from '../types'
@@ -23,7 +23,9 @@ export const NAV_ITEMS: NavItemDef[] = [
   { view: 'api-files', label: 'Files', icon: <HardDrive size={18} /> },
   { view: 'library', label: 'Library', icon: <Library size={18} />, electronOnly: true },
   { view: 'playlists', label: 'Playlists', icon: <ListMusic size={18} /> },
-  { view: 'heardle', label: 'Heardle', icon: <Music4 size={18} /> },
+  // `view` stays 'heardle' — it's the persisted id (and the /heardle route);
+  // only the label is Games, so the tab can hold more than one game later.
+  { view: 'heardle', label: 'Games', icon: <Gamepad2 size={18} /> },
   { view: 'stats', label: 'Wrapped', icon: <BarChart3 size={18} /> },
   // Extras — off by default, addable from Settings → Appearance → Menu items.
   { view: 'news', label: 'News', icon: <Newspaper size={18} />, defaultHidden: true },

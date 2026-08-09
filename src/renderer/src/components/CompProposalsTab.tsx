@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import {
   Loader2, CheckCircle, XCircle, RotateCcw, Download, Calendar, Hash, AlertCircle,
 } from 'lucide-react'
 import * as userApi from '../lib/userApi'
 import type { CompFileProposal, ProposalStatus } from '../lib/userApi'
 import { getToken } from '../lib/userApi'
-import { relativeTime, shortDate, StatusChip, Empty, QueueSearch, matchesQuery } from './adminShared'
+import { relativeTime, shortDate, StatusChip, Empty, QueueSearch, buildHaystack, matchesHaystack } from './adminShared'
 
 export default function CompProposalsTab({ embedded = false, onChanged }: { embedded?: boolean; onChanged?: () => void }): JSX.Element {
   const [status, setStatus] = useState<ProposalStatus | ''>('pending')
@@ -21,10 +21,26 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   // Searchable: both sides of a move, who filed it, the staged file's name,
   // the change type as it's labelled on screen ("New file", not "create"), and
   // the raw id so a proposal referenced by number elsewhere can be pulled up.
-  const visible = useMemo(() => proposals.filter(p => matchesQuery(
-    query, p.file_path, p.destination_path, p.contributor_username,
-    p.staging_filename, userApi.compChangeTypeLabel(p.change_type), p.id,
-  )), [proposals, query])
+  // Flattened once per fetch and matched against a deferred query, so typing
+  // never waits on the list — same treatment as the song-edit queue.
+  const haystacks = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const p of proposals) {
+      m.set(p.id, buildHaystack(
+        p.file_path, p.destination_path, p.contributor_username,
+        p.staging_filename, userApi.compChangeTypeLabel(p.change_type), p.id,
+      ))
+    }
+    return m
+  }, [proposals])
+
+  const deferredQuery = useDeferredValue(query)
+
+  const visible = useMemo(() => (
+    deferredQuery.trim()
+      ? proposals.filter(p => matchesHaystack(deferredQuery, haystacks.get(p.id)))
+      : proposals
+  ), [proposals, haystacks, deferredQuery])
 
   useEffect(() => {
     setLoading(true)
@@ -110,10 +126,12 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
     <div className={`flex-1 min-w-0 h-full flex overflow-hidden ${embedded ? '' : 'bg-[var(--surface)]'}`}>
       <div className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col">
         <div className="shrink-0 p-3 border-b border-[var(--border)] flex flex-col gap-2">
-          <div className="flex gap-2">
+          {/* Wraps: five chips don't fit the 18rem column, and the last one
+              ("all") was running off the edge. */}
+          <div className="flex flex-wrap gap-1">
             {(['pending', 'approved', 'rejected', 'reversed', ''] as const).map(s => (
               <button key={s || 'all'} onClick={() => setStatus(s)}
-                className={`px-2 py-1 rounded text-[10px] font-semibold capitalize ${status === s ? 'bg-accent/15 text-accent' : 'text-text-muted'}`}>
+                className={`px-2 py-1 rounded text-[10px] font-semibold capitalize shrink-0 ${status === s ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
                 {s || 'all'}
               </button>
             ))}

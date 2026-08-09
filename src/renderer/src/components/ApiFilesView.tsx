@@ -5,6 +5,7 @@ import {
   Download, ArrowUpDown, ArrowUp, ArrowDown, Link, Check, Info, ListPlus, Heart,
   X, Pencil, PackageOpen, CheckSquare2, Square, MonitorSmartphone, Globe, Search,
   Filter, MoreHorizontal, Clipboard, Plus, ListMusic, Replace, Trash2,
+  FolderPlus, FilePlus, ExternalLink,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -36,6 +37,13 @@ type SortBy = 'name' | 'type' | 'size'
 type SortDir = 'asc' | 'desc'
 type ZipStatus = 'idle' | 'starting' | 'zipping' | 'done' | 'error'
 type MediaFilter = 'all' | 'audio' | 'image' | 'video'
+
+interface LocalEntry { name: string; path: string; type: 'file' | 'directory'; size: number | null }
+
+/** Inline name prompt — renaming an existing entry, or naming a new one. */
+type NameEditor =
+  | { mode: 'rename'; entry: LocalEntry }
+  | { mode: 'create'; kind: 'file' | 'directory' }
 
 const LS_SORT_BY = 'api-files:sortBy'
 const LS_SORT_DIR = 'api-files:sortDir'
@@ -245,9 +253,28 @@ export default function ApiFilesView(): JSX.Element {
   const isElectron = navigator.userAgent.includes('Electron')
   const [localMode, setLocalMode] = useState(false)
   const [localPath, setLocalPath] = useState('')
-  const [localEntries, setLocalEntries] = useState<Array<{ name: string; path: string; type: 'file' | 'directory'; size: number | null }>>([])
+  const [localEntries, setLocalEntries] = useState<LocalEntry[]>([])
   const [localLoading, setLocalLoading] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
+  // Local file management: right-click menu, plus the inline name editor that
+  // doubles as "rename this entry" and "create a new file/folder here".
+  const [localCtxMenu, setLocalCtxMenu] = useState<{ entry: LocalEntry; x: number; y: number } | null>(null)
+  const localCtxMenuRef = useRef<HTMLDivElement>(null)
+  const [localCtxMenuPos, setLocalCtxMenuPos] = useState({ left: 0, top: 0 })
+  const [nameEditor, setNameEditor] = useState<NameEditor | null>(null)
+  const [nameDraft, setNameDraft] = useState('')
+  const [nameError, setNameError] = useState<string | null>(null)
+  const [nameBusy, setNameBusy] = useState(false)
+
+  useLayoutEffect(() => {
+    const el = localCtxMenuRef.current
+    if (!el || !localCtxMenu) return
+    const rect = el.getBoundingClientRect()
+    setLocalCtxMenuPos({
+      top: Math.max(8, Math.min(localCtxMenu.y, window.innerHeight - rect.height - 8)),
+      left: Math.max(8, Math.min(localCtxMenu.x, window.innerWidth - rect.width - 8)),
+    })
+  }, [localCtxMenu])
 
   const browseLocal = async (dirPath: string): Promise<void> => {
     const el = (window as any).electron
@@ -270,6 +297,61 @@ export default function ApiFilesView(): JSX.Element {
     const el = (window as any).electron
     if (!el) return
     await el.openPath(filePath)
+  }
+
+  // ── Local file management ──────────────────────────────────────────────────
+  // Main owns validation, collision handling and the delete confirm; the
+  // renderer just collects the name and re-reads the folder afterwards.
+
+  const startRename = (entry: LocalEntry): void => {
+    setNameEditor({ mode: 'rename', entry })
+    setNameDraft(entry.name)
+    setNameError(null)
+    setLocalCtxMenu(null)
+  }
+
+  const startCreate = (kind: 'file' | 'directory'): void => {
+    setNameEditor({ mode: 'create', kind })
+    setNameDraft('')
+    setNameError(null)
+    setLocalCtxMenu(null)
+  }
+
+  const cancelNameEditor = (): void => {
+    setNameEditor(null)
+    setNameDraft('')
+    setNameError(null)
+  }
+
+  const submitNameEditor = async (): Promise<void> => {
+    const el = (window as any).electron
+    if (!el || !nameEditor || nameBusy) return
+    const name = nameDraft.trim()
+    if (!name) { setNameError('Name can\'t be empty'); return }
+    setNameBusy(true)
+    setNameError(null)
+    try {
+      const result = nameEditor.mode === 'rename'
+        ? await el.localRename(nameEditor.entry.path, name)
+        : await el.localCreate(localPath, name, nameEditor.kind)
+      if (result?.error) { setNameError(result.error); return }
+      cancelNameEditor()
+      await browseLocal(localPath)
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : 'Failed')
+    } finally {
+      setNameBusy(false)
+    }
+  }
+
+  const deleteLocalEntry = async (entry: LocalEntry): Promise<void> => {
+    const el = (window as any).electron
+    if (!el) return
+    setLocalCtxMenu(null)
+    // Main shows the confirm and moves the item to the OS trash; a cancel
+    // comes back as { canceled } and must leave the listing untouched.
+    const result = await el.localDelete(entry.path)
+    if (result?.ok) await browseLocal(localPath)
   }
 
   const handleLocalPlay = (entry: { name: string; path: string; type: string; size: number | null }): void => {
@@ -796,9 +878,58 @@ export default function ApiFilesView(): JSX.Element {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
               ><FolderOpen size={13} /> Change folder</button>
               {localPath && (
-                <span className="text-text-muted text-xs truncate flex-1" title={localPath}>{localPath}</span>
+                <>
+                  <button
+                    onClick={() => startCreate('directory')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
+                  ><FolderPlus size={13} /> New folder</button>
+                  <button
+                    onClick={() => startCreate('file')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-overlay hover:bg-surface-raised border border-[var(--border)] text-text-secondary text-xs font-medium transition-colors"
+                  ><FilePlus size={13} /> New file</button>
+                  <span className="text-text-muted text-xs truncate flex-1 min-w-0" title={localPath}>{localPath}</span>
+                </>
               )}
             </div>
+
+            {/* Inline name prompt — used for both "new file/folder" and
+                rename, so there's one place that validates and reports. */}
+            {nameEditor && (
+              <div className="mb-3 flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-text-muted shrink-0">
+                    {nameEditor.mode === 'rename'
+                      ? 'Rename to'
+                      : nameEditor.kind === 'directory' ? 'New folder' : 'New file'}
+                  </span>
+                  <input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => { setNameDraft(e.target.value); setNameError(null) }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitNameEditor()
+                      else if (e.key === 'Escape') cancelNameEditor()
+                    }}
+                    placeholder="Name"
+                    className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40"
+                  />
+                  <button
+                    onClick={submitNameEditor}
+                    disabled={nameBusy || !nameDraft.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 transition-opacity hover:opacity-90"
+                  >
+                    {nameBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    {nameEditor.mode === 'rename' ? 'Rename' : 'Create'}
+                  </button>
+                  <button
+                    onClick={cancelNameEditor}
+                    className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors"
+                    title="Cancel"
+                  ><X size={15} className="text-text-muted" /></button>
+                </div>
+                {nameError && <p className="text-xs text-red-400 pl-1">{nameError}</p>}
+              </div>
+            )}
             {localLoading ? (
               <div className="flex items-center justify-center h-40 gap-2 text-text-muted">
                 <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading…</span>
@@ -846,6 +977,7 @@ export default function ApiFilesView(): JSX.Element {
                         else if (mt === 'audio') handleLocalPlay(entry)
                         else if (mt === 'image' || mt === 'video') openLocalLightbox(entry)
                       }}
+                      onContextMenu={(e) => { e.preventDefault(); setLocalCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
                     >
                       <div className="w-9 h-9 flex items-center justify-center shrink-0">
                         {isDir
@@ -865,6 +997,13 @@ export default function ApiFilesView(): JSX.Element {
                           title="Play"
                         ><Play size={14} /></button>
                       )}
+                      {/* Same rationale as the API rows: right-click isn't
+                          reachable on touch, so the menu needs a real button. */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setLocalCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
+                        className="shrink-0 p-2 -my-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                        title="More options"
+                      ><MoreHorizontal size={16} /></button>
                     </div>
                   )
                 })}
@@ -896,6 +1035,7 @@ export default function ApiFilesView(): JSX.Element {
                         else if (mt === 'audio') handleLocalPlay(entry)
                         else if (mt === 'image' || mt === 'video') openLocalLightbox(entry)
                       }}
+                      onContextMenu={(e) => { e.preventDefault(); setLocalCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
                     >
                       <div className="relative w-full aspect-square bg-surface-raised flex items-center justify-center overflow-hidden">
                         {isDir
@@ -915,9 +1055,16 @@ export default function ApiFilesView(): JSX.Element {
                             <span className="text-xs uppercase text-text-muted">{ext}</span>
                           )}
                       </div>
-                      <div className="px-2 py-2">
-                        <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
-                        {!isDir && <p className="text-text-muted text-[10px] uppercase tracking-wide mt-0.5">{ext}</p>}
+                      <div className="px-2 py-2 flex items-center gap-1">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-text-primary text-xs font-medium truncate">{entry.name}</p>
+                          {!isDir && <p className="text-text-muted text-[10px] uppercase tracking-wide mt-0.5">{ext}</p>}
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setLocalCtxMenu({ entry, x: e.clientX, y: e.clientY }) }}
+                          className="shrink-0 p-1.5 -m-1 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary active:text-accent transition-all"
+                          title="More options"
+                        ><MoreHorizontal size={15} /></button>
                       </div>
                     </div>
                   )
@@ -1419,6 +1566,56 @@ export default function ApiFilesView(): JSX.Element {
           </div>
         </>
       )}
+
+      {/* Local-mode context menu — open / play, rename, delete. Deletion and
+          renaming are handled in the main process (confirm + OS trash there),
+          so nothing here touches the filesystem directly. */}
+      {localMode && localCtxMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setLocalCtxMenu(null)} />
+          <div
+            ref={localCtxMenuRef}
+            className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[190px]"
+            style={{ left: localCtxMenuPos.left, top: localCtxMenuPos.top }}
+            onClick={e => e.stopPropagation()}
+          >
+            {localCtxMenu.entry.type === 'directory' ? (
+              <button onClick={() => { browseLocal(localCtxMenu.entry.path); setLocalCtxMenu(null) }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                <FolderOpen size={14} className="text-text-muted" /> Open
+              </button>
+            ) : getMediaType(localCtxMenu.entry.name) === 'audio' ? (
+              <button onClick={() => { handleLocalPlay(localCtxMenu.entry); setLocalCtxMenu(null) }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+                <Play size={14} className="text-text-muted" /> Play
+              </button>
+            ) : null}
+            <button onClick={() => { openLocalFile(localCtxMenu.entry.path); setLocalCtxMenu(null) }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              <ExternalLink size={14} className="text-text-muted" /> Open with system app
+            </button>
+            <button onClick={() => startRename(localCtxMenu.entry)}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              <Pencil size={14} className="text-text-muted" /> Rename
+            </button>
+            <div className="border-t border-[var(--border)] my-1" />
+            <button onClick={() => startCreate('directory')}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              <FolderPlus size={14} className="text-text-muted" /> New folder
+            </button>
+            <button onClick={() => startCreate('file')}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors">
+              <FilePlus size={14} className="text-text-muted" /> New file
+            </button>
+            <div className="border-t border-[var(--border)] my-1" />
+            <button onClick={() => deleteLocalEntry(localCtxMenu.entry)}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-red-400 hover:bg-surface-overlay transition-colors">
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        </>
+      )}
+
       {infoSong && (
         <SongInfoModal
           song={infoSong}

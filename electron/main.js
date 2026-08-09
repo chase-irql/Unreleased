@@ -57,6 +57,13 @@ let appSettings = {
   // When on, the main window's title (taskbar / alt-tab label) follows the
   // current track instead of staying "Unreleased".
   windowTitleNowPlaying: true,
+  // Remember how big the user left each window (main + every pop-out) and
+  // reopen it at that size. See the window-size persistence block below.
+  rememberWindowSizes: true,
+  // { [key]: { width, height, maximized? } } — key is 'main' or a pop-out view
+  // name. Written by rememberSize(); wiped when rememberWindowSizes is turned
+  // off so re-enabling starts from the built-in defaults again.
+  windowSizes: {},
 }
 try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
@@ -293,17 +300,68 @@ function sanitizeFloatParams(params) {
   return out
 }
 
+// ── Window size persistence (setting: rememberWindowSizes) ────────────────────
+// Only the SIZE is remembered, never the position: pop-outs still get centered
+// on the active display (below), so a window can't reopen off-screen or on a
+// monitor that has since been unplugged.
+function clamp(n, min, max) { return Math.max(min, Math.min(max, n)) }
+
+// Saved size for `key`, clamped to the window's own minimums and to the work
+// area it's about to open on. Returns null when the feature is off or nothing
+// has been recorded yet, in which case callers fall back to the defaults.
+function savedWindowSize(key, base, workArea) {
+  if (!appSettings.rememberWindowSizes) return null
+  const s = appSettings.windowSizes?.[key]
+  if (!s || typeof s !== 'object') return null
+  const size = {}
+  if (Number.isFinite(s.width)) size.width = clamp(Math.round(s.width), base.minWidth || 0, workArea.width)
+  if (Number.isFinite(s.height)) size.height = clamp(Math.round(s.height), base.minHeight || 0, workArea.height)
+  return Object.keys(size).length ? size : null
+}
+
+// Record `win`'s size under `key` as the user resizes it. Debounced so a drag
+// doesn't write the settings file on every frame, and flushed on close so the
+// final size always lands.
+function rememberSize(win, key) {
+  let timer = null
+  const record = () => {
+    if (win.isDestroyed() || !appSettings.rememberWindowSizes) return
+    // A minimized window reports junk bounds on some platforms, and
+    // getNormalBounds() ignores the maximized/fullscreen frame so un-maximizing
+    // returns to the size the user actually picked.
+    if (win.isMinimized()) return
+    const { width, height } = win.getNormalBounds()
+    if (!appSettings.windowSizes || typeof appSettings.windowSizes !== 'object') appSettings.windowSizes = {}
+    appSettings.windowSizes[key] = key === 'mini-player'
+      // The mini player's height is driven by the compact/expanded toggle
+      // (mini-player-set-expanded), which locks it via setMaximumSize —
+      // restoring a stored height would fight that, so only the width persists.
+      ? { width }
+      : { width, height, ...(key === 'main' ? { maximized: win.isMaximized() } : {}) }
+    saveSettings()
+  }
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(record, 400) }
+  win.on('resize', schedule)
+  win.on('maximize', schedule)
+  win.on('unmaximize', schedule)
+  win.on('close', () => { clearTimeout(timer); record() })
+}
+
 // A new BrowserWindow with no x/y lands centered on the PRIMARY display, so a
 // pop-out opened while the app sits on a second monitor would jump to the main
 // screen. Center it on whichever display currently holds the app instead —
 // preferring the focused window (the pop-out could be opened from another
-// pop-out), falling back to the main window.
-function centerOnActiveDisplay(view) {
+// pop-out), falling back to the main window. Also resolves the window's size,
+// since centering depends on it.
+function floatBounds(view) {
+  const base = FLOAT_SIZES[view]
   const ref = BrowserWindow.getFocusedWindow() || mainWindow
-  if (!ref || ref.isDestroyed()) return {}
-  const { width, height } = FLOAT_SIZES[view]
-  const { workArea } = screen.getDisplayMatching(ref.getBounds())
+  const { workArea } = ref && !ref.isDestroyed()
+    ? screen.getDisplayMatching(ref.getBounds())
+    : screen.getPrimaryDisplay()
+  const { width, height } = { ...base, ...savedWindowSize(view, base, workArea) }
   return {
+    width, height,
     x: Math.round(workArea.x + (workArea.width - width) / 2),
     y: Math.round(workArea.y + (workArea.height - height) / 2),
   }
@@ -322,7 +380,7 @@ function createFloatWindow(view, params) {
   }
   const win = new BrowserWindow({
     ...FLOAT_SIZES[view],
-    ...centerOnActiveDisplay(view),
+    ...floatBounds(view),
     ...(FLOAT_OPTIONS[view] || {}),
     title: floatTitle(view),
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
@@ -334,6 +392,7 @@ function createFloatWindow(view, params) {
   // The shared bundle's <title> would otherwise overwrite the title above the
   // moment the page loads.
   win.on('page-title-updated', (e) => e.preventDefault())
+  rememberSize(win, view)
   floatWindows.set(view, win)
   broadcastFloatWindows()
   win.once('ready-to-show', () => {
@@ -506,8 +565,11 @@ function updateMainWindowTitle() {
 
 // ── Window creation ───────────────────────────────────────────────────────────
 function createWindow() {
+  const mainDefaults = { width: 1280, height: 800, minWidth: 960, minHeight: 600 }
+  const { workArea } = screen.getPrimaryDisplay()
   mainWindow = new BrowserWindow({
-    width: 1280, height: 800, minWidth: 960, minHeight: 600,
+    ...mainDefaults,
+    ...savedWindowSize('main', mainDefaults, workArea),
     title: 'Unreleased',
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
     webPreferences: {
@@ -519,7 +581,12 @@ function createWindow() {
   // The renderer's <title> would otherwise clobber the now-playing title.
   mainWindow.on('page-title-updated', (e) => e.preventDefault())
 
+  rememberSize(mainWindow, 'main')
+
   mainWindow.once('ready-to-show', () => {
+    // Maximize before showing so the window doesn't visibly snap open at its
+    // restored size first.
+    if (appSettings.rememberWindowSizes && appSettings.windowSizes?.main?.maximized) mainWindow.maximize()
     mainWindow.show()
     updateMainWindowTitle()
   })
@@ -954,6 +1021,118 @@ ipcMain.handle('browse-local', async (_, dirPath) => {
   }
 })
 
+// ── IPC: local file management (create / rename / delete) ───────────────────
+// These act on the user's own filesystem from the Files > Local browser, so
+// they share the same rules as the copy/move handlers further down: a name is
+// only ever a single path segment (never a path, never traversal), nothing
+// silently overwrites an existing entry, and the one destructive op goes
+// through the OS trash behind a modal confirm.
+
+// Windows rejects <>:"/\|?* and trailing dots/spaces in file names, and
+// reserves a handful of device names; the separator/traversal checks matter on
+// every platform, since a name is a single segment by construction here.
+const WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
+function validateEntryName(name) {
+  if (typeof name !== 'string') return 'No name given'
+  const trimmed = name.trim()
+  if (!trimmed) return 'Name can\'t be empty'
+  if (trimmed === '.' || trimmed === '..') return 'Invalid name'
+  if (/[/\\]/.test(trimmed)) return 'Name can\'t contain slashes'
+  if (/[<>:"|?*]/.test(trimmed)) return 'Name contains invalid characters'
+  // Control characters, checked by code point rather than a regex class so no
+  // literal control bytes end up in this source file.
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed.charCodeAt(i) < 32) return 'Name contains invalid characters'
+  }
+  if (process.platform === 'win32') {
+    if (WIN_RESERVED.test(trimmed)) return 'That name is reserved by Windows'
+    if (trimmed.endsWith('.')) return 'Name can\'t end with a dot'
+  }
+  if (trimmed.length > 255) return 'Name is too long'
+  return null
+}
+
+// Guards every handler below: resolves the final path and confirms it stays
+// inside the parent directory, so a name that slipped past validation still
+// can't write outside the folder the user is looking at.
+function resolveChildPath(dirPath, name) {
+  const parent = path.resolve(dirPath)
+  const target = path.resolve(parent, name.trim())
+  const rel = path.relative(parent, target)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
+  return target
+}
+
+ipcMain.handle('local-create', async (event, dirPath, name, kind) => {
+  if (typeof dirPath !== 'string' || !dirPath) return { error: 'No folder' }
+  const invalid = validateEntryName(name)
+  if (invalid) return { error: invalid }
+  const target = resolveChildPath(dirPath, name)
+  if (!target) return { error: 'Invalid name' }
+  if (fs.existsSync(target)) return { error: 'Something with that name already exists' }
+  try {
+    if (kind === 'directory') fs.mkdirSync(target)
+    // 'wx' fails rather than truncating if the file appeared in between.
+    else fs.closeSync(fs.openSync(target, 'wx'))
+    return { ok: true, path: target }
+  } catch (e) {
+    fileOpError(event, 'Create', name, e.message)
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('local-rename', async (event, filePath, name) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No path' }
+  const invalid = validateEntryName(name)
+  if (invalid) return { error: invalid }
+  const target = resolveChildPath(path.dirname(filePath), name)
+  if (!target) return { error: 'Invalid name' }
+  if (target === path.resolve(filePath)) return { ok: true, path: filePath }
+  // Case-only renames on Windows/macOS look like a collision against the file
+  // itself, so only treat a *different* existing entry as one.
+  if (fs.existsSync(target) && target.toLowerCase() !== path.resolve(filePath).toLowerCase()) {
+    return { error: 'Something with that name already exists' }
+  }
+  try {
+    fs.renameSync(filePath, target)
+    return { ok: true, path: target }
+  } catch (e) {
+    fileOpError(event, 'Rename', path.basename(filePath), e.message)
+    return { error: e.message }
+  }
+})
+
+// Same treatment as delete-library-file: OS trash (recoverable), never without
+// a modal confirm, and Cancel is both the default and the escape action.
+ipcMain.handle('local-delete', async (event, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No path' }
+  const name = path.basename(filePath)
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  let isDir = false
+  try { isDir = fs.statSync(filePath).isDirectory() } catch {}
+  const binName = process.platform === 'darwin' ? 'Trash'
+    : process.platform === 'win32' ? 'Recycle Bin' : 'trash'
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Delete', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: isDir ? 'Delete folder' : 'Delete file',
+    message: `Delete "${name}"?`,
+    detail: isDir
+      ? `The folder and everything inside it is moved to the ${binName}.`
+      : `The file is moved to the ${binName}.`,
+  })
+  if (response !== 0) return { canceled: true }
+  try {
+    await shell.trashItem(filePath)
+    return { ok: true }
+  } catch (e) {
+    fileOpError(event, 'Delete', name, e.message)
+    return { error: e.message }
+  }
+})
+
 // Parent the dialog to whichever window asked (Settings can live in a
 // pop-out) — falling back to the main window for safety.
 ipcMain.handle('pick-folder', async (event) => {
@@ -1020,6 +1199,9 @@ ipcMain.handle('get-app-settings', () => appSettings)
 
 ipcMain.handle('set-app-setting', (_, key, value) => {
   appSettings[key] = value
+  // Turning the option off drops what was recorded, so windows go straight back
+  // to their built-in default sizes instead of silently keeping the old ones.
+  if (key === 'rememberWindowSizes' && !value) appSettings.windowSizes = {}
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)

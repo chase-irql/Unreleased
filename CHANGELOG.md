@@ -6,6 +6,62 @@ All notable changes to this project are documented here.
 
 ---
 
+## [1.20.4] — 2026-08-09
+
+- **New** Contributors can now withdraw their own pending comp-file proposals
+- **New** Contributor proposals gained a "New folder" option alongside upload/replace/move/delete
+- **Improve** Admin's proposal review queues (song edits and comp files) gained a search box and a sort-by-user option
+
+---
+
+## [1.20.0] — 2026-08-08
+
+- **New** **Manager** role — a step below Admin, with review powers over proposals and staff, short of full admin access
+- **New** News page's "Feed" tab shows a live stream of recent Tracker edits and comp-file changes as they happen
+- **Fix** Discord login (and shared-playlist links) could land on a blank white page due to a broken asset path on nested URLs
+- **Fix** 999 FM voting and song suggestions now show an accurate error when they don't actually register, instead of silently looking successful
+- **Fix** Song suggestions for 999 FM now search the DJ's actual playable library, so a proposal always matches a real track instead of silently failing
+- **Fix** 999 FM listener identity is now stable across reloads and multiple tabs, so vote thresholds aren't skewed by phantom duplicate listeners
+
+---
+
+## [1.19.3] — 2026-08-07
+
+- **New** Heardle gained a real-time **1v1 mode** — match live against another player
+- **New** Heardle **leaderboards** (Today / Streaks / 1v1) are now live
+- **New** *(Desktop)* **Import Titles** — import a plain-text list of song titles as a synced playlist; each line is matched to a catalog song
+- **New** *(Desktop)* `.m3u`/`.m3u8` files and title-list files can now be dropped straight onto the app window to import
+- **Improve** Contributor file uploads (upload/replace/move) now run in the background via the Download manager instead of blocking the page you submitted them from
+
+---
+
+## [1.19.2] — 2026-08-04
+
+- **New** Contributors (and admins) can propose a file replacement or deletion right from the Files browser's context menu, not just the dedicated Contributor page
+- **Improve** Cover art now loads progressively — a fast low-res thumbnail paints first, then the full image swaps in
+
+---
+
+## [1.19.1] — 2026-08-03
+
+- **Improve** The Contributor file/folder picker now shows the current path and clarifies "use this folder" when browsing to a move/upload destination
+
+---
+
+## [1.19.0] — 2026-08-03
+
+- **New** **Contributor role** — apply to contribute, then propose file changes (upload, replace, move, delete) to the compilation for admin review, tracked from a new Contributor Profile page
+- **New** Wrapped gained **All time / 30 days / 7 days** period filters and a recent-plays timeline
+
+---
+
+## [1.18.8] — 2026-08-02
+
+- **New** **Gradient surfaces** — an opt-in accent-tinted gradient background for the app, sidebar, and player (Settings → Appearance)
+- **Improve** *(Desktop)* ffmpeg and yt-dlp (used by Convert format and Import from URL) now download on first use instead of bundling with every install, shrinking the installer
+
+---
+
 ## [1.18.7] — 2026-08-02
 
 - **New** *(Web)* In-app "Download the app" page — live version and file-size info pulled straight from GitHub Releases, with automatic fallback to the newest release that actually has a macOS build if the latest one hasn't been built for Mac yet
