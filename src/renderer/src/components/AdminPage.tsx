@@ -4,15 +4,17 @@ import {
   Loader2, RefreshCw, FileEdit, KeyRound, Check, AlertCircle, RotateCcw,
   ChevronDown, ChevronUp, Shield, TrendingUp, MessageSquare, Calendar,
   Hash, Minus, Plus, UserCheck, FileCheck, Activity, Pencil, X as XIcon, ChevronDown as ChevronDownIcon,
-  Flag,
+  Flag, History, Play,
 } from 'lucide-react'
+import { apiFetch, songToTrack } from '../lib/juicewrldApi'
+import type { JWApiSong } from '../lib/juicewrldApi'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
 import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } from '../lib/userApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import { invalidateLyricsCache } from './Player'
-import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection } from './adminShared'
+import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection, QueueSearch, matchesQuery } from './adminShared'
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
@@ -524,17 +526,44 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   const [selected,    setSelected]    = useState<SongEditProposal | null>(null)
   const [revising,    setRevising]    = useState(false)
   const [sortBy,      setSortBy]      = useState<ProposalSort>('date')
+  const [query,       setQuery]       = useState('')
+  const { playTrack } = useStorePick('playTrack')
 
-  const sortedProposals = useMemo(() => sortProposals(proposals, sortBy), [proposals, sortBy])
+  // Every proposal ever filed, fetched once and only when the history panel is
+  // first opened — /admin/proposals/ has no per-song filter, so "what else has
+  // been proposed for this song" means holding the whole archive and grouping
+  // client-side. Nulled after a review so the next open reflects it.
+  const [archive,        setArchive]        = useState<SongEditProposal[] | null>(null)
+  const [archiveLoading, setArchiveLoading] = useState(false)
+  const [archiveError,   setArchiveError]   = useState(false)
+  const [historyOpen,    setHistoryOpen]    = useState(false)
+  const [expandedPast,   setExpandedPast]   = useState<number | null>(null)
 
-  // Auto-select first item
+  const [loadingSongId, setLoadingSongId] = useState<number | null>(null)
+  const [playError,     setPlayError]     = useState<string | null>(null)
+
+  // Searchable: the song title, who filed it, the change type, and both ids —
+  // the public song id is what reports and Discord threads cite, so pasting
+  // one should land on its proposal.
+  const sortedProposals = useMemo(() => sortProposals(
+    proposals.filter(p => matchesQuery(query, p.title, p.editor_username, p.change_type, p.song_public_id, p.id)),
+    sortBy,
+  ), [proposals, sortBy, query])
+
+  // Auto-select first item, and keep the selection inside the visible list —
+  // searching can otherwise filter out the proposal the detail pane's
+  // Approve/Reject buttons are pointed at.
   useEffect(() => {
     setSelected(prev => {
-      if (prev && proposals.some(p => p.id === prev.id)) return prev
-      return proposals[0] ?? null
+      if (prev && sortedProposals.some(p => p.id === prev.id)) return prev
+      return sortedProposals[0] ?? null
     })
-    setRevising(false)
-  }, [proposals])
+  }, [sortedProposals])
+
+  // A refetch replaces the rows wholesale, so a half-written revision no
+  // longer lines up with what's on screen. Typing in the search box must not
+  // trip this — that's why it keys off the raw list, not the filtered one.
+  useEffect(() => { setRevising(false) }, [proposals])
 
   // Approving/reversing a proposal changes a song's live data — drop its
   // cached lyrics so the next play reflects it.
@@ -545,15 +574,48 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   const doReview = async (id: number, action: 'approve' | 'reject') => {
     setActionId(id)
-    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); onChanged() }
+    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); setArchive(null); onChanged() }
     catch {} finally { setActionId(null) }
   }
 
   const doReverse = async (id: number) => {
     if (!confirm('Reverse this approval?')) return
     setActionId(id)
-    try { await userApi.adminReverseProposal(id); dropCache(id); onChanged() }
+    try { await userApi.adminReverseProposal(id); dropCache(id); setArchive(null); onChanged() }
     catch {} finally { setActionId(null) }
+  }
+
+  const openHistory = () => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (!next || archive || archiveLoading) return
+    setArchiveLoading(true)
+    setArchiveError(false)
+    userApi.adminListProposals()
+      .then(setArchive)
+      .catch(() => setArchiveError(true))
+      .finally(() => setArchiveLoading(false))
+  }
+
+  // Plays the song a proposal targets, so a reviewer can hear what they're
+  // approving without leaving the queue. Fetched per click rather than per
+  // selection — flipping through the list would otherwise fire a request for
+  // every row passed over.
+  const playProposalSong = async (songId: number) => {
+    setPlayError(null)
+    setLoadingSongId(songId)
+    try {
+      const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+      // An unsurfaced song is a real catalog entry with no file behind it —
+      // the proposal is still reviewable, there's just nothing to play.
+      if (!song.path) { setPlayError('No file on this song to play'); return }
+      const track = songToTrack(song)
+      playTrack(track, [track])
+    } catch {
+      setPlayError('Could not load this song')
+    } finally {
+      setLoadingSongId(null)
+    }
   }
 
   const FILTERS: { id: ProposalStatus | ''; label: string }[] = [
@@ -571,37 +633,58 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   const p = selected
 
+  // Newest first, and it deliberately includes the proposal being viewed — the
+  // point is to read this one in the context of the run, so dropping it leaves
+  // a hole in the timeline. It's marked "viewing" instead.
+  const history = useMemo(() => {
+    if (!p?.song || !archive) return []
+    return archive
+      .filter(r => r.song === p.song)
+      .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+  }, [archive, p?.song])
+  const pastCount = Math.max(history.length - 1, 0)
+
+  // Both are about the proposal on screen, so neither should outlive it.
+  useEffect(() => { setExpandedPast(null); setPlayError(null) }, [p?.id])
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Left: list */}
       <div className="w-80 shrink-0 border-r border-[var(--border)] flex flex-col overflow-hidden">
         {/* Filter bar */}
-        <div className="shrink-0 flex gap-1 flex-wrap items-center px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
-          {FILTERS.map(f => (
-            <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
-              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
-                status === f.id
-                  ? 'bg-accent text-[var(--bg)]'
-                  : 'text-text-muted hover:text-text-muted bg-surface-overlay'
-              }`}>{f.label}
-            </button>
-          ))}
-          <div className="ml-auto flex gap-1 shrink-0">
-            {SORTS.map(s => (
-              <button key={s.id} onClick={() => setSortBy(s.id)}
+        <div className="shrink-0 px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
+          <div className="flex gap-1 flex-wrap items-center">
+            {FILTERS.map(f => (
+              <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
-                  sortBy === s.id
-                    ? 'bg-surface-overlay text-text-primary ring-1 ring-[var(--border)]'
-                    : 'text-text-muted hover:text-text-primary bg-transparent'
-                }`}>{s.label}
+                  status === f.id
+                    ? 'bg-accent text-[var(--bg)]'
+                    : 'text-text-muted hover:text-text-muted bg-surface-overlay'
+                }`}>{f.label}
               </button>
             ))}
+            <div className="ml-auto flex gap-1 shrink-0">
+              {SORTS.map(s => (
+                <button key={s.id} onClick={() => setSortBy(s.id)}
+                  className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
+                    sortBy === s.id
+                      ? 'bg-surface-overlay text-text-primary ring-1 ring-[var(--border)]'
+                      : 'text-text-muted hover:text-text-primary bg-transparent'
+                  }`}>{s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-2">
+            <QueueSearch value={query} onChange={setQuery} placeholder="Search title, editor, #id…"
+              matches={sortedProposals.length} total={proposals.length} />
           </div>
         </div>
 
         {/* List */}
         <div className="flex-1 overflow-y-auto">
-          {sortedProposals.length === 0 && <Empty label="No proposals" />}
+          {proposals.length === 0 && <Empty label="No proposals" />}
+          {proposals.length > 0 && sortedProposals.length === 0 && <Empty label="No matches" />}
           {sortedProposals.map((item, idx) => {
             const showUserHeader = sortBy === 'user' && (idx === 0 || sortedProposals[idx - 1].editor_username !== item.editor_username)
             const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
@@ -672,8 +755,33 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
                     <span className="flex items-center gap-1"><Calendar size={10} />{shortDate(p.created_at)}</span>
                     {p.reviewer_username && <span>reviewed by <span className="text-text-muted">{p.reviewer_username}</span></span>}
                     {p.edit_count > 0 && <span>{p.edit_count} edit{p.edit_count !== 1 ? 's' : ''}</span>}
+                    {p.song != null && (
+                      <button onClick={openHistory}
+                        className={`flex items-center gap-1 transition-colors ${historyOpen ? 'text-accent' : 'hover:text-text-primary'}`}>
+                        <History size={10} />
+                        {/* The count is unknown until the archive loads, so the
+                            label stays generic rather than promising a number
+                            it might have to take back. */}
+                        {archive ? (pastCount === 0 ? 'no earlier proposals' : `${pastCount} earlier proposal${pastCount === 1 ? '' : 's'}`) : 'history'}
+                        {historyOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {/* Play — outside the pending-only block below: hearing the
+                    song is just as useful when auditing something already
+                    approved or reversed. */}
+                {p.song != null && (
+                  <button onClick={() => playProposalSong(p.song as number)} disabled={loadingSongId != null}
+                    title="Play this song"
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] text-text-secondary text-xs font-semibold transition-colors flex items-center gap-1.5 border border-[var(--border)] disabled:opacity-40">
+                    {loadingSongId === p.song
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <Play size={13} />}
+                    Play
+                  </button>
+                )}
 
                 {/* Actions */}
                 {p.status === 'pending' && (
@@ -703,6 +811,12 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
                   </button>
                 )}
               </div>
+
+              {playError && (
+                <p className="flex items-center gap-1.5 mt-2 text-[11px] text-amber-400">
+                  <AlertCircle size={11} /> {playError}
+                </p>
+              )}
 
               {/* Notes */}
               {(p.editor_notes || p.review_notes) && (
@@ -735,6 +849,59 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
                 </div>
               )}
             </div>
+
+            {/* Song history — every proposal ever filed against this song, so a
+                reviewer can see whether a field has been fought over before,
+                or whether this editor is re-submitting something already
+                rejected. Read-only: expanding a row shows its diff in place
+                rather than moving the selection, which would fight the status
+                filter (a rejected proposal isn't in a Pending list). */}
+            {historyOpen && p.song != null && (
+              <div className="shrink-0 max-h-64 overflow-y-auto border-b border-[var(--border)] bg-[var(--surface)]">
+                {archiveLoading && (
+                  <div className="flex justify-center py-4"><Loader2 size={14} className="animate-spin text-text-muted" /></div>
+                )}
+                {archiveError && (
+                  <p className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-amber-400">
+                    <AlertCircle size={11} /> Could not load this song&apos;s history
+                  </p>
+                )}
+                {archive && history.length <= 1 && (
+                  <p className="px-4 py-3 text-[11px] text-text-muted italic">
+                    No other proposals have been filed for this song.
+                  </p>
+                )}
+                {archive && history.length > 1 && history.map(row => {
+                  const isViewing = row.id === p.id
+                  const open = expandedPast === row.id
+                  return (
+                    <div key={row.id} className="border-b border-[var(--border)] last:border-b-0">
+                      <button onClick={() => setExpandedPast(open ? null : row.id)}
+                        className={`w-full flex items-center gap-2 px-4 py-2 text-left transition-colors ${isViewing ? 'bg-accent/5' : 'hover:bg-surface-raised'}`}>
+                        <StatusChip status={row.status} />
+                        <span className="text-[11px] text-text-primary truncate flex-1 min-w-0">
+                          {row.title || `Proposal #${row.id}`}
+                        </span>
+                        {isViewing && <span className="text-[9px] text-accent font-semibold shrink-0">viewing</span>}
+                        <span className="text-[10px] text-text-muted shrink-0">{row.editor_username}</span>
+                        <span className="text-[10px] text-text-muted shrink-0">{shortDate(row.created_at)}</span>
+                        {open ? <ChevronUp size={11} className="text-text-muted shrink-0" /> : <ChevronDown size={11} className="text-text-muted shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="bg-[var(--surface-raised)] border-t border-[var(--border)]">
+                          {row.review_notes && (
+                            <p className="px-4 pt-3 text-[11px] text-text-muted italic">
+                              {row.reviewer_username ? `${row.reviewer_username}: ` : ''}{row.review_notes}
+                            </p>
+                          )}
+                          <ProposalDiff proposal={row} />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             {/* Diff body */}
             <div className="flex-1 overflow-y-auto">

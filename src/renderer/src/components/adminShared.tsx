@@ -1,5 +1,7 @@
 // Small UI pieces shared between AdminPage's tabs and ReportsTab (the latter
 // is also embedded standalone in EditorProfileView for editor-only accounts).
+import { Search, X as XIcon } from 'lucide-react'
+
 export function relativeTime(iso: string | null): string {
   if (!iso) return '—'
   const d = Date.now() - new Date(iso).getTime()
@@ -45,6 +47,57 @@ export function Avatar({ src, name, size = 8 }: { src?: string; name: string; si
 
 export function Empty({ label }: { label: string }): JSX.Element {
   return <div className="flex items-center justify-center h-full text-text-muted text-sm">{label}</div>
+}
+
+/** Case-insensitive match of every whitespace-separated term in `query`
+ *  against any of `fields`. Terms are AND-ed, not OR-ed, so "jane move"
+ *  narrows to jane's move proposals instead of returning both sets. An empty
+ *  query matches everything. */
+export function matchesQuery(query: string, ...fields: (string | number | null | undefined)[]): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const hay = fields.filter(f => f != null && f !== '').map(f => String(f).toLowerCase())
+  return q.split(/\s+/).every(term => hay.some(h => h.includes(term)))
+}
+
+/** Search box for the review queues' left column. Filtering is client-side
+ *  over the rows already loaded — neither the song-edit nor the comp-file list
+ *  endpoint takes a query param, and the status filter beside it is what
+ *  decides which rows get fetched in the first place. So this searches the
+ *  current status bucket, not the whole archive. */
+export function QueueSearch({ value, onChange, placeholder, matches, total }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  matches: number
+  total: number
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <div className="relative flex items-center">
+      <Search size={12} className="absolute left-2.5 text-text-muted pointer-events-none" />
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        // Escape clears rather than blurs — the list is the thing being
+        // filtered, so getting back to "everything" shouldn't cost a mouse trip.
+        onKeyDown={e => { if (e.key === 'Escape' && value) { e.stopPropagation(); onChange('') } }}
+        placeholder={placeholder}
+        spellCheck={false}
+        className="w-full bg-surface-overlay rounded-md pl-7 pr-7 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent/40 transition-shadow"
+      />
+      {value && (
+        <button onClick={() => onChange('')} title="Clear search"
+          className="absolute right-1.5 p-0.5 rounded text-text-muted hover:text-text-primary transition-colors">
+          <XIcon size={11} />
+        </button>
+      )}
+      </div>
+      {value.trim() !== '' && (
+        <span className="px-1 text-[9px] text-text-muted">{matches} of {total}</span>
+      )}
+    </div>
+  )
 }
 
 export function AppSection({ label, value }: { label: string; value: string }): JSX.Element {
