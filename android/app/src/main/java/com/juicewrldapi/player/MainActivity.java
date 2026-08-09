@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         // Capacitor packages are — they have to be registered before super,
         // which is what builds the bridge.
         registerPlugin(ApkInstallerPlugin.class);
+        registerPlugin(LocalLibraryPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

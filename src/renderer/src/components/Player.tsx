@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { eventToCombo, resolveAction, registerHotkeyDispatch } from '../lib/hotkeys'
+import { readArt } from '../lib/localLibrary'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
@@ -372,36 +373,16 @@ export default function Player(): JSX.Element {
           })
           .catch(() => {/* no network — offline snapshot (if any) already applied above */})
       }
-    } else {
-      // Local track — load lyrics + cover art from IPC
-      const el = (window as any).electron
-      if (el && currentTrack.path) {
-        el.readTrackMetadata(currentTrack.path).then((meta: Record<string, any> | null) => {
-          if (isStale()) return
-          if (meta && !meta.error) {
-            setCurrentTrackFull(prev => prev ? {
-              ...prev,
-              lyrics: meta.lyrics || null,
-              syncedLyrics: meta.syncedLyrics || null,
-              ext: currentTrack.path.split('.').pop() || prev.ext,
-              bitrate: meta.bitrate ?? prev.bitrate,
-              sampleRate: meta.sampleRate ?? prev.sampleRate,
-              bitsPerSample: meta.bitsPerSample ?? prev.bitsPerSample,
-              channels: meta.channels ?? prev.channels,
-              fileSize: meta.fileSize ?? prev.fileSize,
-            } : prev)
-          }
-        }).catch(() => {})
-        if (!currentTrack.imageUrl) {
-          el.readAlbumArt(currentTrack.path, 512).then((a: string | null) => {
-            if (isStale()) return
-            if (a) {
-              updateLibraryTrack(currentTrack.id, { albumArt: a })
-              setCurrentTrackFull(prev => prev ? { ...prev, albumArt: a } : prev)
-            }
-          }).catch(() => {})
-        }
-      }
+    } else if (currentTrack.path && !currentTrack.imageUrl) {
+      // Local track. There's no lyrics/tag sidecar to read on Android — the
+      // scan already captured everything MediaMetadataRetriever exposes — so
+      // the only thing still worth fetching is the embedded cover, and only
+      // when the queue entry didn't already carry one.
+      readArt(currentTrack.path).then((a) => {
+        if (isStale() || !a) return
+        updateLibraryTrack(currentTrack.id, { albumArt: a })
+        setCurrentTrackFull(prev => prev ? { ...prev, albumArt: a } : prev)
+      }).catch(() => {})
     }
   }, [currentTrack?.id, currentTrackFull])
 

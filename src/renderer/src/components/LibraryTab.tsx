@@ -13,6 +13,7 @@ import * as userApi from '../lib/userApi'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { formatDuration, formatTotalDuration } from '../lib/format'
+import { readArt } from '../lib/localLibrary'
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Library — local-file browser styled like the rest of the app (solid surfaces,
@@ -95,14 +96,17 @@ interface Artist {
 const inflightArt = new Set<string>()
 
 function useTrackArt(track: LibraryTrack): string | null | undefined {
-  const el = (window as any).electron
   const { applyLibraryArt } = useStorePick('applyLibraryArt')
   const art = useStore((s) => s.libraryArt[track.id])
   useEffect(() => {
-    if (!el || art !== undefined || inflightArt.has(track.id)) return
+    // undefined = never asked; null = asked, and this file has no embedded art.
+    // Only the first state should trigger a read, or a track without a cover
+    // would re-decode on every scroll past it.
+    if (art !== undefined || inflightArt.has(track.id)) return
+    if (!track.hasAlbumArt) { applyLibraryArt(track.id, null); return }
     inflightArt.add(track.id)
-    el.readAlbumArt(track.filePath)
-      .then((a: string | null) => applyLibraryArt(track.id, a ?? null))
+    readArt(track.filePath)
+      .then((a) => applyLibraryArt(track.id, a))
       .catch(() => {})
       .finally(() => inflightArt.delete(track.id))
   }, [track.id, art])
@@ -482,14 +486,11 @@ function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => voi
       </div>
       <div>
         <h2 className="text-text-primary text-xl font-semibold mb-1">Your library is empty</h2>
-        <p className="text-text-muted text-sm max-w-xs">Add folders in Settings → Library Folders and scan, or import audio straight from a YouTube link.</p>
+        <p className="text-text-muted text-sm max-w-xs">Pick a folder of music — or individual files — in Settings → Library, and they&apos;ll show up here.</p>
       </div>
       <div className="flex items-center gap-2">
         <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
-          <FolderOpen size={15} /> Add Folders
-        </button>
-        <button onClick={onImportUrl} className="flex items-center gap-2 px-5 py-2.5 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-raised transition-colors">
-          <Link2 size={15} /> Import from URL
+          <FolderOpen size={15} /> Add music
         </button>
       </div>
     </div>

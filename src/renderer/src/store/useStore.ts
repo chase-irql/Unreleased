@@ -34,6 +34,7 @@ import type { CommunityEdit } from '../lib/audioEffects'
 import { HOTKEY_ACTIONS, effectiveBinding } from '../lib/hotkeys'
 import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getLastfmSession } from '../lib/lastfm'
+import * as localLibrary from '../lib/localLibrary'
 import { runWhenIdle } from '../lib/platform'
 
 // Key used to track songs downloaded individually (song context menu →
@@ -323,6 +324,10 @@ interface AppState {
   // over IPC, and rebuild the whole list every time. Reset only by a forced
   // reload (another window changed the data) — see loadLibrary.
   libraryLoaded: boolean
+  // Live counters from the native scan walk (null when idle). A first scan
+  // over a large folder is minutes of tag-reading, so the UI shows progress
+  // rather than an indefinite spinner.
+  libraryScanProgress: { found: number; parsed: number } | null
   libraryFolders: string[]
   libraryScanning: boolean
   libraryLastScanned: number | null
@@ -793,7 +798,7 @@ function commitM3uImport(
   const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name: res.name || 'Imported Playlist', trackIds, createdAt: Date.now() }
   const next = [...get().localPlaylists, playlist]
   set({ localPlaylists: next, activeLocalPlaylistId: playlist.id })
-  ;(window as unknown as { electron?: { saveLocalPlaylists?: (p: LocalPlaylist[]) => void } }).electron?.saveLocalPlaylists?.(next)
+  localLibrary.savePlaylists(next)
   return { ok: true, playlistId: playlist.id, name: playlist.name, matched: trackIds.length, total: entries.length, unmatched }
 }
 
@@ -1633,6 +1638,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   libraryTracks: [],
   libraryArt: {},
   libraryLoaded: false,
+  libraryScanProgress: null,
   libraryFolders: ls.get<string[]>('libraryFolders') ?? [],
   libraryScanning: false,
   libraryLastScanned: ls.get<number>('libraryLastScanned') ?? null,
@@ -1662,19 +1668,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
     return { libraryTracks: [...s.libraryTracks, track] }
   }),
   deleteLibraryTrack: async (id) => {
-    const el = (window as any).electron
     const track = get().libraryTracks.find((t) => t.id === id)
-    if (!el?.deleteLibraryFile || !track) return false
+    if (!track) return false
 
-    // Stop first when we're deleting what's currently playing: it keeps the app
-    // from "playing" a trashed file, and releases our own read handle — Windows
-    // refuses to move a file that's still open. The confirm prompt itself lives
-    // in the main process (see the delete-library-file handler).
+    // Un-lists the track; the file on disk is untouched. Deleting it would
+    // need a write grant on the source folder, and the Storage Access
+    // Framework permission we take is read-only.
     if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
-
-    const res = await el.deleteLibraryFile(track.filePath)
-    // Cancelled, or the delete failed — main already surfaced the error dialog.
-    if (!res?.ok) return false
 
     const { libraryTracks, libraryArt, localPlaylists, queue, queueIndex, libraryFolders, libraryLastScanned } = get()
     const nextTracks = libraryTracks.filter((t) => t.id !== id)
@@ -1699,54 +1699,19 @@ export const useStore = create<AppStore>((set, get, store) => ({
       queueIndex: nextQueue.length ? Math.max(0, Math.min(queueIndex - removedBefore, nextQueue.length - 1)) : -1,
     })
 
-    // Persist both, or the track reappears from library-data.json next load.
-    el.saveLibraryData({ tracks: nextTracks, folders: libraryFolders, lastScanned: libraryLastScanned })
-    if (touchedPlaylists) el.saveLocalPlaylists(nextPlaylists)
+    // Persist both, or the track reappears from library.json next load. It
+    // still comes back on the next scan while its folder is a source — that's
+    // the intended difference between removing a track and removing a folder.
+    localLibrary.saveLibrary({ tracks: nextTracks, sources: libraryFolders, lastScanned: libraryLastScanned })
+    if (touchedPlaylists) localLibrary.savePlaylists(nextPlaylists)
     return true
   },
-  moveLibraryTrack: async (id) => {
-    const el = (window as any).electron
-    const track = get().libraryTracks.find((t) => t.id === id)
-    if (!el?.moveLibraryFile || !track) return false
 
-    // Playing the file holds a read handle open, which blocks the rename on
-    // Windows — same reasoning as deleteLibraryTrack.
-    if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
+  // Moving a file needs a write grant on its folder, which the read-only
+  // Storage Access Framework permission we take doesn't carry — the desktop
+  // build's "Move to folder…" has no Android equivalent.
+  moveLibraryTrack: async () => false,
 
-    const res = await el.moveLibraryFile(track.filePath)
-    // Cancelled, or the move failed — main already surfaced the error dialog.
-    if (!res?.ok || !res.path) return false
-
-    const newPath: string = res.path
-    const newId = `local-${newPath}`
-    const { libraryTracks, libraryArt, localPlaylists, queue, currentTrack, libraryFolders, libraryLastScanned } = get()
-
-    // A track's id is derived from its path, so moving it re-keys the track
-    // everywhere it's referenced rather than just editing one field.
-    const nextTracks = libraryTracks.map((t) => t.id === id ? { ...t, id: newId, filePath: newPath } : t)
-    const nextArt = { ...libraryArt }
-    if (id in nextArt) { nextArt[newId] = nextArt[id]; delete nextArt[id] }
-    const touchedPlaylists = localPlaylists.some((p) => p.trackIds.includes(id))
-    const nextPlaylists = touchedPlaylists
-      ? localPlaylists.map((p) => p.trackIds.includes(id)
-        ? { ...p, trackIds: p.trackIds.map((t) => t === id ? newId : t) } : p)
-      : localPlaylists
-    // Clearing streamUrl (rather than rebuilding it) lets the Player re-derive
-    // it from the new path — see its `track.streamUrl ?? toFileUrl(track.path)`.
-    const rekey = <T extends { id: string }>(t: T): T =>
-      t.id === id ? { ...t, id: newId, path: newPath, streamUrl: undefined } : t
-    set({
-      libraryTracks: nextTracks,
-      libraryArt: nextArt,
-      localPlaylists: nextPlaylists,
-      queue: queue.map(rekey),
-      currentTrack: currentTrack ? rekey(currentTrack) : currentTrack,
-    })
-
-    el.saveLibraryData({ tracks: nextTracks, folders: libraryFolders, lastScanned: libraryLastScanned })
-    if (touchedPlaylists) el.saveLocalPlaylists(nextPlaylists)
-    return true
-  },
   updateLibraryTrack: (id, updates) => set((s) => {
     const artChanged = updates.albumArt !== undefined
     // Cover art lives in libraryArt, never on the track objects — keep the
@@ -1816,6 +1781,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = get().libraryFolders.filter((f) => f !== folder)
     set({ libraryFolders: next })
     ls.set('libraryFolders', next)
+    // Hand the Storage Access Framework grant back — otherwise a removed
+    // folder keeps counting against the per-app persisted-permission cap
+    // (128 URIs) forever, and re-adding it later would burn a second slot.
+    localLibrary.releaseSource(folder)
+    // Drop that source's tracks so the list matches the folder list without
+    // waiting for a rescan. Anything still reachable from another source
+    // reappears on the next scan.
+    const keep = get().libraryTracks.filter((t) => !t.filePath.startsWith(folder))
+    if (keep.length !== get().libraryTracks.length) {
+      set({ libraryTracks: keep })
+      localLibrary.saveLibrary({ tracks: keep, sources: next, lastScanned: get().libraryLastScanned })
+    }
   },
   setLibraryLastScanned: (ts) => {
     set({ libraryLastScanned: ts })
@@ -1831,103 +1808,86 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   scanLibrary: async () => {
-    const el = (window as any).electron
-    if (!el) return
+    if (!localLibrary.localLibraryAvailable()) return
     const { libraryFolders, libraryTracks } = get()
     if (libraryFolders.length === 0) return
-    set({ libraryScanning: true })
+    set({ libraryScanning: true, libraryScanProgress: null })
+    // The native walk reports as it goes; a big first scan is minutes of
+    // tag-reading, and without this the UI would sit on a bare spinner.
+    const offProgress = localLibrary.onScanProgress((p) => set({ libraryScanProgress: p }))
     try {
-      // Passing the previous scan's tracks lets the main process skip
-      // re-parsing tags for files whose size/mtime haven't changed — makes
-      // this cheap enough to run automatically (see libraryAutoRefresh)
-      // instead of only on an explicit "Scan Now" click.
-      const result = await el.scanLibrary(libraryFolders, libraryTracks)
-      if (result.error) { console.error('Scan error:', result.error); return }
+      // Passing the previous scan's tracks lets the native side skip files
+      // whose size/mtime haven't changed — makes this cheap enough to run
+      // automatically (see libraryAutoRefresh) instead of only on demand.
+      const tracks = await localLibrary.scanSources(libraryFolders, libraryTracks)
       const now = Date.now()
       // Drop cached covers only for files that were added or changed this scan
-      // (their on-disk art may now differ); unchanged files keep theirs so a
+      // (their embedded art may now differ); unchanged files keep theirs so a
       // routine auto-refresh doesn't force every visible cover to re-read.
       const prevSig = new Map(libraryTracks.map((t) => [t.id, `${t.fileSize}:${t.lastModified}`]))
       set((s) => {
         const libraryArt = { ...s.libraryArt }
-        for (const t of result.tracks as LibraryTrack[]) {
+        for (const t of tracks) {
           if (prevSig.get(t.id) !== `${t.fileSize}:${t.lastModified}`) delete libraryArt[t.id]
         }
-        return { libraryTracks: result.tracks, libraryArt, libraryLastScanned: now, libraryLoaded: true }
+        return { libraryTracks: tracks, libraryArt, libraryLastScanned: now, libraryLoaded: true }
       })
       ls.set('libraryLastScanned', now)
-      // The scanner returns metadata only (covers are read on demand), so the
-      // track list can be persisted as-is without bloating library.json.
-      await el.saveLibraryData({ tracks: result.tracks, folders: libraryFolders, lastScanned: now })
-    } catch(e) { console.error('scanLibrary error:', e) }
-    finally { set({ libraryScanning: false }) }
+      // The scan returns metadata only (covers are read on demand), so the
+      // list can be persisted as-is without bloating library.json.
+      await localLibrary.saveLibrary({ tracks, sources: libraryFolders, lastScanned: now })
+    } catch (e) {
+      console.error('scanLibrary error:', e)
+    } finally {
+      offProgress()
+      set({ libraryScanning: false, libraryScanProgress: null })
+    }
   },
 
   createLocalPlaylist: (name) => {
-    const el = (window as any).electron
     const playlist: LocalPlaylist = { id: `lp-${Date.now()}`, name, trackIds: [], createdAt: Date.now() }
     const next = [...get().localPlaylists, playlist]
     set({ localPlaylists: next, activeLocalPlaylistId: playlist.id })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   deleteLocalPlaylist: (id) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.filter((p) => p.id !== id)
     const active = get().activeLocalPlaylistId
     set({ localPlaylists: next, activeLocalPlaylistId: active === id ? null : active })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   renameLocalPlaylist: (id, name) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.map((p) => p.id === id ? { ...p, name } : p)
     set({ localPlaylists: next })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   updateLocalPlaylist: (id, updates) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.map((p) => p.id === id ? { ...p, ...updates } : p)
     set({ localPlaylists: next })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   addToLocalPlaylist: (playlistId, trackId) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.map((p) =>
       p.id === playlistId && !p.trackIds.includes(trackId)
         ? { ...p, trackIds: [...p.trackIds, trackId] } : p
     )
     set({ localPlaylists: next })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   removeFromLocalPlaylist: (playlistId, trackId) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.map((p) =>
       p.id === playlistId ? { ...p, trackIds: p.trackIds.filter((id) => id !== trackId) } : p
     )
     set({ localPlaylists: next })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   reorderLocalPlaylist: (playlistId, trackIds) => {
-    const el = (window as any).electron
     const next = get().localPlaylists.map((p) => p.id === playlistId ? { ...p, trackIds } : p)
     set({ localPlaylists: next })
-    el?.saveLocalPlaylists(next)
+    localLibrary.savePlaylists(next)
   },
   importM3uEntriesLocal: (name, entries) => commitM3uImport(get, set, { name, entries }),
-  exportLocalPlaylistM3u: async (id) => {
-    const el = (window as any).electron
-    if (!el?.exportM3u) return { ok: false as const, error: 'Not supported' }
-    const pl = get().localPlaylists.find((p) => p.id === id)
-    if (!pl) return { ok: false as const, error: 'Playlist not found' }
-    const byId = new Map(get().libraryTracks.map((t) => [t.id, t]))
-    const tracks = pl.trackIds
-      .map((tid) => byId.get(tid))
-      .filter((t): t is LibraryTrack => !!t)
-      .map((t) => ({ path: t.filePath, title: t.title, artist: t.artist, duration: t.duration }))
-    const res = await el.exportM3u({ name: pl.name, tracks })
-    if (!res || res.canceled) return { ok: false as const, canceled: true }
-    if (res.error) return { ok: false as const, error: res.error }
-    return { ok: true as const, path: res.path }
-  },
+  exportLocalPlaylistM3u: async () => ({ ok: false as const, error: 'Not supported on Android' }),
 
   createGuestPlaylist: (name) => {
     const id = `gp-${Date.now()}`
@@ -1969,22 +1929,23 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   loadLibrary: async (force = false) => {
-    const el = (window as any).electron
-    if (!el) return
-    // Already have the list in memory — skip the disk read + IPC + full re-set.
+    if (!localLibrary.localLibraryAvailable()) return
+    // Already have the list in memory — skip the read and the full re-set.
     // The store is authoritative in-session (scans and local-playlist edits
-    // write it directly); only a forced reload after another window changed the
-    // data needs to re-read. This is what makes tab revisits instant.
+    // write it directly), which is what makes tab revisits instant.
     if (!force && get().libraryLoaded) return
     try {
-      const [libData, playlists] = await Promise.all([el.loadLibraryData(), el.loadLocalPlaylists()])
+      const [libData, playlists] = await Promise.all([
+        localLibrary.loadLibrary(),
+        localLibrary.loadPlaylists(),
+      ])
       // Cover art lives in libraryArt (keyed by track id) and is left untouched
-      // here, so the loaded covers survive a Library-tab remount without any
+      // here, so loaded covers survive a Library-tab remount without any
       // per-track merge — just swap in the fresh metadata list.
       if (libData?.tracks) set({ libraryTracks: libData.tracks })
       if (playlists) set({ localPlaylists: playlists })
       set({ libraryLoaded: true })
-    } catch(e) { console.error('loadLibrary error:', e) }
+    } catch (e) { console.error('loadLibrary error:', e) }
   },
 
   // ── Offline playlist sync ────────────────────────────────────────────────

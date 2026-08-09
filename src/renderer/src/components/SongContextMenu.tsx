@@ -470,16 +470,13 @@ export default function SongContextMenu({
             isMobile ? 'w-full rounded-t-2xl border-x-0 border-b-0' : 'w-52 rounded-xl'
           }`}
         >
-          {/* Actions on the local file itself. Copy/move prompt for a
-              destination in the main process; delete goes to the OS trash. */}
-          <MenuItem icon={<FileAudio2 size={14} />} label="Convert format" onClick={() => { useStore.getState().openConvert(track); onClose() }} />
-          <MenuItem icon={<FolderInput size={14} />} label="Move to folder…" onClick={() => { useStore.getState().moveLibraryTrack(track.id); onClose() }} />
-          <Divider />
-          {/* Deletes the user's actual file (to the OS trash) rather than just
-              un-listing it — confirmed in main before anything moves. */}
+          {/* Removing only un-lists the track. Deleting the user's actual
+              file would need a write grant on its source folder, which the
+              read-only Storage Access Framework permission we take doesn't
+              carry — so the file itself is left alone. */}
           <MenuItem
             icon={<Trash2 size={14} />}
-            label="Delete from disk"
+            label="Remove from library"
             destructive
             onClick={() => { useStore.getState().deleteLibraryTrack(track.id); onClose() }}
           />

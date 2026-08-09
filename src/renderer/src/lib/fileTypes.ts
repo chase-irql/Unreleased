@@ -1,4 +1,5 @@
 import { useStore } from '../store/useStore'
+import { toStreamUrl } from './localLibrary'
 
 export const AUDIO_EXTS = new Set(['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus', '.wma', '.alac', '.caf', '.aiff', '.aif'])
 export const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif'])
@@ -19,15 +20,12 @@ export function getMediaType(name: string): FileMediaType {
   return 'other'
 }
 
-// Dev mode serves the renderer from http://localhost:3018 (see the
-// electron:dev script), and Chromium refuses to load `file://` media from a
-// non-file-origin page ("Not allowed to load local resource"). Routing
-// through the app's `local-media://` custom protocol (registered in
-// electron/main.js) sidesteps that in both dev and the packaged file:// build.
+// A local track's "path" is a Storage Access Framework `content://` URI, which
+// the WebView refuses to load directly from the app's https origin. Capacitor's
+// local server proxies it instead — see localLibrary.toStreamUrl for why that
+// matters beyond just loading (same-origin is what lets the EQ chain attach).
 export function toFileUrl(absPath: string): string {
-  const url = new URL('local-media://play/')
-  url.searchParams.set('p', absPath)
-  return url.toString()
+  return toStreamUrl(absPath)
 }
 
 // Converts a scanned library file into the queue/player Track shape — the

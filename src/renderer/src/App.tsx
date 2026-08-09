@@ -71,8 +71,8 @@ const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData')
+  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders')
   useThemeEffects()
   // Android hardware back → close the topmost overlay / step back a view.
   // No-op off native.
@@ -122,6 +122,26 @@ export default function App(): JSX.Element {
   // making at that same moment. Overlap with those is still free — apiRequest
   // dedupes identical in-flight GETs.
   useEffect(() => runWhenIdle(() => { prefetchApiData() }), [prefetchApiData])
+
+  // Read the saved local library (metadata only — covers stream in per row)
+  // during idle after boot, so the first Library/Playlists open is instant
+  // instead of waiting on a file read plus a bridge round trip. loadLibrary
+  // is idempotent, so this never double-reads with a tab-mount call.
+  useEffect(() => runWhenIdle(() => { loadLibrary() }), [loadLibrary])
+
+  // "Auto-refresh" (Settings → Library) — opt-in background rescan so files
+  // added or re-tagged outside the app show up without an explicit "Scan now".
+  // The scan skips anything whose size and date are unchanged, so this stays
+  // cheap. Also runs when the app comes back to the foreground, which is when
+  // a change made in a file manager is most likely to have just happened.
+  useEffect(() => {
+    if (!libraryAutoRefresh || libraryFolders.length === 0) return
+    loadLibrary().then(() => scanLibrary())
+    const onVisible = (): void => { if (document.visibilityState === 'visible') scanLibrary() }
+    document.addEventListener('visibilitychange', onVisible)
+    const interval = setInterval(() => scanLibrary(), 15 * 60 * 1000)
+    return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(interval) }
+  }, [libraryAutoRefresh, libraryFolders, loadLibrary, scanLibrary])
 
   // Deliver any reports queued in a previous session. loadAccount also flushes
   // after login (to attach the token), but this covers a signed-out user whose

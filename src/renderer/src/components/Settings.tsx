@@ -2,13 +2,14 @@ import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } fr
 import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical,
+  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical, Music2,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
   ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
   ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
 import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo } from '../lib/hotkeys'
+import { localLibraryAvailable, pickFolder, pickFiles, decodeSourceLabel } from '../lib/localLibrary'
 import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
@@ -53,7 +54,7 @@ const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[]
   { id: 'bottom', label: 'Bottom', icon: PanelBottom },
 ]
 
-type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'feedback' | 'about'
+type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'library' | 'feedback' | 'about'
 
 // ── Flat row primitive — no card/box, just an icon + label on the left and
 // a control on the right, separated by a hairline. Used inside each tab's
@@ -185,7 +186,7 @@ export default function Settings(): JSX.Element {
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
     hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
-    libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryTracks, libraryLastScanned,
+    libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryScanProgress, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
     lastfmUser, setLastfmUser, lastfmEnabled, setLastfmEnabled,
@@ -196,7 +197,7 @@ export default function Settings(): JSX.Element {
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -401,6 +402,9 @@ export default function Settings(): JSX.Element {
     // there (the bindings themselves stay live — a paired Bluetooth keyboard
     // still works off the defaults).
     ...(isMobile ? [] : [{ id: 'shortcuts' as Tab, label: 'Shortcuts', icon: Keyboard, color: '#4b5563', sub: 'Keyboard bindings' }]),
+    // Only when the native plugin is there to back it — on the plain web build
+    // there's no way to reach the device's files at all.
+    ...(localLibraryAvailable() ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen, color: '#ea580c', sub: 'Folders, files and scanning' }] : []),
     { id: 'feedback', label: 'Feedback', icon: MessageCircle, color: '#db2777', sub: 'Report a problem or idea' },
     { id: 'about', label: 'About', icon: Info, color: '#6b7280', sub: 'Version, links, legal' },
   ]
@@ -1519,6 +1523,103 @@ export default function Settings(): JSX.Element {
                     </div>
                   )
                 })}
+              </div>
+            )}
+
+            {/* ── Library ── */}
+            {tab === 'library' && (
+              <div>
+                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-1">Library</h3>
+                <p className="text-text-muted text-xs mb-4 leading-relaxed max-w-md">
+                  Music you add here stays on your device — nothing is uploaded. Android
+                  only grants access to what you pick, so choose a folder (everything
+                  inside it, including subfolders) or individual files.
+                </p>
+
+                <div className="space-y-2 mb-3">
+                  {libraryFolders.length === 0 && (
+                    <p className="text-text-muted text-xs italic">No folders or files added yet.</p>
+                  )}
+                  {libraryFolders.map((source) => (
+                    <div
+                      key={source}
+                      className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)]"
+                    >
+                      <FolderOpen size={14} className="text-text-muted shrink-0" />
+                      <span className="flex-1 min-w-0 text-text-secondary text-xs truncate" title={source}>
+                        {decodeSourceLabel(source)}
+                      </span>
+                      <button
+                        onClick={() => removeLibraryFolder(source)}
+                        title="Remove from library"
+                        className="shrink-0 p-1 -mr-1 text-text-muted hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 mb-5">
+                  <button
+                    onClick={async () => {
+                      const picked = await pickFolder()
+                      if (!picked) return
+                      addLibraryFolder(picked)
+                      scanLibrary()
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                  >
+                    <FolderPlus size={13} /> Add folder
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const picked = await pickFiles()
+                      if (picked.length === 0) return
+                      for (const uri of picked) addLibraryFolder(uri)
+                      scanLibrary()
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                  >
+                    <Plus size={13} /> Add files
+                  </button>
+                  <button
+                    onClick={() => scanLibrary()}
+                    disabled={libraryScanning || libraryFolders.length === 0}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] disabled:opacity-50"
+                  >
+                    {libraryScanning
+                      ? <><Loader2 size={13} className="animate-spin" /> Scanning…</>
+                      : <><RefreshCw size={13} /> Scan now</>}
+                  </button>
+                </div>
+
+                {/* A first scan reads tags file by file, so a large folder takes
+                    minutes — show what it's actually up to rather than a bare
+                    spinner. `parsed` lags `found` because unchanged files are
+                    carried over from the last scan instead of being re-read. */}
+                {libraryScanning && libraryScanProgress && (
+                  <p className="text-text-muted text-xs mb-4">
+                    Found {libraryScanProgress.found} file{libraryScanProgress.found === 1 ? '' : 's'}
+                    {libraryScanProgress.parsed > 0 && <> · read tags for {libraryScanProgress.parsed}</>}
+                  </p>
+                )}
+
+                <Row icon={Music2} iconColor="#0891b2" label="Tracks in library">
+                  <span className="text-text-muted text-xs">{libraryTracks.length}</span>
+                </Row>
+                <Row icon={Clock} iconColor="#4f46e5" label="Last scanned">
+                  <span className="text-text-muted text-xs">
+                    {libraryLastScanned ? new Date(libraryLastScanned).toLocaleString() : 'Never'}
+                  </span>
+                </Row>
+                <Row
+                  icon={RefreshCw}
+                  iconColor="#059669"
+                  label="Auto-refresh"
+                  sub="Rescan on app start and every 15 minutes. Files whose size and date are unchanged are skipped, so this is cheap."
+                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} /></div>}
+                />
               </div>
             )}
 
