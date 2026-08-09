@@ -241,17 +241,37 @@ export function isGloballyRegistrable(combo: string): boolean {
   return parts.slice(0, -1).some((p) => MODIFIER_TOKENS.has(p))
 }
 
-/** Convert a combo to an Electron accelerator string, or null if it can't be a
- *  global shortcut. "Ctrl" maps to CommandOrControl so it's Cmd on macOS. */
-/** Whether `id` should be OS-globally registered when global shortcuts are on.
- *  Per-action opt-out: absence in `overrides` defaults to true (global), so
- *  existing installs that already had global shortcuts enabled keep every
- *  eligible action global until the user explicitly turns one off. */
-export function isActionGlobal(id: string, overrides: Record<string, boolean>): boolean {
-  if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id]
-  return true
+/** The global-registration default for `id`: the same combo as its default
+ *  in-app binding when that combo is eligible for OS-global registration,
+ *  otherwise unset. Keeps existing installs' shortcuts globally registered
+ *  by default now that in-app and global are independently rebindable. */
+export function defaultGlobalBinding(id: string): string {
+  const def = ACTIONS_BY_ID.get(id)?.defaultBinding ?? ''
+  return isGloballyRegistrable(def) ? def : ''
 }
 
+/** The OS-global combo currently bound to `id`: the user override if one
+ *  exists (an explicit '' means the user cleared it), else
+ *  defaultGlobalBinding(id). Fully independent of effectiveBinding — the
+ *  in-app and global shortcuts for an action can differ, or either can be
+ *  unset while the other stays bound. */
+export function effectiveGlobalBinding(id: string, overrides: Record<string, string>): string {
+  if (Object.prototype.hasOwnProperty.call(overrides, id)) return overrides[id]
+  return defaultGlobalBinding(id)
+}
+
+/** Reverse lookup for the global-binding namespace: which action (if any) is
+ *  globally bound to `combo`. Mirrors resolveAction for the in-app namespace. */
+export function resolveGlobalAction(combo: string, overrides: Record<string, string>): string | null {
+  if (!combo) return null
+  for (const a of HOTKEY_ACTIONS) {
+    if (effectiveGlobalBinding(a.id, overrides) === combo) return a.id
+  }
+  return null
+}
+
+/** Convert a combo to an Electron accelerator string, or null if it can't be a
+ *  global shortcut. "Ctrl" maps to CommandOrControl so it's Cmd on macOS. */
 export function comboToAccelerator(combo: string): string | null {
   if (!isGloballyRegistrable(combo)) return null
   const parts = combo.split('+')

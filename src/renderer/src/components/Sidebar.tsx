@@ -1,9 +1,9 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, ArrowLeft, Info } from 'lucide-react'
+import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, ArrowLeft, Info, Check } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
-import { showStaffProfile, staffProfileView } from '../lib/userApi'
+import { showStaffProfile, staffProfileView, getToken } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible, orderedNavControls, isNavControlVisible, type NavControlId } from '../lib/navItems'
 import AppMenu from './AppMenu'
 import PlaylistContextMenu, { PlaylistContextMenuState } from './PlaylistContextMenu'
@@ -52,6 +52,16 @@ export default function Sidebar(): JSX.Element {
   }
 
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
+
+  const [tokenCopied, setTokenCopied] = useState(false)
+  const copyAuthToken = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const t = getToken()
+    if (!t) return
+    navigator.clipboard.writeText(t)
+    setTokenCopied(true)
+    setTimeout(() => setTokenCopied(false), 1500)
+  }
 
   // Order + which tabs appear both come from Settings → Appearance → Menu
   // items. orderedNavItems sanitizes the saved order; isNavItemVisible drops
@@ -112,13 +122,14 @@ export default function Sidebar(): JSX.Element {
       case 'profile':
         if (!account || !showStaffProfile(account)) return null
         return (
-          <button key="profile" onClick={() => setActiveView(profileView)} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
-            <span className={iconWrap}>
+          <button key="profile" onClick={() => setActiveView(profileView)} onContextMenu={copyAuthToken} title={collapsed ? (account.display_name || account.discord_username) : undefined} className={rowCls}>
+            <span className={`${iconWrap} relative`}>
               {account.discord_avatar
                 ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
                 : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+              {tokenCopied && <span className="absolute inset-0 rounded-full bg-black/60 flex items-center justify-center"><Check size={12} className="text-emerald-400" /></span>}
             </span>
-            <span aria-hidden={collapsed} className={labelCls}>{account.display_name || account.discord_username}</span>
+            <span aria-hidden={collapsed} className={labelCls}>{tokenCopied ? 'Token copied!' : (account.display_name || account.discord_username)}</span>
           </button>
         )
       case 'logout':
@@ -153,10 +164,11 @@ export default function Sidebar(): JSX.Element {
       case 'profile':
         if (!account || !showStaffProfile(account)) return null
         return (
-          <button key="profile" onClick={() => setActiveView(profileView)} title={account.display_name || account.discord_username} className={`${barIconBtn} hover:bg-transparent hover:opacity-80`}>
+          <button key="profile" onClick={() => setActiveView(profileView)} onContextMenu={copyAuthToken} title={tokenCopied ? 'Token copied!' : (account.display_name || account.discord_username)} className={`${barIconBtn} hover:bg-transparent hover:opacity-80 relative`}>
             {account.discord_avatar
               ? <img src={account.discord_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
               : <div className="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-[10px] font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+            {tokenCopied && <span className="absolute inset-0 rounded-full bg-black/60 flex items-center justify-center"><Check size={12} className="text-emerald-400" /></span>}
           </button>
         )
       case 'logout':
