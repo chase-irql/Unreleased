@@ -473,6 +473,29 @@ def guard_no_mobile_dirs():
                  f"but consider deleting it (it has no purpose on {APP_BRANCH}).")
 
 
+def purge_mobile_dirs_from_web():
+    """The counterpart to guard_no_mobile_dirs, run while web is checked out.
+
+    guard_no_mobile_dirs only protects app. web's .gitignore ignores just the
+    Capacitor build output (android/build/, android/.gradle/, …), not android/
+    itself, so in v1.20.1 the `git add -A` below swept the whole untracked
+    android/ tree that was still sitting in the shared working directory into
+    a web commit — and the sync CI then merged web → app, which is how 52
+    Capacitor files became *tracked* on app and wedged the next release.
+
+    Deleting on app alone doesn't hold: web keeps its copy, and one divergent
+    merge puts it back. So strip the dirs here too, every release, before
+    anything is staged."""
+    for name in ("android", "ios"):
+        if capture(f'git ls-files -- "{name}"'):
+            run(f'git rm -r -q --ignore-unmatch "{name}"', check=False)
+            info(f"Removed stale {name}/ from {WEB_BRANCH} (Capacitor lives on its own branch)")
+        elif (ROOT / name).exists():
+            # Untracked leftovers on disk — web's .gitignore won't stop
+            # `git add -A` from committing them, so clear them out.
+            shutil.rmtree(ROOT / name, ignore_errors=True)
+
+
 def step_commit(version, msg, state):
     section(5, TOTAL, f"Commit → {APP_BRANCH}")
 
@@ -587,6 +610,7 @@ def step_sync_web(version, is_beta, state):
             if f.strip():
                 run(f'git rm -q --ignore-unmatch "{f.strip()}"', check=False)
         run(f"git checkout {APP_BRANCH} -- src/ package.json package-lock.json")
+        purge_mobile_dirs_from_web()
 
         if not is_dirty():
             info("Web branch already up to date.")
