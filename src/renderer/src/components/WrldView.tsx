@@ -1,13 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal, LayoutGrid } from 'lucide-react'
-import { registerBackHandler } from '../lib/backHandlers'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
 import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
-import { buildImageUrl, apiFetch, songToTrack, JWAPI_BASE, playlistCoverUrl, smallCoverUrl } from '../lib/juicewrldApi'
+import { buildImageUrl, apiFetch, songToTrack, smallCoverUrl } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
@@ -19,19 +18,12 @@ import { ProgressiveCover } from './ProgressiveCover'
 import SongContextMenu from './SongContextMenu'
 import { getSkin } from '../lib/skins'
 
-// ── WrldData types ────────────────────────────────────────────────────────────
-
-interface WrldSong { name: string; id: number }
-interface WrldVersion { name: string; year: number; cover_url: string; songs: WrldSong[] }
-interface WrldAlbum { id: number; name: string; versions: WrldVersion[] }
-
 export default function WrldView(): JSX.Element {
   const {
     currentTrack, currentTrackFull, account, theme,
     radioFmActive, setRadioFmActive, radioFmIsLive, radioFmNowPlaying,
     radioFmVote, radioFmUpNext, radioFmQueuePreview,
     radioFmMatchedSong,
-    playlists,
     playTrack,
     isPlaying, setIsPlaying, volume, setVolume,
     shuffle, repeat, toggleShuffle, toggleRepeat,
@@ -52,7 +44,6 @@ export default function WrldView(): JSX.Element {
     radioFmUpNext: s.radioFmUpNext,
     radioFmQueuePreview: s.radioFmQueuePreview,
     radioFmMatchedSong: s.radioFmMatchedSong,
-    playlists: s.playlists,
     playTrack: s.playTrack,
     isPlaying: s.isPlaying,
     setIsPlaying: s.setIsPlaying,
@@ -173,36 +164,6 @@ export default function WrldView(): JSX.Element {
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const proposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ── Albums state ─────────────────────────────────────────────────────────────
-  const [wrldAlbums, setWrldAlbums] = useState<WrldAlbum[]>([])
-  const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null)
-  const [selectedVersionIdx, setSelectedVersionIdx] = useState(0)
-  const [playingAlbumSongId, setPlayingAlbumSongId] = useState<number | null>(null)
-  // Lives here (not inside AlbumDetail) because AlbumDetail is invoked as a
-  // plain function — see the note above ArtBox — and plain calls can't own hooks.
-  const [versionMenuOpen, setVersionMenuOpen] = useState(false)
-
-  useEffect(() => {
-    fetch('/wrlddata.json')
-      .then(r => r.json())
-      .then(d => setWrldAlbums(d.albums ?? []))
-      .catch(() => {})
-  }, [])
-
-  const handlePlayAlbumSong = async (songId: number) => {
-    setPlayingAlbumSongId(songId)
-    try {
-      const res = await fetch(`${JWAPI_BASE}/songs/${songId}/`)
-      if (res.ok) {
-        const song: JWApiSong = await res.json()
-        playTrack(songToTrack(song))
-      }
-    } catch {}
-    setPlayingAlbumSongId(null)
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-
   useEffect(() => {
     if (suggestTimer.current) clearTimeout(suggestTimer.current)
     if (!suggestQuery.trim()) { setSuggestResults([]); setSuggestLoading(false); return }
@@ -319,31 +280,11 @@ export default function WrldView(): JSX.Element {
   const txtTer   = textIsDark ? 'rgba(0,0,0,0.35)'  : 'rgba(255,255,255,0.3)'
   const txtFaint = textIsDark ? 'rgba(0,0,0,0.22)'  : 'rgba(255,255,255,0.2)'
 
-  const handleAddToPlaylist = async (playlistId: number) => {
-    if (!currentTrack?.id) return
-    const numericId = parseInt(currentTrack.id.replace('jw-', ''), 10)
-    if (isNaN(numericId)) return
-    try {
-      await userApi.addToPlaylist(playlistId, numericId)
-      useStore.getState().autoDownloadIfOffline(playlistId, [numericId])
-    } catch { /* silent */ }
-  }
-
   const syncedLines = useMemo(() => {
     if (rawLyrics && isSynced) return parseLrc(rawLyrics)
     return []
   }, [rawLyrics, isSynced])
 
-  type NotchCategory = 'albums' | 'mixtapes' | 'unreleased' | 'playlists'
-  const [notchCategory, setNotchCategory] = useState<NotchCategory>('albums')
-  const [notchDropdownOpen, setNotchDropdownOpen] = useState(false)
-  const NOTCH_LABELS: Record<NotchCategory, string> = { albums: 'Released Albums', mixtapes: 'Mixtapes & Singles', unreleased: 'Unreleased', playlists: 'Playlists' }
-  const NOTCH_OPTIONS: { value: NotchCategory; label: string }[] = [
-    { value: 'albums', label: 'Released Albums' },
-    { value: 'mixtapes', label: 'Mixtapes & Singles' },
-    { value: 'unreleased', label: 'Unreleased' },
-    { value: 'playlists', label: 'Playlists' },
-  ]
   // A "new vote" is detected by active rising edge (false/absent -> true),
   // NOT by track/kind equality — those can stay identical across repeated
   // metadata broadcasts for the SAME ongoing vote, but using them as the
@@ -397,12 +338,12 @@ export default function WrldView(): JSX.Element {
   // look interactive when there's no track loaded (and FM isn't filling in).
   const noTrack = !radioFmActive && !currentTrack
 
-  // ArtBox / FmRadioPanel / AlbumsGrid / AlbumDetail are rendered via plain
-  // function calls, NOT <JSX/> element syntax: they're (re)defined on every
-  // WrldView render, so as JSX components React would see a brand-new type
-  // each time and unmount/remount their whole subtree — album art re-decoded
-  // and flickered, and any internal DOM/menu state was lost on every parent
-  // re-render. As plain calls they're just part of this component's own tree.
+  // ArtBox / FmRadioPanel are rendered via plain function calls, NOT <JSX/>
+  // element syntax: they're (re)defined on every WrldView render, so as JSX
+  // components React would see a brand-new type each time and unmount/
+  // remount their whole subtree — album art re-decoded and flickered, and
+  // any internal DOM/menu state was lost on every parent re-render. As plain
+  // calls they're just part of this component's own tree.
   // (Corollary: they must not contain hooks of their own.)
   const ArtBox = ({ mobile }: { mobile: boolean }) => (
     <div
@@ -561,280 +502,6 @@ export default function WrldView(): JSX.Element {
 
   // LyricsPanel is now a module-level component (see below WrldView) — call via JSX.
 
-  // ── Albums notch content ──────────────────────────────────────────────────────
-
-  // `compact` = the desktop notch's tight 256px-wide sizing; the mobile sheet
-  // (full viewport width, touch targets) passes compact=false for larger text
-  // and a visible-not-hover play badge. Same data/handlers either way — only
-  // the sizing tokens differ, so there's one source of truth for the logic.
-  const AlbumsGrid = ({ compact = true }: { compact?: boolean } = {}) => (
-    <div className={`grid grid-cols-2 pb-2 ${compact ? 'gap-2.5' : 'gap-4'}`}>
-      {wrldAlbums.map(album => {
-        const primaryVersion = album.versions[0]
-        return (
-          <button
-            key={album.id}
-            onClick={() => { setSelectedAlbumId(album.id); setSelectedVersionIdx(0); setVersionMenuOpen(false) }}
-            className="flex flex-col gap-1.5 text-left group/album"
-          >
-            <div className="relative w-full aspect-square rounded-xl overflow-hidden shadow-lg ring-1 ring-white/[0.06] group-hover/album:ring-white/25 transition-all duration-200">
-              <img
-                src={primaryVersion.cover_url}
-                alt={album.name}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover/album:scale-[1.04]"
-              />
-              {/* Play overlay — hover-reveal on the desktop notch; on the
-                  touch sheet there's no hover, so it's a small always-visible
-                  badge instead (matches the play-badge convention used on
-                  Tracker/Playlists cover art). */}
-              <div className={`absolute inset-0 flex items-center justify-center transition-colors duration-200 ${
-                compact ? 'bg-black/0 group-hover/album:bg-black/30' : ''
-              }`}>
-                <div className={`rounded-full bg-white flex items-center justify-center shadow-xl transition-all duration-200 ${
-                  compact
-                    ? 'w-8 h-8 opacity-0 group-hover/album:opacity-100 translate-y-1 group-hover/album:translate-y-0'
-                    : 'w-9 h-9 absolute bottom-2 right-2'
-                }`}>
-                  <Play size={compact ? 10 : 14} className="text-black ml-0.5" fill="black" />
-                </div>
-              </div>
-            </div>
-            <div className="px-0.5">
-              <p className={`text-white/85 font-semibold leading-tight line-clamp-2 ${compact ? 'text-[10px]' : 'text-sm'}`}>{album.name}</p>
-              <p className={`text-white/35 mt-0.5 tabular-nums ${compact ? 'text-[9px]' : 'text-xs'}`}>{primaryVersion.year}</p>
-            </div>
-          </button>
-        )
-      })}
-    </div>
-  )
-
-  const AlbumDetail = ({ albumId, compact = true }: { albumId: number; compact?: boolean }): JSX.Element | null => {
-    const album = wrldAlbums.find(a => a.id === albumId)
-    if (!album) return null
-    const version = album.versions[selectedVersionIdx] ?? album.versions[0]
-    const versionLabel = (v: WrldVersion): string => v.name.includes('Deluxe') ? 'Deluxe' : 'Standard'
-
-    return (
-      <div className="flex flex-col gap-3">
-        {/* Back button */}
-        <button
-          onClick={() => setSelectedAlbumId(null)}
-          className={`flex items-center gap-1.5 text-white/40 hover:text-white/75 transition-colors -ml-0.5 self-start ${compact ? 'text-[10px]' : 'text-xs py-1'}`}
-        >
-          <ChevronLeft size={compact ? 11 : 14} />
-          <span>Albums</span>
-        </button>
-
-        {/* Cover art */}
-        <div className="w-full aspect-square rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
-          <img src={version.cover_url} alt={album.name} className="w-full h-full object-cover" />
-        </div>
-
-        {/* Album info */}
-        <div>
-          <p className={`text-white/95 font-bold leading-snug ${compact ? 'text-xs' : 'text-base'}`}>{album.name}</p>
-          <p className={`text-white/40 mt-0.5 ${compact ? 'text-[10px]' : 'text-xs'}`}>Juice WRLD · {version.year}</p>
-        </div>
-
-        {/* Version notch menu */}
-        {album.versions.length > 1 && (
-          <div className="relative">
-            <button
-              onClick={() => setVersionMenuOpen(o => !o)}
-              className={`w-full flex items-center justify-between gap-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] transition-colors ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2.5'}`}
-            >
-              <span className={`text-white/70 font-semibold tracking-wide truncate leading-none ${compact ? 'text-[9px]' : 'text-xs'}`}>
-                {versionLabel(version)}
-              </span>
-              <ChevronDown size={compact ? 10 : 13} className={`text-white/30 shrink-0 transition-transform duration-150 ${versionMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {versionMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setVersionMenuOpen(false)} />
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl">
-                  {album.versions.map((v, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setSelectedVersionIdx(i); setVersionMenuOpen(false) }}
-                      className={`w-full text-left font-medium transition-colors ${compact ? 'px-3 py-1.5 text-[9px]' : 'px-4 py-3 text-xs'} ${
-                        selectedVersionIdx === i
-                          ? 'text-white/90 bg-white/[0.08]'
-                          : 'text-white/45 hover:text-white/80 hover:bg-white/[0.05]'
-                      }`}
-                    >
-                      {versionLabel(v)}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Divider */}
-        <div className="h-px bg-white/[0.07]" />
-
-        {/* Track list */}
-        <div className={compact ? 'flex flex-col -mx-1.5' : 'flex flex-col -mx-2'}>
-          {version.songs.map((song, idx) => {
-            const isActive = currentTrack?.id === `jw-${song.id}`
-            const isLoading = playingAlbumSongId === song.id
-
-            return (
-              <button
-                key={`${song.id}-${idx}`}
-                onClick={() => handlePlayAlbumSong(song.id)}
-                className={`flex items-center gap-2 rounded-lg hover:bg-white/[0.07] active:bg-white/10 transition-colors group/song text-left ${
-                  compact ? 'px-2 py-[5px]' : 'px-3 py-2.5'
-                }`}
-              >
-                {/* Track number / playing indicator. The hover-swap (index →
-                    play icon) has no touch equivalent, so the non-compact
-                    (mobile) variant just always shows the play icon instead
-                    of relying on group-hover. */}
-                <div className={`shrink-0 flex items-center justify-center ${compact ? 'w-5' : 'w-6'}`}>
-                  {isLoading ? (
-                    <div className={`rounded-full border border-white/30 border-t-white/80 animate-spin ${compact ? 'w-2.5 h-2.5' : 'w-3.5 h-3.5'}`} />
-                  ) : isActive ? (
-                    <span className={`text-[var(--accent)] ${compact ? 'text-[9px]' : 'text-xs'}`}>▶</span>
-                  ) : compact ? (
-                    <>
-                      <span className="text-white/25 text-[10px] tabular-nums group-hover/song:hidden">{idx + 1}</span>
-                      <Play size={9} className="text-white/50 hidden group-hover/song:block" fill="currentColor" />
-                    </>
-                  ) : (
-                    <Play size={12} className="text-white/40" fill="currentColor" />
-                  )}
-                </div>
-
-                {/* Song name */}
-                <span
-                  className={`truncate transition-colors leading-tight ${compact ? 'text-[11px]' : 'text-sm'} ${
-                    isActive
-                      ? 'text-[var(--accent)] font-semibold'
-                      : 'text-white/70 group-hover/song:text-white/95'
-                  }`}
-                  title={song.name}
-                >
-                  {song.name}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
-
-  // Quick "add current track to playlist" grid — was inline JSX at the notch's
-  // one call site; extracted so the mobile sheet can reuse it too.
-  const PlaylistsQuickAdd = ({ compact = true }: { compact?: boolean } = {}) => (
-    <div className={`grid grid-cols-2 ${compact ? 'gap-2.5' : 'gap-4'}`}>
-      {playlists.slice(0, 6).map(pl => (
-        <button key={pl.id} onClick={() => handleAddToPlaylist(pl.id)} title={pl.name}
-          className="flex flex-col gap-1.5 text-left group/pl">
-          <div className="w-full aspect-square rounded-xl overflow-hidden ring-1 ring-white/[0.06] group-hover/pl:ring-white/25 transition-all shadow-md">
-            {playlistCoverUrl(pl)
-              ? <img src={playlistCoverUrl(pl)} className="w-full h-full object-cover" />
-              : <div className="w-full h-full bg-white/[0.06] flex items-center justify-center">
-                  <Music size={compact ? 18 : 24} className="text-white/15" />
-                </div>}
-          </div>
-          <p className={`text-white/55 font-medium truncate px-0.5 ${compact ? 'text-[9px]' : 'text-xs'}`}>{pl.name}</p>
-        </button>
-      ))}
-    </div>
-  )
-
-  // ── Mobile browse sheet ──────────────────────────────────────────────────────
-  // Touch-openable counterpart to the hover-only notch menu above — same data
-  // and handlers (AlbumsGrid/AlbumDetail/PlaylistsQuickAdd), sized for a full
-  // screen instead of a 256px sidebar. See useEffect below for the Android
-  // back-button wiring (album detail → album grid → close, same two-level
-  // pattern as Settings' mobile drill-down).
-  const [browseOpen, setBrowseOpen] = useState(false)
-  useEffect(() => {
-    if (!browseOpen) return
-    return registerBackHandler(() => {
-      if (notchCategory === 'albums' && selectedAlbumId !== null) { setSelectedAlbumId(null); return true }
-      setBrowseOpen(false)
-      return true
-    })
-  }, [browseOpen, notchCategory, selectedAlbumId])
-
-  const MobileBrowseSheet = (): JSX.Element => (
-    <div className="md:hidden fixed inset-0 z-40 flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-      {/* Same frosted-glass treatment as WrldQueuePanel's sheet variant —
-          WrldView's own mobile-sheet convention, distinct from the app's
-          generic bottom sheets, to match this page's dark glassy chrome. */}
-      <div
-        className="absolute inset-0"
-        style={{ backdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)', WebkitBackdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)' }}
-      />
-      <div className="absolute inset-0 bg-black/40" />
-
-      <div
-        className="relative z-10 flex items-center justify-between px-4 pb-3 shrink-0 border-b border-white/10"
-        style={{ paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' }}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {notchCategory === 'albums' && selectedAlbumId !== null && (
-            <button onClick={() => setSelectedAlbumId(null)} aria-label="Back" className="-ml-1.5 p-1.5 text-white/70">
-              <ChevronLeft size={20} />
-            </button>
-          )}
-          <h2 className="text-white/90 font-semibold text-sm truncate">
-            {notchCategory === 'albums' && selectedAlbumId !== null
-              ? (wrldAlbums.find(a => a.id === selectedAlbumId)?.name ?? 'Album')
-              : 'Browse'}
-          </h2>
-        </div>
-        <button onClick={() => setBrowseOpen(false)} aria-label="Close" className="text-white/70 hover:text-white/95 transition-colors p-1.5">
-          <X size={20} />
-        </button>
-      </div>
-
-      {/* Category tabs — a segmented row instead of the notch's hover-dropdown,
-          since tapping a tab directly costs one tap instead of open-then-select. */}
-      {!(notchCategory === 'albums' && selectedAlbumId !== null) && (
-        <div className="relative z-10 flex gap-1.5 px-4 py-3 shrink-0 overflow-x-auto">
-          {(account ? NOTCH_OPTIONS : NOTCH_OPTIONS.filter(o => o.value !== 'playlists')).map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { setNotchCategory(opt.value); setSelectedAlbumId(null) }}
-              className={`px-3.5 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-colors shrink-0 ${
-                notchCategory === opt.value ? 'bg-white text-black' : 'bg-white/10 text-white/60'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div
-        className="relative z-10 flex-1 overflow-y-auto px-4 py-3"
-        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
-      >
-        {notchCategory === 'albums' ? (
-          selectedAlbumId !== null
-            ? AlbumDetail({ albumId: selectedAlbumId, compact: false })
-            : AlbumsGrid({ compact: false })
-        ) : notchCategory === 'playlists' && account && playlists.length > 0 ? (
-          PlaylistsQuickAdd({ compact: false })
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-2 py-8">
-            <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center">
-              <Music size={20} className="text-white/15" />
-            </div>
-            <p className="text-white/30 text-xs text-center">Coming soon</p>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-
   // ── Render ────────────────────────────────────────────────────────────────────
 
   const inner = (
@@ -853,7 +520,7 @@ export default function WrldView(): JSX.Element {
           <main> has already absorbed the same inset, so adding it again here
           would push these buttons down by twice the notch height. */}
       <div className={`absolute z-30 flex items-center gap-2 right-3 md:top-4 md:left-4 md:right-auto ${
-        fullscreen ? 'top-[max(0.75rem,calc(0.75rem+env(safe-area-inset-top,0px)))]' : 'top-3'
+        fullscreen ? 'top-[max(0.75rem,calc(0.75rem+env(safe-area-inset-top,0px)))]' : 'top-2'
       }`}>
         <button
           onClick={() => {
@@ -868,7 +535,7 @@ export default function WrldView(): JSX.Element {
             setRadioFmActive(next)
           }}
           disabled={fmDisabled}
-          className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1.5 transition-all disabled:opacity-40
+          className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1 md:py-1.5 transition-all disabled:opacity-40
             ${radioFmActive && radioFmIsLive
               ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
               : radioFmActive
@@ -882,22 +549,11 @@ export default function WrldView(): JSX.Element {
 
         <button
           onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-          className="w-8 h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
+          className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
           title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         >
           {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
         </button>
-
-        {/* Mobile-only entry into the album/playlist browser — desktop
-            reaches the same content via the hover notch on the right edge. */}
-        <button
-          onClick={() => setBrowseOpen(true)}
-          aria-label="Browse albums & playlists"
-          className="md:hidden w-11 h-11 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
-        >
-          <LayoutGrid size={16} />
-        </button>
-
       </div>
 
       <>
@@ -920,8 +576,12 @@ export default function WrldView(): JSX.Element {
           {/* Mobile layout */}
           <div className="md:hidden relative z-10 flex flex-col h-full min-h-0">
 
-            {/* Header: art + title */}
-            <div className="flex items-center gap-3 px-4 pt-12 pb-3 shrink-0">
+            {/* Header: art + title. pt-9 clears the pinned 999FM/fullscreen
+                buttons above (top-2 + their ~28px height) with a little
+                breathing room — it used to be pt-12, sized for a taller
+                button pair, which on top of <main>'s own safe-area padding
+                left a noticeably dead gap under the status bar. */}
+            <div className="flex items-center gap-3 px-4 pt-9 pb-3 shrink-0">
               {ArtBox({ mobile: true })}
               <div className="flex-1 min-w-0">
                 {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
@@ -1374,96 +1034,6 @@ export default function WrldView(): JSX.Element {
 
       </>
 
-      {/* ── Notch menu (desktop only) ── */}
-      {/* Browses albums/mixtapes/unreleased/playlists, not just the queue.
-          Hidden below md because the whole thing is built around :hover
-          (hover-expand width, hover-reveal content, a hover-only dropdown)
-          with no tap trigger anywhere — it was never reachable on a touch
-          device. MobileBrowseSheet (rendered near the bottom of this
-          component, opened via the LayoutGrid button in the top-right
-          cluster) is the touch-openable equivalent: same data and handlers
-          (AlbumsGrid/AlbumDetail/PlaylistsQuickAdd), sized for a full screen
-          and a tab row instead of a hover-dropdown. */}
-      <div className="hidden md:flex group absolute right-0 top-0 bottom-0 z-20 items-center">
-
-        {/* Expanded panel — slides in on hover */}
-        {/* Clip width is in rem (17rem = 272px at scale 1) so it grows together
-            with the rem-based `w-64` panel inside — a fixed px clamp here chopped
-            off the right column of album covers at UI scales above normal. */}
-        <div className="overflow-hidden max-w-0 group-hover:max-w-[17rem] transition-[max-width] duration-200 ease-out">
-          <div
-            className="w-64 opacity-0 group-hover:opacity-100 transition-opacity duration-150 delay-75
-              bg-black/85 backdrop-blur-2xl rounded-l-2xl border-l border-t border-b border-white/[0.07]
-              flex flex-col overflow-hidden"
-            style={{ height: 'calc(100vh - 180px)', maxHeight: 560 }}
-          >
-
-            {/* Category selector */}
-            <div className="relative px-3 pt-3 pb-2 shrink-0">
-              <button
-                onClick={() => setNotchDropdownOpen(o => !o)}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] transition-colors"
-              >
-                <span className="text-white/60 text-[10px] font-semibold tracking-wide truncate leading-none">
-                  {NOTCH_LABELS[notchCategory]}
-                </span>
-                <ChevronDown size={10} className={`text-white/30 shrink-0 transition-transform duration-150 ${notchDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {notchDropdownOpen && (
-                <div className="absolute top-full left-3 right-3 mt-1 z-10 bg-black/95 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden py-1 shadow-2xl">
-                  {(account ? NOTCH_OPTIONS : NOTCH_OPTIONS.filter(o => o.value !== 'playlists')).map(opt => (
-                    <button key={opt.value}
-                      onClick={() => {
-                        setNotchCategory(opt.value)
-                        setNotchDropdownOpen(false)
-                        setSelectedAlbumId(null)
-                      }}
-                      className={`w-full px-3 py-2 text-left text-[10px] font-medium transition-colors ${
-                        notchCategory === opt.value
-                          ? 'text-white/90 bg-white/[0.08]'
-                          : 'text-white/45 hover:text-white/80 hover:bg-white/[0.05]'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Thin separator */}
-            <div className="h-px bg-white/[0.06] mx-3 shrink-0" />
-
-            {/* Scrollable content */}
-            <div className="flex-1 overflow-y-auto px-3 py-3" style={{ scrollbarWidth: 'none' }}>
-
-              {/* ── Albums ── */}
-              {notchCategory === 'albums' ? (
-                selectedAlbumId !== null
-                  ? AlbumDetail({ albumId: selectedAlbumId })
-                  : AlbumsGrid()
-
-              /* ── Playlists ── */
-              ) : notchCategory === 'playlists' && account && playlists.length > 0 ? (
-                PlaylistsQuickAdd()
-
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full gap-2 py-8">
-                  <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
-                    <Music size={16} className="text-white/15" />
-                  </div>
-                  <p className="text-white/20 text-[10px] text-center">Coming soon</p>
-                </div>
-              )}
-
-            </div>
-          </div>
-        </div>
-
-        {/* Notch handle — pill tab */}
-        <div className="w-[5px] group-hover:w-[3px] h-16 group-hover:h-24 rounded-l-full bg-white/20 group-hover:bg-white/50 transition-all duration-200 ease-out shrink-0" />
-      </div>
-
       {/* Mobile queue — full-screen sheet (there's no side-by-side room for
           an inline drawer like the desktop layout gets). Hidden during 999FM,
           a live stream with nothing to queue/reorder. */}
@@ -1472,10 +1042,6 @@ export default function WrldView(): JSX.Element {
           <WrldQueuePanel variant="sheet" onClose={() => setShowQueue(false)} />
         </div>
       )}
-
-      {/* Mobile browse sheet — touch-openable counterpart to the desktop
-          hover notch above (see MobileBrowseSheet definition). */}
-      {browseOpen && <MobileBrowseSheet />}
     </div>
   )
 

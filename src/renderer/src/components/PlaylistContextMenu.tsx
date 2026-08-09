@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow'
 import * as userApi from '../lib/userApi'
 import type { PlaylistSummary } from '../lib/userApi'
 import { JWAPI_BASE } from '../lib/juicewrldApi'
+import { shareOrigin } from '../lib/androidUpdate'
 import { Track } from '../types'
 import { useBackToClose } from '../hooks/useBackToClose'
 
@@ -140,7 +141,7 @@ export default function PlaylistContextMenu({ state, onClose }: {
         setPlaylist(p => ({ ...p, is_public: true }))
         await refreshPlaylists()
       }
-      await navigator.clipboard.writeText(`${window.location.origin}/playlists?id=${playlist.id}&view=shared`)
+      await navigator.clipboard.writeText(`${shareOrigin()}/playlists?id=${playlist.id}&view=shared`)
       setShareCopied(true)
       setTimeout(() => setShareCopied(false), 2000)
     } catch {}

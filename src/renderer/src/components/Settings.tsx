@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } from 'react'
 import {
-  X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle,
+  X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle, Check,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw, DownloadCloud,
   FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical, Music2,
   PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
@@ -108,7 +108,11 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
 // as if this wrapper weren't there), so it only ever touches mobile.
 function SettingsCard({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <div className="md:contents mb-4 md:mb-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-overlay)]/60 px-3.5 overflow-hidden">
+    // Full-opacity surface-overlay, not the /60 this used to be — against the
+    // page's near-black background the two surfaces sit only ~1 step apart in
+    // the dark palette, so at 60% the tint was blending back into the page and
+    // the "card" read as nothing (flat list floating on black, no grouping).
+    <div className="md:contents mb-4 md:mb-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-overlay)] px-3.5 overflow-hidden shadow-sm">
       {children}
     </div>
   )
@@ -894,7 +898,12 @@ export default function Settings(): JSX.Element {
                       <p className="text-text-muted text-xs md:text-[11px] leading-snug">Typeface for the whole app — each option previews in its own font</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
+                  {/* Below md: a compact single-row-per-font list (the native
+                      picker idiom) — the old grid-of-boxes gave each font a
+                      2-line square with the name left-aligned under a preview,
+                      which read as bulky/empty on a phone. At md+ it's still
+                      the box grid, unchanged. */}
+                  <div className="flex flex-col gap-1.5 md:grid md:grid-cols-4 md:gap-2 pl-0 md:pl-[34px]">
                     {FONTS.map((font) => {
                       const active = appFont === font.id
                       return (
@@ -902,23 +911,24 @@ export default function Settings(): JSX.Element {
                           key={font.id}
                           onClick={() => setAppFont(font.id)}
                           title={font.name}
-                          className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
+                          className={`flex items-center gap-3 md:block px-3 py-3 md:px-2.5 md:py-2 rounded-lg border text-left transition-colors ${
                             active
                               ? 'bg-accent/15 border-[var(--accent)]'
-                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
+                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
                           }`}
                         >
                           {/* Specimen renders in the stack it selects, so the
                               list previews itself without applying anything. */}
                           <span
-                            className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`}
+                            className={`text-lg md:block md:text-base leading-tight shrink-0 ${active ? 'text-accent' : 'text-text-primary'}`}
                             style={{ fontFamily: font.stack }}
                           >
                             Ag
                           </span>
-                          <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>
+                          <span className={`flex-1 min-w-0 truncate text-sm md:block md:text-[11px] md:mt-0.5 ${active ? 'text-accent' : 'text-text-muted'}`}>
                             {font.name}
                           </span>
+                          {active && <Check size={16} className="text-accent shrink-0 md:hidden" />}
                         </button>
                       )
                     })}
@@ -934,7 +944,7 @@ export default function Settings(): JSX.Element {
                       <p className="text-text-muted text-xs md:text-[11px] leading-snug">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
+                  <div className="flex flex-col gap-1.5 md:grid md:grid-cols-4 md:gap-2 pl-0 md:pl-[34px]">
                     {FONTS.map((font) => {
                       const active = lyricsFont === font.id
                       return (
@@ -942,21 +952,22 @@ export default function Settings(): JSX.Element {
                           key={font.id}
                           onClick={() => setLyricsFont(font.id)}
                           title={font.name}
-                          className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
+                          className={`flex items-center gap-3 md:block px-3 py-3 md:px-2.5 md:py-2 rounded-lg border text-left transition-colors ${
                             active
                               ? 'bg-accent/15 border-[var(--accent)]'
-                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
+                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
                           }`}
                         >
                           <span
-                            className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`}
+                            className={`text-lg md:block md:text-base leading-tight shrink-0 ${active ? 'text-accent' : 'text-text-primary'}`}
                             style={{ fontFamily: font.stack }}
                           >
                             Ag
                           </span>
-                          <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>
+                          <span className={`flex-1 min-w-0 truncate text-sm md:block md:text-[11px] md:mt-0.5 ${active ? 'text-accent' : 'text-text-muted'}`}>
                             {font.name}
                           </span>
+                          {active && <Check size={16} className="text-accent shrink-0 md:hidden" />}
                         </button>
                       )
                     })}
@@ -1536,75 +1547,90 @@ export default function Settings(): JSX.Element {
                   inside it, including subfolders) or individual files.
                 </p>
 
-                <div className="space-y-2 mb-3">
-                  {libraryFolders.length === 0 && (
-                    <p className="text-text-muted text-xs italic">No folders or files added yet.</p>
-                  )}
-                  {libraryFolders.map((source) => (
-                    <div
-                      key={source}
-                      className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)]"
-                    >
-                      <FolderOpen size={14} className="text-text-muted shrink-0" />
-                      <span className="flex-1 min-w-0 text-text-secondary text-xs truncate" title={source}>
-                        {decodeSourceLabel(source)}
-                      </span>
-                      <button
-                        onClick={() => removeLibraryFolder(source)}
-                        title="Remove from library"
-                        className="shrink-0 p-1 -mr-1 text-text-muted hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                <SettingsCard>
+                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+                  <div className="flex items-center gap-2.5 mb-2.5">
+                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ea580c' }}>
+                      <FolderOpen size={13} className="text-white" strokeWidth={2.25} />
                     </div>
-                  ))}
+                    <div className="min-w-0 flex-1">
+                      <span className="text-text-primary text-sm">Sources</span>
+                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Folders and files added to your library</p>
+                    </div>
+                  </div>
+
+                  <div className="pl-0 md:pl-[34px] space-y-1.5">
+                    {libraryFolders.length === 0 && (
+                      <p className="text-text-muted text-xs italic">No folders or files added yet.</p>
+                    )}
+                    {libraryFolders.map((source) => (
+                      <div
+                        key={source}
+                        className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-overlay)]"
+                      >
+                        <FolderOpen size={14} className="text-text-secondary shrink-0" />
+                        <span className="flex-1 min-w-0 text-text-primary text-sm truncate" title={source}>
+                          {decodeSourceLabel(source)}
+                        </span>
+                        <button
+                          onClick={() => removeLibraryFolder(source)}
+                          title="Remove from library"
+                          className="shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-red-400 hover:bg-[var(--surface-raised)] transition-colors"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 mt-3 pl-0 md:pl-[34px]">
+                    <button
+                      onClick={async () => {
+                        const picked = await pickFolder()
+                        if (!picked) return
+                        addLibraryFolder(picked)
+                        scanLibrary()
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                    >
+                      <FolderPlus size={13} /> Add folder
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const picked = await pickFiles()
+                        if (picked.length === 0) return
+                        for (const uri of picked) addLibraryFolder(uri)
+                        scanLibrary()
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
+                    >
+                      <Plus size={13} /> Add files
+                    </button>
+                    <button
+                      onClick={() => scanLibrary()}
+                      disabled={libraryScanning || libraryFolders.length === 0}
+                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] disabled:opacity-50"
+                    >
+                      {libraryScanning
+                        ? <><Loader2 size={13} className="animate-spin" /> Scanning…</>
+                        : <><RefreshCw size={13} /> Scan now</>}
+                    </button>
+                  </div>
+
+                  {/* A first scan reads tags file by file, so a large folder takes
+                      minutes — show what it's actually up to rather than a bare
+                      spinner. `parsed` lags `found` because unchanged files are
+                      carried over from the last scan instead of being re-read. */}
+                  {libraryScanning && libraryScanProgress && (
+                    <p className="text-text-muted text-xs mt-2.5 pl-0 md:pl-[34px]">
+                      Found {libraryScanProgress.found} file{libraryScanProgress.found === 1 ? '' : 's'}
+                      {libraryScanProgress.parsed > 0 && <> · read tags for {libraryScanProgress.parsed}</>}
+                    </p>
+                  )}
                 </div>
+                </SettingsCard>
 
-                <div className="flex flex-wrap items-center gap-2 mb-5">
-                  <button
-                    onClick={async () => {
-                      const picked = await pickFolder()
-                      if (!picked) return
-                      addLibraryFolder(picked)
-                      scanLibrary()
-                    }}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                  >
-                    <FolderPlus size={13} /> Add folder
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const picked = await pickFiles()
-                      if (picked.length === 0) return
-                      for (const uri of picked) addLibraryFolder(uri)
-                      scanLibrary()
-                    }}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                  >
-                    <Plus size={13} /> Add files
-                  </button>
-                  <button
-                    onClick={() => scanLibrary()}
-                    disabled={libraryScanning || libraryFolders.length === 0}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors px-3 py-2 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] disabled:opacity-50"
-                  >
-                    {libraryScanning
-                      ? <><Loader2 size={13} className="animate-spin" /> Scanning…</>
-                      : <><RefreshCw size={13} /> Scan now</>}
-                  </button>
-                </div>
-
-                {/* A first scan reads tags file by file, so a large folder takes
-                    minutes — show what it's actually up to rather than a bare
-                    spinner. `parsed` lags `found` because unchanged files are
-                    carried over from the last scan instead of being re-read. */}
-                {libraryScanning && libraryScanProgress && (
-                  <p className="text-text-muted text-xs mb-4">
-                    Found {libraryScanProgress.found} file{libraryScanProgress.found === 1 ? '' : 's'}
-                    {libraryScanProgress.parsed > 0 && <> · read tags for {libraryScanProgress.parsed}</>}
-                  </p>
-                )}
-
+                <SettingsCard>
                 <Row icon={Music2} iconColor="#0891b2" label="Tracks in library">
                   <span className="text-text-muted text-xs">{libraryTracks.length}</span>
                 </Row>
@@ -1620,6 +1646,7 @@ export default function Settings(): JSX.Element {
                   sub="Rescan on app start and every 15 minutes. Files whose size and date are unchanged are skipped, so this is cheap."
                   labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} /></div>}
                 />
+                </SettingsCard>
               </div>
             )}
 
@@ -1686,7 +1713,7 @@ export default function Settings(): JSX.Element {
                 {(!account || (!account.is_editor && !account.is_administrator)) && (
                   <button
                     onClick={() => openMainView('editor')}
-                    className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 border border-accent/25 text-accent text-sm font-medium transition-colors mt-2"
+                    className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 active:bg-accent/20 border border-accent/25 text-accent text-sm font-medium transition-colors mt-2"
                   >
                     <PenLine size={15} />
                     Become an Editor
@@ -1695,7 +1722,7 @@ export default function Settings(): JSX.Element {
                 {CONTRIBUTOR_ENABLED && (!account || (!account.is_contributor && !account.is_administrator)) && (
                   <button
                     onClick={() => openMainView('contributor')}
-                    className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/15 border border-sky-500/25 text-sky-400 text-sm font-medium transition-colors mt-2"
+                    className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/15 active:bg-sky-500/20 border border-sky-500/25 text-sky-400 text-sm font-medium transition-colors mt-2"
                   >
                     <FolderOpen size={15} />
                     Become a Contributor
@@ -1703,7 +1730,7 @@ export default function Settings(): JSX.Element {
                 )}
                 <button
                   onClick={() => openMainView('docs')}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors mt-2"
+                  className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors mt-2"
                 >
                   <BookOpen size={15} />
                   API Docs
@@ -1712,14 +1739,14 @@ export default function Settings(): JSX.Element {
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <button
                     onClick={() => setLegalDoc('terms')}
-                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
+                    className="flex items-center gap-2 px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
                   >
                     <ScrollText size={15} />
                     Terms of Service
                   </button>
                   <button
                     onClick={() => setLegalDoc('privacy')}
-                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
+                    className="flex items-center gap-2 px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
                   >
                     <ShieldCheck size={15} />
                     Privacy Policy
@@ -1749,9 +1776,9 @@ export default function Settings(): JSX.Element {
                     <div key={q}>
                       <button
                         onClick={() => setOpenAbout(openAbout === q ? null : q)}
-                        className="flex items-center justify-between w-full px-3 py-2.5 hover:bg-[var(--surface-raised)] transition-colors text-left"
+                        className="flex items-center justify-between w-full px-3 py-3 md:py-2.5 hover:bg-[var(--surface-raised)] active:bg-[var(--surface-raised)] transition-colors text-left"
                       >
-                        <span className="text-text-secondary text-xs font-medium">{q}</span>
+                        <span className="text-text-secondary text-sm md:text-xs font-medium">{q}</span>
                         <ChevronDown size={12} className={`text-text-muted transition-transform duration-150 shrink-0 ml-2 ${openAbout === q ? 'rotate-180' : ''}`} />
                       </button>
                       {openAbout === q && (

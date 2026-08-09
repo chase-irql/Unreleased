@@ -71,8 +71,8 @@ const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders')
+  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders, refreshPlaylists } = useStorePick(
+    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders', 'refreshPlaylists')
   useThemeEffects()
   // Android hardware back → close the topmost overlay / step back a view.
   // No-op off native.
@@ -142,6 +142,18 @@ export default function App(): JSX.Element {
     const interval = setInterval(() => scanLibrary(), 15 * 60 * 1000)
     return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(interval) }
   }, [libraryAutoRefresh, libraryFolders, loadLibrary, scanLibrary])
+
+  // Re-fetch playlists whenever the app comes back to the foreground. Playlist
+  // edits (e.g. saving a shared playlist from the web) happen out-of-band from
+  // whatever session this device has open, so without this the list only ever
+  // updates on next full app start. refreshPlaylists() is a no-op while signed
+  // out. Covers both the Android wrap (backgrounded, not killed) and a
+  // desktop/browser tab left open and refocused.
+  useEffect(() => {
+    const onVisible = (): void => { if (document.visibilityState === 'visible') refreshPlaylists() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [refreshPlaylists])
 
   // Deliver any reports queued in a previous session. loadAccount also flushes
   // after login (to attach the token), but this covers a signed-out user whose

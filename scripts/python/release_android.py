@@ -2,9 +2,11 @@
 """
 Unreleased Music Player — Android (Capacitor) Release Script
 
-Just run it. Optional flag:
-  --skip-install   stop after compiling the APK — skips the adb install +
-                    launch, so no device/emulator connection is required.
+Just run it (or double-click release_android.bat). Optional flag:
+  --install   also adb-install and launch the APK on whatever device/emulator
+              is connected. Off by default — most runs of this script are
+              cutting a release with no device attached, and requiring an
+              explicit opt-in beats failing mid-script on a missing adb target.
 
 Separate from release.py on purpose: this one only ever touches the
 `android` branch. It never checks out, commits to, or pushes app/web, and
@@ -25,9 +27,9 @@ for the desktop app's auto-updater or gets anywhere near the web deploy.
   ── nothing left to answer past this point ──
   5. Commit all changes to android
   6. Run `npm run android:deploy` (scripts/android-deploy.sh): build the
-     renderer, `cap sync android`, `gradlew assembleDebug`, then — unless
-     --skip-install — install and launch it on whatever device/emulator adb
-     sees. Debug-signed either way; no release keystore exists yet, see
+     renderer, `cap sync android`, `gradlew assembleDebug`, then — only with
+     --install — install and launch it on whatever device/emulator adb sees.
+     Debug-signed either way; no release keystore exists yet, see
      step_build's docstring before wiring in a real one.
   7. Push android to GitHub
   8. Create the GitHub release (tag android-v<version>, target_commitish
@@ -138,7 +140,7 @@ def find_adb():
     if fallback.exists():
         return str(fallback)
     die("adb not found (checked PATH and the default Android SDK location).\n"
-        "     Install the Android SDK platform-tools, or pass --skip-install.")
+        "     Install the Android SDK platform-tools, or drop --install to skip deploying.")
 
 
 def is_dirty():
@@ -389,10 +391,9 @@ def step_build(skip_install):
     resolution at all: every command below runs through this same function's
     `shell=True`, which is unambiguous.
 
-    Not just a build — also `adb install -r`s and launches the APK on
-    whatever device/emulator adb sees by default, so a connection is
-    normally required. Pass --skip-install (this script's own flag) to stop
-    after the APK is compiled instead.
+    With --install (this script's own flag), also `adb install -r`s and
+    launches the APK on whatever device/emulator adb sees — off by default,
+    so no device/emulator connection is required for an ordinary release.
 
     Still produces a debug-signed APK (assembleDebug) — there's no
     release-signing keystore for this app yet. Fine for sideloading (what
@@ -402,9 +403,9 @@ def step_build(skip_install):
     section(6, TOTAL, "Build, sync, compile" + ("" if skip_install else " & deploy") + " APK")
     warn("This can take a few minutes on a cold Gradle cache — output streams below")
     if skip_install:
-        info("--skip-install: stopping after the APK is compiled, no device required")
+        info("Stopping after the APK is compiled — pass --install to also deploy to a device")
     else:
-        warn("Requires a device or emulator connected via adb (pass --skip-install to opt out)")
+        warn("--install: requires a device or emulator connected via adb")
     print()
 
     if APK_PATH.exists():
@@ -441,7 +442,7 @@ def step_build(skip_install):
     detail(f"> {adb} install -r {APK_PATH.relative_to(ROOT)}")
     if subprocess.run([adb, "install", "-r", str(APK_PATH)], cwd=ROOT).returncode != 0:
         raise RuntimeError("adb install failed — if there's no device/emulator connected, "
-                            "connect one, or re-run with --skip-install.")
+                            "connect one, or re-run without --install.")
 
     detail(f"> {adb} shell am start -n {ANDROID_PACKAGE}/.MainActivity")
     subprocess.run([adb, "shell", "am", "start", "-n", f"{ANDROID_PACKAGE}/.MainActivity"], cwd=ROOT)
@@ -560,7 +561,11 @@ def rollback(state):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    skip_install = "--skip-install" in sys.argv[1:]
+    # Off by default: --skip-install is still accepted (it's already the
+    # default behavior, so this is a no-op) purely so an old habit or a
+    # script calling this one with that flag doesn't break.
+    args = sys.argv[1:]
+    skip_install = "--install" not in args
     banner()
     state = {}
     try:

@@ -927,8 +927,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
   })(),
 
   setActiveView: (view) => {
-    // Already there: skip, so a repeat call can't stack duplicate history
-    // entries or churn subscribers that key off previousView.
+    // Navigating anywhere should dismiss Settings if it's open. The mobile
+    // overlay has no click-outside-to-close (its header X/back is the only
+    // exit — see Settings' own comment on that), so without this a nav tap
+    // left Settings sitting open on top of the view it just switched to,
+    // covering it and reading as "stuck overlapping the nav bar".
+    if (get().showSettings) set({ showSettings: false })
+    // Already there: skip further work, so a repeat call can't stack
+    // duplicate history entries or churn subscribers that key off previousView.
     if (get().activeView === view) return
     const paths: Partial<Record<ViewType, string>> = {
       'api-tracker': '/tracker',

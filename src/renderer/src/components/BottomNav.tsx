@@ -1,9 +1,11 @@
-import { ReactNode, useEffect, useRef } from 'react'
-import { Settings, ShieldCheck, Disc } from 'lucide-react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Settings, ShieldCheck, Disc, MoreHorizontal } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
 import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 // The mobile nav bar — the counterpart to the desktop Sidebar, which it now
 // shares its destination list with. It used to hardcode its own four tabs,
@@ -17,16 +19,18 @@ import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
 //
 // Hard-capped at 5 tabs total, Settings always the last of them — a phone-width
 // row scrolling to reach a 7th or 8th enabled item (the previous behavior) is
-// worse than just not offering that many at once. Whatever's toggled on beyond
-// the first 4 (in the user's own saved order) simply doesn't appear here; it's
-// still reachable through the desktop side menu.
+// worse than just not offering that many at once. When more items are enabled
+// than fit, a "More" tab takes one of the direct slots and the rest live in a
+// bottom sheet off of it — see moreTabs below. Nothing enabled on this device
+// is ever unreachable on mobile the way it used to be (there's no Sidebar
+// fallback here, unlike desktop).
 const MAX_TABS = 5
 
 interface Tab { view: ViewType; icon: ReactNode; label: string }
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, account, navVisibility, navOrder, sidebarPosition } =
-    useStorePick('activeView', 'setActiveView', 'toggleSettings', 'account', 'navVisibility', 'navOrder', 'sidebarPosition')
+  const { activeView, setActiveView, toggleSettings, setShowSettings, account, navVisibility, navOrder, sidebarPosition } =
+    useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowSettings', 'account', 'navVisibility', 'navOrder', 'sidebarPosition')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
   const isManager = !!account?.is_manager
@@ -64,8 +68,31 @@ export default function BottomNav(): JSX.Element {
   }
 
   // Settings has a guaranteed slot (it's the only route into Settings on
-  // mobile), so the rest compete for the remaining MAX_TABS - 1 spots.
-  const tabs = [...navItemTabs, ...extraTabs].slice(0, MAX_TABS - 1)
+  // mobile), so the rest compete for the remaining MAX_TABS - 1 spots. Only
+  // when that's not enough does "More" claim one of those spots for itself —
+  // with few enough items enabled, every tab still shows directly and no
+  // "More" button appears at all.
+  const allTabs = [...navItemTabs, ...extraTabs]
+  const overflow = allTabs.length > MAX_TABS - 1
+  const tabs = overflow ? allTabs.slice(0, MAX_TABS - 2) : allTabs
+  const moreTabs = overflow ? allTabs.slice(MAX_TABS - 2) : []
+  const moreActive = moreTabs.some((t) => t.view === activeView)
+  const [moreOpen, setMoreOpen] = useState(false)
+  useBackToClose(() => setMoreOpen(false), moreOpen)
+
+  // Shared by both the direct tabs and the "More" sheet's rows.
+  const navigateTo = (view: ViewType): void => {
+    // Re-tapping the already-active Playlists tab dispatches a back event
+    // instead of going through setActiveView (it's a no-op there — same
+    // view), so it needs its own close-Settings call to match every other
+    // tab's behavior.
+    if (activeView === view && view === 'playlists') {
+      setShowSettings(false)
+      window.dispatchEvent(new CustomEvent('playlists:back'))
+    } else {
+      setActiveView(view)
+    }
+  }
 
   const tabCls = (active: boolean): string =>
     `flex-1 min-w-0 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors relative overflow-hidden ${
@@ -107,17 +134,7 @@ export default function BottomNav(): JSX.Element {
       {tabs.map((tab) => {
         const active = activeView === tab.view
         return (
-          <button
-            key={tab.view}
-            onClick={() => {
-              if (activeView === tab.view && tab.view === 'playlists') {
-                window.dispatchEvent(new CustomEvent('playlists:back'))
-              } else {
-                setActiveView(tab.view)
-              }
-            }}
-            className={tabCls(active)}
-          >
+          <button key={tab.view} onClick={() => navigateTo(tab.view)} className={tabCls(active)}>
             {marker(active)}
             {tab.icon}
             <span className={labelCls}>{tab.label}</span>
@@ -125,12 +142,52 @@ export default function BottomNav(): JSX.Element {
         )
       })}
 
+      {moreTabs.length > 0 && (
+        <button onClick={() => setMoreOpen(true)} className={tabCls(moreActive)}>
+          {marker(moreActive)}
+          <MoreHorizontal size={24} />
+          <span className={labelCls}>More</span>
+        </button>
+      )}
+
       {/* Never hideable or counted against the cap: on mobile this is the
           only route into Settings. */}
       <button onClick={() => toggleSettings()} className={tabCls(false)}>
         <Settings size={24} />
         <span className={labelCls}>Settings</span>
       </button>
+
+      {moreOpen && createPortal(
+        <>
+          <div className="fixed inset-0 z-[60] bg-black/40" onClick={() => setMoreOpen(false)} />
+          <div
+            className="fixed z-[61] left-0 right-0 bottom-0 rounded-t-2xl bg-surface border border-[var(--border)] border-b-0 shadow-2xl max-h-[75svh] overflow-y-auto"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+          >
+            <div className="px-4 pt-4 pb-1">
+              <h3 className="text-text-primary font-bold text-base">More</h3>
+            </div>
+            <div className="pb-2">
+              {moreTabs.map((tab) => {
+                const active = activeView === tab.view
+                return (
+                  <button
+                    key={tab.view}
+                    onClick={() => { navigateTo(tab.view); setMoreOpen(false) }}
+                    className={`w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors ${
+                      active ? 'text-accent bg-accent/10' : 'text-text-primary hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
+                    }`}
+                  >
+                    {tab.icon}
+                    <span className="text-sm font-medium">{tab.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </nav>
   )
 }

@@ -51,6 +51,16 @@ export function isAndroidApp(): boolean {
 }
 
 /**
+ * Origin to build shareable/absolute links against. In the Android wrap,
+ * `window.location.origin` is `file://` (the webview loads dist/ off disk),
+ * which produces broken links like `file:///playlists?id=1`. Use the real
+ * deployed site there instead.
+ */
+export function shareOrigin(): string {
+  return isAndroidApp() ? 'https://player.juicewrldapi.com' : window.location.origin
+}
+
+/**
  * Numeric semver compare. Returns >0 when `a` is newer than `b`.
  *
  * Any `-suffix` is dropped before comparing rather than ordered: release
