@@ -65,11 +65,11 @@ const LONG_PRESS_MS = 420
 /** Finger slop before a long-press is treated as a scroll instead. */
 const LONG_PRESS_SLOP = 10
 
-const MEDIA_FILTERS: { key: MediaFilter; label: string; icon: typeof Filter }[] = [
-  { key: 'all', label: 'All', icon: Filter },
-  { key: 'audio', label: 'Audio', icon: Music2 },
-  { key: 'image', label: 'Images', icon: ImageIcon },
-  { key: 'video', label: 'Videos', icon: Video },
+const MEDIA_FILTERS: { key: MediaFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'audio', label: 'Audio' },
+  { key: 'image', label: 'Images' },
+  { key: 'video', label: 'Videos' },
 ]
 
 const SORT_LABELS: Record<SortBy, string> = { name: 'Name', type: 'Type', size: 'Size' }
@@ -791,8 +791,15 @@ export default function ApiFilesView(): JSX.Element {
         {/* App bar. Swaps wholesale in select mode — the browsing controls are
             meaningless while picking files, and a phone has no room to show
             both. */}
+        {/* Neither bar paints its own background. The app shell's background —
+            including the optional accent gradient — runs continuously from
+            behind the status bar down through the listing; an opaque header in
+            between showed up as a flat slab dividing two tinted regions, which
+            read as a separate title bar bolted on above the app. Nothing here
+            floats over scrolling content, so there's nothing to hide behind an
+            opaque fill. */}
         {selectMode ? (
-          <div className="shrink-0 flex items-center gap-1 px-2 pt-2 pb-2 bg-surface">
+          <div className="shrink-0 flex items-center gap-1 px-2 pb-1">
             <button
               onClick={exitSelectMode}
               className="w-11 h-11 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
@@ -807,8 +814,12 @@ export default function ApiFilesView(): JSX.Element {
             >Select all</button>
           </div>
         ) : (
-          <div className="shrink-0 bg-surface">
-            <div className="flex items-center gap-1 px-2 pt-2">
+          <div className="shrink-0">
+            {/* No top padding: <main> has already absorbed the status-bar
+                inset, and the 44px control row carries its own breathing room
+                — anything extra here just reads as a dead strip under the
+                notch. */}
+            <div className="flex items-center gap-1 px-2">
               <button
                 onClick={() => { if (isSearching || search) { setSearch(''); setDebouncedSearch('') } else goBack() }}
                 disabled={!currentPath && !isSearching && !search}
@@ -834,6 +845,15 @@ export default function ApiFilesView(): JSX.Element {
                   <p className="text-text-muted text-xs truncate">{subtitle}</p>
                 )}
               </div>
+
+              {/* Sort lives here rather than as a chip in the row below: the
+                  four filter chips already fill a phone's width on their own.
+                  The current field/direction shows in the sheet it opens. */}
+              <button
+                onClick={() => setSheet('sort')}
+                className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay"
+                aria-label={`Sort by ${SORT_LABELS[sortBy].toLowerCase()}, ${sortDir === 'asc' ? 'ascending' : 'descending'}`}
+              ><SlidersHorizontal size={19} /></button>
 
               <button
                 onClick={() => setViewMode(viewMode === 'list' ? 'grid' : 'list')}
@@ -867,31 +887,27 @@ export default function ApiFilesView(): JSX.Element {
               </div>
             </div>
 
-            {/* Filter + sort chips */}
+            {/* Filter chips. Label-only, and the selected one grows a leading
+                check instead of every chip carrying an icon: four icon+label
+                chips are wider than a phone on their own, so the row was
+                always scrolled and always looked clipped. Sort moved up to
+                the app bar for the same reason. The row can still scroll, but
+                only as a fallback for a very narrow screen. */}
             <div className="flex items-center gap-2 px-4 py-2.5 overflow-x-auto no-scrollbar">
-              {MEDIA_FILTERS.map(({ key, label, icon: Icon }) => {
+              {MEDIA_FILTERS.map(({ key, label }) => {
                 const active = typeFilter === key
                 return (
                   <button
                     key={key}
                     onClick={() => setTypeFilter(key)}
-                    className={`shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-full text-[13px] font-medium transition-colors ${
-                      active ? 'bg-accent text-white' : 'bg-surface-overlay text-text-secondary active:bg-surface-highest'
+                    className={`shrink-0 flex items-center gap-1 h-9 pr-3.5 rounded-full text-[13px] font-medium transition-colors ${
+                      active ? 'bg-accent text-white pl-2.5' : 'bg-surface-overlay text-text-secondary active:bg-surface-highest pl-3.5'
                     }`}
                   >
-                    <Icon size={14} />{label}
+                    {active && <Check size={14} />}{label}
                   </button>
                 )
               })}
-              <div className="shrink-0 w-px h-5 bg-[var(--border)] mx-0.5" />
-              <button
-                onClick={() => setSheet('sort')}
-                className="shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-surface-overlay text-text-secondary text-[13px] font-medium active:bg-surface-highest"
-              >
-                <SlidersHorizontal size={14} />
-                {SORT_LABELS[sortBy]}
-                {sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-              </button>
             </div>
           </div>
         )}
