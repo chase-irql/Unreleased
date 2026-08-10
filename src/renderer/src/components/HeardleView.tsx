@@ -22,7 +22,7 @@ import type {
 } from '../lib/heardle'
 import {
   HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize, versusWins,
-  startPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
+  startTodayPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
 } from '../lib/heardleApi'
 import type { LeaderboardBoard, LeaderboardEntry, PuzzleResponse } from '../lib/heardleApi'
 import HeardleVersusPanel from './HeardleVersusPanel'
@@ -512,7 +512,9 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
     setLoading(true)
     setError(null)
     const fetchMode = board === 'versus' ? 'versus' : mode
-    fetchLeaderboard(board, fetchMode, day)
+    // No day: the server answers for its own today, which is the calendar the
+    // rounds are actually graded against.
+    fetchLeaderboard(board, fetchMode)
       .then((res) => {
         if (cancelled) return
         setEntries(res.entries ?? [])
@@ -664,11 +666,23 @@ export default function HeardleView(): JSX.Element {
   const [serverClipUrl, setServerClipUrl] = useState<string | null>(null)
   const [waveSeed, setWaveSeed] = useState(1)
   const [serverLadder, setServerLadder] = useState<number[] | null>(null)
+  // The server's calendar day and puzzle number for the current round. Null
+  // until it answers (or on the offline/signed-out path), where the local
+  // date stands in.
+  const [serverDay, setServerDay] = useState<string | null>(null)
+  const [serverPuzzleNo, setServerPuzzleNo] = useState<number | null>(null)
+  // Round failures are their own thing — reporting them as "couldn't load the
+  // catalogue" sent me looking at the songs endpoint for a date bug.
+  const [roundError, setRoundError] = useState<string | null>(null)
 
   const isDaily = mode !== 'unlimited' && mode !== 'versus'
   const useServerRound = isDaily && !!account
   const dailyMode: DailyMode = mode === 'personal' ? 'personal' : 'daily'
-  const day = useMemo(() => todayKey(), [])
+  const localDay = useMemo(() => todayKey(), [])
+  // Every day-keyed thing below uses this, never todayKey() directly: on the
+  // server path the round belongs to the server's day, and storing it under
+  // this machine's date would split one round across two keys near midnight.
+  const day = serverDay ?? localDay
 
   // Which settings actually apply here — Daily ignores all of them, Personal
   // takes the difficulty half. Everything below reads `rules`, never
@@ -746,6 +760,11 @@ export default function HeardleView(): JSX.Element {
 
   const applyServerPuzzle = useCallback((res: PuzzleResponse) => {
     setRoundToken(res.round_token)
+    // The server's calendar wins. Everything keyed by day — the saved round,
+    // the stats entry, the share text — must use the day the round was
+    // actually graded against, not this machine's local date.
+    if (res.day) setServerDay(res.day)
+    if (res.puzzle_number != null) setServerPuzzleNo(res.puzzle_number)
     // Fall back to the local ladder only when the server didn't send one —
     // a short/absent ladder must not silently shrink the round.
     setServerLadder(Array.isArray(res.ladder) && res.ladder.length > 0 ? res.ladder : null)
@@ -762,11 +781,12 @@ export default function HeardleView(): JSX.Element {
   useEffect(() => {
     if (!useServerRound) return
     let cancelled = false
-    startPuzzle(dailyMode, day)
+    setRoundError(null)
+    startTodayPuzzle(dailyMode)
       .then((res) => { if (!cancelled) applyServerPuzzle(res) })
-      .catch((err: Error) => { if (!cancelled) setPoolError(err.message) })
+      .catch((err: Error) => { if (!cancelled) setRoundError(err.message) })
     return () => { cancelled = true }
-  }, [useServerRound, dailyMode, day, applyServerPuzzle])
+  }, [useServerRound, dailyMode, applyServerPuzzle])
 
   useEffect(() => {
     if (playablePool.length === 0 || useServerRound) return
@@ -1107,7 +1127,7 @@ export default function HeardleView(): JSX.Element {
       stopPlayback()
       apiSubmitGuess(roundToken, song.id)
         .then(applyServerPuzzle)
-        .catch((err: Error) => setPoolError(err.message))
+        .catch((err: Error) => setRoundError(err.message))
       setQuery('')
       setDropdownOpen(false)
       return
@@ -1139,7 +1159,7 @@ export default function HeardleView(): JSX.Element {
     if (finished) return
     if (useServerRound && roundToken) {
       stopPlayback()
-      apiSkipGuess(roundToken).then(applyServerPuzzle).catch((err: Error) => setPoolError(err.message))
+      apiSkipGuess(roundToken).then(applyServerPuzzle).catch((err: Error) => setRoundError(err.message))
       return
     }
     if (!answer) return
@@ -1306,7 +1326,7 @@ export default function HeardleView(): JSX.Element {
           {/* The three modes are easy to confuse at a glance, so spell out what
               you're playing rather than leaving it to the tab labels. */}
           <p className="text-center text-[10px] font-mono tracking-wider text-text-muted mb-3">
-            {mode === 'daily' && `#${puzzleNumber(day)} · `}
+            {mode === 'daily' && `#${serverPuzzleNo ?? puzzleNumber(day)} · `}
             {MODES.find((m) => m.id === mode)?.hint.toLowerCase()}
             {mode !== 'versus' && ` · ${ladder.length} tries · up to ${formatSeconds(fullWindow)}`}
             {mode !== 'versus' && rules.startPoint === 'timestamp' ? ' · from a timestamp' : mode !== 'versus' ? ' · from the intro' : ''}
@@ -1340,6 +1360,22 @@ export default function HeardleView(): JSX.Element {
               <p className="text-sm">
                 Loading the {categories.map((c) => POOL_LABELS[c].toLowerCase()).join(' + ')} catalogue…
               </p>
+            </div>
+          ) : roundError ? (
+            <div className="flex flex-col items-center gap-3 py-24 text-center">
+              <AlertCircle size={22} className="text-red-400" />
+              <p className="text-sm text-text-secondary">Couldn't start today's round — {roundError}</p>
+              <button
+                onClick={() => {
+                  setRoundError(null)
+                  startTodayPuzzle(dailyMode)
+                    .then(applyServerPuzzle)
+                    .catch((err: Error) => setRoundError(err.message))
+                }}
+                className="text-xs font-semibold text-accent hover:underline"
+              >
+                Try again
+              </button>
             </div>
           ) : poolError ? (
             <div className="flex flex-col items-center gap-3 py-24 text-center">

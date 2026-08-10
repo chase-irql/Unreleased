@@ -1434,12 +1434,12 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   if (actions.length === 0) return null
                   return (
                     <div key={category} className="mt-4 first:mt-3">
-                      <div className="flex items-center justify-between gap-3 mb-1.5 px-0.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">{category}</p>
+                      <div className="flex items-center gap-2 mb-1.5 px-0.5">
+                        <p className="flex-1 min-w-0 text-[10px] font-semibold uppercase tracking-widest text-text-muted">{category}</p>
                         {isElectron && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="w-[92px] text-center text-[10px] font-semibold uppercase tracking-widest text-text-muted">In-app</span>
-                            <span className="w-[92px] text-center text-[10px] font-semibold uppercase tracking-widest text-text-muted">Global</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="w-[134px] text-center text-[10px] font-semibold uppercase tracking-widest text-text-muted">In-app</span>
+                            <span className="w-[134px] text-center text-[10px] font-semibold uppercase tracking-widest text-text-muted">Global</span>
                           </div>
                         )}
                       </div>
@@ -1452,12 +1452,15 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                           const globalTokens = comboTokens(globalBinding)
                           const isRecordingGlobal = recording?.id === action.id && recording.column === 'global'
                           return (
-                            <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
-                              <span className="text-text-secondary text-sm truncate">{action.label}</span>
-                              <div className="shrink-0 flex items-center gap-1">
+                            <div key={action.id} className="flex items-center gap-2 px-3 py-2 bg-[var(--surface)]">
+                              <span className="flex-1 min-w-0 text-text-secondary text-sm truncate">{action.label}</span>
+                              {/* Each column is a fixed width (button + reserved clear-button slot,
+                                  present or not) so the two columns line up with their headers and
+                                  with each other row-to-row regardless of combo length. */}
+                              <div className="shrink-0 flex items-center gap-1 w-[134px]">
                                 <button
                                   onClick={() => setRecording(isRecordingApp ? null : { id: action.id, column: 'app' })}
-                                  className={`min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                  className={`flex-1 min-w-0 flex items-center justify-center flex-wrap gap-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                                     isRecordingApp
                                       ? 'border-accent text-accent bg-accent/10 animate-pulse'
                                       : appTokens.length > 0
@@ -1478,52 +1481,56 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                                     'Not set'
                                   )}
                                 </button>
-                                {appTokens.length > 0 && !isRecordingApp && (
+                                {appTokens.length > 0 && !isRecordingApp ? (
                                   <button
-                                    onClick={() => { setHotkeyBinding(action.id, ''); if (isRecordingGlobal) setRecording(null) }}
+                                    onClick={() => { setHotkeyBinding(action.id, ''); if (isRecordingApp) setRecording(null) }}
                                     title="Clear the in-app shortcut"
-                                    className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-[var(--surface-overlay)] transition-colors"
+                                    className="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-[var(--surface-overlay)] transition-colors"
                                   >
                                     <X size={13} />
                                   </button>
-                                )}
-                                {isElectron && (
-                                  <>
-                                    <button
-                                      onClick={() => setRecording(isRecordingGlobal ? null : { id: action.id, column: 'global' })}
-                                      className={`min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                        isRecordingGlobal
-                                          ? 'border-accent text-accent bg-accent/10 animate-pulse'
-                                          : globalTokens.length > 0
-                                            ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
-                                            : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                                      }`}
-                                      title={isRecordingGlobal ? 'Press a key combination (needs a modifier or media key)…' : 'Click to change the global (OS-wide) shortcut'}
-                                    >
-                                      {isRecordingGlobal ? (
-                                        'Press keys…'
-                                      ) : globalTokens.length > 0 ? (
-                                        globalTokens.map((t, i) => (
-                                          <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
-                                            {t}
-                                          </kbd>
-                                        ))
-                                      ) : (
-                                        'Not set'
-                                      )}
-                                    </button>
-                                    {globalTokens.length > 0 && !isRecordingGlobal && (
-                                      <button
-                                        onClick={() => { setGlobalHotkeyBinding(action.id, ''); if (isRecordingGlobal) setRecording(null) }}
-                                        title="Clear the global shortcut"
-                                        className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-[var(--surface-overlay)] transition-colors"
-                                      >
-                                        <X size={13} />
-                                      </button>
-                                    )}
-                                  </>
+                                ) : (
+                                  <span className="shrink-0 w-[25px]" aria-hidden="true" />
                                 )}
                               </div>
+                              {isElectron && (
+                                <div className="shrink-0 flex items-center gap-1 w-[134px]">
+                                  <button
+                                    onClick={() => setRecording(isRecordingGlobal ? null : { id: action.id, column: 'global' })}
+                                    className={`flex-1 min-w-0 flex items-center justify-center flex-wrap gap-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                                      isRecordingGlobal
+                                        ? 'border-accent text-accent bg-accent/10 animate-pulse'
+                                        : globalTokens.length > 0
+                                          ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
+                                          : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
+                                    }`}
+                                    title={isRecordingGlobal ? 'Press a key combination (needs a modifier or media key)…' : 'Click to change the global (OS-wide) shortcut'}
+                                  >
+                                    {isRecordingGlobal ? (
+                                      'Press keys…'
+                                    ) : globalTokens.length > 0 ? (
+                                      globalTokens.map((t, i) => (
+                                        <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
+                                          {t}
+                                        </kbd>
+                                      ))
+                                    ) : (
+                                      'Not set'
+                                    )}
+                                  </button>
+                                  {globalTokens.length > 0 && !isRecordingGlobal ? (
+                                    <button
+                                      onClick={() => { setGlobalHotkeyBinding(action.id, ''); if (isRecordingGlobal) setRecording(null) }}
+                                      title="Clear the global shortcut"
+                                      className="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-[var(--surface-overlay)] transition-colors"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  ) : (
+                                    <span className="shrink-0 w-[25px]" aria-hidden="true" />
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )
                         })}
