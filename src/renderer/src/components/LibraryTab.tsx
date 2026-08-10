@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react'
+import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import {
-  Music, Play, Pause, Shuffle, Search, MoreHorizontal,
-  ChevronLeft, ChevronRight, LayoutGrid, List, Sparkles, User,
-  FolderOpen, Clock, Loader2, GripVertical, ChevronDown, ChevronUp, Link2,
-  CheckSquare2, Square, Pencil, ListPlus,
+  Music, Play, Shuffle, Search, MoreVertical, ArrowLeft, User, FolderOpen, Loader2,
+  Link2, Pencil, ListPlus, X, Check, ArrowUp, ArrowDown, ListMusic,
+  RefreshCw, Settings2, Circle, ChevronRight,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
@@ -11,55 +10,60 @@ import { libraryTrackToTrack as toQueueTrack } from '../lib/fileTypes'
 import { fisherYates } from '../store/queueSlice'
 import * as userApi from '../lib/userApi'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
+import { Sheet, SheetItem, SheetDivider } from './mobile/Sheet'
+import { useLongPress } from './mobile/useLongPress'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { formatDuration, formatTotalDuration } from '../lib/format'
+import { registerBackHandler } from '../lib/backHandlers'
 import { readArt } from '../lib/localLibrary'
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   Library — local-file browser styled like the rest of the app (solid surfaces,
-   standard tokens). An in-view rail on the left (Library sections) drives a
-   contextual main pane. Album grids and the song list are windowed so a
-   multi-thousand-track library stays light.
+   Library — the on-device music collection, built for a phone rather than
+   adapted to one. The desktop version put a collapsible section rail beside a
+   toolbar of small buttons and a spreadsheet-style song table; none of that
+   survives here.
+
+   What it is instead: one browse screen with four category chips, a permanent
+   Play/Shuffle pair, an A–Z rail you can drag to jump through a few thousand
+   songs, and art-led album/artist screens you drill into and back out of.
+   Everything below the data layer is new — the scan, the lazy per-track cover
+   reads, the album/artist grouping and the windowing are unchanged.
    ══════════════════════════════════════════════════════════════════════════════ */
 
-// Windowing geometry — kept in sync with the row/card markup below.
-const SONG_ROW_H = 56       // one SongRow incl. padding
-const GRID_PAD = 20         // grid outer padding, px
-const GRID_GAP = 20         // gap between cards, px
-const CARD_MIN = 150        // min card column width, px
-const CARD_TEXT_H = 60      // fixed text block beneath square art, px
+const SONG_ROW_H = 64
+const ARTIST_ROW_H = 68
+const GRID_GAP = 12
+const GRID_PAD = 16
+/** Title + subtitle block under a square album tile. */
+const TILE_TEXT_H = 52
+/** Below this many rows an A–Z rail is more clutter than help. */
+const ALPHA_MIN_ROWS = 30
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+type Tab = 'songs' | 'albums' | 'artists' | 'recent'
+type SortField = 'title' | 'artist' | 'album' | 'duration' | 'added'
+type SheetKind = 'sort' | 'more' | 'bulk' | null
 
-const byTrackNo = (a: LibraryTrack, b: LibraryTrack) => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'songs', label: 'Songs' },
+  { key: 'albums', label: 'Albums' },
+  { key: 'artists', label: 'Artists' },
+  { key: 'recent', label: 'Recent' },
+]
+
+const SORTS: { key: SortField; label: string }[] = [
+  { key: 'title', label: 'Title' },
+  { key: 'artist', label: 'Artist' },
+  { key: 'album', label: 'Album' },
+  { key: 'duration', label: 'Duration' },
+  { key: 'added', label: 'Recently added' },
+]
+
+const LS_TAB = 'library:view'
+const LS_SORT = 'library:sort'
+const LS_SORT_DIR = 'library:sortDir'
+
+const byTrackNo = (a: LibraryTrack, b: LibraryTrack): number => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
 const shuffled = fisherYates
-
-// ─── multi-select ─────────────────────────────────────────────────────────────
-// Song rows appear three levels down in some views (song list, album detail,
-// artist detail), so selection travels by context rather than through every
-// intermediate component's props. Rows report the list they belong to on each
-// interaction, which is what makes shift-click ranges and "Select all" work in
-// whichever view is on screen.
-
-interface LibrarySelection {
-  selectMode: boolean
-  selected: Map<string, LibraryTrack>
-  /** `extend` = shift-click: takes everything between the anchor and here. */
-  toggle: (track: LibraryTrack, list: LibraryTrack[], extend: boolean) => void
-  /** Lets the action bar's "Select all" act on whatever view is showing. */
-  registerVisible: (tracks: LibraryTrack[]) => void
-}
-
-const SelectionCtx = createContext<LibrarySelection | null>(null)
-
-/** Publishes the list a view is rendering, so "Select all" hits exactly what
- *  the user can see rather than the whole library. */
-function useVisibleTracks(tracks: LibraryTrack[]): void {
-  const sel = useContext(SelectionCtx)
-  useEffect(() => { sel?.registerVisible(tracks) }, [tracks, sel])
-}
-
-// ─── album / artist models ───────────────────────────────────────────────────
 
 interface Album {
   key: string
@@ -78,21 +82,22 @@ interface Artist {
   coverTrack: LibraryTrack
 }
 
-// ─── lazy album-art loading hook ──────────────────────────────────────────────
+/** First character a row sorts under, for the A–Z rail. */
+function indexLetter(s: string): string {
+  const c = (s || '').trim().charAt(0).toUpperCase()
+  return c >= 'A' && c <= 'Z' ? c : '#'
+}
+
+// ─── lazy album-art loading ───────────────────────────────────────────────────
 // Covers live in the store's `libraryArt` map keyed by track id: `undefined`
 // until read off disk, then `null` (artless) or a data URI. This subscribes a
-// thumbnail to just its own entry and kicks off the read once. The main-process
-// read is itself cached (in memory + on disk, artless files remembered as ''),
-// so this never re-parses a file it has already seen.
+// thumbnail to just its own entry and kicks off the read once. The read is
+// itself cached (memory + disk, artless files remembered), so a file is never
+// re-parsed.
 //
-// NB: we intentionally do NOT gate on `track.hasAlbumArt` — the scan runs with
-// `skipCovers: true`, which makes music-metadata drop the picture tag entirely,
-// so that flag is always false and gating on it hid every cover. The on-demand
-// read + cache is the real optimization for artless files.
-
 // The same track can be visible in several places at once (song list, album
-// grid, playlist mosaic) — without this, each thumbnail fired its own
-// readAlbumArt parse before the first result landed in the store.
+// tile, playlist mosaic) — without this set, each thumbnail fired its own parse
+// before the first result landed in the store.
 const inflightArt = new Set<string>()
 
 function useTrackArt(track: LibraryTrack): string | null | undefined {
@@ -118,7 +123,7 @@ export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?
   const art = useTrackArt(track)
   // rem, not px, so the thumbnail scales with the app text-size setting (which
   // drives the root font-size) rather than staying pinned while its rem-sized
-  // wrapper and neighbouring text grow around it. Identical at normal scale.
+  // wrapper and neighbouring text grow around it.
   const rem = `${size / 16}rem`
   if (art) return <img src={art} alt="" className="object-cover" style={{ width: rem, height: rem }} />
   return (
@@ -128,428 +133,312 @@ export function AlbumArtThumb({ track, size = 48 }: { track: LibraryTrack; size?
   )
 }
 
+/** Art that fills its parent box, with a shimmer while the read is in flight. */
+function FillArt({ track, round, fallback }: { track: LibraryTrack; round?: boolean; fallback?: JSX.Element }): JSX.Element {
+  const art = useTrackArt(track)
+  const shape = round ? 'rounded-full' : ''
+  if (art === undefined) return <div className={`w-full h-full art-shimmer ${shape}`} />
+  if (art) return <img src={art} alt="" className={`w-full h-full object-cover ${shape}`} />
+  return (
+    <div className={`w-full h-full flex items-center justify-center bg-surface-overlay text-text-muted ${shape}`}>
+      {fallback ?? <Music size={28} />}
+    </div>
+  )
+}
+
+/** Three animated bars marking the row you're currently hearing. */
+function EqBars({ paused }: { paused: boolean }): JSX.Element {
+  return (
+    <span className="flex items-end gap-[2px] h-3.5 shrink-0">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className={`w-[3px] h-full rounded-full bg-accent ${paused ? '' : 'eq-bar'}`}
+          style={{ animationDelay: `${i * 0.18}s`, transform: paused ? 'scaleY(0.4)' : undefined }}
+        />
+      ))}
+    </span>
+  )
+}
+
+/** Selection drawn ON the artwork — a leading checkbox would shove every row
+ *  sideways the instant select mode turns on, which happens mid-long-press. */
+function SelectOverlay({ selected, round }: { selected: boolean; round?: boolean }): JSX.Element {
+  return (
+    <div className={`absolute inset-0 flex items-center justify-center transition-colors ${round ? 'rounded-full' : ''} ${selected ? 'bg-accent/75' : 'bg-black/45'}`}>
+      {selected ? <Check size={22} className="text-white" strokeWidth={3} /> : <Circle size={20} className="text-white/85" />}
+    </div>
+  )
+}
+
 // ─── song row ─────────────────────────────────────────────────────────────────
 
-function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, onDragStart, onDragOver, onDrop }: {
+interface SongRowProps {
   track: LibraryTrack
-  index: number
-  queue: LibraryTrack[]
-  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
-  showAlbum?: boolean
-  draggable?: boolean
-  onDragStart?: () => void
-  onDragOver?: (e: React.DragEvent) => void
-  onDrop?: () => void
-}): JSX.Element {
-  const { playTrack, currentTrack, isPlaying, setIsPlaying } = useStorePick('playTrack', 'currentTrack', 'isPlaying', 'setIsPlaying')
-  const [hover, setHover] = useState(false)
-  const sel = useContext(SelectionCtx)
+  /** Track number shown instead of artwork — album screens only. */
+  ordinal?: number
+  onPlay: (track: LibraryTrack) => void
+  onMenu: (track: LibraryTrack, e: React.MouseEvent) => void
+  onLongPress: (track: LibraryTrack) => void
+  selectMode: boolean
+  selected: boolean
+  currentId: string | null
+  isPlaying: boolean
+}
 
-  const isCurrent = currentTrack?.id === track.id
-  const selectMode = !!sel?.selectMode
-  const isSelected = !!sel?.selected.has(track.id)
-
-  const play = () => {
-    if (isCurrent) { setIsPlaying(!isPlaying); return }
-    playTrack(toQueueTrack(track), queue.map(toQueueTrack))
-  }
-
-  // Ctrl/Cmd-click starts a selection from anywhere; once in select mode a
-  // plain click toggles and shift-click takes the range — the same convention
-  // the Tracker's multi-select uses.
-  const handleClick = (e: React.MouseEvent): void => {
-    if (selectMode) { sel?.toggle(track, queue, e.shiftKey); return }
-    if (e.ctrlKey || e.metaKey) sel?.toggle(track, queue, false)
-  }
+const SongRow = memo(function SongRow({
+  track, ordinal, onPlay, onMenu, onLongPress, selectMode, selected, currentId, isPlaying,
+}: SongRowProps): JSX.Element {
+  const isCurrent = currentId === track.id
+  const press = useLongPress({
+    onTap: () => { if (selectMode) onLongPress(track); else onPlay(track) },
+    onLongPress: () => onLongPress(track),
+  })
 
   return (
-    <div className="px-1.5">
-      <div
-        className={`group flex items-center gap-3 pl-3 pr-2 py-2 rounded-lg transition-colors cursor-pointer ${
-          isSelected ? 'bg-accent/10' : isCurrent ? 'bg-surface-raised' : 'hover:bg-surface-raised'
-        } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        onClick={handleClick}
-        onDoubleClick={() => { if (!selectMode) play() }}
-        onContextMenu={e => { e.preventDefault(); onContext(track, queue, e.clientX, e.clientY) }}
-        draggable={draggable}
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-      >
-        {draggable && <GripVertical size={14} className="text-text-muted opacity-0 group-hover:opacity-100 shrink-0 -ml-1" />}
-        <div className="w-5 shrink-0 flex items-center justify-center">
-          {selectMode
-            ? (isSelected
-                ? <CheckSquare2 size={14} className="text-accent" />
-                : <Square size={14} className="text-text-muted" />)
-            : hover || isCurrent
-            ? <button onClick={e => { e.stopPropagation(); play() }}>
-                {isCurrent && isPlaying
-                  ? <Pause size={13} fill="currentColor" className="text-accent" />
-                  : <Play size={13} fill="currentColor" className={isCurrent ? 'text-accent' : 'text-text-primary'} />}
-              </button>
-            : <span className="text-text-muted text-xs tabular-nums">{index + 1}</span>}
+    <div
+      className={`flex items-center gap-3 px-4 py-1.5 h-full rounded-2xl transition-colors ${
+        selected ? 'bg-accent/15' : 'active:bg-surface-overlay'
+      }`}
+      {...press}
+    >
+      {ordinal !== undefined && !selectMode ? (
+        <span className={`w-7 shrink-0 text-center text-[13px] tabular-nums ${isCurrent ? 'text-accent' : 'text-text-muted'}`}>
+          {ordinal}
+        </span>
+      ) : (
+        <div className="relative shrink-0 w-12 h-12 rounded-xl overflow-hidden bg-surface-overlay">
+          <AlbumArtThumb track={track} size={48} />
+          {selectMode && <SelectOverlay selected={selected} />}
         </div>
-        <div className="w-10 h-10 rounded overflow-hidden shrink-0 bg-surface-overlay">
-          <AlbumArtThumb track={track} size={40} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm truncate ${isCurrent ? 'text-accent font-medium' : 'text-text-primary'}`} title={track.title}>{track.title}</p>
-          <p className="text-text-muted text-xs truncate">{track.artist || 'Unknown Artist'}</p>
-        </div>
-        {showAlbum && <span className="text-text-muted text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
-        <span className="text-text-muted text-xs shrink-0 tabular-nums">{formatDuration(track.duration, '--:--')}</span>
+      )}
+
+      <div className="flex-1 min-w-0">
+        <p className={`text-[15px] leading-snug truncate ${isCurrent ? 'text-accent font-semibold' : 'text-text-primary'}`}>
+          {track.title}
+        </p>
+        <p className="text-text-muted text-xs truncate mt-0.5">
+          {[track.artist || 'Unknown Artist', track.album].filter(Boolean).join(' · ')}
+        </p>
+      </div>
+
+      {isCurrent && <EqBars paused={!isPlaying} />}
+      <span className="text-text-muted text-[11px] tabular-nums shrink-0">{formatDuration(track.duration, '--:--')}</span>
+
+      {!selectMode && (
         <button
-          onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(track, queue, r.right, r.bottom) }}
-          className="w-7 h-7 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-all"
+          className="shrink-0 w-10 h-11 -mr-2 flex items-center justify-center text-text-muted active:text-accent"
+          onClick={(e) => { e.stopPropagation(); onMenu(track, e) }}
+          aria-label="More options"
         >
-          <MoreHorizontal size={15} />
+          <MoreVertical size={18} />
         </button>
-      </div>
+      )}
     </div>
   )
-}
+})
 
-// ─── album card ───────────────────────────────────────────────────────────────
+// ─── album tile / artist row ──────────────────────────────────────────────────
 
-function AlbumCard({ album, onOpen, onPlay }: { album: Album; onOpen: () => void; onPlay: () => void }): JSX.Element {
-  const [hover, setHover] = useState(false)
-  const art = useTrackArt(album.coverTrack)
+const AlbumTile = memo(function AlbumTile({ album, onOpen }: { album: Album; onOpen: () => void }): JSX.Element {
   return (
-    <div className="group cursor-pointer select-none" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} onClick={onOpen}>
-      <div className="relative aspect-square mb-3">
-        <div className="relative rounded-lg overflow-hidden aspect-square bg-surface-overlay border border-[var(--border)] shadow-sm">
-          {art === undefined
-            ? <div className="w-full h-full art-shimmer" />
-            : art
-            ? <img src={art} alt={album.name} className="w-full h-full object-cover" />
-            : <div className="w-full h-full flex items-center justify-center text-text-muted"><Music size={40} /></div>}
-          <div className={`absolute inset-0 flex items-end p-3 transition-opacity duration-200 ${hover ? 'opacity-100' : 'opacity-0'}`}
-            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.45), transparent 55%)' }}>
-            <button onClick={e => { e.stopPropagation(); onPlay() }}
-              className="ml-auto w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center shadow-lg hover:bg-accent-hover transition-colors">
-              <Play size={16} fill="currentColor" className="ml-0.5" />
-            </button>
-          </div>
-        </div>
+    <button onClick={onOpen} className="flex flex-col text-left active:opacity-70 transition-opacity">
+      <div className="w-full aspect-square rounded-2xl overflow-hidden bg-surface-overlay shrink-0">
+        <FillArt track={album.coverTrack} fallback={<Music size={34} />} />
       </div>
-      <div style={{ height: CARD_TEXT_H }} className="overflow-hidden px-0.5">
-        <p className="text-text-primary text-sm font-medium truncate leading-5">{album.name}</p>
-        <p className="text-text-secondary text-xs truncate leading-4">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
-        <p className="text-text-muted text-[11px] leading-4">{album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}</p>
-      </div>
-    </div>
-  )
-}
-
-// ─── artist card (circular) ───────────────────────────────────────────────────
-
-function ArtistCard({ artist, onOpen }: { artist: Artist; onOpen: () => void }): JSX.Element {
-  const art = useTrackArt(artist.coverTrack)
-  return (
-    <button onClick={onOpen} className="group flex flex-col items-center gap-3 select-none">
-      <div className="relative w-full aspect-square">
-        <div className="relative w-full h-full rounded-full overflow-hidden bg-surface-overlay border border-[var(--border)] shadow-sm">
-          {art === undefined
-            ? <div className="w-full h-full art-shimmer" />
-            : art
-            ? <img src={art} alt={artist.name} className="w-full h-full object-cover" />
-            : <div className="w-full h-full flex items-center justify-center text-text-muted"><User size={40} /></div>}
-        </div>
-      </div>
-      <div className="text-center px-1 w-full">
-        <p className="text-text-primary text-sm font-medium truncate">{artist.name}</p>
-        <p className="text-text-muted text-[11px]">{artist.tracks.length} {artist.tracks.length === 1 ? 'song' : 'songs'}</p>
+      <div className="pt-2 min-w-0" style={{ height: TILE_TEXT_H }}>
+        <p className="text-text-primary text-[13px] font-medium truncate leading-tight">{album.name}</p>
+        <p className="text-text-muted text-[11px] truncate mt-0.5">{album.artist}</p>
+        <p className="text-text-muted text-[11px] truncate">
+          {album.tracks.length} song{album.tracks.length === 1 ? '' : 's'}{album.year ? ` · ${album.year}` : ''}
+        </p>
       </div>
     </button>
   )
-}
+})
 
-// ─── virtualized card grid (albums & artists) ─────────────────────────────────
+const ArtistRow = memo(function ArtistRow({ artist, onOpen }: { artist: Artist; onOpen: () => void }): JSX.Element {
+  return (
+    <button onClick={onOpen} className="w-full h-full flex items-center gap-3 px-4 py-1.5 rounded-2xl active:bg-surface-overlay transition-colors text-left">
+      <div className="relative shrink-0 w-14 h-14 rounded-full overflow-hidden bg-surface-overlay">
+        <FillArt track={artist.coverTrack} round fallback={<User size={24} />} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-text-primary text-[15px] leading-snug truncate">{artist.name}</p>
+        <p className="text-text-muted text-xs truncate mt-0.5">
+          {artist.tracks.length} song{artist.tracks.length === 1 ? '' : 's'} · {artist.albums} album{artist.albums === 1 ? '' : 's'}
+        </p>
+      </div>
+      <ChevronRight size={18} className="text-text-muted shrink-0" />
+    </button>
+  )
+})
 
-function CardGrid({ count, render, circular = false }: {
-  count: number
-  render: (i: number) => JSX.Element
-  circular?: boolean
-}): JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const [cols, setCols] = useState(1)
-  const [colW, setColW] = useState(CARD_MIN)
+// ─── A–Z fast scroll ──────────────────────────────────────────────────────────
+// The reason a phone library needs this: 2500 songs is ~40 screens of flick
+// scrolling. Dragging the rail jumps straight to a letter, with a bubble showing
+// where you are. Only rendered when the list is actually sorted alphabetically —
+// jumping to "M" in a duration-sorted list would be nonsense.
 
-  useEffect(() => {
-    const el = scrollRef.current
+function AlphaRail({ letters, onPick }: { letters: string[]; onPick: (letter: string) => void }): JSX.Element {
+  const [active, setActive] = useState<string | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const pickAt = (clientY: number): void => {
+    const el = ref.current
     if (!el) return
-    const compute = () => {
-      const w = el.clientWidth - GRID_PAD * 2
-      const c = Math.max(1, Math.floor((w + GRID_GAP) / (CARD_MIN + GRID_GAP)))
-      setCols(c)
-      setColW((w - (c - 1) * GRID_GAP) / c)
+    const r = el.getBoundingClientRect()
+    const i = Math.floor(((clientY - r.top) / r.height) * letters.length)
+    const letter = letters[Math.min(letters.length - 1, Math.max(0, i))]
+    if (letter && letter !== active) {
+      navigator.vibrate?.(4)
+      setActive(letter)
+      onPick(letter)
     }
-    compute()
-    const ro = new ResizeObserver(compute)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  }
 
-  const textH = circular ? 52 : CARD_TEXT_H
-  const rowStride = colW + textH + 12 /* mb-3 */ + GRID_GAP
-  const rows = Math.ceil(count / cols)
-  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rows, rowStride)
-
-  return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto view-enter" style={{ padding: GRID_PAD }}>
-      {count === 0 ? (
-        <p className="text-text-muted text-sm text-center py-16">Nothing here yet</p>
-      ) : (
-        <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
-          {Array.from({ length: end - start }, (_, r) => {
-            const row = start + r
-            return (
-              <div key={row} style={{
-                position: 'absolute', top: row * rowStride, left: 0, right: 0,
-                display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: GRID_GAP,
-              }}>
-                {Array.from({ length: Math.min(cols, count - row * cols) }, (_, c) => render(row * cols + c))}
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── virtualized song list ────────────────────────────────────────────────────
-
-function SongList({ tracks, header, onContext }: {
-  tracks: LibraryTrack[]
-  header?: JSX.Element
-  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
-}): JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  // Windowed row height must be concrete px, so scale it with the app text-size
-  // setting — the row's rem-based cover/text grow with it, and a fixed 56 would
-  // otherwise clip them (and shrink the cover) at larger scales.
-  const appTextScale = useStore(s => s.appTextScale)
-  const rowH = Math.round(SONG_ROW_H * appTextScale)
-  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, tracks.length, rowH)
-  useVisibleTracks(tracks)
-  return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto py-3 px-2.5 view-enter">
-      {header}
-      {tracks.length === 0 ? (
-        <p className="text-text-muted text-sm text-center py-16">No songs found</p>
-      ) : (
-        <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
-          {tracks.slice(start, end).map((t, i) => {
-            const index = start + i
-            return (
-              <div key={t.id} style={{ position: 'absolute', top: index * rowH, left: 0, right: 0, height: rowH }}>
-                <SongRow track={t} index={index} queue={tracks} onContext={onContext} />
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── detail header (shared by album & artist) ──────────────────────────────────
-
-function DetailHeader({ art, eyebrow, title, subtitle, meta, round, onBack, onPlay, onShuffle, fallbackIcon }: {
-  art?: string | null
-  eyebrow: string
-  title: string
-  subtitle: string
-  meta: string
-  round?: boolean
-  onBack?: () => void
-  onPlay: () => void
-  onShuffle?: () => void
-  fallbackIcon: JSX.Element
-}): JSX.Element {
   return (
     <>
-      <div className={`flex items-end gap-5 p-6 pb-4 ${onBack ? 'pt-14' : ''}`}>
-        {onBack && (
-          <button onClick={onBack} className="absolute top-3 left-3 w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
-            <ChevronLeft size={18} />
-          </button>
-        )}
-        <div className={`w-40 h-40 overflow-hidden shrink-0 bg-surface-overlay border border-[var(--border)] shadow-lg flex items-center justify-center ${round ? 'rounded-full' : 'rounded-xl'}`}>
-          {art === undefined ? <div className="w-full h-full art-shimmer" />
-            : art ? <img src={art} alt={title} className="w-full h-full object-cover" />
-            : fallbackIcon}
-        </div>
-        <div className="pb-1 min-w-0 flex-1">
-          <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-1">{eyebrow}</p>
-          <h1 className="text-text-primary text-3xl font-bold mb-1 truncate">{title}</h1>
-          <p className="text-text-secondary text-sm truncate">{subtitle}</p>
-          <p className="text-text-muted text-xs mt-1">{meta}</p>
-        </div>
+      <div
+        ref={ref}
+        // touch-none: without it the rail's own drag scrolls the list underneath
+        // at the same time, and the two fight each other.
+        className="absolute right-0 top-2 bottom-2 w-7 z-10 flex flex-col items-center justify-center touch-none select-none"
+        onTouchStart={(e) => pickAt(e.touches[0].clientY)}
+        onTouchMove={(e) => pickAt(e.touches[0].clientY)}
+        onTouchEnd={() => setActive(null)}
+        onTouchCancel={() => setActive(null)}
+      >
+        {letters.map((l) => (
+          <span
+            key={l}
+            className={`text-[9px] font-semibold leading-none py-[1px] transition-colors ${
+              active === l ? 'text-accent' : 'text-text-muted'
+            }`}
+          >
+            {l}
+          </span>
+        ))}
       </div>
-      <div className="flex items-center gap-3 px-6 pb-4">
-        <button onClick={onPlay} className="flex items-center gap-2 px-5 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
-          <Play size={16} fill="currentColor" className="ml-0.5" /> Play
-        </button>
-        {onShuffle && (
-          <button onClick={onShuffle} className="flex items-center gap-2 px-5 py-2 bg-surface-overlay border border-[var(--border)] text-text-primary rounded-lg text-sm font-semibold hover:bg-surface-highest transition-colors">
-            <Shuffle size={16} /> Shuffle
-          </button>
-        )}
-      </div>
+      {active && (
+        <div className="absolute right-10 top-1/2 -translate-y-1/2 z-20 w-16 h-16 rounded-2xl bg-surface-highest border border-[var(--border)] shadow-2xl flex items-center justify-center pointer-events-none">
+          <span className="text-text-primary text-2xl font-bold">{active}</span>
+        </div>
+      )}
     </>
   )
 }
 
-// ─── detail: album ────────────────────────────────────────────────────────────
+// ─── windowing ────────────────────────────────────────────────────────────────
 
-function AlbumDetail({ album, onBack, onContext }: {
-  album: Album; onBack: () => void; onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
+function VirtualRows({ scrollRef, contentRef, count, rowH, render }: {
+  scrollRef: React.RefObject<HTMLDivElement>
+  contentRef: React.RefObject<HTMLDivElement>
+  count: number
+  rowH: number
+  render: (index: number) => JSX.Element
 }): JSX.Element {
-  const { playCollection } = useStorePick('playCollection')
-  const art = useTrackArt(album.coverTrack)
-  const tracks = useMemo(() => [...album.tracks].sort(byTrackNo), [album])
-  useVisibleTracks(tracks)
-  const total = tracks.reduce((s, t) => s + t.duration, 0)
-  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, count, rowH)
   return (
-    <div className="flex-1 overflow-y-auto relative view-enter">
-      <DetailHeader
-        art={art} eyebrow="Album" title={album.name}
-        subtitle={`${album.artist}${album.year ? ` · ${album.year}` : ''}`}
-        meta={`${tracks.length} songs · ${formatTotalDuration(total)}`}
-        onBack={onBack} onPlay={() => play(tracks)} onShuffle={() => play(shuffled(tracks))}
-        fallbackIcon={<Music size={48} className="text-text-muted" />}
-      />
-      <div className="px-3 pb-8">
-        {tracks.map((t, i) => <SongRow key={t.id} track={t} index={i} queue={tracks} onContext={onContext} showAlbum={false} />)}
-      </div>
-    </div>
-  )
-}
-
-// ─── detail: artist ───────────────────────────────────────────────────────────
-
-function ArtistDetail({ artist, albums, onBack, onOpenAlbum, onContext }: {
-  artist: Artist
-  albums: Album[]
-  onBack: () => void
-  onOpenAlbum: (a: Album) => void
-  onContext: (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => void
-}): JSX.Element {
-  const { playCollection } = useStorePick('playCollection')
-  const art = useTrackArt(artist.coverTrack)
-  const allTracks = useMemo(() => [...artist.tracks].sort((a, b) => a.title.localeCompare(b.title)), [artist])
-  useVisibleTracks(allTracks)
-  const total = artist.tracks.reduce((s, t) => s + t.duration, 0)
-  const play = (list: LibraryTrack[]) => { const q = list.map(toQueueTrack); if (q.length) playCollection(q) }
-  return (
-    <div className="flex-1 overflow-y-auto relative view-enter">
-      <DetailHeader
-        art={art} round eyebrow="Artist" title={artist.name}
-        subtitle={`${albums.length} ${albums.length === 1 ? 'album' : 'albums'}`}
-        meta={`${artist.tracks.length} songs · ${formatTotalDuration(total)}`}
-        onBack={onBack} onPlay={() => play(allTracks)} onShuffle={() => play(shuffled(allTracks))}
-        fallbackIcon={<User size={48} className="text-text-muted" />}
-      />
-      {albums.length > 0 && (
-        <div className="px-6 pb-2">
-          <h2 className="text-text-primary text-lg font-bold mb-3">Albums</h2>
-          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))' }}>
-            {albums.map(a => <AlbumCard key={a.key} album={a} onOpen={() => onOpenAlbum(a)} onPlay={() => play([...a.tracks].sort(byTrackNo))} />)}
-          </div>
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {Array.from({ length: Math.max(0, end - start) }, (_, i) => start + i).map((i) => (
+        <div key={i} style={{ position: 'absolute', top: i * rowH, left: 0, right: 0, height: rowH }}>
+          {render(i)}
         </div>
-      )}
-      <div className="px-6 pt-4 pb-2">
-        <h2 className="text-text-primary text-lg font-bold">Songs</h2>
-      </div>
-      <div className="px-3 pb-8">
-        {allTracks.slice(0, 60).map((t, i) => <SongRow key={t.id} track={t} index={i} queue={allTracks} onContext={onContext} />)}
-      </div>
+      ))}
     </div>
   )
 }
 
-// ─── empty state ──────────────────────────────────────────────────────────────
+function AlbumGrid({ scrollRef, contentRef, albums, onOpen }: {
+  scrollRef: React.RefObject<HTMLDivElement>
+  contentRef: React.RefObject<HTMLDivElement>
+  albums: Album[]
+  onOpen: (album: Album) => void
+}): JSX.Element {
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const measure = (): void => setWidth(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [contentRef])
+
+  const appTextScale = useStore((s) => s.appTextScale)
+  const cols = width >= 560 ? 3 : 2
+  const cellW = width > 0 ? Math.floor((width - GRID_GAP * (cols - 1)) / cols) : 0
+  const rowH = cellW + Math.round(TILE_TEXT_H * appTextScale) + 8 + GRID_GAP
+  const rowCount = Math.ceil(albums.length / cols)
+  const { start, end, totalHeight } = useVirtualWindow(scrollRef, contentRef, rowCount, rowH)
+
+  return (
+    <div ref={contentRef} style={{ height: totalHeight, position: 'relative' }}>
+      {width > 0 && Array.from({ length: Math.max(0, end - start) }, (_, i) => start + i).map((r) =>
+        albums.slice(r * cols, r * cols + cols).map((album, c) => (
+          <div
+            key={album.key}
+            style={{ position: 'absolute', top: r * rowH, left: c * (cellW + GRID_GAP), width: cellW }}
+          >
+            <AlbumTile album={album} onOpen={() => onOpen(album)} />
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
+// ─── shared bits ──────────────────────────────────────────────────────────────
+
+function PlayShuffleRow({ onPlay, onShuffle, disabled }: { onPlay: () => void; onShuffle: () => void; disabled?: boolean }): JSX.Element {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={onPlay}
+        disabled={disabled}
+        className="flex-1 h-12 flex items-center justify-center gap-2 rounded-full bg-accent text-white text-[15px] font-semibold disabled:opacity-40 active:opacity-80"
+      >
+        <Play size={18} fill="currentColor" /> Play
+      </button>
+      <button
+        onClick={onShuffle}
+        disabled={disabled}
+        className="flex-1 h-12 flex items-center justify-center gap-2 rounded-full bg-surface-overlay text-text-primary text-[15px] font-semibold disabled:opacity-40 active:bg-surface-highest"
+      >
+        <Shuffle size={17} /> Shuffle
+      </button>
+    </div>
+  )
+}
 
 function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => void; onImportUrl: () => void }): JSX.Element {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8 text-center">
+    <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
       <div className="w-20 h-20 rounded-full bg-surface-overlay flex items-center justify-center">
-        <Music size={36} className="text-text-muted" />
+        <Music size={34} className="text-text-muted" />
       </div>
       <div>
-        <h2 className="text-text-primary text-xl font-semibold mb-1">Your library is empty</h2>
-        <p className="text-text-muted text-sm max-w-xs">Pick a folder of music — or individual files — in Settings → Library, and they&apos;ll show up here.</p>
+        <h2 className="text-text-primary text-xl font-semibold mb-1">No music yet</h2>
+        <p className="text-text-muted text-sm max-w-xs">
+          Pick a folder of music — or single files — and everything in it shows up here.
+        </p>
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={onOpenSettings} className="flex items-center gap-2 px-5 py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors">
-          <FolderOpen size={15} /> Add music
+      <div className="flex flex-col gap-2 w-full max-w-xs">
+        <button
+          onClick={onOpenSettings}
+          className="h-12 flex items-center justify-center gap-2 rounded-full bg-accent text-white text-[15px] font-semibold active:opacity-80"
+        >
+          <FolderOpen size={17} /> Choose a folder
+        </button>
+        <button
+          onClick={onImportUrl}
+          className="h-12 flex items-center justify-center gap-2 rounded-full bg-surface-overlay text-text-primary text-[15px] font-semibold active:bg-surface-highest"
+        >
+          <Link2 size={17} /> Download from a link
         </button>
       </div>
-    </div>
-  )
-}
-
-// ─── browse rail ──────────────────────────────────────────────────────────────
-
-type LibKey = 'recent' | 'artists' | 'albums' | 'songs'
-type Nav = { kind: 'lib'; key: LibKey }
-
-const LIB_SECTIONS: { key: LibKey; label: string; icon: JSX.Element }[] = [
-  { key: 'recent', label: 'Recently Added', icon: <Sparkles size={16} /> },
-  { key: 'artists', label: 'Artists', icon: <User size={16} /> },
-  { key: 'albums', label: 'Albums', icon: <LayoutGrid size={16} /> },
-  { key: 'songs', label: 'Songs', icon: <List size={16} /> },
-]
-
-const LS_RAIL_COLLAPSED = 'library:railCollapsed'
-
-function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => void; songCount: number }): JSX.Element {
-  const [collapsed, setCollapsed] = useState<boolean>(() => localStorage.getItem(LS_RAIL_COLLAPSED) === 'true')
-  const toggle = (): void => setCollapsed(c => { const next = !c; localStorage.setItem(LS_RAIL_COLLAPSED, String(next)); return next })
-
-  const row = (active: boolean) =>
-    `w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${
-      active ? 'bg-surface-raised text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
-    }`
-  // Labels fade to zero-width when collapsed so only the icons remain (matches Sidebar).
-  const label = (extra = ''): string =>
-    `truncate text-left transition-opacity duration-200 ${collapsed ? 'w-0 flex-none opacity-0 pointer-events-none' : `opacity-100 ${extra}`}`
-
-  return (
-    <div className={`shrink-0 flex flex-col bg-surface-raised border-r border-[var(--border)] overflow-x-hidden overflow-y-auto transition-[width] duration-200 ${collapsed ? 'w-14' : 'w-52'}`}>
-      <div className="flex items-center px-4 pt-5 pb-3 min-h-[2.75rem]">
-        <h1 className={`text-text-primary text-lg font-bold ${label('flex-1')}`}>Library</h1>
-      </div>
-
-      <div className="px-2 space-y-1">
-        {LIB_SECTIONS.map(s => (
-          <button key={s.key} onClick={() => onNav({ kind: 'lib', key: s.key })}
-            title={collapsed ? s.label : undefined}
-            className={row(nav.kind === 'lib' && nav.key === s.key)}>
-            <span className="shrink-0">{s.icon}</span>
-            <span aria-hidden={collapsed} className={label('flex-1')}>{s.label}</span>
-            {s.key === 'songs' && <span aria-hidden={collapsed} className={`text-[10px] text-text-muted transition-opacity duration-200 ${collapsed ? 'w-0 opacity-0 pointer-events-none' : 'opacity-100'}`}>{songCount}</span>}
-          </button>
-        ))}
-      </div>
-
-      {/* Collapse toggle */}
-      <button
-        onClick={toggle}
-        title={collapsed ? 'Expand menu' : 'Collapse menu'}
-        className="mt-auto m-2 flex items-center gap-3 px-3 py-2 rounded text-sm font-medium text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
-      >
-        <span className="shrink-0">{collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}</span>
-        <span aria-hidden={collapsed} className={label('flex-1')}>Collapse</span>
-      </button>
     </div>
   )
 }
@@ -557,86 +446,60 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
-  const { libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings, playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds, toggleLike, openUrlImport, openBulkTrackEditor } = useStorePick('libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings', 'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds', 'toggleLike', 'openUrlImport', 'openBulkTrackEditor')
+  const {
+    libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings,
+    playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds,
+    toggleLike, openUrlImport, openBulkTrackEditor, currentTrack, isPlaying, setIsPlaying,
+  } = useStorePick(
+    'libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings',
+    'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds',
+    'toggleLike', 'openUrlImport', 'openBulkTrackEditor', 'currentTrack', 'isPlaying', 'setIsPlaying')
 
-  const [nav, setNav] = useState<Nav>(() => ({ kind: 'lib', key: (localStorage.getItem('library:view') as LibKey) || 'albums' }))
+  const [tab, setTabState] = useState<Tab>(() => {
+    const saved = localStorage.getItem(LS_TAB)
+    return saved === 'songs' || saved === 'albums' || saved === 'artists' || saved === 'recent' ? saved : 'albums'
+  })
+  const setTab = (t: Tab): void => { setTabState(t); localStorage.setItem(LS_TAB, t) }
+
   const [drill, setDrill] = useState<{ kind: 'album'; album: Album } | { kind: 'artist'; name: string } | null>(null)
-  const [searchQ, setSearchQ] = useState('')
-  // Shared song context menu (same one the Tracker/Playlists/Player use). The
-  // queue captured at open-time drives its Play/Play-next/Add-to-queue actions.
-  const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
-  const [sortField, setSortField] = useState<'title' | 'album' | 'duration' | null>(null)
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [search, setSearch] = useState('')
+  const [sortField, setSortFieldState] = useState<SortField>(() => (localStorage.getItem(LS_SORT) as SortField) || 'title')
+  const [sortDir, setSortDirState] = useState<'asc' | 'desc'>(() => (localStorage.getItem(LS_SORT_DIR) as 'asc' | 'desc') || 'asc')
+  const setSortField = (f: SortField): void => { setSortFieldState(f); localStorage.setItem(LS_SORT, f) }
+  const setSortDir = (d: 'asc' | 'desc'): void => { setSortDirState(d); localStorage.setItem(LS_SORT_DIR, d) }
 
-  // ── multi-select (drives the bulk tag editor) ──
+  const [sheet, setSheet] = useState<SheetKind>(null)
+  const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
+
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Map<string, LibraryTrack>>(new Map())
-  // Anchor for shift-click ranges, and the list currently on screen (set by
-  // whichever view is rendering song rows — see useVisibleTracks).
-  const anchorRef = useRef<string | null>(null)
-  const visibleRef = useRef<LibraryTrack[]>([])
+  const selectedTracks = useMemo(() => [...selected.values()], [selected])
 
-  const selection = useMemo<LibrarySelection>(() => ({
-    selectMode,
-    selected,
-    registerVisible: (tracks) => { visibleRef.current = tracks },
-    toggle: (track, list, extend) => {
-      setSelectMode(true)
-      setSelected(prev => {
-        const next = new Map(prev)
-        const anchor = anchorRef.current
-        if (extend && anchor) {
-          const from = list.findIndex(t => t.id === anchor)
-          const to = list.findIndex(t => t.id === track.id)
-          if (from >= 0 && to >= 0) {
-            const [a, b] = from < to ? [from, to] : [to, from]
-            for (let i = a; i <= b; i++) next.set(list[i].id, list[i])
-            return next
-          }
-        }
-        if (next.has(track.id)) next.delete(track.id)
-        else next.set(track.id, track)
-        return next
-      })
-      if (!extend) anchorRef.current = track.id
-    },
-  }), [selectMode, selected])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
-  const exitSelectMode = (): void => {
-    setSelectMode(false)
-    setSelected(new Map())
-    anchorRef.current = null
+  const appTextScale = useStore((s) => s.appTextScale)
+  const songRowH = Math.round(SONG_ROW_H * appTextScale)
+  const artistRowH = Math.round(ARTIST_ROW_H * appTextScale)
+
+  useEffect(() => { loadLibrary() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleSelect = (track: LibraryTrack): void => {
+    setSelectMode(true)
+    setSelected((prev) => {
+      const next = new Map(prev)
+      if (next.has(track.id)) next.delete(track.id)
+      else next.set(track.id, track)
+      return next
+    })
   }
 
-  // Deselecting the last track drops out of select mode on its own, so there's
-  // no separate "Cancel" needed. Escape works too.
+  const exitSelectMode = (): void => { setSelectMode(false); setSelected(new Map()) }
+
+  // Deselecting the last track drops out of select mode on its own.
   useEffect(() => {
     if (selectMode && selected.size === 0) setSelectMode(false)
   }, [selectMode, selected])
-
-  useEffect(() => {
-    if (!selectMode) return
-    const onKeyDown = (e: KeyboardEvent): void => { if (e.key === 'Escape') exitSelectMode() }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectMode])
-
-  const selectedTracks = useMemo(() => [...selected.values()], [selected])
-
-  const openCtx = (track: LibraryTrack, queue: LibraryTrack[], x: number, y: number) => setCtx({ track, queue, x, y })
-
-  const navTo = (n: Nav) => {
-    setNav(n); setDrill(null)
-    if (n.kind === 'lib') localStorage.setItem('library:view', n.key)
-  }
-  const toggleSort = (f: 'title' | 'album' | 'duration') => {
-    if (sortField === f) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortField(f); setSortDir('asc') }
-  }
-
-  useEffect(() => { loadLibrary() }, [])
-  // Reset drill when switching rail section
-  useEffect(() => { setDrill(null) }, [nav])
 
   // ── derived collections ──
   const albums = useMemo<Album[]>(() => {
@@ -644,7 +507,13 @@ export default function LibraryTab(): JSX.Element {
     for (const t of libraryTracks) {
       const key = `${t.album || 'Unknown Album'}__${t.albumArtist || t.artist || 'Unknown Artist'}`
       let a = map.get(key)
-      if (!a) { a = { key, name: t.album || 'Unknown Album', artist: t.albumArtist || t.artist || 'Unknown Artist', year: t.year, addedAt: 0, tracks: [], coverTrack: t }; map.set(key, a) }
+      if (!a) {
+        a = {
+          key, name: t.album || 'Unknown Album', artist: t.albumArtist || t.artist || 'Unknown Artist',
+          year: t.year, addedAt: 0, tracks: [], coverTrack: t,
+        }
+        map.set(key, a)
+      }
       a.tracks.push(t)
       a.addedAt = Math.max(a.addedAt, t.addedAt || 0)
       if (t.trackNumber === 1 || (!a.coverTrack.hasAlbumArt && t.hasAlbumArt)) a.coverTrack = t
@@ -667,170 +536,477 @@ export default function LibraryTab(): JSX.Element {
     return [...map.values()].sort((x, y) => x.name.localeCompare(y.name))
   }, [libraryTracks])
 
-  const q = searchQ.trim().toLowerCase()
+  const q = search.trim().toLowerCase()
 
-  const albumsSorted = useMemo(() => {
-    const base = nav.kind === 'lib' && nav.key === 'recent'
+  const songs = useMemo(() => {
+    const list = q
+      ? libraryTracks.filter(t =>
+          t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q))
+      : libraryTracks
+    const dir = sortDir === 'asc' ? 1 : -1
+    const cmp = (a: LibraryTrack, b: LibraryTrack): number => {
+      switch (sortField) {
+        case 'artist': return (a.artist || '').localeCompare(b.artist || '') || a.title.localeCompare(b.title)
+        case 'album': return (a.album || '').localeCompare(b.album || '') || byTrackNo(a, b)
+        case 'duration': return a.duration - b.duration
+        case 'added': return (a.addedAt || 0) - (b.addedAt || 0)
+        default: return a.title.localeCompare(b.title)
+      }
+    }
+    return [...list].sort((a, b) => cmp(a, b) * dir)
+  }, [libraryTracks, q, sortField, sortDir])
+
+  const albumsFiltered = useMemo(() => {
+    const base = tab === 'recent'
       ? [...albums].sort((a, b) => b.addedAt - a.addedAt)
       : [...albums].sort((a, b) => a.name.localeCompare(b.name))
     if (!q) return base
     return base.filter(a => a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q))
-  }, [albums, nav, q])
+  }, [albums, tab, q])
 
-  const artistsFiltered = useMemo(() => q ? artists.filter(a => a.name.toLowerCase().includes(q)) : artists, [artists, q])
+  const artistsFiltered = useMemo(
+    () => q ? artists.filter(a => a.name.toLowerCase().includes(q)) : artists,
+    [artists, q]
+  )
 
-  const songs = useMemo(() => {
-    let list = q ? libraryTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : libraryTracks
-    if (sortField) {
-      list = [...list].sort((a, b) => {
-        let av: string | number, bv: string | number
-        if (sortField === 'title') { av = a.title.toLowerCase(); bv = b.title.toLowerCase() }
-        else if (sortField === 'album') { av = (a.album || '').toLowerCase(); bv = (b.album || '').toLowerCase() }
-        else { av = a.duration; bv = b.duration }
-        return sortDir === 'asc' ? (av < bv ? -1 : av > bv ? 1 : 0) : (av > bv ? -1 : av < bv ? 1 : 0)
-      })
-    }
-    return list
-  }, [libraryTracks, q, sortField, sortDir])
+  // ── A–Z rail ──
+  // Only meaningful on an alphabetically-sorted list; `letterIndex` maps each
+  // letter to the first row that sorts under it.
+  const alphaSource = tab === 'artists'
+    ? artistsFiltered.map(a => a.name)
+    : tab === 'songs' && (sortField === 'title' || sortField === 'artist')
+      ? songs.map(t => sortField === 'artist' ? (t.artist || '') : t.title)
+      : null
 
+  const { letters, letterIndex } = useMemo(() => {
+    if (!alphaSource || alphaSource.length < ALPHA_MIN_ROWS) return { letters: [] as string[], letterIndex: new Map<string, number>() }
+    const idx = new Map<string, number>()
+    alphaSource.forEach((s, i) => {
+      const l = indexLetter(s)
+      if (!idx.has(l)) idx.set(l, i)
+    })
+    const ordered = [...idx.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a.localeCompare(b)))
+    return { letters: ordered, letterIndex: idx }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alphaSource?.length, tab, sortField, sortDir, q])
+
+  const jumpToLetter = (letter: string): void => {
+    const i = letterIndex.get(letter)
+    const scroller = scrollRef.current
+    const content = contentRef.current
+    if (i === undefined || !scroller || !content) return
+    const rowH = tab === 'artists' ? artistRowH : songRowH
+    scroller.scrollTo({ top: content.offsetTop + i * rowH })
+  }
+
+  // ── playback ──
+  const playAll = (list: LibraryTrack[], rnd = false): void => {
+    const queue = (rnd ? shuffled(list) : list).map(toQueueTrack)
+    if (queue.length) playCollection(queue)
+  }
+
+  const playFrom = (track: LibraryTrack, list: LibraryTrack[]): void => {
+    if (currentTrack?.id === track.id) { setIsPlaying(!isPlaying); return }
+    playTrack(toQueueTrack(track), list.map(toQueueTrack))
+  }
+
+  const openMenu = (track: LibraryTrack, queue: LibraryTrack[], e: React.MouseEvent): void => {
+    if (selectMode) { toggleSelect(track); return }
+    setCtx({ track, queue, x: e.clientX, y: e.clientY })
+  }
+
+  // ── drill targets ──
   const drillArtist = drill?.kind === 'artist' ? artists.find(a => a.name === drill.name) : undefined
-  const drillArtistAlbums = drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : []
+  const drillArtistAlbums = useMemo(
+    () => drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : [],
+    [drillArtist, albums]
+  )
+  const drillAlbumTracks = useMemo(
+    () => drill?.kind === 'album' ? [...drill.album.tracks].sort(byTrackNo) : [],
+    [drill]
+  )
+  const drillArtistTracks = useMemo(
+    () => drillArtist ? [...drillArtist.tracks].sort((a, b) => a.title.localeCompare(b.title)) : [],
+    [drillArtist]
+  )
 
-  const playAll = (list: LibraryTrack[], rnd = false) => { const q2 = (rnd ? shuffled(list) : list).map(toQueueTrack); if (q2.length) playCollection(q2) }
-  const playAlbum = (a: Album) => playAll([...a.tracks].sort(byTrackNo))
+  // Whatever list is on screen — what "Select all" and the play buttons act on.
+  const visibleTracks = drill?.kind === 'album' ? drillAlbumTracks
+    : drill?.kind === 'artist' ? drillArtistTracks
+    : songs
+
+  // Hardware back, innermost first. Registered once through a ref: handlers run
+  // last-registered-first, so re-registering on every state change would let
+  // this steal presses from a sheet that opened earlier.
+  const backRef = useRef<() => boolean>(() => false)
+  backRef.current = (): boolean => {
+    if (selectMode) { exitSelectMode(); return true }
+    if (drill) { setDrill(null); return true }
+    if (search) { setSearch(''); return true }
+    return false
+  }
+  useEffect(() => registerBackHandler(() => backRef.current()), [])
 
   const showEmpty = libraryTracks.length === 0 && !libraryScanning
-  const showToolbar = !drill && nav.kind === 'lib'
+  const totalDuration = useMemo(() => libraryTracks.reduce((s, t) => s + t.duration, 0), [libraryTracks])
 
-  const title = drill?.kind === 'album' ? drill.album.name
-    : drill?.kind === 'artist' ? drill.name
-    : LIB_SECTIONS.find(s => s.key === nav.key)?.label ?? 'Library'
+  const rowCommon = {
+    onPlay: (t: LibraryTrack) => playFrom(t, visibleTracks),
+    onLongPress: toggleSelect,
+    selectMode,
+    currentId: currentTrack?.id ?? null,
+    isPlaying,
+  }
+
+  // ── album / artist screens ──
+  const drillHeader = (): JSX.Element | null => {
+    if (drill?.kind === 'album') {
+      const a = drill.album
+      const total = drillAlbumTracks.reduce((s, t) => s + t.duration, 0)
+      return (
+        <div className="px-4 pb-4">
+          <div className="flex flex-col items-center text-center pt-1 pb-4">
+            <div className="w-44 h-44 rounded-2xl overflow-hidden bg-surface-overlay shadow-2xl">
+              <FillArt track={a.coverTrack} fallback={<Music size={48} />} />
+            </div>
+            <h1 className="text-text-primary text-[20px] font-bold leading-tight mt-4 line-clamp-2">{a.name}</h1>
+            <p className="text-text-secondary text-sm mt-1 truncate max-w-full">{a.artist}</p>
+            <p className="text-text-muted text-xs mt-0.5">
+              {a.year ? `${a.year} · ` : ''}{drillAlbumTracks.length} song{drillAlbumTracks.length === 1 ? '' : 's'} · {formatTotalDuration(total)}
+            </p>
+          </div>
+          <PlayShuffleRow onPlay={() => playAll(drillAlbumTracks)} onShuffle={() => playAll(drillAlbumTracks, true)} />
+        </div>
+      )
+    }
+    if (drill?.kind === 'artist' && drillArtist) {
+      const total = drillArtistTracks.reduce((s, t) => s + t.duration, 0)
+      return (
+        <div className="px-4 pb-4">
+          <div className="flex flex-col items-center text-center pt-1 pb-4">
+            <div className="w-36 h-36 rounded-full overflow-hidden bg-surface-overlay shadow-2xl">
+              <FillArt track={drillArtist.coverTrack} round fallback={<User size={44} />} />
+            </div>
+            <h1 className="text-text-primary text-[20px] font-bold leading-tight mt-4 line-clamp-2">{drillArtist.name}</h1>
+            <p className="text-text-muted text-xs mt-1">
+              {drillArtistAlbums.length} album{drillArtistAlbums.length === 1 ? '' : 's'} · {drillArtistTracks.length} song{drillArtistTracks.length === 1 ? '' : 's'} · {formatTotalDuration(total)}
+            </p>
+          </div>
+          <PlayShuffleRow onPlay={() => playAll(drillArtistTracks)} onShuffle={() => playAll(drillArtistTracks, true)} />
+          {drillArtistAlbums.length > 0 && (
+            <div className="mt-5 -mx-4">
+              <p className="px-4 text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">Albums</p>
+              {/* Horizontal strip: an artist's albums are a short list, and a
+                  carousel keeps the songs below reachable without scrolling
+                  past a grid first. */}
+              <div className="flex gap-3 overflow-x-auto no-scrollbar px-4 pb-1">
+                {drillArtistAlbums.map((al) => (
+                  <button
+                    key={al.key}
+                    onClick={() => setDrill({ kind: 'album', album: al })}
+                    className="w-28 shrink-0 text-left active:opacity-70"
+                  >
+                    <div className="w-28 h-28 rounded-xl overflow-hidden bg-surface-overlay">
+                      <FillArt track={al.coverTrack} fallback={<Music size={26} />} />
+                    </div>
+                    <p className="text-text-primary text-[12px] font-medium truncate mt-1.5">{al.name}</p>
+                    <p className="text-text-muted text-[11px] truncate">{al.year ?? `${al.tracks.length} songs`}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">Songs</p>
+        </div>
+      )
+    }
+    return null
+  }
 
   return (
-    <SelectionCtx.Provider value={selection}>
-    <div className="flex-1 flex overflow-hidden bg-surface">
-      <BrowseRail nav={nav} onNav={navTo} songCount={libraryTracks.length} />
-
-      <div className="flex-1 flex flex-col overflow-hidden relative">
-        {/* Toolbar (grid/list sections only; detail views carry their own header) */}
-        {showToolbar && !showEmpty && !libraryScanning && (
-          /* The whole bar must NOT be app-region:no-drag — Chromium computes drag
-             regions as flat rect math (drag minus no-drag, stacking ignored), so a
-             full-width no-drag bar here erased App's titlebar drag strip and made
-             the window unmovable on this view. Only the controls punch holes. */
-          <div className="shrink-0 flex items-center flex-wrap gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--border)]">
-            <h2 className="text-text-primary text-xl font-bold shrink-0">{title}</h2>
-            <div className="relative flex-1 min-w-[120px] max-w-xs ml-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search library…"
-                className="w-full pl-8 pr-3 py-1.5 bg-surface-overlay border border-[var(--border)] rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      {/* The header paints no background of its own — the app shell's runs
+          continuously behind it — and it deliberately does not collapse in
+          select mode: swapping it out mid-long-press moves the list under the
+          finger. Selection controls live in the bottom bar. */}
+      {drill ? (
+        <div className="shrink-0 flex items-center gap-1 px-2 pb-1">
+          <button
+            onClick={() => setDrill(null)}
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+            aria-label="Back"
+          ><ArrowLeft size={20} /></button>
+          <span className="flex-1 min-w-0 text-text-primary text-[15px] font-semibold truncate">
+            {drill.kind === 'album' ? drill.album.name : drill.name}
+          </span>
+        </div>
+      ) : (
+        <div className="shrink-0">
+          <div className="flex items-center gap-1 px-2">
+            <div className="flex-1 min-w-0 pl-2.5">
+              <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">Library</h1>
+              <p className="text-text-muted text-xs truncate">
+                {libraryScanning ? 'Scanning…'
+                  : libraryTracks.length === 0 ? 'Nothing added yet'
+                  : `${libraryTracks.length.toLocaleString()} songs · ${albums.length} albums · ${formatTotalDuration(totalDuration)}`}
+              </p>
             </div>
-            <div className="flex items-center gap-2 ml-auto" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              {libraryTracks.length > 0 && (
-                <>
-                  <button onClick={() => playAll(songs)} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition-colors">
-                    <Play size={12} fill="currentColor" /> Play
-                  </button>
-                  <button onClick={() => playAll(songs, true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors">
-                    <Shuffle size={12} /> Shuffle
-                  </button>
-                </>
-              )}
-              <button onClick={() => openUrlImport()}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors"
-                title="Download audio from a link into your library">
-                <Link2 size={12} /> Add from URL
-              </button>
-              <button onClick={() => scanLibrary()} disabled={libraryScanning || libraryFolders.length === 0}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors disabled:opacity-40"
-                title={libraryFolders.length === 0 ? 'Add folders in Settings first' : 'Scan library'}>
-                {libraryScanning ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-                {libraryScanning ? 'Scanning…' : 'Scan'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Content */}
-        {showEmpty ? (
-          <EmptyState onOpenSettings={() => setShowSettings(true)} onImportUrl={() => openUrlImport()} />
-        ) : libraryScanning ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3">
-            <Loader2 size={32} className="animate-spin text-accent" />
-            <p className="text-text-muted text-sm">Scanning your library…</p>
-          </div>
-        ) : drill?.kind === 'album' ? (
-          <AlbumDetail album={drill.album} onBack={() => setDrill(null)} onContext={openCtx} />
-        ) : drill?.kind === 'artist' && drillArtist ? (
-          <ArtistDetail artist={drillArtist} albums={drillArtistAlbums} onBack={() => setDrill(null)}
-            onOpenAlbum={a => setDrill({ kind: 'album', album: a })} onContext={openCtx} />
-        ) : nav.kind === 'lib' && nav.key === 'artists' ? (
-          <CardGrid circular count={artistsFiltered.length} render={i => {
-            const a = artistsFiltered[i]
-            return <ArtistCard key={a.name} artist={a} onOpen={() => setDrill({ kind: 'artist', name: a.name })} />
-          }} />
-        ) : nav.kind === 'lib' && nav.key === 'songs' ? (
-          <SongList tracks={songs} onContext={openCtx}
-            header={
-              <div className="flex items-center gap-3 px-4 py-1.5 mb-1">
-                <div className="w-5 text-[10px] text-text-muted uppercase tracking-wider text-center">#</div>
-                <div className="w-10 shrink-0" />
-                <button onClick={() => toggleSort('title')} className="flex-1 flex items-center gap-1 text-[10px] text-text-muted uppercase tracking-wider hover:text-text-primary transition-colors">
-                  Title {sortField === 'title' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
-                </button>
-                <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[180px] text-[10px] text-text-muted uppercase tracking-wider hover:text-text-primary transition-colors">
-                  Album {sortField === 'album' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
-                </button>
-                <button onClick={() => toggleSort('duration')} className="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors shrink-0">
-                  <Clock size={11} /> {sortField === 'duration' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
-                </button>
-                <div className="w-7" />
-              </div>
-            } />
-        ) : (
-          /* albums + recently added */
-          <CardGrid count={albumsSorted.length} render={i => {
-            const a = albumsSorted[i]
-            return <AlbumCard key={a.key} album={a} onOpen={() => setDrill({ kind: 'album', album: a })} onPlay={() => playAlbum(a)} />
-          }} />
-        )}
-
-        {/* Bulk selection action bar */}
-        {selectMode && (
-          <div className="shrink-0 border-t border-[var(--border)] bg-surface px-4 py-2.5 flex items-center gap-2">
-            <span className="text-sm text-text-primary font-medium flex-1">
-              {selected.size} selected
-            </span>
+            {tab === 'songs' && (
+              <button
+                onClick={() => setSheet('sort')}
+                className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay"
+                aria-label="Sort"
+              >{sortDir === 'asc' ? <ArrowUp size={19} /> : <ArrowDown size={19} />}</button>
+            )}
             <button
-              onClick={() => setSelected(new Map(visibleRef.current.map(t => [t.id, t])))}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
-            >
-              Select all
-            </button>
+              onClick={() => setSheet('more')}
+              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay"
+              aria-label="Library options"
+            ><MoreVertical size={19} /></button>
+          </div>
+
+          {!showEmpty && (
+            <>
+              <div className="flex items-center gap-2 px-4 pt-2.5 overflow-x-auto no-scrollbar">
+                {TABS.map(({ key, label }) => {
+                  const active = tab === key
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => { setTab(key); setDrill(null) }}
+                      className={`shrink-0 h-9 px-4 rounded-full text-[13px] font-medium transition-colors ${
+                        active ? 'bg-accent text-white' : 'bg-surface-overlay text-text-secondary active:bg-surface-highest'
+                      }`}
+                    >{label}</button>
+                  )
+                })}
+              </div>
+
+              <div className="px-4 pt-2.5">
+                <div className="relative flex items-center">
+                  <Search size={16} className="absolute left-3.5 text-text-muted pointer-events-none" />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Songs, albums, artists"
+                    enterKeyHint="search"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    className="w-full h-11 bg-surface-overlay rounded-full pl-10 pr-10 text-[15px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 [&::-webkit-search-cancel-button]:hidden"
+                  />
+                  {search && (
+                    <button
+                      onClick={() => setSearch('')}
+                      className="absolute right-1 w-9 h-9 flex items-center justify-center rounded-full text-text-muted active:text-text-primary"
+                      aria-label="Clear search"
+                    ><X size={16} /></button>
+                  )}
+                </div>
+              </div>
+
+              <div className="px-4 pt-2.5 pb-1">
+                <PlayShuffleRow
+                  onPlay={() => playAll(songs)}
+                  onShuffle={() => playAll(songs, true)}
+                  disabled={songs.length === 0}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Body ───────────────────────────────────────────────────────────── */}
+      {showEmpty ? (
+        <EmptyState onOpenSettings={() => setShowSettings(true)} onImportUrl={() => openUrlImport()} />
+      ) : libraryScanning && libraryTracks.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <Loader2 size={30} className="animate-spin text-accent" />
+          <p className="text-text-muted text-sm">Scanning your music…</p>
+        </div>
+      ) : (
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto overscroll-contain pt-2 pb-6">
+          {drill ? (
+            <>
+              {drillHeader()}
+              {/* Windowed like every other list here: the desktop version capped
+                  an artist's songs at 60 to stay mountable, which quietly hid
+                  the rest. Windowing shows all of them and mounts none of the
+                  off-screen ones — and each row's cover is a lazy disk read, so
+                  "mounted" is not cheap. */}
+              <VirtualRows
+                scrollRef={scrollRef}
+                contentRef={contentRef}
+                count={visibleTracks.length}
+                rowH={songRowH}
+                render={(i) => (
+                  <SongRow
+                    track={visibleTracks[i]}
+                    ordinal={drill.kind === 'album' ? (visibleTracks[i].trackNumber ?? i + 1) : undefined}
+                    selected={selected.has(visibleTracks[i].id)}
+                    onMenu={(track, e) => openMenu(track, visibleTracks, e)}
+                    {...rowCommon}
+                  />
+                )}
+              />
+            </>
+          ) : tab === 'artists' ? (
+            artistsFiltered.length === 0 ? (
+              <p className="text-text-muted text-sm text-center py-16">No artists found</p>
+            ) : (
+              <>
+                <VirtualRows
+                  scrollRef={scrollRef}
+                  contentRef={contentRef}
+                  count={artistsFiltered.length}
+                  rowH={artistRowH}
+                  render={(i) => (
+                    <ArtistRow artist={artistsFiltered[i]} onOpen={() => setDrill({ kind: 'artist', name: artistsFiltered[i].name })} />
+                  )}
+                />
+                {letters.length > 1 && <AlphaRail letters={letters} onPick={jumpToLetter} />}
+              </>
+            )
+          ) : tab === 'songs' ? (
+            songs.length === 0 ? (
+              <p className="text-text-muted text-sm text-center py-16">No songs found</p>
+            ) : (
+              <>
+                <VirtualRows
+                  scrollRef={scrollRef}
+                  contentRef={contentRef}
+                  count={songs.length}
+                  rowH={songRowH}
+                  render={(i) => (
+                    <SongRow
+                      track={songs[i]}
+                      selected={selected.has(songs[i].id)}
+                      onMenu={(track, e) => openMenu(track, songs, e)}
+                      {...rowCommon}
+                    />
+                  )}
+                />
+                {letters.length > 1 && <AlphaRail letters={letters} onPick={jumpToLetter} />}
+              </>
+            )
+          ) : (
+            albumsFiltered.length === 0 ? (
+              <p className="text-text-muted text-sm text-center py-16">No albums found</p>
+            ) : (
+              <div className="px-4">
+                <AlbumGrid
+                  scrollRef={scrollRef}
+                  contentRef={contentRef}
+                  albums={albumsFiltered}
+                  onOpen={(album) => setDrill({ kind: 'album', album })}
+                />
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* ── Selection bar ──────────────────────────────────────────────────── */}
+      {selectMode && (
+        <div className="shrink-0 border-t border-[var(--border)]">
+          <div className="flex items-center gap-1 pl-1 pr-2 pt-1">
             <button
               onClick={exitSelectMode}
-              className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
-            >
-              Clear
-            </button>
+              className="w-10 h-10 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+              aria-label="Cancel selection"
+            ><X size={19} /></button>
+            <span className="flex-1 min-w-0 text-text-primary font-semibold text-[15px] truncate">{selected.size} selected</span>
             <button
-              onClick={() => { selectedTracks.forEach(t => addToQueue(toQueueTrack(t))) }}
-              disabled={selected.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay hover:bg-surface-raised text-text-primary rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-            >
-              <ListPlus size={13} /> Add to queue
-            </button>
-            <button
-              onClick={() => openBulkTrackEditor(selectedTracks)}
-              disabled={selected.size === 0}
-              title="Edit tags across every selected file"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
-            >
-              <Pencil size={13} /> Edit tags
-            </button>
+              onClick={() => setSelected(new Map(visibleTracks.map(t => [t.id, t])))}
+              className="px-3 h-10 rounded-full text-accent text-[13px] font-semibold active:bg-accent/10"
+            >Select all</button>
           </div>
-        )}
-      </div>
+          <div className="flex items-stretch px-2 py-1.5">
+            {([
+              { key: 'queue', icon: ListPlus, label: 'Queue', onClick: () => { selectedTracks.forEach(t => addToQueue(toQueueTrack(t))); exitSelectMode() } },
+              { key: 'next', icon: Play, label: 'Play next', onClick: () => { [...selectedTracks].reverse().forEach(t => playNext(toQueueTrack(t))); exitSelectMode() } },
+              { key: 'tags', icon: Pencil, label: 'Edit tags', onClick: () => { openBulkTrackEditor(selectedTracks); exitSelectMode() } },
+              { key: 'more', icon: MoreVertical, label: 'More', onClick: () => setSheet('bulk') },
+            ] as const).map((action) => (
+              <button
+                key={action.key}
+                onClick={action.onClick}
+                disabled={selected.size === 0}
+                className="flex-1 flex flex-col items-center justify-center gap-1 py-2 rounded-2xl text-text-primary disabled:opacity-35 active:bg-surface-overlay"
+              >
+                <action.icon size={20} />
+                <span className="text-[11px] font-medium">{action.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Sheets ─────────────────────────────────────────────────────────── */}
+      {sheet === 'sort' && (
+        <Sheet onClose={() => setSheet(null)} title="Sort songs by">
+          {SORTS.map((s) => (
+            <SheetItem
+              key={s.key}
+              label={s.label}
+              active={sortField === s.key}
+              trailing={sortField === s.key ? <Check size={17} className="text-accent shrink-0" /> : undefined}
+              onClick={() => setSortField(s.key)}
+            />
+          ))}
+          <SheetDivider />
+          <SheetItem
+            icon={ArrowUp} label="Ascending" active={sortDir === 'asc'}
+            trailing={sortDir === 'asc' ? <Check size={17} className="text-accent shrink-0" /> : undefined}
+            onClick={() => setSortDir('asc')}
+          />
+          <SheetItem
+            icon={ArrowDown} label="Descending" active={sortDir === 'desc'}
+            trailing={sortDir === 'desc' ? <Check size={17} className="text-accent shrink-0" /> : undefined}
+            onClick={() => setSortDir('desc')}
+          />
+        </Sheet>
+      )}
+
+      {sheet === 'more' && (
+        <Sheet onClose={() => setSheet(null)} title="Library">
+          <SheetItem
+            icon={libraryScanning ? Loader2 : RefreshCw}
+            label={libraryScanning ? 'Scanning…' : 'Scan for new music'}
+            sub={libraryFolders.length === 0 ? 'Add a folder first' : `${libraryFolders.length} folder${libraryFolders.length === 1 ? '' : 's'}`}
+            disabled={libraryScanning || libraryFolders.length === 0}
+            onClick={() => { scanLibrary(); setSheet(null) }}
+          />
+          <SheetItem
+            icon={Link2}
+            label="Download from a link"
+            sub="Pull audio from a URL into the library"
+            onClick={() => { openUrlImport(); setSheet(null) }}
+          />
+          <SheetDivider />
+          <SheetItem
+            icon={Settings2}
+            label="Library settings"
+            sub="Folders, auto-refresh"
+            onClick={() => { setShowSettings(true); setSheet(null) }}
+          />
+        </Sheet>
+      )}
+
+      {sheet === 'bulk' && (
+        <Sheet onClose={() => setSheet(null)} title={`${selected.size} song${selected.size === 1 ? '' : 's'} selected`}>
+          <SheetItem icon={ListPlus} label="Add to queue" onClick={() => { selectedTracks.forEach(t => addToQueue(toQueueTrack(t))); exitSelectMode(); setSheet(null) }} />
+          <SheetItem icon={Play} label="Play next" onClick={() => { [...selectedTracks].reverse().forEach(t => playNext(toQueueTrack(t))); exitSelectMode(); setSheet(null) }} />
+          <SheetItem icon={ListMusic} label="Play these songs" onClick={() => { playAll(selectedTracks); exitSelectMode(); setSheet(null) }} />
+          <SheetItem icon={Shuffle} label="Shuffle these songs" onClick={() => { playAll(selectedTracks, true); exitSelectMode(); setSheet(null) }} />
+          <SheetDivider />
+          <SheetItem icon={Pencil} label="Edit tags" sub="Across every selected file" onClick={() => { openBulkTrackEditor(selectedTracks); exitSelectMode(); setSheet(null) }} />
+          <SheetDivider />
+          <SheetItem icon={X} label="Clear selection" onClick={() => { exitSelectMode(); setSheet(null) }} />
+        </Sheet>
+      )}
 
       {ctx && (
         <SongContextMenu
@@ -841,13 +1017,12 @@ export default function LibraryTab(): JSX.Element {
           onPlay={() => playTrack(toQueueTrack(ctx.track), ctx.queue.map(toQueueTrack))}
           onPlayNext={() => playNext(toQueueTrack(ctx.track))}
           onAddToQueue={() => addToQueue(toQueueTrack(ctx.track))}
-          onSelect={() => selection.toggle(ctx.track, ctx.queue, false)}
+          onSelect={() => toggleSelect(ctx.track)}
           onEditLocalMetadata={() => openLocalEditor(ctx.track)}
           liked={likedTrackIds.includes(ctx.track.id)}
           onToggleLike={() => toggleLike(ctx.track.id)}
         />
       )}
     </div>
-    </SelectionCtx.Provider>
   )
 }

@@ -276,7 +276,11 @@ REM hands a started child whatever stdout this script has, so when the script's
 REM own output is piped somewhere, the emulator writes into that same pipe and
 REM stalls the moment nobody drains it - which looks exactly like a device that
 REM boots forever.
-start "Android Emulator - !AVD!" /D "%SDK%\emulator" "%EMULATOR%" -avd "!AVD!" -no-snapshot-load -no-boot-anim >nul 2>&1
+REM No -no-boot-anim: skipping the boot animation is cosmetic, and on this AVD
+REM every launch carrying that flag wedged on a black screen with
+REM sys.boot_completed never flipping, while the identical command without it
+REM booted in under a minute. Not worth the seconds it saves.
+start "Android Emulator - !AVD!" /D "%SDK%\emulator" "%EMULATOR%" -avd "!AVD!" -no-snapshot-load >nul 2>&1
 set "EMU_STARTED=1"
 
 REM Each phase below gets its own budget. They used to share one counter, so
@@ -312,17 +316,14 @@ REM minutes it is wedged, not slow, and waiting longer has never once turned
 REM into a successful run - it just burns time before the same failure. So the
 REM budget is deliberately short and the message says what to actually do.
 :ed_waitboot
-set "BOOTED="
-for /f "usebackq delims=" %%b in (`"%ADB%" -s "!DEVICE!" shell getprop sys.boot_completed 2^>nul`) do set "BOOTED=%%b"
+call :getprop sys.boot_completed
 REM Substring compare: adb's output carries a trailing CR, which breaks =="1".
-if "!BOOTED:~0,1!"=="1" goto ed_pmstart
+if "!PROPVAL:~0,1!"=="1" goto ed_pmstart
 REM Second opinions: some images set one of these well before the others.
-set "BOOTED="
-for /f "usebackq delims=" %%b in (`"%ADB%" -s "!DEVICE!" shell getprop dev.bootcomplete 2^>nul`) do set "BOOTED=%%b"
-if "!BOOTED:~0,1!"=="1" goto ed_pmstart
-set "ANIM="
-for /f "usebackq delims=" %%b in (`"%ADB%" -s "!DEVICE!" shell getprop init.svc.bootanim 2^>nul`) do set "ANIM=%%b"
-if "!ANIM:~0,7!"=="stopped" goto ed_pmstart
+call :getprop dev.bootcomplete
+if "!PROPVAL:~0,1!"=="1" goto ed_pmstart
+call :getprop init.svc.bootanim
+if "!PROPVAL:~0,7!"=="stopped" goto ed_pmstart
 set /a TRIES+=1
 if !TRIES! GTR 60 (
   echo [ERROR] The emulator is stuck - 3 minutes without finishing boot, when a
@@ -348,9 +349,8 @@ set /a TRIES=0
 :ed_waitpm
 REM boot_completed flips before the package manager is actually serving, and
 REM installing into that window dies with "Can't find service: package".
-set "PMOK="
-for /f "usebackq delims=" %%p in (`"%ADB%" -s "!DEVICE!" shell pm path android 2^>nul`) do set "PMOK=%%p"
-if defined PMOK goto ed_ready
+call :adbread pm path android
+if defined PROPVAL goto ed_ready
 set /a TRIES+=1
 if !TRIES! GTR 60 (
   echo [ERROR] The package manager never came up on !DEVICE!.
@@ -362,6 +362,27 @@ goto ed_waitpm
 
 :ed_ready
 echo     Device ready: !DEVICE!
+exit /b 0
+
+REM ---- Reads one device property into PROPVAL -------------------------------
+REM Via a temp file rather than `for /f ... in (`adb ... !DEVICE! ...`)`. That
+REM form silently produced nothing: the delayed-expansion !DEVICE! inside a
+REM FOR's backquoted command does not survive the way it does in a plain
+REM command, so adb was invoked with an empty -s and the property came back
+REM blank forever. The script then reported a perfectly healthy, fully booted
+REM emulator as "still booting" until it timed out - the black-screen symptom
+REM was real once (a corrupt Quick Boot snapshot), but every wedge after that
+REM was this bug. %DEVICE% expands normally here because this is an ordinary
+REM command line, not a FOR header.
+:getprop
+call :adbread getprop %~1
+exit /b 0
+
+REM ---- Runs an adb shell command, first output line into PROPVAL ------------
+:adbread
+set "PROPVAL="
+"%ADB%" -s %DEVICE% shell %* > "%TEMP%\run-android-adb.txt" 2>nul
+for /f "usebackq delims=" %%v in ("%TEMP%\run-android-adb.txt") do if not defined PROPVAL set "PROPVAL=%%v"
 exit /b 0
 
 REM ---- ~3 second sleep ------------------------------------------------------

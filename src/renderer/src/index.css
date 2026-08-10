@@ -387,6 +387,20 @@ input[type='range']:active::-webkit-slider-thumb {
   animation: eq-bar 0.9s ease-in-out infinite;
 }
 
+/* A colour input as a plain circular swatch (Settings → Accent color). Chrome
+   draws a bordered square inside the control, which made the custom-colour
+   swatch the odd tile in a row of circles; only the shadow-DOM pseudo-elements
+   can turn that off, so it can't be done from the className. */
+.color-dot {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.color-dot::-webkit-color-swatch-wrapper { padding: 0; }
+.color-dot::-webkit-color-swatch { border: 0; border-radius: 9999px; }
+
 @media (prefers-reduced-motion: reduce) {
   .animate-wrld-queue-in,
   .wrld-q-row,

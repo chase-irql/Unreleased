@@ -191,7 +191,16 @@ export default function App(): JSX.Element {
           <div className="flex-1 overflow-hidden flex">
             <ErrorBoundary>
             <Suspense fallback={null}>
-            {activeView === 'api-tracker' ? <ApiTrackerView />
+            {/* Settings is a page, not an overlay. It used to render as a
+                fixed layer below, on top of everything including the player
+                bar — so opening it hid what was playing. Rendering it in the
+                content slot keeps the player and nav where they are, and it
+                sits ahead of the view switch because `showSettings` is its own
+                flag rather than an activeView (every setShowSettings caller in
+                the app keeps working, and activeView still remembers the view
+                underneath to return to). */}
+            {showSettings ? <Settings />
+              : activeView === 'api-tracker' ? <ApiTrackerView />
               : activeView === 'api-files' ? <ApiFilesView />
               : activeView === 'editor' ? <EditorPage />
               : activeView === 'contributor' ? <ContributorPage />
@@ -233,11 +242,6 @@ export default function App(): JSX.Element {
       <ErrorBoundary fallback={null}><LastfmScrobbler /></ErrorBoundary>
       <ErrorBoundary fallback={null}><NewsNotifier /></ErrorBoundary>
       {sidebarPosition !== 'top' && <ErrorBoundary fallback={null}><BottomNav /></ErrorBoundary>}
-      {showSettings && (
-        <ErrorBoundary variant="overlay" onDismiss={() => setShowSettings(false)}>
-          <Suspense fallback={null}><Settings /></Suspense>
-        </ErrorBoundary>
-      )}
       {showDiagnostics && (
         <ErrorBoundary variant="overlay" onDismiss={() => setShowDiagnostics(false)}>
           <Suspense fallback={null}><DiagnosticsModal /></Suspense>

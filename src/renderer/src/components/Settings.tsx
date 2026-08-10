@@ -1,20 +1,18 @@
-import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
-  X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle, Check,
-  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw, DownloadCloud,
-  FolderOpen, FolderPlus, Monitor, BellOff, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Wrench, FlaskConical, Music2,
-  PanelLeft, PanelRight, PanelTop, PanelBottom, Waves, Keyboard, RotateCcw, AppWindow, PictureInPicture2, Minimize2,
-  ListOrdered, GripVertical, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
+  Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle, Check,
+  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw,
+  FolderOpen, FolderPlus, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Music2,
+  PanelLeft, PanelTop, PanelBottom, Waves, RotateCcw, ExternalLink,
+  ListOrdered, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
   ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
-import { HOTKEY_ACTIONS, HOTKEY_CATEGORIES, effectiveBinding, comboTokens, eventToCombo } from '../lib/hotkeys'
 import { localLibraryAvailable, pickFolder, pickFiles, decodeSourceLabel } from '../lib/localLibrary'
 import { SKINS, getSkin, createCustomSkin, parseSkinFile } from '../lib/skins'
 import SkinEditorModal from './SkinEditorModal'
 import { FONTS } from '../lib/fonts'
-import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, orderedNavControls, isNavControlAvailable, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible, DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY } from '../lib/navItems'
 import { getToken, CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import { APP_VERSION } from '../lib/appVersion'
 import {
@@ -24,6 +22,7 @@ import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
 import { registerBackHandler } from '../lib/backHandlers'
 import { useBackToClose } from '../hooks/useBackToClose'
+import { Sheet } from './mobile/Sheet'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
@@ -49,22 +48,26 @@ const LYRIC_TEXT_SIZES: { label: string; value: number }[] = [
   { label: 'Huge', value: 1.4 },
 ]
 
+// A vertical rail doesn't fit a phone, so only the two edges the tab bar can
+// actually take are offered. `left`/`right` still exist in the store (a value
+// saved on desktop, or a synced profile) and render as bottom tabs — see how
+// `active` is derived below.
 const NAV_POSITIONS: { id: SidebarPosition; label: string; icon: ElementType }[] = [
-  { id: 'left', label: 'Left', icon: PanelLeft },
-  { id: 'right', label: 'Right', icon: PanelRight },
   { id: 'top', label: 'Top', icon: PanelTop },
   { id: 'bottom', label: 'Bottom', icon: PanelBottom },
 ]
 
-type Tab = 'account' | 'appearance' | 'playback' | 'shortcuts' | 'library' | 'feedback' | 'about'
+type Tab = 'account' | 'appearance' | 'playback' | 'library' | 'feedback' | 'about'
 
-// ── Flat row primitive — no card/box, just an icon + label on the left and
-// a control on the right, separated by a hairline. Used inside each tab's
-// content pane (macOS System Settings' detail-pane idiom, not the boxed
-// inset-grouped list). The icon sits in a colored badge (iOS Settings-style)
-// — a fixed color + white icon reads correctly in both themes, unlike the
-// plain `text-muted` icon this replaced, which nearly disappeared in light
-// mode. ──
+const SECTION_IDS: Tab[] = ['account', 'appearance', 'playback', 'library', 'feedback', 'about']
+
+// ── Row primitives ────────────────────────────────────────────────────────
+// Every section is built from these three, inside a SettingsCard: `Row` for a
+// label with its control on the right, `Block` for a label whose control is too
+// wide to sit beside it, and `Segmented` for a small closed set of choices.
+// The icon sits in a colored badge (iOS Settings-style) — a fixed color + white
+// icon reads correctly in both themes, unlike the plain `text-muted` icon this
+// replaced, which nearly disappeared in light mode.
 
 function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
   icon: ElementType
@@ -79,18 +82,17 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
   children?: ReactNode
 }): JSX.Element {
   return (
-    // Taller rows below md so each is a comfortable touch target, and the
-    // label/sub wrap there instead of truncating — on a phone the helper text
-    // is usually the part that explains what the control does, and truncating
-    // it to one clipped line loses exactly that.
-    <div className="flex items-center justify-between gap-3 py-3.5 md:py-3 border-b border-[var(--border)] last:border-b-0">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
-          <Icon size={13} className="text-white" strokeWidth={2.25} />
+    // 52px minimum and the helper text wraps rather than truncating: on a phone
+    // the sub-label is usually the part that explains what the control does, so
+    // clipping it to one line loses exactly the useful half.
+    <div className="flex items-center justify-between gap-3 py-3 min-h-[52px] border-b border-[var(--border)] last:border-b-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
+          <Icon size={15} className="text-white" strokeWidth={2.25} />
         </div>
         <div className="min-w-0">
-          <p className="text-text-primary text-sm md:truncate">{label}</p>
-          {sub && <p className="text-text-muted text-xs md:text-[11px] leading-snug md:truncate">{sub}</p>}
+          <p className="text-text-primary text-[15px] leading-snug">{label}</p>
+          {sub && <p className="text-text-muted text-xs leading-snug mt-0.5">{sub}</p>}
         </div>
         {labelExtra}
       </div>
@@ -99,33 +101,140 @@ function Row({ icon: Icon, iconColor, label, sub, labelExtra, children }: {
   )
 }
 
-// ── Mobile grouped-card wrapper ───────────────────────────────────────────
-// The content panes are built from Row/ad-hoc blocks laid one after another
-// with a plain hairline between them — macOS System Settings' flat detail-
-// pane idiom, and correct to leave alone on desktop (mirrors that app). On a
-// phone that reads as a bare list of options floating on the page background
-// rather than a native settings screen — iOS/Android group related rows into
-// an inset card with its own surface. `md:contents` makes this a true no-op
-// above md (no box at all is rendered — the wrapped children lay out exactly
-// as if this wrapper weren't there), so it only ever touches mobile.
-function SettingsCard({ children }: { children: ReactNode }): JSX.Element {
+// A row that *is* the control: the whole 52px strip is tappable and a chevron
+// (or an external-link arrow) says so. About's pill buttons and full-width
+// bordered buttons became these, so navigation looks like navigation and only
+// switches and pickers look like controls.
+function ActionRow({ icon: Icon, iconColor, label, sub, onClick }: {
+  icon: ElementType
+  iconColor: string
+  label: string
+  sub?: string
+  onClick: () => void
+}): JSX.Element {
   return (
-    // Full-opacity surface-overlay, not the /60 this used to be — against the
-    // page's near-black background the two surfaces sit only ~1 step apart in
-    // the dark palette, so at 60% the tint was blending back into the page and
-    // the "card" read as nothing (flat list floating on black, no grouping).
-    <div className="md:contents mb-4 md:mb-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-overlay)] px-3.5 overflow-hidden shadow-sm">
+    <button onClick={onClick} className="w-full flex items-center gap-3 py-3 min-h-[52px] border-b border-[var(--border)] last:border-b-0 text-left active:opacity-70">
+      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
+        <Icon size={15} className="text-white" strokeWidth={2.25} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-text-primary text-[15px] leading-snug">{label}</p>
+        {sub && <p className="text-text-muted text-xs leading-snug mt-0.5">{sub}</p>}
+      </div>
+      <ChevronRight size={17} className="text-text-muted shrink-0" />
+    </button>
+  )
+}
+
+// Same, for a link that leaves the app.
+function LinkRow({ icon: Icon, iconColor, label, href }: {
+  icon: ElementType
+  iconColor: string
+  label: string
+  href: string
+}): JSX.Element {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 py-3 min-h-[52px] border-b border-[var(--border)] last:border-b-0 active:opacity-70">
+      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
+        <Icon size={15} className="text-white" strokeWidth={2.25} />
+      </div>
+      <span className="min-w-0 flex-1 text-text-primary text-[15px]">{label}</span>
+      <ExternalLink size={16} className="text-text-muted shrink-0" />
+    </a>
+  )
+}
+
+// A label whose control can't fit beside it — a swatch grid, a segmented
+// control, a reorderable list. Same badge, label and hairline as `Row`, but the
+// control goes underneath at full card width instead of at the right edge.
+//
+// This replaces the header markup that used to be hand-rolled at each such
+// site, which had drifted: a 24px badge against Row's 28px, `text-sm` against
+// Row's 15px, and a 34px indent under the label that only some of them applied.
+function Block({ icon: Icon, iconColor, label, sub, action, children }: {
+  icon: ElementType
+  iconColor: string
+  label: string
+  sub?: string
+  // Optional trailing control on the header line itself (Import, Reset…).
+  action?: ReactNode
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div className="py-3 border-b border-[var(--border)] last:border-b-0">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: iconColor }}>
+          <Icon size={15} className="text-white" strokeWidth={2.25} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-text-primary text-[15px] leading-snug">{label}</p>
+          {sub && <p className="text-text-muted text-xs leading-snug mt-0.5">{sub}</p>}
+        </div>
+        {action}
+      </div>
       {children}
+    </div>
+  )
+}
+
+// A closed set of 2–4 choices (text size, lyric alignment, nav edge). These
+// were loose wrapping pills, which on a phone left a ragged trailing gap and
+// gave no sense of being one control; equal-width segments in a track read as
+// a single switch and land on the same baseline in every section that uses one.
+function Segmented<T extends string | number>({ value, options, onChange }: {
+  value: T
+  options: { value: T; label: string; icon?: ElementType }[]
+  onChange: (value: T) => void
+}): JSX.Element {
+  return (
+    <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--surface-highest)]">
+      {options.map(({ value: v, label, icon: Icon }) => {
+        const active = value === v
+        return (
+          <button
+            key={String(v)}
+            onClick={() => onChange(v)}
+            aria-pressed={active}
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 h-9 rounded-lg text-[13px] font-medium transition-colors ${
+              active ? 'bg-accent text-white' : 'text-text-secondary active:bg-[var(--surface-overlay)]'
+            }`}
+          >
+            {Icon && <Icon size={14} className="shrink-0" />}
+            <span className="truncate">{label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Grouped-card wrapper ──────────────────────────────────────────────────
+// Related rows grouped into one inset card, the platform idiom on both iOS and
+// Android. Without it the pane is a bare list of rows with hairlines between
+// them, which reads as options floating on the page rather than a settings
+// screen. `title` is the small caption above the group — worth setting on any
+// pane long enough to scroll, so the groups are findable rather than an
+// undifferentiated stack of cards.
+function SettingsCard({ title, children }: { title?: string; children: ReactNode }): JSX.Element {
+  return (
+    <div className="mb-4">
+      {title && (
+        <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{title}</p>
+      )}
+      {/* Full-opacity surface-overlay, not a tinted one: in the dark palette
+          the two surfaces sit ~1 step apart, so any transparency blends the
+          card straight back into the page. */}
+      <div className="rounded-2xl bg-[var(--surface-overlay)] px-4 overflow-hidden">
+        {children}
+      </div>
     </div>
   )
 }
 
 // Collapses a bulky inline picker (skin swatches, a 7-item font list) down to
 // one summary row — current value + chevron — that opens a bottom sheet with
-// the full picker. Mobile only; these sections stay inline on desktop where
-// vertical space isn't scarce. This is what actually shortens the Appearance
-// page instead of just tidying it — three ~250-450px sections collapse to
-// three ~50px rows.
+// the full picker. This is what actually shortens the Appearance page instead
+// of just tidying it: three ~250-450px sections become three ~50px rows.
 function PickerRow({ preview, title, sub, onClick }: {
   preview: ReactNode
   title: string
@@ -133,53 +242,33 @@ function PickerRow({ preview, title, sub, onClick }: {
   onClick: () => void
 }): JSX.Element {
   return (
-    <button onClick={onClick} className="w-full flex items-center gap-3 py-1 -my-1 text-left">
+    <button onClick={onClick} className="w-full flex items-center gap-3 py-2.5 -my-1 text-left active:opacity-70">
       {preview}
       <div className="min-w-0 flex-1">
-        <p className="text-text-primary text-sm font-medium truncate">{title}</p>
-        {sub && <p className="text-text-muted text-xs truncate">{sub}</p>}
+        <p className="text-text-primary text-[15px] font-medium truncate">{title}</p>
+        {sub && <p className="text-text-muted text-xs truncate mt-0.5">{sub}</p>}
       </div>
-      <ChevronRight size={16} className="text-text-muted shrink-0" />
+      <ChevronRight size={17} className="text-text-muted shrink-0" />
     </button>
   )
 }
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }): JSX.Element {
   return (
-    // Slightly larger on touch (44px including the invisible tap padding
-    // from -m-2/p-2, vs the visually-unchanged w-10 h-5 switch itself on
-    // desktop) — a mouse click doesn't need a bigger switch, a thumb does.
-    // The bigger tap area is padding around the same-looking switch rather
-    // than a bigger switch, so it doesn't change how any row visually reads.
-    <button
-      onClick={onClick}
-      aria-pressed={on}
-      className="shrink-0 -m-2 p-2 md:m-0 md:p-0"
-    >
-      <span className={`relative block w-10 h-5 rounded-full transition-colors ${on ? 'bg-accent' : 'bg-[var(--surface-overlay)]'}`}>
-        {/* Vertically centered with inset-y-0 + my-auto (an auto-margin flex/
-            block centering trick) instead of a manual top offset — a fixed
-            `top-0.5` still relied on the parent having zero padding/border to
-            land exactly right. No shadow on the knob either — its default
-            downward offset (0 1px 3px) reads as visual weight sitting low,
-            making it look off-center even when it's geometrically centered. */}
-        <span className={`absolute inset-y-0 my-auto w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+    // A thumb-sized switch, with the tap target extended past it by padding so
+    // the whole 44px is live without the switch itself looking oversized.
+    // The knob is centred with inset-y-0 + my-auto rather than a fixed top
+    // offset, which only lands right if the parent has zero padding/border,
+    // and carries no shadow — a default downward-offset shadow reads as weight
+    // sitting low, making a geometrically centred knob look off-centre. The
+    // off state sits on surface-highest: against a card that is already
+    // surface-overlay, an off switch in that same colour vanished.
+    <button onClick={onClick} aria-pressed={on} className="shrink-0 -m-2 p-2">
+      <span className={`relative block w-[46px] h-[26px] rounded-full transition-colors ${on ? 'bg-accent' : 'bg-[var(--surface-highest)]'}`}>
+        <span className={`absolute inset-y-0 my-auto w-[20px] h-[20px] rounded-full bg-white transition-all ${on ? 'left-[23px]' : 'left-[3px]'}`} />
       </span>
     </button>
   )
-}
-
-interface AppSettings {
-  downloadPath: string
-  autoDownload: boolean
-  minimizeToTray: boolean
-  minimizeTo: 'taskbar' | 'tray'
-  startupView: string
-  discordRpcEnabled: boolean
-  offlineLibraryPath: string
-  miniPlayerHidesWindows: boolean
-  confirmCloseWhilePlaying: boolean
-  windowTitleNowPlaying: boolean
 }
 
 export default function Settings(): JSX.Element {
@@ -206,8 +295,6 @@ export default function Settings(): JSX.Element {
     sidebarPosition, setSidebarPosition,
     navOrder, setNavOrder,
     navVisibility, setNavItemVisible,
-    navControlOrder, setNavControlOrder,
-    navControlVisibility, setNavControlVisible,
     audioOutput, setAudioOutput,
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
@@ -215,7 +302,6 @@ export default function Settings(): JSX.Element {
     mediaOverlayEnabled, setMediaOverlayEnabled,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
-    hotkeyBindings, setHotkeyBinding, resetHotkeyBindings, hotkeySeekSeconds, setHotkeySeekSeconds,
     libraryFolders, addLibraryFolder, removeLibraryFolder, scanLibrary, libraryScanning, libraryScanProgress, libraryTracks, libraryLastScanned,
     libraryAutoRefresh, setLibraryAutoRefresh,
     developerMode, setDeveloperMode,
@@ -227,20 +313,12 @@ export default function Settings(): JSX.Element {
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'setNavControlOrder', 'navControlVisibility', 'setNavControlVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'hotkeyBindings', 'setHotkeyBinding', 'resetHotkeyBindings', 'hotkeySeekSeconds', 'setHotkeySeekSeconds', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
-  // Drag-to-reorder state for the "Menu order" list — indices into the visible
-  // nav list (see shownNav below). null = nothing being dragged / hovered.
-  const [navDragIdx, setNavDragIdx] = useState<number | null>(null)
-  const [navOverIdx, setNavOverIdx] = useState<number | null>(null)
-  // Same, for the separate "Menu controls" list below.
-  const [ctrlDragIdx, setCtrlDragIdx] = useState<number | null>(null)
-  const [ctrlOverIdx, setCtrlOverIdx] = useState<number | null>(null)
   const [sleepMinutes, setSleepMinutes] = useState(30)
   const accentDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const overlayRef = useRef<HTMLDivElement>(null)
   // Custom skins — which one the editor modal is open on (null = closed), the
   // hidden file input for Import, and a transient "that file wasn't a skin"
   // message shown under the section.
@@ -298,33 +376,13 @@ export default function Settings(): JSX.Element {
     setNavOrder(next)
   }
 
-  // ── Menu controls — the foot-of-menu buttons (Profile, Log out, Diagnostics,
-  // Download, Settings). Same reorder/hide model, filtered to the controls
-  // that actually apply to this session (account state, platform, dev mode).
-  const controlCtx = { account: !!account, developerMode }
-  const ctrlRows = orderedNavControls(navControlOrder).filter((c) => isNavControlAvailable(c.id, controlCtx))
-  const ctrlOrderIsDefault = navControlOrder.length === DEFAULT_NAV_CONTROL_ORDER.length && navControlOrder.every((v, i) => v === DEFAULT_NAV_CONTROL_ORDER[i])
-  const ctrlVisIsDefault = ctrlRows.every((c) => (navControlVisibility[c.id] ?? true) === (DEFAULT_NAV_CONTROL_VISIBILITY[c.id] ?? true))
-  const ctrlIsDefault = ctrlOrderIsDefault && ctrlVisIsDefault
-  const resetControls = (): void => {
-    setNavControlOrder(DEFAULT_NAV_CONTROL_ORDER)
-    for (const c of ctrlRows) {
-      const def = DEFAULT_NAV_CONTROL_VISIBILITY[c.id] ?? true
-      if ((navControlVisibility[c.id] ?? true) !== def) setNavControlVisible(c.id, def)
-    }
-  }
-  const moveNavControl = (fromRow: number, toRow: number): void => {
-    if (fromRow === toRow) return
-    const full = orderedNavControls(navControlOrder).map((c) => c.id as string)
-    const dragId = ctrlRows[fromRow].id
-    const targetId = ctrlRows[toRow].id
-    const from = full.indexOf(dragId)
-    const next = [...full]
-    next.splice(from, 1)
-    const targetIdx = next.indexOf(targetId)
-    next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragId)
-    setNavControlOrder(next)
-  }
+  // The foot-of-menu controls (Profile, Log out, Diagnostics, Download) had a
+  // reorder/hide list here too. They belong to the desktop side menu; the phone
+  // bar has no equivalent row — Settings is pinned there and the profile entry
+  // is role-gated by the card below — so the list configured nothing you could
+  // see. It's gone, along with its drag handlers; the store keys it wrote
+  // (navControlOrder / navControlVisibility) are untouched and still drive the
+  // desktop build off their defaults.
 
   const closeSettings = (): void => setShowSettings(false)
   const openMainView = (view: ViewType): void => { setShowSettings(false); setActiveView(view) }
@@ -380,62 +438,28 @@ export default function Settings(): JSX.Element {
     setLastfmUser(null)
   }
 
-  // Which shortcut row is currently "listening" for a key combo (null = none).
-  const [recordingId, setRecordingId] = useState<string | null>(null)
-  // While recording, the next keypress becomes the binding. Capture phase +
-  // stopPropagation so the key doesn't also fire the live hotkey (Player's
-  // listener is on document, bubble phase) or type into anything.
-  useEffect(() => {
-    if (!recordingId) return
-    const onKey = (e: KeyboardEvent): void => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (e.key === 'Escape') { setRecordingId(null); return }
-      const bare = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey
-      // Bare Backspace/Delete clears the binding; modified, they can still bind.
-      if (bare && (e.key === 'Backspace' || e.key === 'Delete')) {
-        setHotkeyBinding(recordingId, '')
-        setRecordingId(null)
-        return
-      }
-      const combo = eventToCombo(e)
-      if (!combo) return // modifier held on its own — keep waiting for a real key
-      setHotkeyBinding(recordingId, combo)
-      setRecordingId(null)
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [recordingId, setHotkeyBinding])
+  // The Shortcuts section — a key-combo recorder over every hotkey action —
+  // is gone: there's no keyboard here to record from, and the recorder listened
+  // on `window` for a keydown that a touch device never sends. The bindings
+  // themselves are untouched in the store, so a paired Bluetooth keyboard still
+  // works off the defaults; only the editor for them is desktop-side now.
 
   const [tab, setTab] = useState<Tab>((settingsTab as Tab) ?? 'appearance')
 
-  // Below md the panel stops being a dialog and becomes a full-screen page with
-  // a two-level drill-down (category list → section), the platform-native
-  // settings idiom — the old horizontal pill scroller crammed 8 categories into
-  // one row and left the content in a boxed card floating over a backdrop.
-  // `mobileDetail` = a section is open; false = showing the category list.
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
-  const [mobileDetail, setMobileDetail] = useState(!!settingsTab)
-  useEffect(() => {
-    const check = (): void => setIsMobile(window.innerWidth < 768)
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
-  }, [])
+  // Settings is a two-level page: a category list that drills into one section
+  // at a time. `inSection` = a section is open.
+  const [inSection, setInSection] = useState(!!settingsTab)
 
-  // Which mobile picker sheet is open (see PickerRow) — null when none.
+  // Which picker sheet is open (see PickerRow) — null when none.
   const [pickerOpen, setPickerOpen] = useState<'skin' | 'appFont' | 'lyricsFont' | null>(null)
   useBackToClose(() => setPickerOpen(null), pickerOpen !== null)
 
-  // `sub` shows under the label in the mobile category list; `color` is the
-  // badge tint, matching the iOS-Settings idiom the Row primitive already uses.
+  // `sub` shows under the label in the category list; `color` is the badge
+  // tint, matching the iOS-Settings idiom the Row primitive already uses.
   const tabs: { id: Tab; label: string; icon: ElementType; color: string; sub: string }[] = [
     { id: 'account', label: 'Account', icon: User, color: '#1d4ed8', sub: account ? (account.display_name || account.discord_username) : 'Not signed in' },
     { id: 'appearance', label: 'Appearance', icon: Palette, color: '#7c3aed', sub: 'Skin, accent, fonts, layout' },
     { id: 'playback', label: 'Playback', icon: Volume2, color: '#2563eb', sub: 'Output, crossfade, lyrics' },
-    // Touch devices have no keyboard to bind, so the whole section is dropped
-    // there (the bindings themselves stay live — a paired Bluetooth keyboard
-    // still works off the defaults).
-    ...(isMobile ? [] : [{ id: 'shortcuts' as Tab, label: 'Shortcuts', icon: Keyboard, color: '#4b5563', sub: 'Keyboard bindings' }]),
     // Only when the native plugin is there to back it — on the plain web build
     // there's no way to reach the device's files at all.
     ...(localLibraryAvailable() ? [{ id: 'library' as Tab, label: 'Library', icon: FolderOpen, color: '#ea580c', sub: 'Folders, files and scanning' }] : []),
@@ -445,30 +469,27 @@ export default function Settings(): JSX.Element {
 
   const openSection = (id: Tab): void => {
     setTab(id)
-    setMobileDetail(true)
+    setInSection(true)
   }
 
   // Android back inside a section returns to the category list; only once
   // we're on the list does back fall through to closing Settings entirely.
   useEffect(() => {
-    if (!isMobile || !mobileDetail) return
-    return registerBackHandler(() => { setMobileDetail(false); return true })
-  }, [isMobile, mobileDetail])
+    if (!inSection) return
+    return registerBackHandler(() => { setInSection(false); return true })
+  }, [inSection])
 
-  // Shrinking a desktop window past the breakpoint (or a deep link) can leave
-  // `tab` pointing at a category that no longer exists on mobile.
-  useEffect(() => {
-    if (isMobile && tab === 'shortcuts') setTab('appearance')
-  }, [isMobile, tab])
-
-  // A deep-linked open (app menu → "Keyboard shortcuts"/"Version") sets
-  // settingsTab; jump to it, then clear so a later plain open lands wherever
-  // the user last was rather than snapping back here. On mobile this must land
-  // in the section itself, not the category list.
+  // A deep-linked open (app menu → "Version", say) sets settingsTab; jump to
+  // it, then clear so a later plain open lands wherever the user last was
+  // rather than snapping back here. It must land in the section itself, not on
+  // the category list. The store's SettingsTab union is the desktop one and
+  // still carries categories this page doesn't have (shortcuts, app,
+  // developer), so an unknown target falls back to the list rather than
+  // rendering a blank pane.
   useEffect(() => {
     if (!settingsTab) return
-    setTab(settingsTab as Tab)
-    setMobileDetail(true)
+    const known = SECTION_IDS.includes(settingsTab as Tab)
+    if (known) { setTab(settingsTab as Tab); setInSection(true) }
     setSettingsTab(null)
   }, [settingsTab, setSettingsTab])
 
@@ -484,15 +505,16 @@ export default function Settings(): JSX.Element {
   }
 
   // ── Appearance pickers ───────────────────────────────────────────────────
-  // Shared between the always-visible desktop grid and the mobile picker
-  // sheet (see PickerRow) — same JSX either way, just placed in whichever
-  // slot is showing for the current width.
+  // Each of these is the body of a picker sheet, summarised inline by a
+  // PickerRow. The current value drives that row's preview.
   const currentSkin = getSkin(theme)
   const currentAppFont = FONTS.find((f) => f.id === appFont) ?? FONTS[0]
   const currentLyricsFont = FONTS.find((f) => f.id === lyricsFont) ?? FONTS[0]
 
+  // Two across: the sheet is the full screen width, and a 4-across grid put
+  // four ~80px mocks in a row where nothing in them was legible.
   const skinGrid = (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 gap-2.5">
       {[...SKINS, ...customSkins].map((skin) => {
         const active = theme === skin.id
         return (
@@ -510,7 +532,7 @@ export default function Settings(): JSX.Element {
                   player bar with the skin's accent — a live swatch of
                   the actual palette values, not approximations. */}
               <div
-                className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
+                className="h-16 rounded-xl overflow-hidden flex border transition-transform group-active:scale-[0.97]"
                 style={{
                   background: skin.vars['--surface'],
                   borderColor: active ? 'var(--accent)' : 'var(--border)',
@@ -536,63 +558,35 @@ export default function Settings(): JSX.Element {
                   </div>
                 </div>
               </div>
-              <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
+              <p className={`mt-1.5 text-xs font-medium text-center truncate ${active ? 'text-accent' : 'text-text-muted'}`}>
                 {skin.name}
               </p>
             </button>
-            {/* Custom skins get an edit button (sibling, not nested,
-                to keep the markup button-in-button free). */}
+            {/* Custom skins get an edit button (sibling, not nested, to keep
+                the markup button-in-button free). It used to be a hover
+                reveal, with double-click as the alternative — neither exists
+                on touch, so it stays visible. */}
             {skin.custom && (
-              // Was opacity-0 group-hover:opacity-100 with no
-              // touch fallback — the double-click alternative
-              // (see onDoubleClick above) doesn't translate to
-              // touch either, so this was the only real way in.
               <button
                 onClick={(e) => { e.stopPropagation(); setEditingSkinId(skin.id) }}
-                className="absolute top-1 right-1 rounded-md bg-black/45 text-white opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 hover:bg-black/65 transition-opacity w-7 h-7 md:w-auto md:h-auto flex items-center justify-center md:p-1"
+                className="absolute top-1.5 right-1.5 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center active:bg-black/70 transition-colors"
                 aria-label={`Edit ${skin.name}`}
               >
-                <Pencil size={13} className="md:w-[11px] md:h-[11px]" />
+                <Pencil size={14} />
               </button>
             )}
           </div>
         )
       })}
       {/* Create-a-skin tile */}
-      <button onClick={createSkin} className="group text-left" title="Create a new skin">
-        <div className="h-14 rounded-lg border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-0.5 text-text-muted group-hover:text-accent group-hover:border-accent transition-colors">
-          <Plus size={16} />
+      <button onClick={createSkin} className="text-left active:opacity-70" title="Create a new skin">
+        <div className="h-16 rounded-xl border border-dashed border-[var(--border)] flex items-center justify-center text-text-muted">
+          <Plus size={18} />
         </div>
-        <p className="mt-1 text-[11px] font-medium text-center text-text-muted group-hover:text-text-primary transition-colors">
+        <p className="mt-1.5 text-xs font-medium text-center text-text-muted">
           Create
         </p>
       </button>
-    </div>
-  )
-
-  // Desktop keeps the box-grid look (4-across, "Ag" over the name); the
-  // mobile sheet uses a denser single-row-per-font list instead — see
-  // PickerRow above for why.
-  const fontBoxGrid = (value: string, onSelect: (id: string) => void): ReactNode => (
-    <div className="grid grid-cols-4 gap-2">
-      {FONTS.map((font) => {
-        const active = value === font.id
-        return (
-          <button
-            key={font.id}
-            onClick={() => onSelect(font.id)}
-            title={font.name}
-            className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
-              active ? 'bg-accent/15 border-[var(--accent)]' : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
-            }`}
-          >
-            <span className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`} style={{ fontFamily: font.stack }}>
-              Ag
-            </span>
-            <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>{font.name}</span>
-          </button>
-        )
-      })}
     </div>
   )
 
@@ -620,23 +614,18 @@ export default function Settings(): JSX.Element {
     </div>
   )
 
+  const activeTab = tabs.find((t) => t.id === tab)
+
   return (
-    <div
-      ref={overlayRef}
-      className={`fixed z-50 flex items-center justify-center ${isMobile ? 'inset-x-0' : 'inset-0'} ${isMobile ? '' : 'bg-black/60 backdrop-blur-sm'}`}
-      // The mobile page fills the viewport minus the bottom-nav strip (see
-      // BottomNav's --bottom-nav-height, or the top strip when the nav is
-      // pinned to the top instead) — it used to cover the whole screen and
-      // hide the nav bar entirely while Settings was open. Click-outside-to-
-      // close only exists where there IS an outside; the mobile page's
-      // header X/back is the only exit either way.
-      style={isMobile
-        ? (sidebarPosition === 'top'
-          ? { top: 'var(--bottom-nav-height, 0px)', bottom: 0 }
-          : { top: 0, bottom: 'var(--bottom-nav-height, 0px)' })
-        : undefined}
-      onClick={(e) => { if (!isMobile && e.target === overlayRef.current) closeSettings() }}
-    >
+    // A page, not a dialog. This used to be a fixed overlay covering the whole
+    // viewport, which meant the player bar disappeared the moment you opened
+    // Settings — you couldn't see or control what was playing while changing
+    // playback settings, which is exactly when you'd want to. It now renders
+    // inside the app's content area like every other tab, so the player and the
+    // nav bar stay put, the status-bar inset is already handled upstream, and
+    // there's no z-index, no backdrop, and no close button to get out with:
+    // you leave by tapping another tab.
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Custom-skin editor (portals to <body>, so placement here is fine) */}
       {editingSkinId && (
         <SkinEditorModal
@@ -645,53 +634,41 @@ export default function Settings(): JSX.Element {
           onEditSkin={setEditingSkinId}
         />
       )}
-      <div className={`bg-surface flex flex-col overflow-hidden ${isMobile
-        ? 'w-full h-full'
-        : 'border border-[var(--border)] rounded-3xl shadow-2xl w-full max-w-[760px] mx-3 h-[600px] max-h-[85vh]'}`}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)] shrink-0 select-none"
-          style={{
-            // Clear the status bar / notch — the mobile page runs edge to edge.
-            ...(isMobile ? { paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))' } : {}),
-          }}
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            {isMobile && mobileDetail && (
-              <button
-                onClick={() => setMobileDetail(false)}
-                aria-label="Back"
-                className="-ml-2 p-2 text-text-secondary hover:text-text-primary transition-colors"
-              >
-                <ArrowLeft size={20} />
-              </button>
-            )}
-            <h2 className="text-text-primary font-black text-xl tracking-tight truncate">
-              {isMobile && mobileDetail ? (tabs.find((t) => t.id === tab)?.label ?? 'Settings') : 'Settings'}
-            </h2>
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={closeSettings} className="text-text-muted hover:text-text-primary transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-        </div>
 
-        {/* Mobile root — the category list. Tapping a row drills into that
-            section (the header grows a back arrow), so each pane gets the whole
-            screen instead of sharing it with a pill scroller. */}
-        {isMobile && !mobileDetail && (
-          <div
-            className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4"
-            style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+      {/* App bar — same shape as the other tabs', and no background of its own
+          so the shell's (optionally accent-gradient) backdrop runs unbroken. */}
+      <div className="shrink-0 flex items-center gap-1 px-2">
+        {inSection && (
+          <button
+            onClick={() => setInSection(false)}
+            aria-label="Back"
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
           >
+            <ArrowLeft size={20} />
+          </button>
+        )}
+        <div className={`flex-1 min-w-0 ${inSection ? 'px-0.5' : 'pl-2.5'}`}>
+          <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">
+            {inSection ? (activeTab?.label ?? 'Settings') : 'Settings'}
+          </h1>
+          <p className="text-text-muted text-xs truncate">
+            {inSection ? (activeTab?.sub ?? '') : `unreleased v${APP_VERSION}`}
+          </p>
+        </div>
+      </div>
+
+        {/* Root — the category list. Tapping a row drills into that section
+            (the header grows a back arrow), so each pane gets the whole screen
+            instead of sharing it with a pill scroller. */}
+        {!inSection && (
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-3 pb-6 space-y-4">
             {/* Account gets a profile header rather than a list row — the
                 platform idiom (iOS's Apple ID card, Android's account chip),
                 and it makes signing in discoverable instead of buried as one
                 more identical row. It's pulled out of the list below. */}
             <button
               onClick={() => openSection('account')}
-              className="w-full flex items-center gap-3.5 p-3.5 rounded-2xl bg-[var(--surface-overlay)] border border-[var(--border)] text-left active:bg-[var(--surface-raised)] transition-colors"
+              className="w-full flex items-center gap-3.5 p-3.5 rounded-2xl bg-[var(--surface-overlay)] text-left active:bg-[var(--surface-raised)] transition-colors"
             >
               {account?.discord_avatar
                 ? <img src={account.discord_avatar} alt="" className="w-12 h-12 rounded-full object-cover shrink-0" />
@@ -715,7 +692,7 @@ export default function Settings(): JSX.Element {
 
             {/* The rest as one inset grouped card, so the section reads as a
                 single surface instead of rows floating on the page. */}
-            <div className="rounded-2xl border border-[var(--border)] overflow-hidden">
+            <div className="rounded-2xl overflow-hidden">
               {tabs.filter((t) => t.id !== 'account').map((t) => (
                 <button
                   key={t.id}
@@ -734,70 +711,40 @@ export default function Settings(): JSX.Element {
               ))}
             </div>
 
-            <p className="text-text-muted text-[11px] text-center pt-1">unreleased v{APP_VERSION}</p>
           </div>
         )}
 
-        {/* Body — sidebar category list + flat content pane, mirroring
-            macOS System Settings / Apple Music's own preferences window. On
-            mobile the sidebar is gone and this is the drilled-into section. */}
-        <div className={`flex flex-1 min-h-0 ${isMobile && !mobileDetail ? 'hidden' : ''}`}>
-          <div className="w-[180px] shrink-0 border-r border-[var(--border)] py-3 px-2 overflow-y-auto hidden md:block">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors mb-0.5 ${
-                  tab === t.id ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                }`}
-              >
-                <t.icon size={15} className="shrink-0" />
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div
-            className="flex-1 min-w-0 overflow-y-auto px-4 py-4 md:px-6 md:py-5"
-            style={isMobile ? { paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' } : undefined}
-          >
+        {/* The drilled-into section — one category owns the whole screen. */}
+        {inSection && (
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-3 pb-6">
 
             {/* ── Account ── */}
             {tab === 'account' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Account</h3>
                 {account ? (
                   <>
-                    <SettingsCard>
-                    <div className="flex items-center gap-3 py-3 border-b border-[var(--border)] last:border-b-0">
+                    {/* Identity as a centred header rather than a list row —
+                        the platform idiom, and there's nothing to compare it
+                        against on a screen it has to itself. */}
+                    <div className="flex flex-col items-center text-center pt-2 pb-6">
                       {account.discord_avatar
-                        ? <img src={account.discord_avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0" />
-                        : <div className="w-11 h-11 rounded-full bg-accent/20 text-accent flex items-center justify-center text-base font-semibold shrink-0">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-text-primary text-sm font-semibold truncate">{account.display_name || account.discord_username}</p>
-                        <p className="text-text-muted text-xs truncate">Signed in with Discord</p>
-                      </div>
-                      <button
-                        onClick={() => logoutAccount()}
-                        className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-red-400 transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-red-500/10 border border-[var(--border)] shrink-0"
-                      >
-                        <LogOut size={13} />
-                        Log out
-                      </button>
+                        ? <img src={account.discord_avatar} alt="" className="w-20 h-20 rounded-full object-cover" />
+                        : <div className="w-20 h-20 rounded-full bg-accent/20 text-accent flex items-center justify-center text-2xl font-semibold">{(account.display_name || account.discord_username || '?').charAt(0).toUpperCase()}</div>}
+                      <p className="mt-3 text-text-primary text-lg font-semibold truncate max-w-full">{account.display_name || account.discord_username}</p>
+                      <p className="text-text-muted text-xs">Signed in with Discord</p>
                     </div>
-                    </SettingsCard>
 
-                    <div className="mt-2 rounded-xl border border-[var(--border)] overflow-hidden">
-                      <button
-                        onClick={() => setShowToken(v => !v)}
-                        className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] text-text-secondary text-sm font-medium transition-colors"
+                    <SettingsCard title="Auth token">
+                      <Row
+                        icon={KeyRound}
+                        iconColor="#0f766e"
+                        label="Show token"
+                        sub="Paste it on a device where Discord sign-in can't complete — like this app, where the redirect can't come back in-app"
                       >
-                        <KeyRound size={15} />
-                        <span className="flex-1 text-left">Auth Token</span>
-                        {showToken ? <EyeOff size={14} className="text-text-muted" /> : <Eye size={14} className="text-text-muted" />}
-                      </button>
+                        <Toggle on={showToken} onClick={() => setShowToken(v => !v)} />
+                      </Row>
                       {showToken && (
-                        <>
+                        <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                           <button
                             onClick={() => {
                               const t = getToken()
@@ -807,87 +754,91 @@ export default function Settings(): JSX.Element {
                                 setTimeout(() => setTokenCopied(false), 2000)
                               }
                             }}
-                            className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface)] hover:bg-[var(--surface-raised)] transition-colors border-t border-[var(--border)] group"
-                            title="Click to copy"
+                            className="w-full flex items-center gap-2 p-3 rounded-xl bg-[var(--surface-highest)] active:bg-[var(--surface-raised)] transition-colors"
                           >
-                            <code className="flex-1 text-left text-[10px] font-mono text-text-muted truncate">
-                              {getToken() ?? '&#8212;'}
+                            <code className="flex-1 min-w-0 text-left text-[11px] font-mono text-text-muted truncate">
+                              {getToken() ?? '—'}
                             </code>
-                            <span className={`flex-shrink-0 flex items-center gap-1 text-[10px] font-medium transition-colors ${tokenCopied ? 'text-emerald-500' : 'text-text-muted group-hover:text-text-primary'}`}>
-                              {tokenCopied ? 'Copied!' : <><Copy size={11} /> Copy</>}
+                            <span className={`shrink-0 flex items-center gap-1 text-xs font-medium ${tokenCopied ? 'text-emerald-500' : 'text-text-secondary'}`}>
+                              {tokenCopied ? 'Copied' : <><Copy size={13} /> Copy</>}
                             </span>
                           </button>
-                          <p className="px-3 py-2 text-[10px] text-text-muted leading-relaxed border-t border-[var(--border)]">
-                            Copy this on a device where sign-in works, then paste it under Account on a device where it doesn't (e.g. the Android app, where Discord's redirect can't complete in-app).
-                          </p>
-                        </>
+                        </div>
                       )}
-                    </div>
+                    </SettingsCard>
+
+                    <SettingsCard>
+                      <button
+                        onClick={() => logoutAccount()}
+                        className="w-full flex items-center justify-center gap-2 py-3 min-h-[52px] text-red-400 text-[15px] font-medium active:opacity-70"
+                      >
+                        <LogOut size={16} />
+                        Log out
+                      </button>
+                    </SettingsCard>
                   </>
                 ) : (
                   <>
-                    <p className="text-text-muted text-sm mb-4 leading-relaxed max-w-md">
-                      Log in with Discord to save favorite tracks and playlists that follow you on every device.
-                    </p>
+                    <div className="flex flex-col items-center text-center pt-2 pb-5">
+                      <div className="w-20 h-20 rounded-full bg-[var(--surface-overlay)] text-text-muted flex items-center justify-center">
+                        <User size={34} />
+                      </div>
+                      <p className="mt-3 text-text-primary text-lg font-semibold">Not signed in</p>
+                      <p className="text-text-muted text-xs leading-relaxed mt-1 max-w-[280px]">
+                        Log in with Discord to save favorite tracks and playlists that follow you on every device.
+                      </p>
+                    </div>
+
                     <button
                       onClick={() => setShowUserAuth(true)}
-                      className="w-full py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 mb-4"
+                      className="w-full h-12 rounded-xl bg-[#5865F2] text-white text-[15px] font-semibold flex items-center justify-center gap-2 active:opacity-80 transition-opacity mb-4"
                     >
-                      <LogIn size={16} />
+                      <LogIn size={17} />
                       Continue with Discord
                     </button>
 
-                    <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-                      <button
-                        onClick={() => setTokenPasteOpen(v => !v)}
-                        className="flex items-center gap-2 w-full px-3 py-2.5 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] text-text-secondary text-sm font-medium transition-colors"
+                    <SettingsCard title="Trouble signing in?">
+                      <Row
+                        icon={KeyRound}
+                        iconColor="#0f766e"
+                        label="Paste a token instead"
+                        sub="Sign in on the web player, copy your token from Settings → Account there, and paste it here"
                       >
-                        <KeyRound size={15} />
-                        <span className="flex-1 text-left">Paste a token instead</span>
-                        {tokenPasteOpen ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
-                      </button>
+                        <Toggle on={tokenPasteOpen} onClick={() => setTokenPasteOpen(v => !v)} />
+                      </Row>
                       {tokenPasteOpen && (
-                        <div className="px-3 py-3 border-t border-[var(--border)] space-y-2">
-                          <p className="text-text-muted text-[11px] leading-relaxed">
-                            If Discord sign-in doesn't work here (e.g. the Android app), sign in on another device or the web player, copy your token from Settings &rarr; Account there, and paste it below.
-                          </p>
-                          <div className="flex gap-1.5">
-                            <input
-                              value={tokenPasteValue}
-                              onChange={(e) => { setTokenPasteValue(e.target.value); setTokenPasteError(null) }}
-                              onKeyDown={(e) => e.key === 'Enter' && !tokenPasteSubmitting && tokenPasteValue.trim() && (async () => {
-                                setTokenPasteSubmitting(true)
-                                setTokenPasteError(null)
-                                try { await loginWithToken(tokenPasteValue); setTokenPasteValue(''); setTokenPasteOpen(false) }
-                                catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
-                                finally { setTokenPasteSubmitting(false) }
-                              })()}
-                              placeholder="Paste token"
-                              className="flex-1 min-w-0 bg-surface-overlay border border-[var(--border)] rounded-lg px-2.5 py-2.5 md:py-1.5 text-xs font-mono text-text-primary focus:outline-none"
-                            />
-                            <button
-                              disabled={tokenPasteSubmitting || !tokenPasteValue.trim()}
-                              onClick={async () => {
-                                setTokenPasteSubmitting(true)
-                                setTokenPasteError(null)
-                                try { await loginWithToken(tokenPasteValue); setTokenPasteValue(''); setTokenPasteOpen(false) }
-                                catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
-                                finally { setTokenPasteSubmitting(false) }
-                              }}
-                              className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50 shrink-0"
-                            >
-                              {tokenPasteSubmitting ? <Loader2 size={13} className="animate-spin" /> : 'Log in'}
-                            </button>
-                          </div>
+                        <div className="py-3 border-b border-[var(--border)] last:border-b-0 space-y-2">
+                          <input
+                            value={tokenPasteValue}
+                            onChange={(e) => { setTokenPasteValue(e.target.value); setTokenPasteError(null) }}
+                            placeholder="Paste token"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            className="w-full bg-[var(--surface-highest)] rounded-xl px-3 h-11 text-[13px] font-mono text-text-primary placeholder:text-text-muted focus:outline-none"
+                          />
+                          <button
+                            disabled={tokenPasteSubmitting || !tokenPasteValue.trim()}
+                            onClick={async () => {
+                              setTokenPasteSubmitting(true)
+                              setTokenPasteError(null)
+                              try { await loginWithToken(tokenPasteValue); setTokenPasteValue(''); setTokenPasteOpen(false) }
+                              catch (err) { setTokenPasteError(err instanceof Error ? err.message : 'Could not verify that token.') }
+                              finally { setTokenPasteSubmitting(false) }
+                            }}
+                            className="w-full h-11 rounded-xl bg-accent text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:opacity-80 transition-opacity"
+                          >
+                            {tokenPasteSubmitting ? <Loader2 size={15} className="animate-spin" /> : 'Log in'}
+                          </button>
                           {tokenPasteError && (
-                            <div className="flex items-start gap-1.5 text-red-400 text-[11px]">
-                              <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                            <div className="flex items-start gap-1.5 text-red-400 text-xs">
+                              <AlertCircle size={13} className="shrink-0 mt-0.5" />
                               {tokenPasteError}
                             </div>
                           )}
                         </div>
                       )}
-                    </div>
+                    </SettingsCard>
                   </>
                 )}
               </div>
@@ -896,24 +847,21 @@ export default function Settings(): JSX.Element {
             {/* ── Appearance ── */}
             {tab === 'appearance' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Appearance</h3>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#4b5563' }}>
-                      <Brush size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-text-primary text-sm">Skin</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Skins with a signature color also set the accent — or build your own below</p>
-                    </div>
-                    <button
-                      onClick={() => skinImportRef.current?.click()}
-                      className="flex items-center gap-1.5 px-3 py-2.5 md:px-2.5 md:py-1.5 rounded-lg text-xs md:text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0"
-                      title="Import a skin file"
-                    >
-                      <Upload size={13} /> Import
-                    </button>
+                <SettingsCard title="Theme">
+                  <Block
+                    icon={Brush}
+                    iconColor="#4b5563"
+                    label="Skin"
+                    sub="Skins with a signature color also set the accent"
+                    action={
+                      <button
+                        onClick={() => skinImportRef.current?.click()}
+                        className="flex items-center gap-1.5 px-3 py-2 -my-1 rounded-lg text-xs font-medium text-text-secondary active:bg-[var(--surface-highest)] transition-colors shrink-0"
+                      >
+                        <Upload size={13} /> Import
+                      </button>
+                    }
+                  >
                     <input
                       ref={skinImportRef}
                       type="file"
@@ -925,11 +873,9 @@ export default function Settings(): JSX.Element {
                         e.target.value = ''
                       }}
                     />
-                  </div>
-                  {skinImportError && (
-                    <p className="text-red-400 text-[11px] mb-2 pl-0 md:pl-[34px]">{skinImportError}</p>
-                  )}
-                  {isMobile ? (
+                    {skinImportError && (
+                      <p className="text-red-400 text-xs mb-2">{skinImportError}</p>
+                    )}
                     <PickerRow
                       preview={
                         <div className="h-10 w-14 rounded-lg overflow-hidden flex border shrink-0" style={{ background: currentSkin.vars['--surface'], borderColor: 'var(--border)' }}>
@@ -944,297 +890,155 @@ export default function Settings(): JSX.Element {
                       sub="Tap to change"
                       onClick={() => setPickerOpen('skin')}
                     />
-                  ) : (
-                    <div className="pl-[34px]">{skinGrid}</div>
-                  )}
-                </div>
+                  </Block>
+                  <Block icon={Palette} iconColor="#ec4899" label="Accent color" sub="Highlights, the active tab, and the player's progress">
+                    {/* A fixed 5-across grid rather than a wrapping row: the
+                        swatches are 40px (a 28px circle is a mouse target, not
+                        a finger one), and eight presets plus the custom one
+                        wrap to an even 5 + 4. The active preset carries a check
+                        — at this size an outline ring around a saturated circle
+                        is easy to miss. */}
+                    <div className="grid grid-cols-5 gap-x-2 gap-y-3 justify-items-center">
+                      {ACCENT_PRESETS.map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => { setAccentColor(c); setCustomAccent(c) }}
+                          className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+                          style={{ backgroundColor: c }}
+                          aria-label={`Accent color ${c}`}
+                          aria-pressed={accentColor === c}
+                        >
+                          {accentColor === c && <Check size={18} className="text-white" strokeWidth={3} />}
+                        </button>
+                      ))}
+                      {/* The custom swatch is the color input itself — you
+                          can't put a check inside one, so this is the one that
+                          shows selection as a ring. `color-dot` strips the
+                          native bordered square Chrome draws inside the
+                          control, which is what made this tile the odd one out
+                          in a row of circles. */}
+                      <span className="relative w-10 h-10 shrink-0">
+                        <input
+                          type="color"
+                          value={customAccent}
+                          onChange={(e) => {
+                            setCustomAccent(e.target.value)
+                            if (accentDebounceRef.current) clearTimeout(accentDebounceRef.current)
+                            accentDebounceRef.current = setTimeout(() => setAccentColor(e.target.value), 80)
+                          }}
+                          className="color-dot absolute inset-0 w-10 h-10 rounded-full"
+                          style={{ outline: accentColor === customAccent && !ACCENT_PRESETS.includes(accentColor) ? '2px solid var(--text-primary)' : 'none', outlineOffset: '2px' }}
+                          aria-label="Custom accent color"
+                        />
+                        {/* Otherwise this is just a ninth coloured circle with
+                            no hint that it opens a picker — and it starts out
+                            holding the current accent, so it can be an exact
+                            duplicate of the swatch beside it. */}
+                        <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-[var(--surface-overlay)] flex items-center justify-center">
+                          <Plus size={11} className="text-text-secondary" strokeWidth={3} />
+                        </span>
+                      </span>
+                    </div>
+                  </Block>
+                  <Row
+                    icon={Waves}
+                    iconColor="#8b5cf6"
+                    label="Gradient surfaces"
+                    sub="Accent-tinted gradients behind the app, nav, and player"
+                  >
+                    <Toggle on={gradientsEnabled} onClick={() => setGradientsEnabled(!gradientsEnabled)} />
+                  </Row>
                 </SettingsCard>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ec4899' }}>
-                      <Palette size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <span className="text-text-primary text-sm">Accent color</span>
-                  </div>
-                  {/* 36px swatches below md — a 28px circle is a mouse target,
-                      not a finger one, and these sit in a tightly packed row. */}
-                  <div className="flex items-center gap-2.5 md:gap-2 flex-wrap pl-0 md:pl-[34px]">
-                    {ACCENT_PRESETS.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => { setAccentColor(c); setCustomAccent(c) }}
-                        className="w-9 h-9 md:w-7 md:h-7 rounded-full transition-transform hover:scale-110"
-                        style={{ backgroundColor: c, outline: accentColor === c ? `2px solid ${c}` : 'none', outlineOffset: '2px' }}
-                        aria-label={`Accent color ${c}`}
-                      />
-                    ))}
-                    <input
-                      type="color"
-                      value={customAccent}
-                      onChange={(e) => {
-                        setCustomAccent(e.target.value)
-                        if (accentDebounceRef.current) clearTimeout(accentDebounceRef.current)
-                        accentDebounceRef.current = setTimeout(() => setAccentColor(e.target.value), 80)
-                      }}
-                      className="w-9 h-9 md:w-7 md:h-7 rounded-full cursor-pointer border-0 p-0 bg-transparent"
-                      title="Custom color"
-                      aria-label="Custom accent color"
-                    />
-                  </div>
-                </div>
-                <Row
-                  icon={Waves}
-                  iconColor="#8b5cf6"
-                  label="Gradient surfaces"
-                  sub="Accent-tinted gradients behind the app, sidebar, and player"
-                >
-                  <Toggle on={gradientsEnabled} onClick={() => setGradientsEnabled(!gradientsEnabled)} />
-                </Row>
-                </SettingsCard>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#7c3aed' }}>
-                      <Type size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">App font</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Typeface for the whole app — each option previews in its own font</p>
-                    </div>
-                  </div>
-                  {isMobile ? (
+
+                <SettingsCard title="Text">
+                  <Block icon={Type} iconColor="#7c3aed" label="App font" sub="Typeface for the whole app">
                     <PickerRow
                       preview={<span className="text-lg w-9 text-center shrink-0" style={{ fontFamily: currentAppFont.stack }}>Ag</span>}
                       title={currentAppFont.name}
                       sub="Tap to change"
                       onClick={() => setPickerOpen('appFont')}
                     />
-                  ) : (
-                    <div className="pl-[34px]">{fontBoxGrid(appFont, setAppFont)}</div>
-                  )}
-                </div>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#e11d48' }}>
-                      <Type size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">Lyrics font</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
-                    </div>
-                  </div>
-                  {isMobile ? (
+                  </Block>
+                  <Block icon={Type} iconColor="#ca8a04" label="App text size" sub="Scales text across the whole app">
+                    <Segmented value={appTextScale} options={APP_TEXT_SIZES.map(({ label, value }) => ({ value, label }))} onChange={setAppTextScale} />
+                  </Block>
+                </SettingsCard>
+
+                <SettingsCard title="Lyrics">
+                  <Block icon={Type} iconColor="#e11d48" label="Lyrics font" sub="Used only in the lyric panels, so lyrics can differ from the rest of the app">
                     <PickerRow
                       preview={<span className="text-lg w-9 text-center shrink-0" style={{ fontFamily: currentLyricsFont.stack }}>Ag</span>}
                       title={currentLyricsFont.name}
                       sub="Tap to change"
                       onClick={() => setPickerOpen('lyricsFont')}
                     />
-                  ) : (
-                    <div className="pl-[34px]">{fontBoxGrid(lyricsFont, setLyricsFont)}</div>
-                  )}
-                </div>
+                  </Block>
+                  <Block icon={FileText} iconColor="#db2777" label="Lyrics text size" sub="Synced and plain lyrics everywhere — WRLD tab, now playing, mini player">
+                    <Segmented value={lyricsScale} options={LYRIC_TEXT_SIZES.map(({ label, value }) => ({ value, label }))} onChange={setLyricsScale} />
+                  </Block>
+                  <Block icon={AlignCenter} iconColor="#0ea5e9" label="Lyrics alignment" sub="How lyric lines line up">
+                    <Segmented
+                      value={lyricsAlign}
+                      options={[
+                        { value: 'left' as const, label: 'Left', icon: AlignLeft },
+                        { value: 'center' as const, label: 'Center', icon: AlignCenter },
+                      ]}
+                      onChange={setLyricsAlign}
+                    />
+                  </Block>
+                  <Row
+                    icon={Eye}
+                    iconColor="#64748b"
+                    label="Blur upcoming lyrics"
+                    sub="Soften synced lines that haven't played yet"
+                  >
+                    <Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />
+                  </Row>
                 </SettingsCard>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ca8a04' }}>
-                      <Type size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">App text size</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Scales text across the whole app</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
-                    {APP_TEXT_SIZES.map(({ label, value }) => {
-                      const active = appTextScale === value
-                      return (
-                        <button
-                          key={value}
-                          onClick={() => setAppTextScale(value)}
-                          className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                            active
-                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
-                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#db2777' }}>
-                      <FileText size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">Lyrics text size</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Synced and plain lyrics everywhere — WRLD tab, now playing, mini player</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
-                    {LYRIC_TEXT_SIZES.map(({ label, value }) => {
-                      const active = lyricsScale === value
-                      return (
-                        <button
-                          key={value}
-                          onClick={() => setLyricsScale(value)}
-                          className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                            active
-                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
-                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0ea5e9' }}>
-                      <AlignCenter size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">Lyrics alignment</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">How lyric lines line up</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
-                    {([
-                      { id: 'left' as const, label: 'Left', icon: AlignLeft },
-                      { id: 'center' as const, label: 'Center', icon: AlignCenter },
-                    ]).map(({ id, label, icon: AlignIcon }) => {
-                      const active = lyricsAlign === id
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => setLyricsAlign(id)}
-                          className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                            active
-                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
-                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          <AlignIcon size={14} className="shrink-0" />
-                          {label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <Row
-                  icon={Eye}
-                  iconColor="#64748b"
-                  label="Blur upcoming lyrics"
-                  sub="Soften synced lines that haven't played yet"
-                >
-                  <Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />
-                </Row>
-                </SettingsCard>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#0d9488' }}>
-                      <PanelLeft size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-text-primary text-sm">Navigation position</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">
-                        {isMobile ? 'Which edge the nav tabs sit on' : 'Where the nav menu sits'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap pl-0 md:pl-[34px]">
-                    {/* A vertical rail doesn't fit a phone, so mobile only
-                        offers the two edges its tab bar can actually take. */}
-                    {NAV_POSITIONS.filter(({ id }) => !isMobile || id === 'top' || id === 'bottom').map(({ id, label, icon: PosIcon }) => {
+
+                <SettingsCard title="Navigation">
+                  <Block icon={PanelLeft} iconColor="#0d9488" label="Tab bar position" sub="Which edge the nav tabs sit on">
+                    <Segmented
                       // A left/right value saved on desktop renders as bottom
-                      // tabs here, so Bottom is what's really selected — without
-                      // this, mobile would show no option highlighted at all.
-                      const active = isMobile
-                        ? (id === 'top' ? sidebarPosition === 'top' : sidebarPosition !== 'top')
-                        : sidebarPosition === id
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => setSidebarPosition(id)}
-                          className={`flex items-center gap-1.5 px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                            active
-                              ? 'bg-accent/15 text-accent border-[var(--accent)]'
-                              : 'text-text-muted border-[var(--border)] hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          <PosIcon size={14} className="shrink-0" />
-                          {label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                </SettingsCard>
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#6366f1' }}>
-                      <ListOrdered size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-text-primary text-sm">Menu items</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">
-                        {isMobile
-                          ? 'Reorder with the arrows · tap the eye to show or hide a tab'
-                          : 'Drag to reorder · tap the eye to show or hide a tab'}
-                      </p>
-                    </div>
-                    {!navIsDefault && (
+                      // tabs here, so Bottom is what's really selected —
+                      // without this, neither option would look picked at all.
+                      value={sidebarPosition === 'top' ? 'top' : 'bottom'}
+                      options={NAV_POSITIONS.map(({ id, label, icon }) => ({ value: id, label, icon }))}
+                      onChange={setSidebarPosition}
+                    />
+                  </Block>
+                  <Block
+                    icon={ListOrdered}
+                    iconColor="#6366f1"
+                    label="Tabs"
+                    sub="Reorder with the arrows · tap the eye to show or hide"
+                    action={!navIsDefault ? (
                       <button
                         onClick={resetNav}
-                        title="Restore the default menu items and order"
-                        className="flex items-center gap-1 px-2 py-2 -mr-2 md:p-0 md:mr-0 text-xs md:text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
+                        className="flex items-center gap-1 px-2 py-2 -my-1 text-xs text-text-muted active:text-text-primary transition-colors shrink-0"
                       >
-                        <RotateCcw size={11} /> Reset
+                        <RotateCcw size={12} /> Reset
                       </button>
-                    )}
-                  </div>
-                  <div className="pl-0 md:pl-[34px] space-y-1.5">
-                    {navRows.map((item, idx) => {
-                      const shown = isNavItemVisible(item, navVisibility)
-                      return (
-                        <div
-                          key={item.view}
-                          // HTML5 drag events never fire for touch, so the grip
-                          // is swapped for arrow buttons on mobile rather than
-                          // leaving a handle that looks draggable and isn't.
-                          draggable={!isMobile}
-                          onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
-                          onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
-                          onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
-                          className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border transition-colors ${isMobile ? '' : 'cursor-grab active:cursor-grabbing'} ${
-                            navDragIdx === idx
-                              ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
-                              : navOverIdx === idx
-                                ? 'border-[var(--accent)] bg-accent/10'
-                                : 'border-[var(--border)] bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          {isMobile ? (
-                            // p-0.5 (an ~18px hit area) was too small for the
-                            // exact interaction this replaces drag with — w-9
-                            // h-9 (36px) per button is the largest that fits
-                            // stacked without the row ballooning in height.
-                            <div className="flex flex-col shrink-0 -my-1 -mr-1">
+                    ) : undefined}
+                  >
+                    {/* HTML5 drag events never fire for touch, so the drag
+                        handle this list used to carry is a pair of arrow
+                        buttons — 36px each, the largest that stack without the
+                        row growing taller than the icon beside them. */}
+                    <div className="rounded-xl bg-[var(--surface-highest)] overflow-hidden">
+                      {navRows.map((item, idx) => {
+                        const shown = isNavItemVisible(item, navVisibility)
+                        return (
+                          <div
+                            key={item.view}
+                            className="flex items-center gap-2 pl-1 pr-1 py-1 border-b border-[var(--border)] last:border-b-0"
+                          >
+                            <div className="flex flex-col shrink-0">
                               <button
                                 onClick={() => { if (idx > 0) moveNavItem(idx, idx - 1) }}
                                 disabled={idx === 0}
                                 aria-label={`Move ${item.label} up`}
-                                className="w-9 h-9 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                                className="w-9 h-6 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
                               >
                                 <ChevronUp size={16} />
                               </button>
@@ -1242,472 +1046,304 @@ export default function Settings(): JSX.Element {
                                 onClick={() => { if (idx < navRows.length - 1) moveNavItem(idx, idx + 1) }}
                                 disabled={idx === navRows.length - 1}
                                 aria-label={`Move ${item.label} down`}
-                                className="w-9 h-9 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
+                                className="w-9 h-6 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
                               >
                                 <ChevronDown size={16} />
                               </button>
                             </div>
-                          ) : (
-                            <GripVertical size={14} className="text-text-muted shrink-0" />
-                          )}
-                          <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
-                          <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
-                          <button
-                            onClick={() => setNavItemVisible(item.view, !shown)}
-                            title={shown ? 'Hide from menu' : 'Add to menu'}
-                            className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
-                          >
-                            {shown ? <Eye size={15} /> : <EyeOff size={15} />}
-                          </button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-                </SettingsCard>
-                {/* Editor/admin-only tabs on the mobile bottom bar (Albums, and
-                    the Editor/Admin profile tab). They aren't part of the
-                    NAV_ITEMS registry above (which drives the desktop side
-                    menu) — so they get their own toggle here, shown only to
-                    editors/admins. Reuses the shared navVisibility map. */}
-                {(account?.is_editor || account?.is_administrator) && (
-                  <SettingsCard>
-                  <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                    <div className="flex items-center gap-2.5 mb-2.5">
-                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#f59e0b' }}>
-                        <ShieldCheck size={13} className="text-white" strokeWidth={2.25} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-text-primary text-sm">Editor tabs (mobile)</span>
-                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">Show or hide the editor-only tabs in the mobile bottom bar</p>
-                      </div>
-                    </div>
-                    <div className="pl-0 md:pl-[34px] space-y-1.5">
-                      {([
-                        { view: 'albums-admin' as ViewType, label: 'Albums', icon: <Disc size={18} /> },
-                        { view: 'editor-profile' as ViewType, label: account?.is_administrator ? 'Admin' : 'Editor', icon: <ShieldCheck size={18} /> },
-                      ]).map((item) => {
-                        const shown = navVisibility[item.view] ?? true
-                        return (
-                          <div key={item.view} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-overlay)]">
-                            <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
-                            <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
+                            <span className={`w-6 h-6 shrink-0 flex items-center justify-center ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
+                            <span className={`flex-1 min-w-0 truncate text-sm ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
                             <button
                               onClick={() => setNavItemVisible(item.view, !shown)}
-                              title={shown ? 'Hide from menu' : 'Show in menu'}
-                              className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
+                              aria-label={shown ? `Hide ${item.label}` : `Show ${item.label}`}
+                              className="shrink-0 w-11 h-11 flex items-center justify-center rounded-lg text-text-muted active:bg-[var(--surface-overlay)] transition-colors"
                             >
-                              {shown ? <Eye size={15} /> : <EyeOff size={15} />}
+                              {shown ? <Eye size={16} /> : <EyeOff size={16} />}
                             </button>
                           </div>
                         )
                       })}
                     </div>
-                  </div>
-                  </SettingsCard>
-                )}
-                {/* Foot-of-menu controls belong to the desktop side menu; the
-                    mobile bar has no equivalent row (Settings is pinned there,
-                    profile is role-gated above), so hiding them on mobile keeps
-                    the list to switches that actually do something. */}
-                {ctrlRows.length > 0 && !isMobile && (
-                  <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                    <div className="flex items-center gap-2.5 mb-2.5">
-                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#8b5cf6' }}>
-                        <ListOrdered size={13} className="text-white" strokeWidth={2.25} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-text-primary text-sm">Menu controls</span>
-                        <p className="text-text-muted text-xs md:text-[11px] leading-snug">The buttons at the foot of the menu — reorder or hide them</p>
-                      </div>
-                      {!ctrlIsDefault && (
-                        <button
-                          onClick={resetControls}
-                          title="Restore the default controls and order"
-                          className="flex items-center gap-1 px-2 py-2 -mr-2 md:p-0 md:mr-0 text-xs md:text-[11px] text-text-muted hover:text-text-primary transition-colors shrink-0"
-                        >
-                          <RotateCcw size={11} /> Reset
-                        </button>
-                      )}
-                    </div>
-                    <div className="pl-0 md:pl-[34px] space-y-1.5">
-                      {ctrlRows.map((ctrl, idx) => {
-                        const shown = navControlVisibility[ctrl.id] ?? true
-                        return (
-                          <div
-                            key={ctrl.id}
-                            draggable
-                            onDragStart={(e) => { setCtrlDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
-                            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setCtrlOverIdx(idx) }}
-                            onDrop={(e) => { e.preventDefault(); if (ctrlDragIdx !== null) moveNavControl(ctrlDragIdx, idx); setCtrlDragIdx(null); setCtrlOverIdx(null) }}
-                            onDragEnd={() => { setCtrlDragIdx(null); setCtrlOverIdx(null) }}
-                            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-grab active:cursor-grabbing transition-colors ${
-                              ctrlDragIdx === idx
-                                ? 'opacity-50 border-[var(--accent)] bg-[var(--surface-overlay)]'
-                                : ctrlOverIdx === idx
-                                  ? 'border-[var(--accent)] bg-accent/10'
-                                  : 'border-[var(--border)] bg-[var(--surface-overlay)]'
-                            }`}
-                          >
-                            <GripVertical size={14} className="text-text-muted shrink-0" />
-                            <span className={`w-6 h-6 shrink-0 flex items-center justify-center transition-opacity ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{ctrl.icon}</span>
-                            <span className={`text-sm truncate transition-colors ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{ctrl.label}</span>
-                            <button
-                              onClick={() => setNavControlVisible(ctrl.id, !shown)}
-                              title={shown ? 'Hide from menu' : 'Show in menu'}
-                              className="ml-auto shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors"
-                            >
-                              {shown ? <Eye size={15} /> : <EyeOff size={15} />}
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
+                  </Block>
+                  {/* Albums and the Editor/Admin tab aren't in the NAV_ITEMS
+                      registry the list above is built from, so they get their
+                      own switches — shown only to the accounts that have them. */}
+                  {(account?.is_editor || account?.is_administrator) && ([
+                    { view: 'albums-admin' as ViewType, label: 'Albums', icon: Disc },
+                    { view: 'editor-profile' as ViewType, label: account?.is_administrator ? 'Admin' : 'Editor', icon: ShieldCheck },
+                  ]).map((item) => {
+                    const shown = navVisibility[item.view] ?? true
+                    return (
+                      <Row key={item.view} icon={item.icon} iconColor="#f59e0b" label={`${item.label} tab`} sub="Editor-only tab in the nav bar">
+                        <Toggle on={shown} onClick={() => setNavItemVisible(item.view, !shown)} />
+                      </Row>
+                    )
+                  })}
+                </SettingsCard>
               </div>
             )}
 
             {/* ── Playback ── */}
             {tab === 'playback' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-4">Playback</h3>
-                <SettingsCard>
-                {devices.length > 0 && (
-                  <Row icon={Volume2} iconColor="#2563eb" label="Audio output">
-                    <select
-                      value={audioOutput}
-                      onChange={(e) => setAudioOutput(e.target.value)}
-                      className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)] max-w-[180px] truncate"
-                    >
-                      <option value="">Default</option>
-                      {devices.map((d) => (
-                        <option key={d.deviceId} value={d.deviceId}>{d.label || `Device ${d.deviceId.slice(0, 6)}`}</option>
-                      ))}
-                    </select>
-                  </Row>
-                )}
-                {/* Playback speed moved to the player bar's Equalizer panel */}
-                <Row icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.1) * 10) / 10)}
-                      aria-label="Shift lyrics earlier"
-                      className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
-                    >
-                      <Minus size={13} />
-                    </button>
-                    <span className="text-text-muted text-xs tabular-nums w-12 text-center">
-                      {lyricsOffset > 0 ? '+' : ''}{lyricsOffset.toFixed(1)}s
-                    </span>
-                    <button
-                      onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.1) * 10) / 10)}
-                      aria-label="Shift lyrics later"
-                      className="w-9 h-9 md:w-7 md:h-7 flex items-center justify-center rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
-                    >
-                      <Plus size={13} />
-                    </button>
-                    {lyricsOffset !== 0 && (
-                      <button
-                        onClick={() => setLyricsOffset(0)}
-                        title="Reset to 0"
-                        className="text-text-muted hover:text-text-primary text-xs transition-colors"
+                <SettingsCard title="Audio">
+                  {devices.length > 0 && (
+                    <Row icon={Volume2} iconColor="#2563eb" label="Audio output">
+                      <select
+                        value={audioOutput}
+                        onChange={(e) => setAudioOutput(e.target.value)}
+                        className="bg-[var(--surface-highest)] text-text-primary text-sm rounded-lg px-3 h-10 border-0 max-w-[160px] truncate"
                       >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                </Row>
-                <Row
-                  icon={Zap}
-                  iconColor="#7c3aed"
-                  label="Crossfade"
-                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={crossfadeEnabled} onClick={() => setCrossfade(!crossfadeEnabled, crossfadeDuration)} /></div>}
-                >
+                        <option value="">Default</option>
+                        {devices.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>{d.label || `Device ${d.deviceId.slice(0, 6)}`}</option>
+                        ))}
+                      </select>
+                    </Row>
+                  )}
+                  {/* Playback speed lives in the player bar's Equalizer panel */}
+                  <Row icon={Zap} iconColor="#7c3aed" label="Crossfade" sub="Blend the end of a track into the next one">
+                    <Toggle on={crossfadeEnabled} onClick={() => setCrossfade(!crossfadeEnabled, crossfadeDuration)} />
+                  </Row>
                   {crossfadeEnabled && (
-                    <div className="flex items-center gap-2">
+                    // Indented to the label column (28px badge + 12px gap) so it
+                    // reads as part of the row above rather than a new setting.
+                    // The slider was 80px wide next to the label; on a phone that
+                    // is 12 steps across five-eighths of an inch.
+                    <div className="flex items-center gap-3 py-2 pl-10 border-b border-[var(--border)] last:border-b-0">
                       <input
                         type="range" min={1} max={12} step={1}
                         value={crossfadeDuration}
                         onChange={(e) => setCrossfade(true, parseInt(e.target.value))}
-                        className="w-20 accent-[var(--accent)]"
+                        aria-label="Crossfade length"
+                        className="flex-1 min-w-0 h-9 accent-[var(--accent)]"
                       />
-                      <span className="text-text-muted text-xs tabular-nums w-10 text-right">{crossfadeDuration}s</span>
+                      <span className="text-text-muted text-xs tabular-nums w-8 text-right shrink-0">{crossfadeDuration}s</span>
                     </div>
                   )}
-                </Row>
-                <Row
-                  icon={Waves}
-                  iconColor="#0ea5e9"
-                  label="Smooth fade when pausing"
-                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={pauseFadeEnabled} onClick={() => setPauseFade(!pauseFadeEnabled)} /></div>}
-                />
-                <Row
-                  icon={FileText}
-                  iconColor="#059669"
-                  label="Prefer OG version"
-                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} /></div>}
-                />
+                  <Row icon={Waves} iconColor="#0ea5e9" label="Smooth fade when pausing">
+                    <Toggle on={pauseFadeEnabled} onClick={() => setPauseFade(!pauseFadeEnabled)} />
+                  </Row>
+                  <Row icon={FileText} iconColor="#059669" label="Prefer OG version">
+                    <Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} />
+                  </Row>
                 </SettingsCard>
-                <SettingsCard>
-                <Row icon={Clock} iconColor="#4f46e5" label="Sleep timer">
-                  <div className="flex items-center gap-2">
-                    {sleepTimerEnd ? (
-                      <span className="text-accent text-xs font-medium">
-                        {Math.max(0, Math.ceil((sleepTimerEnd - Date.now()) / 60000))} min left
-                      </span>
-                    ) : (
-                      <select
-                        value={sleepMinutes}
-                        onChange={(e) => setSleepMinutes(parseInt(e.target.value))}
-                        className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
-                      >
-                        {[15, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} min</option>)}
-                      </select>
-                    )}
-                    <button
-                      onClick={toggleSleepTimer}
-                      className={`px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        sleepTimerEnd ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'bg-accent/15 text-accent hover:bg-accent/25'
-                      }`}
-                    >
-                      {sleepTimerEnd ? 'Cancel' : 'Start'}
-                    </button>
-                  </div>
-                </Row>
-                <Row
-                  icon={CloudUpload}
-                  iconColor="#d51007"
-                  label="Last.fm scrobbling"
-                  sub={
-                    !lastfmConfigured() ? 'Unavailable — this build has no Last.fm API key'
-                    : lastfmError ? lastfmError
-                    : lastfmUser ? `Connected as ${lastfmUser}`
-                    : lastfmWaiting ? 'Approve access on last.fm, then come back here'
-                    : 'Send what you listen to, to your Last.fm profile'
-                  }
-                  labelExtra={lastfmUser
-                    ? <div className="ml-2 translate-y-[3px]"><Toggle on={lastfmEnabled} onClick={() => setLastfmEnabled(!lastfmEnabled)} /></div>
-                    : undefined}
-                >
-                  {lastfmConfigured() && (
-                    lastfmUser ? (
+
+                <SettingsCard title="Lyrics">
+                  <Block icon={AlignLeft} iconColor="#0891b2" label="Lyrics sync" sub="Shift synced lines earlier or later against the audio">
+                    <div className="flex items-center gap-3">
                       <button
-                        onClick={disconnectLastfm}
-                        className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                        onClick={() => setLyricsOffset(Math.round((lyricsOffset - 0.1) * 10) / 10)}
+                        aria-label="Shift lyrics earlier"
+                        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-xl bg-[var(--surface-highest)] text-text-secondary active:bg-[var(--surface-raised)] transition-colors"
                       >
-                        Disconnect
+                        <Minus size={16} />
                       </button>
-                    ) : lastfmWaiting ? (
-                      <div className="flex items-center gap-2">
-                        <Loader2 size={14} className="animate-spin text-text-muted" />
+                      <span className="flex-1 text-center text-text-primary text-[15px] font-medium tabular-nums">
+                        {lyricsOffset > 0 ? '+' : ''}{lyricsOffset.toFixed(1)}s
+                      </span>
+                      <button
+                        onClick={() => setLyricsOffset(Math.round((lyricsOffset + 0.1) * 10) / 10)}
+                        aria-label="Shift lyrics later"
+                        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-xl bg-[var(--surface-highest)] text-text-secondary active:bg-[var(--surface-raised)] transition-colors"
+                      >
+                        <Plus size={16} />
+                      </button>
+                      {lyricsOffset !== 0 && (
+                        <button
+                          onClick={() => setLyricsOffset(0)}
+                          className="shrink-0 px-3 h-11 rounded-xl text-xs font-medium text-text-muted active:bg-[var(--surface-highest)] transition-colors"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </Block>
+                </SettingsCard>
+
+                <SettingsCard title="More">
+                  <Block
+                    icon={Clock}
+                    iconColor="#4f46e5"
+                    label="Sleep timer"
+                    sub={sleepTimerEnd
+                      ? `Stopping in ${Math.max(0, Math.ceil((sleepTimerEnd - Date.now()) / 60000))} min`
+                      : 'Stop playback after a set time'}
+                  >
+                    {sleepTimerEnd ? (
+                      <button
+                        onClick={toggleSleepTimer}
+                        className="w-full h-11 rounded-xl text-sm font-semibold bg-red-500/15 text-red-400 active:bg-red-500/25 transition-colors"
+                      >
+                        Cancel timer
+                      </button>
+                    ) : (
+                      <>
+                        {/* Was a native <select> beside a Start button — two
+                            taps and an OS dialog to pick one of five values. */}
+                        <Segmented
+                          value={sleepMinutes}
+                          options={[15, 30, 45, 60, 90].map((m) => ({ value: m, label: `${m}m` }))}
+                          onChange={setSleepMinutes}
+                        />
+                        <button
+                          onClick={toggleSleepTimer}
+                          className="mt-2 w-full h-11 rounded-xl text-sm font-semibold bg-accent text-white active:opacity-80 transition-opacity"
+                        >
+                          Start
+                        </button>
+                      </>
+                    )}
+                  </Block>
+                  <Block
+                    icon={CloudUpload}
+                    iconColor="#d51007"
+                    label="Last.fm scrobbling"
+                    sub={
+                      !lastfmConfigured() ? 'Unavailable — this build has no Last.fm API key'
+                      : lastfmError ? lastfmError
+                      : lastfmUser ? `Connected as ${lastfmUser}`
+                      : lastfmWaiting ? 'Approve access on last.fm, then come back here'
+                      : 'Send what you listen to, to your Last.fm profile'
+                    }
+                    action={lastfmUser
+                      ? <Toggle on={lastfmEnabled} onClick={() => setLastfmEnabled(!lastfmEnabled)} />
+                      : undefined}
+                  >
+                    {lastfmConfigured() && (
+                      lastfmUser ? (
+                        <button
+                          onClick={disconnectLastfm}
+                          className="w-full h-11 rounded-xl text-sm font-semibold bg-[var(--surface-highest)] text-red-400 active:bg-red-500/15 transition-colors"
+                        >
+                          Disconnect
+                        </button>
+                      ) : lastfmWaiting ? (
                         <button
                           onClick={stopLastfmPoll}
-                          className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-[var(--surface-overlay)] text-text-secondary hover:text-text-primary border border-[var(--border)]"
+                          className="w-full h-11 rounded-xl text-sm font-semibold bg-[var(--surface-highest)] text-text-secondary flex items-center justify-center gap-2 active:bg-[var(--surface-raised)] transition-colors"
                         >
-                          Cancel
+                          <Loader2 size={15} className="animate-spin" />
+                          Waiting — tap to cancel
                         </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={connectLastfm}
-                        disabled={lastfmBusy}
-                        className="px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg text-xs font-medium transition-colors bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-50"
-                      >
-                        Connect
-                      </button>
-                    )
-                  )}
-                </Row>
+                      ) : (
+                        <button
+                          onClick={connectLastfm}
+                          disabled={lastfmBusy}
+                          className="w-full h-11 rounded-xl text-sm font-semibold bg-accent/15 text-accent active:bg-accent/25 disabled:opacity-50 transition-colors"
+                        >
+                          Connect
+                        </button>
+                      )
+                    )}
+                  </Block>
                 </SettingsCard>
-              </div>
-            )}
-
-            {/* ── Shortcuts ── */}
-            {tab === 'shortcuts' && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="hidden md:block text-text-primary text-lg font-bold">Keyboard Shortcuts</h3>
-                  <button
-                    onClick={() => { setRecordingId(null); resetHotkeyBindings() }}
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-2.5 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] shrink-0"
-                    title="Restore every shortcut to its default"
-                  >
-                    <RotateCcw size={12} /> Reset to defaults
-                  </button>
-                </div>
-                <p className="text-text-muted text-[11px] mb-3">
-                  Click a shortcut, then press the keys. Esc cancels · Backspace clears. Shortcuts work while the app window is focused.
-                </p>
-
-                <Row icon={Clock} iconColor="#4f46e5" label="Skip amount" sub="How far skip-forward / skip-backward jump">
-                  <select
-                    value={hotkeySeekSeconds}
-                    onChange={(e) => setHotkeySeekSeconds(parseInt(e.target.value))}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2.5 py-2.5 md:px-2 md:py-1.5 border border-[var(--border)]"
-                  >
-                    {[5, 10, 15, 30, 60].map((s) => <option key={s} value={s}>{s} seconds</option>)}
-                  </select>
-                </Row>
-
-                {HOTKEY_CATEGORIES.map((category) => {
-                  const actions = HOTKEY_ACTIONS.filter((a) => a.category === category && (developerMode || !a.devModeOnly))
-                  if (actions.length === 0) return null
-                  return (
-                    <div key={category} className="mt-4 first:mt-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted mb-1.5">{category}</p>
-                      <div className="rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
-                        {actions.map((action) => {
-                          const binding = effectiveBinding(action.id, hotkeyBindings)
-                          const tokens = comboTokens(binding)
-                          const recording = recordingId === action.id
-                          return (
-                            <div key={action.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-[var(--surface)]">
-                              <span className="text-text-secondary text-sm truncate flex items-center gap-1.5">
-                                {action.label}
-                              </span>
-                              <button
-                                onClick={() => setRecordingId(recording ? null : action.id)}
-                                className={`shrink-0 min-w-[92px] flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                  recording
-                                    ? 'border-accent text-accent bg-accent/10 animate-pulse'
-                                    : tokens.length > 0
-                                      ? 'border-[var(--border)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)]'
-                                      : 'border-dashed border-[var(--border)] text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)]'
-                                }`}
-                                title={recording ? 'Press a key combination…' : 'Click to change'}
-                              >
-                                {recording ? (
-                                  'Press keys…'
-                                ) : tokens.length > 0 ? (
-                                  tokens.map((t, i) => (
-                                    <kbd key={i} className="px-1.5 py-0.5 rounded bg-[var(--surface-highest)] text-text-primary text-[10px] font-semibold leading-none border border-[var(--border)] tabular-nums">
-                                      {t}
-                                    </kbd>
-                                  ))
-                                ) : (
-                                  'Not set'
-                                )}
-                              </button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })}
               </div>
             )}
 
             {/* ── Library ── */}
             {tab === 'library' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-1">Library</h3>
-                <p className="text-text-muted text-xs mb-4 leading-relaxed max-w-md">
+                <p className="text-text-muted text-xs mb-4 leading-relaxed">
                   Music you add here stays on your device — nothing is uploaded. Android
                   only grants access to what you pick, so choose a folder (everything
                   inside it, including subfolders) or individual files.
                 </p>
 
-                <SettingsCard>
-                <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-                  <div className="flex items-center gap-2.5 mb-2.5">
-                    <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: '#ea580c' }}>
-                      <FolderOpen size={13} className="text-white" strokeWidth={2.25} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-text-primary text-sm">Sources</span>
-                      <p className="text-text-muted text-xs md:text-[11px] leading-snug">Folders and files added to your library</p>
-                    </div>
-                  </div>
-
-                  <div className="pl-0 md:pl-[34px] space-y-1.5">
-                    {libraryFolders.length === 0 && (
-                      <p className="text-text-muted text-xs italic">No folders or files added yet.</p>
-                    )}
-                    {libraryFolders.map((source) => (
-                      <div
-                        key={source}
-                        className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface-overlay)]"
-                      >
-                        <FolderOpen size={14} className="text-text-secondary shrink-0" />
-                        <span className="flex-1 min-w-0 text-text-primary text-sm truncate" title={source}>
-                          {decodeSourceLabel(source)}
-                        </span>
-                        <button
-                          onClick={() => removeLibraryFolder(source)}
-                          title="Remove from library"
-                          className="shrink-0 w-9 h-9 -my-1 md:w-auto md:h-auto md:my-0 flex items-center justify-center md:p-1 rounded-md text-text-muted hover:text-red-400 hover:bg-[var(--surface-raised)] transition-colors"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                <SettingsCard title="Sources">
+                  <Block icon={FolderOpen} iconColor="#ea580c" label="Folders and files" sub="What gets scanned into your library">
+                    {libraryFolders.length === 0 ? (
+                      <p className="text-text-muted text-sm py-2">Nothing added yet.</p>
+                    ) : (
+                      <div className="rounded-xl bg-[var(--surface-highest)] overflow-hidden mb-2">
+                        {libraryFolders.map((source) => (
+                          <div
+                            key={source}
+                            className="flex items-center gap-2.5 pl-3 pr-1 py-1 border-b border-[var(--border)] last:border-b-0"
+                          >
+                            <FolderOpen size={15} className="text-text-secondary shrink-0" />
+                            <span className="flex-1 min-w-0 text-text-primary text-sm truncate py-2" title={source}>
+                              {decodeSourceLabel(source)}
+                            </span>
+                            <button
+                              onClick={() => removeLibraryFolder(source)}
+                              aria-label={`Remove ${decodeSourceLabel(source)}`}
+                              className="shrink-0 w-11 h-11 flex items-center justify-center rounded-lg text-text-muted active:text-red-400 active:bg-[var(--surface-overlay)] transition-colors"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    )}
 
-                  <div className="flex flex-wrap items-center gap-2 mt-3 pl-0 md:pl-[34px]">
-                    <button
-                      onClick={async () => {
-                        const picked = await pickFolder()
-                        if (!picked) return
-                        addLibraryFolder(picked)
-                        scanLibrary()
-                      }}
-                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                    >
-                      <FolderPlus size={13} /> Add folder
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const picked = await pickFiles()
-                        if (picked.length === 0) return
-                        for (const uri of picked) addLibraryFolder(uri)
-                        scanLibrary()
-                      }}
-                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                    >
-                      <Plus size={13} /> Add files
-                    </button>
+                    {/* Full-width stacked buttons: these were three pills on one
+                        wrapping line, which put "Scan now" on its own second row
+                        at a hair over the minimum tap height. */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={async () => {
+                          const picked = await pickFolder()
+                          if (!picked) return
+                          addLibraryFolder(picked)
+                          scanLibrary()
+                        }}
+                        className="flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-medium text-text-secondary bg-[var(--surface-highest)] active:bg-[var(--surface-raised)] transition-colors"
+                      >
+                        <FolderPlus size={15} /> Folder
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const picked = await pickFiles()
+                          if (picked.length === 0) return
+                          for (const uri of picked) addLibraryFolder(uri)
+                          scanLibrary()
+                        }}
+                        className="flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-medium text-text-secondary bg-[var(--surface-highest)] active:bg-[var(--surface-raised)] transition-colors"
+                      >
+                        <Plus size={15} /> Files
+                      </button>
+                    </div>
                     <button
                       onClick={() => scanLibrary()}
                       disabled={libraryScanning || libraryFolders.length === 0}
-                      className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)] disabled:opacity-50"
+                      className="mt-2 w-full h-11 rounded-xl text-sm font-semibold bg-accent/15 text-accent flex items-center justify-center gap-2 active:bg-accent/25 disabled:opacity-40 transition-colors"
                     >
                       {libraryScanning
-                        ? <><Loader2 size={13} className="animate-spin" /> Scanning…</>
-                        : <><RefreshCw size={13} /> Scan now</>}
+                        ? <><Loader2 size={15} className="animate-spin" /> Scanning…</>
+                        : <><RefreshCw size={15} /> Scan now</>}
                     </button>
-                  </div>
 
-                  {/* A first scan reads tags file by file, so a large folder takes
-                      minutes — show what it's actually up to rather than a bare
-                      spinner. `parsed` lags `found` because unchanged files are
-                      carried over from the last scan instead of being re-read. */}
-                  {libraryScanning && libraryScanProgress && (
-                    <p className="text-text-muted text-xs mt-2.5 pl-0 md:pl-[34px]">
-                      Found {libraryScanProgress.found} file{libraryScanProgress.found === 1 ? '' : 's'}
-                      {libraryScanProgress.parsed > 0 && <> · read tags for {libraryScanProgress.parsed}</>}
-                    </p>
-                  )}
-                </div>
+                    {/* A first scan reads tags file by file, so a large folder takes
+                        minutes — show what it's actually up to rather than a bare
+                        spinner. `parsed` lags `found` because unchanged files are
+                        carried over from the last scan instead of being re-read. */}
+                    {libraryScanning && libraryScanProgress && (
+                      <p className="text-text-muted text-xs mt-2.5 text-center">
+                        Found {libraryScanProgress.found} file{libraryScanProgress.found === 1 ? '' : 's'}
+                        {libraryScanProgress.parsed > 0 && <> · read tags for {libraryScanProgress.parsed}</>}
+                      </p>
+                    )}
+                  </Block>
                 </SettingsCard>
 
-                <SettingsCard>
-                <Row icon={Music2} iconColor="#0891b2" label="Tracks in library">
-                  <span className="text-text-muted text-xs">{libraryTracks.length}</span>
-                </Row>
-                <Row icon={Clock} iconColor="#4f46e5" label="Last scanned">
-                  <span className="text-text-muted text-xs">
-                    {libraryLastScanned ? new Date(libraryLastScanned).toLocaleString() : 'Never'}
-                  </span>
-                </Row>
-                <Row
-                  icon={RefreshCw}
-                  iconColor="#059669"
-                  label="Auto-refresh"
-                  sub="Rescan on app start and every 15 minutes. Files whose size and date are unchanged are skipped, so this is cheap."
-                  labelExtra={<div className="ml-2 translate-y-[3px]"><Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} /></div>}
-                />
+                <SettingsCard title="Status">
+                  <Row icon={Music2} iconColor="#0891b2" label="Tracks in library">
+                    <span className="text-text-secondary text-[15px] tabular-nums">{libraryTracks.length}</span>
+                  </Row>
+                  <Row icon={Clock} iconColor="#4f46e5" label="Last scanned">
+                    <span className="text-text-secondary text-[13px] text-right">
+                      {libraryLastScanned ? new Date(libraryLastScanned).toLocaleString() : 'Never'}
+                    </span>
+                  </Row>
+                  <Row
+                    icon={RefreshCw}
+                    iconColor="#059669"
+                    label="Auto-refresh"
+                    sub="Rescan on app start and every 15 minutes. Files whose size and date are unchanged are skipped, so this is cheap."
+                  >
+                    <Toggle on={libraryAutoRefresh} onClick={() => setLibraryAutoRefresh(!libraryAutoRefresh)} />
+                  </Row>
                 </SettingsCard>
               </div>
             )}
@@ -1715,107 +1351,56 @@ export default function Settings(): JSX.Element {
             {/* ── Feedback ── */}
             {tab === 'feedback' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-1">Feedback</h3>
-                <p className="text-text-muted text-xs mb-4 leading-relaxed max-w-md">
+                <p className="text-text-muted text-xs mb-4 leading-relaxed">
                   Found a bug or have an idea? Let us know. To report a problem with a
                   specific song's info or lyrics, open that song and choose “Report”.
                 </p>
-                <div className="max-w-md">
-                  <ReportForm mode={{ kind: 'feedback' }} />
-                </div>
+                <ReportForm mode={{ kind: 'feedback' }} />
               </div>
             )}
 
             {/* ── About ── */}
             {tab === 'about' && (
               <div>
-                <h3 className="hidden md:block text-text-primary text-lg font-bold mb-3">About</h3>
                 <p className="text-text-muted text-xs mb-3">
                   unreleased v{APP_VERSION} &mdash; powered by{' '}
-                  <a href="https://juicewrldapi.com" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                  <a href="https://juicewrldapi.com" target="_blank" rel="noopener noreferrer" className="text-accent">
                     juicewrldapi.com
                   </a>
                 </p>
                 {/* Android has no store/update channel (sideloaded APK), so it
-                    gets its own updater here. The desktop equivalent is the
-                    refresh button in this panel's header (electron-updater).
-                    Note this reports the APK's own versionName, which is not
-                    the APP_VERSION above — see lib/androidUpdate. */}
-                {isAndroidApp() && <AndroidUpdateSection />}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <a
-                    href="https://github.com/leanwrldd/unreleased"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                  >
-                    <Github size={13} />
-                    GitHub
-                  </a>
-                  <a
-                    href="https://discord.gg/jwa"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                  >
-                    <MessageCircle size={13} />
-                    Discord
-                  </a>
-                  <a
-                    href="https://juicewrldapi.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors px-3.5 py-2.5 md:px-3 md:py-1.5 rounded-full bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] border border-[var(--border)]"
-                  >
-                    <Globe size={13} />
-                    API
-                  </a>
-                </div>
+                    gets its own updater here. Note this reports the APK's own
+                    versionName, which is not the APP_VERSION above — see
+                    lib/androidUpdate. */}
+                {isAndroidApp() && <div className="mb-4"><AndroidUpdateSection /></div>}
 
-                {(!account || (!account.is_editor && !account.is_administrator)) && (
-                  <button
-                    onClick={() => openMainView('editor')}
-                    className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-accent/10 hover:bg-accent/15 active:bg-accent/20 border border-accent/25 text-accent text-sm font-medium transition-colors mt-2"
-                  >
-                    <PenLine size={15} />
-                    Become an Editor
-                  </button>
+                <SettingsCard title="Links">
+                  <LinkRow icon={Github} iconColor="#24292f" label="GitHub" href="https://github.com/leanwrldd/unreleased" />
+                  <LinkRow icon={MessageCircle} iconColor="#5865F2" label="Discord" href="https://discord.gg/jwa" />
+                  <LinkRow icon={Globe} iconColor="#0891b2" label="API" href="https://juicewrldapi.com" />
+                  <ActionRow icon={BookOpen} iconColor="#6366f1" label="API Docs" onClick={() => openMainView('docs')} />
+                </SettingsCard>
+
+                {/* Only shown to accounts that aren't already one — these are
+                    the application pages, not a status display. */}
+                {((!account || (!account.is_editor && !account.is_administrator))
+                  || (CONTRIBUTOR_ENABLED && (!account || (!account.is_contributor && !account.is_administrator)))) && (
+                  <SettingsCard title="Get involved">
+                    {(!account || (!account.is_editor && !account.is_administrator)) && (
+                      <ActionRow icon={PenLine} iconColor="#7c3aed" label="Become an Editor" sub="Help correct song info and lyrics" onClick={() => openMainView('editor')} />
+                    )}
+                    {CONTRIBUTOR_ENABLED && (!account || (!account.is_contributor && !account.is_administrator)) && (
+                      <ActionRow icon={FolderOpen} iconColor="#0ea5e9" label="Become a Contributor" sub="Submit files to the archive" onClick={() => openMainView('contributor')} />
+                    )}
+                  </SettingsCard>
                 )}
-                {CONTRIBUTOR_ENABLED && (!account || (!account.is_contributor && !account.is_administrator)) && (
-                  <button
-                    onClick={() => openMainView('contributor')}
-                    className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/15 active:bg-sky-500/20 border border-sky-500/25 text-sky-400 text-sm font-medium transition-colors mt-2"
-                  >
-                    <FolderOpen size={15} />
-                    Become a Contributor
-                  </button>
-                )}
-                <button
-                  onClick={() => openMainView('docs')}
-                  className="flex items-center gap-2 w-full px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors mt-2"
-                >
-                  <BookOpen size={15} />
-                  API Docs
-                </button>
 
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button
-                    onClick={() => setLegalDoc('terms')}
-                    className="flex items-center gap-2 px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
-                  >
-                    <ScrollText size={15} />
-                    Terms of Service
-                  </button>
-                  <button
-                    onClick={() => setLegalDoc('privacy')}
-                    className="flex items-center gap-2 px-3 py-3 md:py-2.5 rounded-xl bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)] border border-[var(--border)] text-text-secondary text-sm font-medium transition-colors"
-                  >
-                    <ShieldCheck size={15} />
-                    Privacy Policy
-                  </button>
-                </div>
+                <SettingsCard title="Legal">
+                  <ActionRow icon={ScrollText} iconColor="#6b7280" label="Terms of Service" onClick={() => setLegalDoc('terms')} />
+                  <ActionRow icon={ShieldCheck} iconColor="#6b7280" label="Privacy Policy" onClick={() => setLegalDoc('privacy')} />
+                </SettingsCard>
 
-                <div className="mt-4 rounded-xl border border-[var(--border)] overflow-hidden divide-y divide-[var(--border)]">
+                <SettingsCard title="FAQ">
                   {([
                     {
                       q: 'What is this?',
@@ -1835,21 +1420,21 @@ export default function Settings(): JSX.Element {
                       a: 'The Juice WRLD API is built with Django and PostgreSQL. This player (unreleased) is built with React, TypeScript, Vite, and Tailwind CSS.',
                     },
                   ] as { q: string; a: string; link?: { text: string } }[]).map(({ q, a, link }) => (
-                    <div key={q}>
+                    <div key={q} className="border-b border-[var(--border)] last:border-b-0">
                       <button
                         onClick={() => setOpenAbout(openAbout === q ? null : q)}
-                        className="flex items-center justify-between w-full px-3 py-3 md:py-2.5 hover:bg-[var(--surface-raised)] active:bg-[var(--surface-raised)] transition-colors text-left"
+                        className="flex items-center justify-between gap-3 w-full py-3 min-h-[52px] text-left"
                       >
-                        <span className="text-text-secondary text-sm md:text-xs font-medium">{q}</span>
-                        <ChevronDown size={12} className={`text-text-muted transition-transform duration-150 shrink-0 ml-2 ${openAbout === q ? 'rotate-180' : ''}`} />
+                        <span className="text-text-primary text-[15px]">{q}</span>
+                        <ChevronDown size={16} className={`text-text-muted transition-transform duration-150 shrink-0 ${openAbout === q ? 'rotate-180' : ''}`} />
                       </button>
                       {openAbout === q && (
-                        <div className="px-3 pb-3 pt-0">
-                          <p className="text-text-muted text-xs leading-relaxed">{a}</p>
+                        <div className="pb-3 -mt-1">
+                          <p className="text-text-muted text-[13px] leading-relaxed">{a}</p>
                           {link && (
                             <button
                               onClick={() => openMainView('docs')}
-                              className="mt-1.5 inline-block text-xs text-accent hover:underline">
+                              className="mt-2 inline-block text-[13px] text-accent">
                               {link.text}
                             </button>
                           )}
@@ -1857,42 +1442,28 @@ export default function Settings(): JSX.Element {
                       )}
                     </div>
                   ))}
-                </div>
+                </SettingsCard>
               </div>
             )}
           </div>
-        </div>
-      </div>
+        )}
 
       {legalDoc && <LegalModal initialDoc={legalDoc} onClose={() => setLegalDoc(null)} />}
 
-      {/* Mobile picker sheet — the expanded form of whichever PickerRow was
-          tapped (Skin / App font / Lyrics font). Portalled above Settings
-          itself (z-70) rather than nested in the scrolling pane, so it isn't
-          clipped by any ancestor's overflow. */}
-      {pickerOpen && createPortal(
-        <>
-          <div className="fixed inset-0 z-[70] bg-black/40" onClick={() => setPickerOpen(null)} />
-          <div
-            className="fixed z-[71] left-0 right-0 bottom-0 rounded-t-2xl bg-surface border border-[var(--border)] border-b-0 shadow-2xl max-h-[75svh] overflow-y-auto"
-            style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
-          >
-            <div className="sticky top-0 bg-surface px-4 pt-4 pb-3 flex items-center justify-between border-b border-[var(--border)]">
-              <h3 className="text-text-primary font-bold text-base">
-                {pickerOpen === 'skin' ? 'Skin' : pickerOpen === 'appFont' ? 'App font' : 'Lyrics font'}
-              </h3>
-              <button onClick={() => setPickerOpen(null)} className="text-text-muted hover:text-text-primary transition-colors p-1 -m-1">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-4 py-4">
-              {pickerOpen === 'skin' && skinGrid}
-              {pickerOpen === 'appFont' && fontListPicker(appFont, setAppFont)}
-              {pickerOpen === 'lyricsFont' && fontListPicker(lyricsFont, setLyricsFont)}
-            </div>
+      {/* Picker sheet — the expanded form of whichever PickerRow was tapped
+          (Skin / App font / Lyrics font), on the app's shared bottom-sheet
+          primitive rather than a hand-rolled portal. */}
+      {pickerOpen && (
+        <Sheet
+          onClose={() => setPickerOpen(null)}
+          title={pickerOpen === 'skin' ? 'Skin' : pickerOpen === 'appFont' ? 'App font' : 'Lyrics font'}
+        >
+          <div className="px-4 pt-2">
+            {pickerOpen === 'skin' && skinGrid}
+            {pickerOpen === 'appFont' && fontListPicker(appFont, setAppFont)}
+            {pickerOpen === 'lyricsFont' && fontListPicker(lyricsFont, setLyricsFont)}
           </div>
-        </>,
-        document.body
+        </Sheet>
       )}
     </div>
   )
