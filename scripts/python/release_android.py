@@ -26,9 +26,10 @@ for the desktop app's auto-updater or gets anywhere near the web deploy.
      android-v* tag)
   ── nothing left to answer past this point ──
   5. Commit all changes to android
-  6. Run `npm run android:deploy` (scripts/android-deploy.sh): build the
-     renderer, `cap sync android`, `gradlew assembleDebug`, then — only with
-     --install — install and launch it on whatever device/emulator adb sees.
+  6. Build: the renderer, `cap sync android`, `gradlew assembleDebug`, then —
+     only with --install — install and launch it on whatever device/emulator
+     adb sees. (Same recipe scripts/run-android.bat runs interactively; see
+     step_build for why this script issues the commands itself.)
      Debug-signed either way; no release keystore exists yet, see
      step_build's docstring before wiring in a real one.
   7. Push android to GitHub
@@ -130,7 +131,7 @@ def capture(cmd, cwd=None):
 def find_adb():
     """adb is frequently not on PATH even when the Android SDK is installed —
     fall back to the standard platform-tools location (mirrors the same
-    fallback in scripts/android-deploy.sh, for whoever runs that directly)."""
+    fallback in scripts/run-android.bat)."""
     from shutil import which
     found = which("adb")
     if found:
@@ -373,23 +374,19 @@ def step_commit(version, msg, state):
 
 
 def step_build(skip_install):
-    """Runs each build step directly via subprocess rather than delegating to
-    `npm run android:deploy` (scripts/android-deploy.sh, which real Git Bash
-    usage should still reach for). That delegation used to be the whole
-    point — one recipe instead of two that could quietly drift apart — but
-    it depends on a bare `bash` resolving to Git's, and that assumption
-    breaks specifically for THIS caller: `subprocess.run(shell=True)` on
-    Windows always goes through cmd.exe regardless of what shell this script
-    itself runs under, and cmd.exe's own PATH doesn't include Git's usr/bin
-    at all (only an interactive Git Bash session adds that via its own
-    startup profile). What `bash` resolves to *instead* isn't even stable —
-    it's been observed as WSL's launcher shim (tries to execute gradlew.bat's
-    literal content as a shell script, fails on `@rem`) and some dash-like sh
-    lacking bash's `pipefail` (fails on this script's own `set -euo
-    pipefail`), depending on what else was on PATH at the time. Rather than
-    chase a moving target, this step just doesn't depend on `bash`
-    resolution at all: every command below runs through this same function's
-    `shell=True`, which is unambiguous.
+    """Runs each build step directly via subprocess rather than shelling out
+    to scripts/run-android.bat, which does the same three commands for
+    interactive use. Two copies of one recipe is a real cost — they can drift
+    — but delegating costs more here: the .bat is built around a *person*
+    watching it (it boots an emulator and waits, prompts, pauses at the end),
+    none of which suits an unattended release, and the previous incarnation of
+    that delegation (a bash script) broke outright because
+    `subprocess.run(shell=True)` on Windows always goes through cmd.exe, whose
+    PATH has no Git usr/bin — a bare `bash` there resolved to WSL's shim or a
+    dash-like sh, neither of which could run it. Every command below goes
+    through this same function's `shell=True`, which is unambiguous.
+
+    If you change the build steps, change them in both places.
 
     With --install (this script's own flag), also `adb install -r`s and
     launches the APK on whatever device/emulator adb sees — off by default,

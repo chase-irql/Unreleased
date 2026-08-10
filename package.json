@@ -8,7 +8,7 @@
     "preview": "vite preview",
     "android:sync": "npm run build && cap sync android",
     "android:apk": "npm run android:sync && cd android && gradlew assembleDebug",
-    "android:deploy": "bash scripts/android-deploy.sh"
+    "android:deploy": "scripts\\run-android.bat --no-pause"
   },
   "keywords": [],
   "author": "leanwrldd",

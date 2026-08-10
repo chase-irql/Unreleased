@@ -179,10 +179,9 @@ export default function App(): JSX.Element {
             CSS viewport starts behind the status bar / notch. Every view in
             here opens with a flat pt-5-ish header, which physically lands
             under the cutout — so the inset is absorbed once, here, instead of
-            each view remembering to. Two cases opt out and are unaffected:
-            anything position:fixed (NowPlaying, QueuePanel, Settings, sheets)
-            escapes this box entirely and owns its own inset, and WrldView
-            cancels it below to keep its cover-art backdrop full-bleed.
+            each view remembering to. The one case that opts out: anything
+            position:fixed (NowPlaying, QueuePanel, Settings, sheets) escapes
+            this box entirely and owns its own inset.
             Skipped when the nav sits on top, since BottomNav already pads
             itself by the same amount and content flows below it. */}
         <main

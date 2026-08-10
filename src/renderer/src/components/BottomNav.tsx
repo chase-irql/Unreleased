@@ -29,8 +29,8 @@ const MAX_TABS = 5
 interface Tab { view: ViewType; icon: ReactNode; label: string }
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, toggleSettings, setShowSettings, account, navVisibility, navOrder, sidebarPosition } =
-    useStorePick('activeView', 'setActiveView', 'toggleSettings', 'setShowSettings', 'account', 'navVisibility', 'navOrder', 'sidebarPosition')
+  const { activeView, setActiveView, toggleSettings, showSettings, setShowSettings, account, navVisibility, navOrder, sidebarPosition } =
+    useStorePick('activeView', 'setActiveView', 'toggleSettings', 'showSettings', 'setShowSettings', 'account', 'navVisibility', 'navOrder', 'sidebarPosition')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
   const isManager = !!account?.is_manager
@@ -76,7 +76,12 @@ export default function BottomNav(): JSX.Element {
   const overflow = allTabs.length > MAX_TABS - 1
   const tabs = overflow ? allTabs.slice(0, MAX_TABS - 2) : allTabs
   const moreTabs = overflow ? allTabs.slice(MAX_TABS - 2) : []
-  const moreActive = moreTabs.some((t) => t.view === activeView)
+  // Settings is an overlay, not a view — activeView still points at whatever
+  // was showing underneath it. Without checking showSettings here, that tab
+  // stayed lit accent-colored the whole time Settings was open on top of it,
+  // while the Settings button itself (hardcoded to tabCls(false) below) never
+  // showed as current at all — neither end of the swap reflected reality.
+  const moreActive = !showSettings && moreTabs.some((t) => t.view === activeView)
   const [moreOpen, setMoreOpen] = useState(false)
   useBackToClose(() => setMoreOpen(false), moreOpen)
 
@@ -132,7 +137,7 @@ export default function BottomNav(): JSX.Element {
         : { borderTop: '1px solid var(--border)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
       {tabs.map((tab) => {
-        const active = activeView === tab.view
+        const active = !showSettings && activeView === tab.view
         return (
           <button key={tab.view} onClick={() => navigateTo(tab.view)} className={tabCls(active)}>
             {marker(active)}
@@ -152,7 +157,8 @@ export default function BottomNav(): JSX.Element {
 
       {/* Never hideable or counted against the cap: on mobile this is the
           only route into Settings. */}
-      <button onClick={() => toggleSettings()} className={tabCls(false)}>
+      <button onClick={() => toggleSettings()} className={tabCls(showSettings)}>
+        {marker(showSettings)}
         <Settings size={24} />
         <span className={labelCls}>Settings</span>
       </button>

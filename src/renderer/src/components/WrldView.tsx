@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
@@ -106,50 +106,6 @@ export default function WrldView(): JSX.Element {
   }
 
   const [fmTab, setFmTab] = useState<'radio' | 'lyrics'>('radio')
-  // Fullscreen renders the page through a portal (covers the sidebar/other
-  // chrome) AND requests real OS/browser-level fullscreen — the portal alone
-  // only fills the app window, not the actual screen.
-  const [fullscreen, setFullscreen] = useState(false)
-  const fullscreenRef = useRef(false)
-  fullscreenRef.current = fullscreen
-  // The portal root, so the Escape handler below can tell "the fullscreen view
-  // is the top layer" from "a modal/popover is stacked on top of it".
-  const fsOverlayRef = useRef<HTMLDivElement>(null)
-  const enterFullscreen = (): void => {
-    document.documentElement.requestFullscreen?.().catch(() => {})
-    setFullscreen(true)
-  }
-  const exitFullscreen = (): void => {
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
-    setFullscreen(false)
-  }
-
-  // Keep React state in sync when fullscreen is entered/exited by something
-  // other than our own button — the WebView's own Escape-exits-fullscreen
-  // behavior, or an OS gesture.
-  useEffect(() => {
-    const onChange = (): void => setFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', onChange)
-    return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
-
-  // If this page unmounts (navigating away) while still fullscreen, leave
-  // real OS/browser fullscreen too — otherwise the window would be stuck
-  // fullscreen with no obvious way back once the WRLD-specific toggle is gone.
-  useEffect(() => () => {
-    if (!fullscreenRef.current) return
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
-  }, [])
-
-  // Mirror fullscreen into the global store so App.tsx can hide the
-  // frameless-window title bar controls (minimize/maximize/close) — they'd
-  // otherwise float over this immersive view regardless of how fullscreen
-  // was entered/exited (button, F11, Escape, or unmount).
-  const setWrldFullscreen = useStore(s => s.setWrldFullscreen)
-  useEffect(() => {
-    setWrldFullscreen(fullscreen)
-    return () => setWrldFullscreen(false)
-  }, [fullscreen, setWrldFullscreen])
 
   const [suggestQuery, setSuggestQuery]     = useState('')
   const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
@@ -504,56 +460,67 @@ export default function WrldView(): JSX.Element {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
+  const toggleFm = (): void => {
+    const next = !radioFmActive
+    if (next) {
+      setIsPlaying(false)
+      resumeEffectsContext()
+      void getActiveRadioClient()?.startListening()?.catch(() => setRadioFmActive(false))
+    } else {
+      getActiveRadioClient()?.stopListening()
+    }
+    setRadioFmActive(next)
+  }
+
+  // Full label pill — desktop pinned corner only, where there's room for it.
+  const fmToggleButton = (
+    <button
+      onClick={toggleFm}
+      disabled={fmDisabled}
+      className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1 md:py-1.5 transition-all disabled:opacity-40 shrink-0
+        ${radioFmActive && radioFmIsLive
+          ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
+          : radioFmActive
+          ? 'bg-white/10 text-white/50 backdrop-blur-sm'
+          : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
+      title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
+    >
+      <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
+      <span>{fmLabel}</span>
+    </button>
+  )
+
+  // Icon-only — mobile header row, sized to match the Queue/Like/Menu buttons
+  // it sits next to. The full label pill doesn't fit that row without
+  // crowding the title out, so state is conveyed by color/pulse instead.
+  const fmToggleButtonMobile = (
+    <button
+      onClick={toggleFm}
+      disabled={fmDisabled}
+      aria-label={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
+      title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
+      className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+        radioFmActive && radioFmIsLive
+          ? 'bg-red-600/80 text-white'
+          : radioFmActive
+          ? 'bg-white/10 text-white/50'
+          : 'hover:bg-white/10'
+      }`}
+      style={!radioFmActive ? { color: textIsDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)' } : undefined}
+    >
+      <Radio size={18} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
+    </button>
+  )
+
   const inner = (
     <div className="relative flex flex-col md:flex-row flex-1 h-full w-full overflow-hidden">
 
-      {/* 999 FM toggle + fullscreen toggle, grouped together so they move as
-          one unit — 999FM sits top-right on mobile, top-left on desktop
-          (md:), and fullscreen now rides along right next to it instead of
-          living in its own corner. */}
-      {/* The status-bar inset is only this component's problem in fullscreen,
-          where the portal (fixed inset-0) escapes the app shell and this sits
-          at a flat 12px from the CSS viewport's top edge — physically under
-          the system status bar, where touches never reach the WebView at all
-          (confirmed via a document-level capture listener that never saw the
-          pointerdown), not merely overlapping it. In normal (in-flow) mode
-          <main> has already absorbed the same inset, so adding it again here
-          would push these buttons down by twice the notch height. */}
-      <div className={`absolute z-30 flex items-center gap-2 right-3 md:top-4 md:left-4 md:right-auto ${
-        fullscreen ? 'top-[max(0.75rem,calc(0.75rem+env(safe-area-inset-top,0px)))]' : 'top-2'
-      }`}>
-        <button
-          onClick={() => {
-            const next = !radioFmActive
-            if (next) {
-              setIsPlaying(false)
-              resumeEffectsContext()
-              void getActiveRadioClient()?.startListening()?.catch(() => setRadioFmActive(false))
-            } else {
-              getActiveRadioClient()?.stopListening()
-            }
-            setRadioFmActive(next)
-          }}
-          disabled={fmDisabled}
-          className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1 md:py-1.5 transition-all disabled:opacity-40
-            ${radioFmActive && radioFmIsLive
-              ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
-              : radioFmActive
-              ? 'bg-white/10 text-white/50 backdrop-blur-sm'
-              : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
-          title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
-        >
-          <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
-          <span>{fmLabel}</span>
-        </button>
-
-        <button
-          onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}
-          className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-full transition-all border bg-white/60 dark:bg-black/25 border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm"
-          title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        >
-          {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={13} />}
-        </button>
+      {/* 999 FM toggle — pinned top-left on desktop only. On mobile it now
+          lives inline in the header row below instead of floating above it;
+          a pinned overlay there meant the header needed reserved top padding
+          just to clear it, which read as dead space under the status bar. */}
+      <div className="hidden md:flex absolute z-30 items-center gap-2 md:top-4 md:left-4">
+        {fmToggleButton}
       </div>
 
       <>
@@ -576,12 +543,12 @@ export default function WrldView(): JSX.Element {
           {/* Mobile layout */}
           <div className="md:hidden relative z-10 flex flex-col h-full min-h-0">
 
-            {/* Header: art + title. pt-9 clears the pinned 999FM/fullscreen
-                buttons above (top-2 + their ~28px height) with a little
-                breathing room — it used to be pt-12, sized for a taller
-                button pair, which on top of <main>'s own safe-area padding
-                left a noticeably dead gap under the status bar. */}
-            <div className="flex items-center gap-3 px-4 pt-9 pb-3 shrink-0">
+            {/* Header: art + title. The 999FM toggle used to float pinned
+                above this row, which meant the row needed reserved top
+                padding just to clear it — now it's part of the row itself,
+                so this only needs the same top padding every other mobile
+                header on this page uses. */}
+            <div className="flex items-center gap-3 px-4 pt-4 pb-3 shrink-0">
               {ArtBox({ mobile: true })}
               <div className="flex-1 min-w-0">
                 {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
@@ -589,6 +556,7 @@ export default function WrldView(): JSX.Element {
                 {displayAlbum  && <p className="text-xs mt-0.5 truncate" style={{ color: txtTer }}>{displayAlbum}</p>}
                 {radioFmActive && !radioFmNowPlaying && <p className="text-xs mt-0.5" style={{ color: txtTer }}>Tuning in…</p>}
               </div>
+              {fmToggleButtonMobile}
               {!radioFmActive && (
                 <button
                   onClick={() => setShowQueue(!showQueue)}
@@ -1045,20 +1013,6 @@ export default function WrldView(): JSX.Element {
     </div>
   )
 
-  if (fullscreen) {
-    // Portaled to <body> so it covers the sidebar/nav instead of being
-    // squeezed into the normal content column. z-30 is deliberately LOW: the
-    // portal only has to out-stack the app chrome (nothing there goes above
-    // z-20), and every overlay in the app — the EQ popover, Settings,
-    // pickers, context menus, modals — sits at z-40 or higher. Parking this
-    // at z-[150] like it used to meant all of those opened *behind* the
-    // fullscreen view and looked broken. The view's own internal z-indexes
-    // are unaffected: the positioned portal root is their stacking context.
-    return createPortal(
-      <div ref={fsOverlayRef} className="fixed inset-0 z-30 bg-black">{inner}</div>,
-      document.body,
-    )
-  }
   return inner
 }
 
@@ -1598,11 +1552,10 @@ const LyricsPanel = memo(function LyricsPanel({
   // 'timeupdate' event, ~4x/sec) — that throttling is what made the active
   // line snap every ~250ms instead of transitioning smoothly.
   // Lazily computed from the live audio position (not just -1) so that a
-  // remount — e.g. entering/exiting fullscreen re-parents this panel through
-  // a portal, which fully unmounts and remounts it — doesn't momentarily
-  // render with no active line (translateY snaps to 0 / the first line)
-  // before the next rAf tick corrects it. That produced a visible "jump to
-  // the top, then glide back down" flash on every fullscreen toggle.
+  // remount (e.g. switching the FM tab away from and back to Lyrics) doesn't
+  // momentarily render with no active line (translateY snaps to 0 / the
+  // first line) before the next rAf tick corrects it — that produced a
+  // visible "jump to the top, then glide back down" flash.
   const [currentLineIdx, setCurrentLineIdx] = useState(() =>
     isSynced && syncedLines.length > 0
       ? getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)

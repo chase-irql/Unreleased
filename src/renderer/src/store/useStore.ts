@@ -147,10 +147,6 @@ interface AppState {
   infoSongId: number | null
   // Desktop bottom player collapsed to a slim strip to reclaim vertical space.
   playerCollapsed: boolean
-  // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
-  // is active — lets App.tsx hide the frameless-window title bar controls,
-  // which would otherwise float over the immersive view.
-  wrldFullscreen: boolean
   radioFmActive: boolean
   radioFmIsLive: boolean | null  // null = unknown (not yet checked)
   radioFmNowPlaying: import('../lib/radioLive').RadioTrack | null
@@ -404,7 +400,6 @@ interface AppActions {
   toggleEqPanel: () => void
   setInfoSongId: (id: number | null) => void
   setPlayerCollapsed: (collapsed: boolean) => void
-  setWrldFullscreen: (fullscreen: boolean) => void
   setTheme: (theme: SkinId) => void
   /** Creates or updates a custom skin (upsert by id). Since editing the active
    *  skin's palette re-runs the theme effect, the editor uses this for live
@@ -897,7 +892,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   showEqPanel: false,
   infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
-  wrldFullscreen: false,
   radioFmActive: false,
   radioFmIsLive: null,
   radioFmNowPlaying: null,
@@ -973,7 +967,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   toggleEqPanel: () => set((s) => ({ showEqPanel: !s.showEqPanel })),
   setInfoSongId: (infoSongId) => set({ infoSongId }),
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
-  setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
   saveCustomSkin: (skin) => {
     const list = get().customSkins

@@ -354,8 +354,44 @@ input[type='range']:active::-webkit-slider-thumb {
   animation: menu-pop 0.13s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* ─── Bottom sheet ───────────────────────────────────────────────────────────────
+   components/mobile/Sheet — the sheet slides its full height up from the bottom
+   edge while the scrim fades. The entrance class is *removed* once it finishes
+   (see Sheet.tsx): with fill-mode `both` the animation's final transform would
+   outrank the inline one the drag-to-dismiss gesture writes. */
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes sheet-out {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-sheet-in  { animation: sheet-in 0.26s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-sheet-out { animation: sheet-out 0.2s cubic-bezier(0.4, 0, 1, 1) both; }
+.animate-scrim-in  { animation: scrim-in 0.2s ease both; }
+.animate-scrim-out { animation: scrim-in 0.18s ease reverse both; }
+
+/* Playing-track equalizer bars — the animated "this row is the one you're
+   hearing" marker used in place of a static icon in file/track lists. */
+@keyframes eq-bar {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq-bar 0.9s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-wrld-queue-in,
   .wrld-q-row,
   .animate-menu-pop { animation-duration: 0.01ms; animation-delay: 0ms; }
+  .animate-sheet-in,
+  .animate-sheet-out { animation-duration: 0.01ms; }
+  .eq-bar { animation: none; transform: scaleY(0.7); }
 }

@@ -5,7 +5,7 @@ import { formatBytes } from '../lib/format'
 import { cancelCompUpload } from '../lib/compUploads'
 
 export default function DownloadManager(): JSX.Element | null {
-  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus', 'wrldFullscreen')
+  const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus')
   const el = (window as any).electron
   const panelRef = useRef<HTMLDivElement>(null)
   // Per-download last-sample (bytes, timestamp) used to derive a live
@@ -72,10 +72,6 @@ export default function DownloadManager(): JSX.Element | null {
   }, [showDownloadManager])
 
   if (!el) return null
-  // WRLD's immersive fullscreen hides the window-control buttons this
-  // trigger is anchored next to (see App.tsx / WrldView.tsx) — with no
-  // corner reference left, it just floats awkwardly, so hide it too.
-  if (wrldFullscreen) return null
 
   const active = downloads.filter((d) => d.state === 'downloading').length
   const hasDownloads = downloads.length > 0

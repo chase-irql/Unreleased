@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, ReactNode, ElementType, CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle, Check,
   PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw, DownloadCloud,
@@ -22,6 +23,7 @@ import {
 import { cacheClearAll } from '../lib/apiCache'
 import { formatBytes } from '../lib/format'
 import { registerBackHandler } from '../lib/backHandlers'
+import { useBackToClose } from '../hooks/useBackToClose'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
@@ -115,6 +117,30 @@ function SettingsCard({ children }: { children: ReactNode }): JSX.Element {
     <div className="md:contents mb-4 md:mb-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-overlay)] px-3.5 overflow-hidden shadow-sm">
       {children}
     </div>
+  )
+}
+
+// Collapses a bulky inline picker (skin swatches, a 7-item font list) down to
+// one summary row — current value + chevron — that opens a bottom sheet with
+// the full picker. Mobile only; these sections stay inline on desktop where
+// vertical space isn't scarce. This is what actually shortens the Appearance
+// page instead of just tidying it — three ~250-450px sections collapse to
+// three ~50px rows.
+function PickerRow({ preview, title, sub, onClick }: {
+  preview: ReactNode
+  title: string
+  sub?: string
+  onClick: () => void
+}): JSX.Element {
+  return (
+    <button onClick={onClick} className="w-full flex items-center gap-3 py-1 -my-1 text-left">
+      {preview}
+      <div className="min-w-0 flex-1">
+        <p className="text-text-primary text-sm font-medium truncate">{title}</p>
+        {sub && <p className="text-text-muted text-xs truncate">{sub}</p>}
+      </div>
+      <ChevronRight size={16} className="text-text-muted shrink-0" />
+    </button>
   )
 }
 
@@ -396,6 +422,10 @@ export default function Settings(): JSX.Element {
     return () => window.removeEventListener('resize', check)
   }, [])
 
+  // Which mobile picker sheet is open (see PickerRow) — null when none.
+  const [pickerOpen, setPickerOpen] = useState<'skin' | 'appFont' | 'lyricsFont' | null>(null)
+  useBackToClose(() => setPickerOpen(null), pickerOpen !== null)
+
   // `sub` shows under the label in the mobile category list; `color` is the
   // badge tint, matching the iOS-Settings idiom the Row primitive already uses.
   const tabs: { id: Tab; label: string; icon: ElementType; color: string; sub: string }[] = [
@@ -452,6 +482,143 @@ export default function Settings(): JSX.Element {
     if (sleepTimerEnd) setSleepTimer(null)
     else setSleepTimer(Date.now() + sleepMinutes * 60 * 1000)
   }
+
+  // ── Appearance pickers ───────────────────────────────────────────────────
+  // Shared between the always-visible desktop grid and the mobile picker
+  // sheet (see PickerRow) — same JSX either way, just placed in whichever
+  // slot is showing for the current width.
+  const currentSkin = getSkin(theme)
+  const currentAppFont = FONTS.find((f) => f.id === appFont) ?? FONTS[0]
+  const currentLyricsFont = FONTS.find((f) => f.id === lyricsFont) ?? FONTS[0]
+
+  const skinGrid = (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {[...SKINS, ...customSkins].map((skin) => {
+        const active = theme === skin.id
+        return (
+          <div key={skin.id} className="relative group">
+            <button
+              onClick={() => {
+                setTheme(skin.id)
+                if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
+              }}
+              onDoubleClick={() => { if (skin.custom) setEditingSkinId(skin.id) }}
+              className="w-full text-left"
+              title={skin.dynamic ? 'Palette follows the current song’s cover art' : skin.name}
+            >
+              {/* Mini app mock: sidebar strip, two "text" lines, and a
+                  player bar with the skin's accent — a live swatch of
+                  the actual palette values, not approximations. */}
+              <div
+                className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
+                style={{
+                  background: skin.vars['--surface'],
+                  borderColor: active ? 'var(--accent)' : 'var(--border)',
+                  boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
+                }}
+              >
+                <div className="w-1/4 h-full border-r" style={{ background: skin.vars['--sidebar'], borderColor: skin.vars['--border'] }} />
+                <div className="flex-1 p-1.5 flex flex-col gap-1 min-w-0">
+                  <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
+                  <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
+                  <div className="mt-auto flex items-center gap-1">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{
+                        // Dynamic skin has no fixed accent — a color wheel
+                        // signals "follows the song's cover art".
+                        background: skin.dynamic
+                          ? 'conic-gradient(#f43f5e, #f59e0b, #10b981, #38bdf8, #a78bfa, #f43f5e)'
+                          : skin.accent ?? accentColor,
+                      }}
+                    />
+                    <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
+                  </div>
+                </div>
+              </div>
+              <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
+                {skin.name}
+              </p>
+            </button>
+            {/* Custom skins get an edit button (sibling, not nested,
+                to keep the markup button-in-button free). */}
+            {skin.custom && (
+              // Was opacity-0 group-hover:opacity-100 with no
+              // touch fallback — the double-click alternative
+              // (see onDoubleClick above) doesn't translate to
+              // touch either, so this was the only real way in.
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditingSkinId(skin.id) }}
+                className="absolute top-1 right-1 rounded-md bg-black/45 text-white opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 hover:bg-black/65 transition-opacity w-7 h-7 md:w-auto md:h-auto flex items-center justify-center md:p-1"
+                aria-label={`Edit ${skin.name}`}
+              >
+                <Pencil size={13} className="md:w-[11px] md:h-[11px]" />
+              </button>
+            )}
+          </div>
+        )
+      })}
+      {/* Create-a-skin tile */}
+      <button onClick={createSkin} className="group text-left" title="Create a new skin">
+        <div className="h-14 rounded-lg border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-0.5 text-text-muted group-hover:text-accent group-hover:border-accent transition-colors">
+          <Plus size={16} />
+        </div>
+        <p className="mt-1 text-[11px] font-medium text-center text-text-muted group-hover:text-text-primary transition-colors">
+          Create
+        </p>
+      </button>
+    </div>
+  )
+
+  // Desktop keeps the box-grid look (4-across, "Ag" over the name); the
+  // mobile sheet uses a denser single-row-per-font list instead — see
+  // PickerRow above for why.
+  const fontBoxGrid = (value: string, onSelect: (id: string) => void): ReactNode => (
+    <div className="grid grid-cols-4 gap-2">
+      {FONTS.map((font) => {
+        const active = value === font.id
+        return (
+          <button
+            key={font.id}
+            onClick={() => onSelect(font.id)}
+            title={font.name}
+            className={`px-2.5 py-2 rounded-lg border text-left transition-colors ${
+              active ? 'bg-accent/15 border-[var(--accent)]' : 'border-[var(--border)] hover:bg-[var(--surface-overlay)]'
+            }`}
+          >
+            <span className={`block text-base leading-tight truncate ${active ? 'text-accent' : 'text-text-primary'}`} style={{ fontFamily: font.stack }}>
+              Ag
+            </span>
+            <span className={`block text-[11px] mt-0.5 truncate ${active ? 'text-accent' : 'text-text-muted'}`}>{font.name}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  const fontListPicker = (value: string, onSelect: (id: string) => void): ReactNode => (
+    <div className="flex flex-col gap-1.5">
+      {FONTS.map((font) => {
+        const active = value === font.id
+        return (
+          <button
+            key={font.id}
+            onClick={() => onSelect(font.id)}
+            title={font.name}
+            className={`flex items-center gap-3 px-3 py-3 rounded-lg border text-left transition-colors ${
+              active ? 'bg-accent/15 border-[var(--accent)]' : 'border-[var(--border)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
+            }`}
+          >
+            <span className={`text-lg leading-tight shrink-0 ${active ? 'text-accent' : 'text-text-primary'}`} style={{ fontFamily: font.stack }}>
+              Ag
+            </span>
+            <span className={`flex-1 min-w-0 truncate text-sm ${active ? 'text-accent' : 'text-text-muted'}`}>{font.name}</span>
+            {active && <Check size={16} className="text-accent shrink-0" />}
+          </button>
+        )
+      })}
+    </div>
+  )
 
   return (
     <div
@@ -762,86 +929,24 @@ export default function Settings(): JSX.Element {
                   {skinImportError && (
                     <p className="text-red-400 text-[11px] mb-2 pl-0 md:pl-[34px]">{skinImportError}</p>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pl-0 md:pl-[34px]">
-                    {[...SKINS, ...customSkins].map((skin) => {
-                      const active = theme === skin.id
-                      return (
-                        <div key={skin.id} className="relative group">
-                          <button
-                            onClick={() => {
-                              setTheme(skin.id)
-                              if (skin.accent) { setAccentColor(skin.accent); setCustomAccent(skin.accent) }
-                            }}
-                            onDoubleClick={() => { if (skin.custom) setEditingSkinId(skin.id) }}
-                            className="w-full text-left"
-                            title={skin.dynamic ? 'Palette follows the current song’s cover art' : skin.name}
-                          >
-                            {/* Mini app mock: sidebar strip, two "text" lines, and a
-                                player bar with the skin's accent — a live swatch of
-                                the actual palette values, not approximations. */}
-                            <div
-                              className="h-14 rounded-lg overflow-hidden flex border transition-transform group-hover:scale-[1.03] group-active:scale-[0.98]"
-                              style={{
-                                background: skin.vars['--surface'],
-                                borderColor: active ? 'var(--accent)' : 'var(--border)',
-                                boxShadow: active ? '0 0 0 1px var(--accent)' : undefined,
-                              }}
-                            >
-                              <div className="w-1/4 h-full border-r" style={{ background: skin.vars['--sidebar'], borderColor: skin.vars['--border'] }} />
-                              <div className="flex-1 p-1.5 flex flex-col gap-1 min-w-0">
-                                <div className="h-1.5 rounded-full w-3/4" style={{ background: skin.vars['--text-primary'] }} />
-                                <div className="h-1.5 rounded-full w-1/2" style={{ background: skin.vars['--text-secondary'], opacity: 0.7 }} />
-                                <div className="mt-auto flex items-center gap-1">
-                                  <div
-                                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                                    style={{
-                                      // Dynamic skin has no fixed accent — a color wheel
-                                      // signals "follows the song's cover art".
-                                      background: skin.dynamic
-                                        ? 'conic-gradient(#f43f5e, #f59e0b, #10b981, #38bdf8, #a78bfa, #f43f5e)'
-                                        : skin.accent ?? accentColor,
-                                    }}
-                                  />
-                                  <div className="h-1 flex-1 rounded-full" style={{ background: skin.vars['--surface-highest'] }} />
-                                </div>
-                              </div>
-                            </div>
-                            <p className={`mt-1 text-[11px] font-medium text-center transition-colors ${active ? 'text-accent' : 'text-text-muted group-hover:text-text-primary'}`}>
-                              {skin.name}
-                            </p>
-                          </button>
-                          {/* Custom skins get an edit button (sibling, not nested,
-                              to keep the markup button-in-button free). */}
-                          {skin.custom && (
-                            // Was opacity-0 group-hover:opacity-100 with no
-                            // touch fallback — the double-click alternative
-                            // (see onDoubleClick above) doesn't translate to
-                            // touch either, so this was the only real way in.
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setEditingSkinId(skin.id) }}
-                              className="absolute top-1 right-1 rounded-md bg-black/45 text-white opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100 hover:bg-black/65 transition-opacity w-7 h-7 md:w-auto md:h-auto flex items-center justify-center md:p-1"
-                              aria-label={`Edit ${skin.name}`}
-                            >
-                              <Pencil size={13} className="md:w-[11px] md:h-[11px]" />
-                            </button>
-                          )}
+                  {isMobile ? (
+                    <PickerRow
+                      preview={
+                        <div className="h-10 w-14 rounded-lg overflow-hidden flex border shrink-0" style={{ background: currentSkin.vars['--surface'], borderColor: 'var(--border)' }}>
+                          <div className="w-1/4 h-full border-r" style={{ background: currentSkin.vars['--sidebar'], borderColor: currentSkin.vars['--border'] }} />
+                          <div className="flex-1 p-1 flex flex-col justify-center gap-0.5 min-w-0">
+                            <div className="h-1 rounded-full w-3/4" style={{ background: currentSkin.vars['--text-primary'] }} />
+                            <div className="h-1 rounded-full w-1/2" style={{ background: currentSkin.vars['--text-secondary'], opacity: 0.7 }} />
+                          </div>
                         </div>
-                      )
-                    })}
-                    {/* Create-a-skin tile */}
-                    <button
-                      onClick={createSkin}
-                      className="group text-left"
-                      title="Create a new skin"
-                    >
-                      <div className="h-14 rounded-lg border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-0.5 text-text-muted group-hover:text-accent group-hover:border-accent transition-colors">
-                        <Plus size={16} />
-                      </div>
-                      <p className="mt-1 text-[11px] font-medium text-center text-text-muted group-hover:text-text-primary transition-colors">
-                        Create
-                      </p>
-                    </button>
-                  </div>
+                      }
+                      title={currentSkin.name}
+                      sub="Tap to change"
+                      onClick={() => setPickerOpen('skin')}
+                    />
+                  ) : (
+                    <div className="pl-[34px]">{skinGrid}</div>
+                  )}
                 </div>
                 </SettingsCard>
                 <SettingsCard>
@@ -898,41 +1003,16 @@ export default function Settings(): JSX.Element {
                       <p className="text-text-muted text-xs md:text-[11px] leading-snug">Typeface for the whole app — each option previews in its own font</p>
                     </div>
                   </div>
-                  {/* Below md: a compact single-row-per-font list (the native
-                      picker idiom) — the old grid-of-boxes gave each font a
-                      2-line square with the name left-aligned under a preview,
-                      which read as bulky/empty on a phone. At md+ it's still
-                      the box grid, unchanged. */}
-                  <div className="flex flex-col gap-1.5 md:grid md:grid-cols-4 md:gap-2 pl-0 md:pl-[34px]">
-                    {FONTS.map((font) => {
-                      const active = appFont === font.id
-                      return (
-                        <button
-                          key={font.id}
-                          onClick={() => setAppFont(font.id)}
-                          title={font.name}
-                          className={`flex items-center gap-3 md:block px-3 py-3 md:px-2.5 md:py-2 rounded-lg border text-left transition-colors ${
-                            active
-                              ? 'bg-accent/15 border-[var(--accent)]'
-                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          {/* Specimen renders in the stack it selects, so the
-                              list previews itself without applying anything. */}
-                          <span
-                            className={`text-lg md:block md:text-base leading-tight shrink-0 ${active ? 'text-accent' : 'text-text-primary'}`}
-                            style={{ fontFamily: font.stack }}
-                          >
-                            Ag
-                          </span>
-                          <span className={`flex-1 min-w-0 truncate text-sm md:block md:text-[11px] md:mt-0.5 ${active ? 'text-accent' : 'text-text-muted'}`}>
-                            {font.name}
-                          </span>
-                          {active && <Check size={16} className="text-accent shrink-0 md:hidden" />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  {isMobile ? (
+                    <PickerRow
+                      preview={<span className="text-lg w-9 text-center shrink-0" style={{ fontFamily: currentAppFont.stack }}>Ag</span>}
+                      title={currentAppFont.name}
+                      sub="Tap to change"
+                      onClick={() => setPickerOpen('appFont')}
+                    />
+                  ) : (
+                    <div className="pl-[34px]">{fontBoxGrid(appFont, setAppFont)}</div>
+                  )}
                 </div>
                 <div className="py-3 border-b border-[var(--border)] last:border-b-0">
                   <div className="flex items-center gap-2.5 mb-2.5">
@@ -944,34 +1024,16 @@ export default function Settings(): JSX.Element {
                       <p className="text-text-muted text-xs md:text-[11px] leading-snug">Used only in the lyric panels, so lyrics can differ from the rest of the app</p>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1.5 md:grid md:grid-cols-4 md:gap-2 pl-0 md:pl-[34px]">
-                    {FONTS.map((font) => {
-                      const active = lyricsFont === font.id
-                      return (
-                        <button
-                          key={font.id}
-                          onClick={() => setLyricsFont(font.id)}
-                          title={font.name}
-                          className={`flex items-center gap-3 md:block px-3 py-3 md:px-2.5 md:py-2 rounded-lg border text-left transition-colors ${
-                            active
-                              ? 'bg-accent/15 border-[var(--accent)]'
-                              : 'border-[var(--border)] hover:bg-[var(--surface-overlay)] active:bg-[var(--surface-overlay)]'
-                          }`}
-                        >
-                          <span
-                            className={`text-lg md:block md:text-base leading-tight shrink-0 ${active ? 'text-accent' : 'text-text-primary'}`}
-                            style={{ fontFamily: font.stack }}
-                          >
-                            Ag
-                          </span>
-                          <span className={`flex-1 min-w-0 truncate text-sm md:block md:text-[11px] md:mt-0.5 ${active ? 'text-accent' : 'text-text-muted'}`}>
-                            {font.name}
-                          </span>
-                          {active && <Check size={16} className="text-accent shrink-0 md:hidden" />}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  {isMobile ? (
+                    <PickerRow
+                      preview={<span className="text-lg w-9 text-center shrink-0" style={{ fontFamily: currentLyricsFont.stack }}>Ag</span>}
+                      title={currentLyricsFont.name}
+                      sub="Tap to change"
+                      onClick={() => setPickerOpen('lyricsFont')}
+                    />
+                  ) : (
+                    <div className="pl-[34px]">{fontBoxGrid(lyricsFont, setLyricsFont)}</div>
+                  )}
                 </div>
                 </SettingsCard>
                 <SettingsCard>
@@ -1803,6 +1865,35 @@ export default function Settings(): JSX.Element {
       </div>
 
       {legalDoc && <LegalModal initialDoc={legalDoc} onClose={() => setLegalDoc(null)} />}
+
+      {/* Mobile picker sheet — the expanded form of whichever PickerRow was
+          tapped (Skin / App font / Lyrics font). Portalled above Settings
+          itself (z-70) rather than nested in the scrolling pane, so it isn't
+          clipped by any ancestor's overflow. */}
+      {pickerOpen && createPortal(
+        <>
+          <div className="fixed inset-0 z-[70] bg-black/40" onClick={() => setPickerOpen(null)} />
+          <div
+            className="fixed z-[71] left-0 right-0 bottom-0 rounded-t-2xl bg-surface border border-[var(--border)] border-b-0 shadow-2xl max-h-[75svh] overflow-y-auto"
+            style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+          >
+            <div className="sticky top-0 bg-surface px-4 pt-4 pb-3 flex items-center justify-between border-b border-[var(--border)]">
+              <h3 className="text-text-primary font-bold text-base">
+                {pickerOpen === 'skin' ? 'Skin' : pickerOpen === 'appFont' ? 'App font' : 'Lyrics font'}
+              </h3>
+              <button onClick={() => setPickerOpen(null)} className="text-text-muted hover:text-text-primary transition-colors p-1 -m-1">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-4 py-4">
+              {pickerOpen === 'skin' && skinGrid}
+              {pickerOpen === 'appFont' && fontListPicker(appFont, setAppFont)}
+              {pickerOpen === 'lyricsFont' && fontListPicker(lyricsFont, setLyricsFont)}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   )
 }
