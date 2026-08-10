@@ -271,8 +271,12 @@ REM That looks exactly like "booting very slowly", which is what made it hard
 REM to spot. Cold booting costs a little startup time and cannot wedge.
 REM Userdata is untouched either way - installed apps and settings survive.
 REM
-REM Its own window, so the emulator's chatter doesn't drown out the build here.
-start "Android Emulator - !AVD!" /D "%SDK%\emulator" "%EMULATOR%" -avd "!AVD!" -no-snapshot-load -no-boot-anim
+REM Its own window, and its handles pointed at nul rather than inherited: cmd
+REM hands a started child whatever stdout this script has, so when the script's
+REM own output is piped somewhere, the emulator writes into that same pipe and
+REM stalls the moment nobody drains it - which looks exactly like a device that
+REM boots forever.
+start "Android Emulator - !AVD!" /D "%SDK%\emulator" "%EMULATOR%" -avd "!AVD!" -no-snapshot-load -no-boot-anim >nul 2>&1
 set "EMU_STARTED=1"
 
 REM Each phase below gets its own budget. They used to share one counter, so
@@ -303,12 +307,10 @@ goto ed_waitloop
 echo     Device !DEVICE! attached - waiting for Android to finish booting...
 set /a TRIES=0
 
-REM A healthy cold boot lands in well under two minutes. The generous budget
-REM here is only so a slow machine isn't cut off mid-boot - if you ever watch
-REM this run for minutes on end while the emulator shows a black screen, the
-REM device is wedged rather than slow, and the -no-snapshot-load flag above is
-REM the thing that prevents it. The heartbeat's elapsed figure is accurate:
-REM each tick really is ~3 seconds.
+REM Fail fast. A healthy cold boot of this AVD is ~40 seconds; past about three
+REM minutes it is wedged, not slow, and waiting longer has never once turned
+REM into a successful run - it just burns time before the same failure. So the
+REM budget is deliberately short and the message says what to actually do.
 :ed_waitboot
 set "BOOTED="
 for /f "usebackq delims=" %%b in (`"%ADB%" -s "!DEVICE!" shell getprop sys.boot_completed 2^>nul`) do set "BOOTED=%%b"
@@ -322,9 +324,16 @@ set "ANIM="
 for /f "usebackq delims=" %%b in (`"%ADB%" -s "!DEVICE!" shell getprop init.svc.bootanim 2^>nul`) do set "ANIM=%%b"
 if "!ANIM:~0,7!"=="stopped" goto ed_pmstart
 set /a TRIES+=1
-if !TRIES! GTR 400 (
-  echo [ERROR] The device never finished booting after 20 minutes.
-  echo         Check the emulator window - it may be waiting on a prompt.
+if !TRIES! GTR 60 (
+  echo [ERROR] The emulator is stuck - 3 minutes without finishing boot, when a
+  echo         healthy cold boot takes about 40 seconds. It is almost certainly
+  echo         sitting on a black screen. Fastest fix:
+  echo.
+  echo           1. close the emulator window
+  echo           2. delete "%USERPROFILE%\.android\avd\%AVD%.avd\snapshots"
+  echo           3. start the emulator yourself from Android Studio's Device
+  echo              Manager, wait for the home screen, then run this again -
+  echo              it reuses a running emulator and takes seconds
   exit /b 1
 )
 call :heartbeat "still booting"

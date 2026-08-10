@@ -674,15 +674,19 @@ export default function ApiFilesView(): JSX.Element {
         onClick={() => openEntry(entry)}
         {...pressHandlers(entry)}
       >
-        {selectMode && (
-          <div className="shrink-0 -ml-1">
-            {isSelected
-              ? <CheckCircle2 size={22} className="text-accent" />
-              : <Circle size={22} className="text-text-muted opacity-40" />}
-          </div>
-        )}
+        {/* Selection state is drawn ON the thumbnail, not inserted before it: a
+            leading checkbox shoves every row sideways the moment select mode
+            turns on, which happens mid-long-press — the layout moves out from
+            under the finger before the press has even ended. */}
         <div className="relative shrink-0">
           <Thumb entry={entry} size={48} />
+          {selectMode && (
+            <div className={`absolute inset-0 flex items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-accent/75' : 'bg-black/45'}`}>
+              {isSelected
+                ? <Check size={22} className="text-white" strokeWidth={3} />
+                : <Circle size={20} className="text-white/85" />}
+            </div>
+          )}
           {playing === entry.path && (
             <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55">
               <Loader2 size={18} className="text-white animate-spin" />
@@ -788,33 +792,16 @@ export default function ApiFilesView(): JSX.Element {
   return (
     <>
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* App bar. Swaps wholesale in select mode — the browsing controls are
-            meaningless while picking files, and a phone has no room to show
-            both. */}
-        {/* Neither bar paints its own background. The app shell's background —
-            including the optional accent gradient — runs continuously from
-            behind the status bar down through the listing; an opaque header in
-            between showed up as a flat slab dividing two tinted regions, which
-            read as a separate title bar bolted on above the app. Nothing here
-            floats over scrolling content, so there's nothing to hide behind an
-            opaque fill. */}
-        {selectMode ? (
-          <div className="shrink-0 flex items-center gap-1 px-2 pb-1">
-            <button
-              onClick={exitSelectMode}
-              className="w-11 h-11 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
-              aria-label="Cancel selection"
-            ><X size={20} /></button>
-            <span className="flex-1 min-w-0 text-text-primary font-semibold text-[16px] truncate">
-              {selectedPaths.size} selected
-            </span>
-            <button
-              onClick={() => setSelectedPaths(new Set(filteredEntries.map((e) => e.path)))}
-              className="px-3 h-11 rounded-full text-accent text-[13px] font-semibold active:bg-accent/10"
-            >Select all</button>
-          </div>
-        ) : (
-          <div className="shrink-0">
+        {/* The header paints no background of its own: the app shell's — the
+            optional accent gradient included — runs continuously from behind
+            the status bar down through the listing, and an opaque header in
+            between showed up as a flat slab dividing two tinted regions.
+            It also deliberately does NOT collapse in select mode. Swapping it
+            for a one-line selection bar dropped the search and filter rows at
+            once, jumping the list up the screen under the finger that was still
+            long-pressing. The selection controls live in the bottom bar
+            instead, which only shortens the scroller. */}
+        <div className="shrink-0">
             {/* No top padding: <main> has already absorbed the status-bar
                 inset, and the 44px control row carries its own breathing room
                 — anything extra here just reads as a dead strip under the
@@ -909,8 +896,7 @@ export default function ApiFilesView(): JSX.Element {
                 )
               })}
             </div>
-          </div>
-        )}
+        </div>
 
         {/* Listing */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain pb-6">
@@ -981,7 +967,22 @@ export default function ApiFilesView(): JSX.Element {
         {/* Selection action bar — in flow, so it sits directly above the player
             and nav instead of floating over the last row. */}
         {selectMode && (
-          <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-t border-[var(--border)] bg-surface">
+          <div className="shrink-0 border-t border-[var(--border)] bg-surface">
+          <div className="flex items-center gap-1 pl-1 pr-2 pt-1">
+            <button
+              onClick={exitSelectMode}
+              className="w-10 h-10 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+              aria-label="Cancel selection"
+            ><X size={19} /></button>
+            <span className="flex-1 min-w-0 text-text-primary font-semibold text-[15px] truncate">
+              {selectedPaths.size} selected
+            </span>
+            <button
+              onClick={() => setSelectedPaths(new Set(filteredEntries.map((e) => e.path)))}
+              className="px-3 h-10 rounded-full text-accent text-[13px] font-semibold active:bg-accent/10"
+            >Select all</button>
+          </div>
+          <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
             {canPropose && (
               <button
                 onClick={() => {
@@ -1011,6 +1012,7 @@ export default function ApiFilesView(): JSX.Element {
                 : zipStatus === 'error' ? <><X size={17} /> Failed</>
                 : <><PackageOpen size={17} /> Download ZIP</>}
             </button>
+          </div>
           </div>
         )}
       </div>
