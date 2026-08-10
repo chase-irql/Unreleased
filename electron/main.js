@@ -1604,6 +1604,41 @@ ipcMain.handle('copy-file-to-clipboard', async (_, filePath) => {
   return { ok: true, fallback: 'path' }
 })
 
+// Cover art → clipboard as an actual image (pasteable into Discord, Photoshop,
+// a message box), not a URL. The renderer fetches the bytes and re-encodes to
+// PNG first (see lib/coverImage.ts) since nativeImage only decodes PNG/JPEG.
+ipcMain.handle('copy-image-to-clipboard', (_, dataUrl) => {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return { error: 'Invalid image data' }
+  const image = nativeImage.createFromDataURL(dataUrl)
+  if (image.isEmpty()) return { error: 'Could not decode image' }
+  clipboard.writeImage(image)
+  return { ok: true }
+})
+
+// Cover art → disk, through a native Save-as dialog. Writes the bytes verbatim
+// (no image decode) so the saved file is the original JPEG/WebP/PNG the API
+// served, with the extension the renderer derived from its mime type.
+ipcMain.handle('save-image-file', async (event, payload) => {
+  const { defaultName, dataUrl } = payload || {}
+  const base64 = typeof dataUrl === 'string' ? /^data:[^;,]*;base64,([\s\S]*)$/.exec(dataUrl)?.[1] : null
+  if (!base64) return { error: 'Invalid image data' }
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const safeName = String(defaultName || 'cover.jpg').replace(/[/\\:*?"<>|]/g, '_').trim() || 'cover.jpg'
+  const ext = path.extname(safeName).slice(1).toLowerCase() || 'jpg'
+  const result = await dialog.showSaveDialog(win, {
+    title: 'Save cover art',
+    defaultPath: path.join(appSettings.downloadPath, safeName),
+    filters: [{ name: 'Image', extensions: [ext] }, { name: 'All files', extensions: ['*'] }],
+  })
+  if (result.canceled || !result.filePath) return { canceled: true }
+  try {
+    fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'))
+    return { ok: true, path: result.filePath }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
 // ── IPC: offline playlist sync (download API songs for offline playback) ─────
 //
 // tracks: keyed by track id ("jw-{songId}") — the audio file plus enough of

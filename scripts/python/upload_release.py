@@ -67,20 +67,31 @@ def api_request(method, path, token, data=None):
         raise
 
 # ── Upload with progress ──────────────────────────────────────────────────────
+# http.client streams a file-like body with `data.read(self.blocksize)` and
+# blocksize is 8192, so a 92 MB asset means ~11,800 reads — each one its own
+# sendall and, before this, its own console repaint. 1 MB blocks (read() may
+# return more than asked; send() just forwards it) plus a bar that only
+# repaints when the percentage actually moves.
+UPLOAD_CHUNK = 1_048_576
+
+
 class ProgressFileWrapper:
     def __init__(self, path):
         self._file = open(path, "rb")
         self._size = os.path.getsize(path)
         self._read = 0
+        self._last_pct = -1
 
     def read(self, n=-1):
-        chunk = self._file.read(n)
+        chunk = self._file.read(UPLOAD_CHUNK if n is None or n < 0 else max(n, UPLOAD_CHUNK))
         self._read += len(chunk)
         pct = self._read * 100 // self._size if self._size else 0
-        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_done = self._read / 1_048_576
-        mb_total = self._size / 1_048_576
-        print(f"\r  [{bar}] {pct:3d}%  {mb_done:.1f}/{mb_total:.1f} MB", end="", flush=True)
+        if pct != self._last_pct:
+            self._last_pct = pct
+            bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
+            mb_done = self._read / 1_048_576
+            mb_total = self._size / 1_048_576
+            print(f"\r  [{bar}] {pct:3d}%  {mb_done:.1f}/{mb_total:.1f} MB", end="", flush=True)
         return chunk
 
     def __len__(self):

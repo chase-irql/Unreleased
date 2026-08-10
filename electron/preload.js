@@ -132,6 +132,11 @@ contextBridge.exposeInMainWorld('electron', {
   // { fallback: 'path' }.
   copyFileToClipboard: (filePath)     => ipcRenderer.invoke('copy-file-to-clipboard', filePath),
   copyTextToClipboard: (text)         => ipcRenderer.invoke('copy-text-to-clipboard', text),
+  // Cover art, as bytes the renderer already fetched (see lib/coverImage.ts):
+  // copyImageToClipboard wants a PNG data URL; saveImageFile takes any image
+  // data URL plus the filename to offer, and resolves { ok, path } | { canceled }.
+  copyImageToClipboard: (dataUrl)     => ipcRenderer.invoke('copy-image-to-clipboard', dataUrl),
+  saveImageFile:       (payload)      => ipcRenderer.invoke('save-image-file', payload),
 
   // On-demand tool binaries (ffmpeg / yt-dlp): downloaded into userData/bin on
   // first use instead of shipping ~100 MB with every install.

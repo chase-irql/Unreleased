@@ -28,7 +28,8 @@ Prompts are asked up front, then everything else runs unattended:
      BETA_ADMIN_TOKEN in .env.local).
 """
 
-import os, sys, re, json, shutil, subprocess, time, urllib.request, urllib.error, urllib.parse
+import os, sys, re, json, shutil, subprocess, threading, time, urllib.request, urllib.error, urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"): sys.stderr.reconfigure(encoding="utf-8")
 
@@ -47,6 +48,20 @@ WEB_BRANCH   = "web"
 API_BASE     = "https://api.github.com"
 UPLOAD_BASE  = "https://uploads.github.com"
 BETA_API_BASE = "https://juicewrldapi.com/beta"
+
+# How much we hand the socket per read(). http.client streams a file-like body
+# with `while block := data.read(self.blocksize)` and blocksize is 8192 — so a
+# 92 MB asset would otherwise be ~11,800 read/callback/sendall round-trips per
+# file. Returning more than the requested `n` is fine: send() just sendall()s
+# whatever comes back. 1 MB drops that to ~92 iterations.
+UPLOAD_CHUNK = 1_048_576
+# Assets uploaded at once. A single TLS stream to uploads.github.com rarely
+# saturates a fast uplink (it's bandwidth-delay-product bound, not CPU bound),
+# so the big .7z and offline .exe go up side by side.
+UPLOAD_WORKERS = 3
+# Asset uploads occasionally die mid-stream on GitHub's side (502/503, reset
+# connection). Re-uploading 92 MB beats failing the whole release at step 9.
+UPLOAD_RETRIES = 3
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 RST  = "\033[0m"
@@ -190,31 +205,93 @@ def api(method, path, token, data=None):
 
 # ── Upload with live progress bar ─────────────────────────────────────────────
 
+class _Bar:
+    """Throttled, thread-safe in-place progress bar.
+
+    Redrawing used to happen on every read() the HTTP layer made — ~24,000
+    console writes per release once you count both big assets. A Windows
+    console write is slow enough (and synchronous with the socket) that the
+    bar itself was throttling the upload. Now it only repaints when the
+    integer percentage moves AND at most ~10×/second.
+    """
+    def __init__(self, total, prefix="     "):
+        self._total  = max(int(total), 0)
+        self._prefix = prefix
+        self._done   = 0
+        self._lock   = threading.Lock()
+        self._last_pct  = -1
+        self._last_draw = 0.0
+        self._start  = time.time()
+        self._finished = False
+
+    def advance(self, delta):
+        with self._lock:
+            self._done += delta
+            pct = self._done * 100 // self._total if self._total else 100
+            now = time.time()
+            if pct != self._last_pct and now - self._last_draw >= 0.1:
+                self._last_pct, self._last_draw = pct, now
+                self._draw(pct)
+
+    def finish(self):
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._draw(self._done * 100 // self._total if self._total else 100)
+            print()
+
+    def _draw(self, pct):
+        pct = min(max(pct, 0), 100)
+        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
+        elapsed = max(time.time() - self._start, 0.001)
+        rate = self._done / elapsed / 1_048_576
+        print(f"\r{self._prefix}[{bar}] {pct:3d}%  "
+              f"{self._done/1_048_576:.1f}/{self._total/1_048_576:.1f} MB  "
+              f"{rate:.1f} MB/s", end="", flush=True)
+
+
 class _ProgressFile:
     def __init__(self, path, on_progress=None):
         self._f    = open(path, "rb")
         self._size = path.stat().st_size
         self._done = 0
+        self._bar  = None
         # on_progress(done_bytes, total_bytes) — defaults to printing an
         # in-place ASCII bar; a GUI can pass its own callback instead.
-        self._on_progress = on_progress or self._print_bar
-    def _print_bar(self, done, total):
-        pct = done * 100 // total if total else 100
-        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_d, mb_t = done / 1_048_576, total / 1_048_576
-        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
+        if on_progress is None:
+            self._bar = _Bar(self._size)
+            on_progress = lambda done, total: None
+        self._on_progress = on_progress
     def read(self, n=-1):
-        chunk = self._f.read(n)
+        # `n` is deliberately ignored in favour of UPLOAD_CHUNK — see the
+        # constant's comment. The only caller is http.client's send loop,
+        # which is happy with a larger block than it asked for.
+        chunk = self._f.read(UPLOAD_CHUNK if n is None or n < 0 else max(n, UPLOAD_CHUNK))
         self._done += len(chunk)
+        if self._bar is not None:
+            self._bar.advance(len(chunk))
         self._on_progress(self._done, self._size)
         return chunk
     def __len__(self):  return self._size
-    def close(self):    self._f.close()
+    def close(self):
+        # Idempotent: upload_asset closes it early so the bar's trailing
+        # newline lands before the success line, and again in its finally.
+        if self._bar is not None:
+            self._bar.finish()
+        if not self._f.closed:
+            self._f.close()
 
-def upload_asset(release_id, filepath, token, on_progress=None):
+def upload_asset(release_id, filepath, token, on_progress=None, quiet=False):
+    """Upload one asset, retrying on transient GitHub-side failures.
+
+    Any partially-created asset is deleted before a retry — GitHub rejects a
+    second upload under a name that already exists, even a broken one.
+    """
     name = filepath.name
     size = filepath.stat().st_size
-    print(f"\n  Uploading: {_c(name, WHT, BOLD)}  ({size/1_048_576:.1f} MB)")
+    if not quiet:
+        print(f"\n  Uploading: {_c(name, WHT, BOLD)}  ({size/1_048_576:.1f} MB)")
     url = (f"{UPLOAD_BASE}/repos/{REPO_OWNER}/{REPO_NAME}"
            f"/releases/{release_id}/assets?name={urllib.parse.quote(name)}")
     hdrs = {
@@ -224,19 +301,122 @@ def upload_asset(release_id, filepath, token, on_progress=None):
         "Content-Length": str(size),
         "User-Agent":     "release.py",
     }
-    wrap = _ProgressFile(filepath, on_progress)
-    req  = urllib.request.Request(url, data=wrap, headers=hdrs, method="POST")
+
+    for attempt in range(1, UPLOAD_RETRIES + 1):
+        wrap = _ProgressFile(filepath, on_progress)
+        req  = urllib.request.Request(url, data=wrap, headers=hdrs, method="POST")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read())
+                wrap.close()   # flush the bar's final line first
+                if not quiet:
+                    print(f"  {_c('✓', GRN, BOLD)}  {result['browser_download_url']}")
+                return result
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+            code = getattr(e, "code", None)
+            if isinstance(e, urllib.error.HTTPError):
+                body = e.read().decode(errors="replace")
+            else:
+                body = str(e)
+            # 4xx other than 422 (name taken) are our fault — don't burn
+            # three 92 MB uploads on a bad token or a deleted release.
+            retryable = code is None or code == 422 or code >= 500
+            if attempt == UPLOAD_RETRIES or not retryable:
+                if not quiet:
+                    print(f"\n  {_c('✗', RED, BOLD)}  {name}: "
+                          f"{'HTTP ' + str(code) if code else 'network error'} — {body[:300]}")
+                raise
+            if not quiet:
+                warn(f"{name}: {'HTTP ' + str(code) if code else 'network error'} — "
+                     f"retrying ({attempt}/{UPLOAD_RETRIES - 1})")
+            delete_asset_by_name(release_id, name, token)
+            time.sleep(2 * attempt)
+        finally:
+            wrap.close()
+
+
+def delete_asset_by_name(release_id, name, token):
+    """Remove an asset by filename if it exists. Best-effort — a missing
+    asset (the normal case) is not an error."""
     try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
-            print(f"\n  {_c('✓', GRN, BOLD)}  {result['browser_download_url']}")
-            return result
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        print(f"\n  HTTP {e.code}: {body[:300]}")
-        raise
+        for a in api("GET", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/assets", token):
+            if a["name"] == name:
+                api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{a['id']}", token)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def upload_assets(release_id, paths, token, workers=UPLOAD_WORKERS,
+                  on_file_progress=None, on_total_progress=None, verbose=True):
+    """Upload several assets concurrently behind one aggregate progress bar.
+
+    Serially, a release spends most of step 9 waiting on a single TLS stream
+    that never fills a fast uplink. Uploading the big artifacts side by side
+    is the difference between "bandwidth-limited" and "latency-limited".
+
+    on_file_progress(name, done, total) is per-file; on_total_progress(done,
+    total) is the aggregate. Pass verbose=False from a GUI — release_gui.py
+    is a windowed app with no console to print a bar to.
+    """
+    paths = list(paths)
+    if not paths:
+        return []
+
+    total = sum(p.stat().st_size for p in paths)
+    if verbose:
+        print()
+        for p in paths:
+            info(f"{p.name}  ({p.stat().st_size/1_048_576:.1f} MB)")
+        print()
+    bar = _Bar(total) if verbose else None
+    seen = {}          # name -> bytes already counted into the aggregate
+    seen_lock = threading.Lock()
+
+    def make_cb(name):
+        def _cb(done, size):
+            # High-water mark per file, so a retry restarting at byte 0
+            # doesn't drag the aggregate bar backwards — it just pauses
+            # until the re-upload passes where the failed one got to.
+            with seen_lock:
+                delta = done - seen.get(name, 0)
+                if delta > 0:
+                    seen[name] = done
+                agg = sum(seen.values())
+            if delta > 0 and bar is not None:
+                bar.advance(delta)
+            if on_file_progress:
+                on_file_progress(name, done, size)
+            if on_total_progress:
+                on_total_progress(agg, total)
+        return _cb
+
+    results, errors = [], []
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(paths)))) as pool:
+            futures = [(p, pool.submit(upload_asset, release_id, p, token,
+                                       on_progress=make_cb(p.name), quiet=True))
+                       for p in paths]
+            # Surfaces the first failure only once every worker has stopped,
+            # so a traceback can't interleave with a live progress bar.
+            for p, fut in futures:
+                try:
+                    results.append(fut.result())
+                except Exception as exc:
+                    errors.append((p, exc))
     finally:
-        wrap.close()
+        if bar is not None:
+            bar.finish()
+
+    if errors:
+        p, exc = errors[0]
+        raise RuntimeError(f"Upload failed for {p.name}: {exc}")
+
+    if verbose:
+        for r in results:
+            print(f"  {_c('✓', GRN, BOLD)}  {r['browser_download_url']}")
+    return results
 
 # ── Beta publish (private — never touches GitHub) ─────────────────────────────
 # Streams a multipart/form-data body (fields + files) without loading the
@@ -261,18 +441,23 @@ class _MultipartUpload:
         self._idx = 0
         self._fh = None
         self._done = 0
+        self._bar = None
         # on_progress(done_bytes, total_bytes) — defaults to printing an
         # in-place ASCII bar; a GUI can pass its own callback instead.
-        self._on_progress = on_progress or self._print_bar
+        if on_progress is None:
+            self._bar = _Bar(self._size)
+            on_progress = lambda done, total: None
+        self._on_progress = on_progress
 
     def __len__(self):
         return self._size
 
-    def _print_bar(self, done, total):
-        pct = done * 100 // total if total else 100
-        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_d, mb_t = done / 1_048_576, total / 1_048_576
-        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
+    def _emit(self, data):
+        self._done += len(data)
+        if self._bar is not None:
+            self._bar.advance(len(data))
+        self._on_progress(self._done, self._size)
+        return data
 
     def read(self, n=-1):
         while self._idx < len(self._segments):
@@ -280,25 +465,26 @@ class _MultipartUpload:
             if kind == "bytes":
                 self._idx += 1
                 if data:
-                    self._done += len(data)
-                    self._on_progress(self._done, self._size)
-                    return data
+                    return self._emit(data)
                 continue
             if self._fh is None:
                 self._fh = open(data, "rb")
-            chunk = self._fh.read(n if n and n > 0 else 1_048_576)
+            # `n` ignored in favour of UPLOAD_CHUNK, same reasoning as
+            # _ProgressFile.read — http.client would otherwise ask for 8 KB.
+            chunk = self._fh.read(UPLOAD_CHUNK if n is None or n < 0 else max(n, UPLOAD_CHUNK))
             if chunk:
-                self._done += len(chunk)
-                self._on_progress(self._done, self._size)
-                return chunk
+                return self._emit(chunk)
             self._fh.close()
             self._fh = None
             self._idx += 1
         return b""
 
     def close(self):
+        if self._bar is not None:
+            self._bar.finish()
         if self._fh:
             self._fh.close()
+            self._fh = None
 
 def upload_beta(url, token, fields, files, on_progress=None):
     boundary = f"----unreleased-{int(time.time())}"
@@ -312,8 +498,9 @@ def upload_beta(url, token, fields, files, on_progress=None):
     })
     try:
         with urllib.request.urlopen(req) as resp:
-            print()
-            return resp.read()
+            body = resp.read()
+            wrap.close()   # flush the bar's final line before anything else prints
+            return body
     finally:
         wrap.close()
 
@@ -770,7 +957,16 @@ def step_release(version, token, notes, state):
             info(f"Replacing existing asset: {fp.name}")
             api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{existing[fp.name]}", token)
 
-    for fp in to_upload:
+    # latest.yml is the update manifest: the moment it's live, every running
+    # app that polls sees the new version and starts fetching the .7z it
+    # names. Upload the payload first (in parallel), then publish the
+    # manifest — otherwise there's a multi-minute window where auto-update
+    # 404s on an asset that doesn't exist yet.
+    payload  = [p for p in to_upload if p.name != "latest.yml"]
+    manifest = [p for p in to_upload if p.name == "latest.yml"]
+
+    upload_assets(release_id, payload, token)
+    for fp in manifest:
         upload_asset(release_id, fp, token)
 
     url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/{tag}"

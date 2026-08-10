@@ -4,13 +4,14 @@ import {
   X, Music2, Pencil, Flag, PictureInPicture2, Minimize2,
   Clock, Hash, MicVocal, Music, Wrench, FileText, Piano, MapPin,
   Calendar, CalendarClock, CalendarDays, Droplets, Gauge, Layers,
-  GitBranch, Info, StickyNote, Quote, LucideIcon
+  GitBranch, Info, StickyNote, Quote, Copy, Download, Loader2, LucideIcon
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { attachToMainWindow } from '../lib/windowSync'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
+import { copyCoverImage, saveCoverImage } from '../lib/coverImage'
 import SongPrefsSection from './SongPrefsSection'
 import { ProgressiveCover } from './ProgressiveCover'
 
@@ -114,6 +115,12 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
   const [versions, setVersions] = useState<{ song: JWApiSong; meta: SongVersionMeta }[]>([])
   const [loadingVersions, setLoadingVersions] = useState(false)
 
+  // Cover art actions (copy to clipboard / save to disk). `coverMsg` briefly
+  // takes over the cover tile to report the outcome, since neither action
+  // changes anything visible on its own.
+  const [coverBusy, setCoverBusy] = useState<'copy' | 'save' | null>(null)
+  const [coverMsg, setCoverMsg] = useState<string | null>(null)
+
   const refreshVersions = (id: number): void => {
     if (!versionsEnabled) return
     setLoadingVersions(true)
@@ -156,6 +163,28 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
 
   const hasInstrumentals = displaySong.instrumentals || displaySong.instrumental_names
   const hasSession = displaySong.session_titles || displaySong.session_tracking
+
+  const flashCoverMsg = (msg: string): void => {
+    setCoverMsg(msg)
+    setTimeout(() => setCoverMsg(null), 1900)
+  }
+
+  const runCoverAction = async (kind: 'copy' | 'save'): Promise<void> => {
+    if (!coverUrl || coverBusy) return
+    setCoverBusy(kind)
+    try {
+      if (kind === 'copy') {
+        await copyCoverImage(coverUrl)
+        flashCoverMsg('Copied')
+      } else if (await saveCoverImage(coverUrl, primaryTitle) === 'saved') {
+        flashCoverMsg('Saved')
+      }
+    } catch {
+      flashCoverMsg(kind === 'copy' ? "Couldn't copy" : "Couldn't save")
+    } finally {
+      setCoverBusy(null)
+    }
+  }
 
   let notesDisplay: string | null = null
   if (displaySong.notes) {
@@ -245,7 +274,12 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
             </button>
           </div>
           <div className="relative flex items-end gap-4 px-5 pt-8 pb-5">
-            <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay">
+            {/* Cover — hovering reveals copy/save actions. In a pop-out the hero
+                is the window's drag handle, so the overlay opts back out of it. */}
+            <div
+              className="group/cover relative shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay"
+              style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
+            >
               {coverUrl ? (
                 <ProgressiveCover src={coverUrl} alt={primaryTitle} className="w-full h-full object-cover" />
               ) : (
@@ -253,6 +287,30 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
                   <Music2 size={32} className="text-text-muted opacity-30" />
                 </div>
               )}
+              {coverUrl && (coverMsg ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/75 px-1 text-center">
+                  <span className="text-white text-[10px] font-semibold">{coverMsg}</span>
+                </div>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/60 opacity-0 group-hover/cover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => runCoverAction('copy')}
+                    disabled={!!coverBusy}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/25 disabled:opacity-50 transition-colors"
+                    title="Copy cover image"
+                  >
+                    {coverBusy === 'copy' ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+                  </button>
+                  <button
+                    onClick={() => runCoverAction('save')}
+                    disabled={!!coverBusy}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/25 disabled:opacity-50 transition-colors"
+                    title="Save cover image"
+                  >
+                    {coverBusy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  </button>
+                </div>
+              ))}
             </div>
             <div className="flex-1 min-w-0 pb-0.5">
               <h2 className="text-white font-bold text-xl leading-tight">{primaryTitle}</h2>

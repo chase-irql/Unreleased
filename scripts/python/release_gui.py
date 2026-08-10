@@ -497,14 +497,30 @@ class ReleaseWorker(QThread):
                 self.log.emit(f"Replacing existing asset: {fp.name}", "info")
                 r.api("DELETE", f"/repos/{r.REPO_OWNER}/{r.REPO_NAME}/releases/assets/{existing[fp.name]}", token)
 
-        for fp in to_upload:
-            self.log.emit(f"Uploading: {fp.name}  ({fp.stat().st_size/1_048_576:.1f} MB)", "info")
-            name = fp.name
-            def _cb(done, total, _name=name):
-                pct = done * 100 // total if total else 100
-                self.upload.emit(_name, pct)
-            r.upload_asset(release_id, fp, token, on_progress=_cb)
-            self.upload.emit(name, 100)
+        # latest.yml goes up last, on its own: it's the update manifest, and
+        # publishing it before the .7z it points at leaves every polling app
+        # 404ing on an asset that doesn't exist yet. See release.py's
+        # step_release for the same split.
+        payload  = [p for p in to_upload if p.name != "latest.yml"]
+        manifest = [p for p in to_upload if p.name == "latest.yml"]
+
+        if payload:
+            total_mb = sum(p.stat().st_size for p in payload) / 1_048_576
+            for p in payload:
+                self.log.emit(f"Uploading: {p.name}  ({p.stat().st_size/1_048_576:.1f} MB)", "info")
+            label = f"{len(payload)} asset(s), {total_mb:.1f} MB"
+            def _total_cb(done, total, _label=label):
+                self.upload.emit(_label, done * 100 // total if total else 100)
+            r.upload_assets(release_id, payload, token,
+                            on_total_progress=_total_cb, verbose=False)
+            self.upload.emit(label, 100)
+
+        for fp in manifest:
+            self.log.emit(f"Uploading: {fp.name}", "info")
+            def _cb(done, total, _name=fp.name):
+                self.upload.emit(_name, done * 100 // total if total else 100)
+            r.upload_asset(release_id, fp, token, on_progress=_cb, quiet=True)
+            self.upload.emit(fp.name, 100)
 
         return f"https://github.com/{r.REPO_OWNER}/{r.REPO_NAME}/releases/tag/{tag}"
 
