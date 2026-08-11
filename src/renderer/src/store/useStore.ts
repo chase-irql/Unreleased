@@ -128,7 +128,6 @@ interface AppState {
   // like the editor send its back button/redirects to wherever the user
   // actually came from instead of a hardcoded destination.
   previousView: ViewType | null
-  showNowPlaying: boolean
   showSettings: boolean
   // Which Settings tab to show on next open (deep-link from the app menu, e.g.
   // "Keyboard shortcuts" → the Shortcuts tab). Settings applies it then clears
@@ -374,7 +373,6 @@ interface AppActions {
   playCommunityEdit: (edit: CommunityEdit) => void
 
   setActiveView: (view: ViewType) => void
-  setShowNowPlaying: (show: boolean) => void
   setRadioFmActive: (active: boolean) => void
   setRadioFmIsLive: (live: boolean | null) => void
   setRadioFmNowPlaying: (track: import('../lib/radioLive').RadioTrack | null) => void
@@ -884,7 +882,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // ── UI ────────────────────────────────────────────────────────────────────
   activeView: 'api-tracker',
   previousView: null,
-  showNowPlaying: false,
   showSettings: false,
   settingsTab: null,
   showDiagnostics: false,
@@ -946,7 +943,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
     set((s) => ({ activeView: view, previousView: view === s.activeView ? s.previousView : s.activeView }))
   },
-  setShowNowPlaying: (showNowPlaying) => set({ showNowPlaying }),
   setRadioFmActive: (radioFmActive) => set({ radioFmActive }),
   setRadioFmIsLive: (radioFmIsLive) => set({ radioFmIsLive }),
   setRadioFmNowPlaying: (radioFmNowPlaying) => set({ radioFmNowPlaying }),

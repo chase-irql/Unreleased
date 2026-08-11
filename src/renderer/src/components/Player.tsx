@@ -10,7 +10,6 @@ import {
   Repeat1,
   Volume2,
   VolumeX,
-  Maximize2,
   ListOrdered,
   Heart,
   ChevronUp,
@@ -94,8 +93,6 @@ export default function Player(): JSX.Element {
     toggleRepeat,
     nextTrack,
     prevTrack,
-    setShowNowPlaying,
-    showNowPlaying,
     showQueue,
     setShowQueue,
     playerCollapsed,
@@ -114,7 +111,7 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId, sidebarPosition } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'sidebarPosition')
+    playNext, account, updateLibraryTrack, setPendingEditorSongId, sidebarPosition } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'sidebarPosition')
   const canEditSong = !!(account?.is_editor || account?.is_administrator)
 
   const [showContextMenu, setShowContextMenu] = useState(false)
@@ -1352,8 +1349,8 @@ export default function Player(): JSX.Element {
         <div className="flex items-center px-3 py-2 gap-3 h-14">
           <button
             className="w-10 h-10 rounded bg-surface-overlay shrink-0 overflow-hidden"
-            onClick={() => setShowNowPlaying(true)}
-            aria-label="Open now playing"
+            onClick={() => setActiveView('wrld')}
+            aria-label="Open the WRLD player"
           >
             {radioFmActive ? (
               radioFmMatchedSong?.imageUrl
@@ -1369,14 +1366,14 @@ export default function Player(): JSX.Element {
               </div>
             )}
           </button>
-          {/* Cover + info both open Now Playing, the full-screen player on
-              mobile. (The cover used to jump to the WRLD page and this strip
-              was dead space entirely.) WRLD stays its own immersive view,
-              reachable from the nav. */}
+          {/* Cover + info both expand into WRLD, the full-screen player. There
+              used to be a separate Now Playing panel behind this strip that did
+              the same job in a smaller way; WRLD is the one immersive view now,
+              so tapping the mini player just goes there. */}
           <button
             className="flex-1 min-w-0 text-left"
-            onClick={() => setShowNowPlaying(true)}
-            aria-label="Open now playing"
+            onClick={() => setActiveView('wrld')}
+            aria-label="Open the WRLD player"
           >
             <p className="text-sm font-medium text-text-primary truncate">
               {radioFmActive && radioFmNowPlaying
@@ -1389,7 +1386,7 @@ export default function Player(): JSX.Element {
                 : (currentTrack?.artist || '')}
             </p>
           </button>
-          {/* Shuffle and repeat moved to Now Playing's transport row — five
+          {/* Shuffle and repeat live in WRLD's transport row instead — five
               controls in this strip meant ~27px targets and left the title
               almost no room. What's left gets proper 44px touch targets. */}
           <div className="flex items-center shrink-0 -mr-1">
@@ -1670,12 +1667,6 @@ export default function Player(): JSX.Element {
                 {Math.min(queue.length - queueIndex - 1, 99)}
               </span>
             )}
-          </button>}
-
-          {!radioFmActive && <button onClick={() => setShowNowPlaying(!showNowPlaying)}
-            className={`transition-colors ${showNowPlaying ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
-            title="Now Playing">
-            <Maximize2 size={16} />
           </button>}
 
 

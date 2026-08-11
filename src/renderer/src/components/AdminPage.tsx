@@ -153,7 +153,7 @@ function ProposalDiff({ proposal }: { proposal: SongEditProposal }): JSX.Element
 // profile's Admin tab) — no back button, page title, or window-control
 // clearance, since the host view owns that chrome.
 export default function AdminPage({ embedded = false }: { embedded?: boolean }): JSX.Element {
-  const { account, setActiveView, loadAccount, showNowPlaying, showQueue } = useStorePick('account', 'setActiveView', 'loadAccount', 'showNowPlaying', 'showQueue')
+  const { account, setActiveView, loadAccount } = useStorePick('account', 'setActiveView', 'loadAccount')
   // The header's rightmost controls (refresh + tabs) sit at the same corner
   // as the custom frameless-window buttons (see WindowControls in App.tsx,
   // fixed top-right). Without extra clearance they render underneath them —

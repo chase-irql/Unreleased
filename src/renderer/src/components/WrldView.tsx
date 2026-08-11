@@ -1180,8 +1180,7 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
 
 // Apple Music-style "Up Next" queue panel for the WRLD tab — a dark glass
 // panel matching the rest of the page instead of the app-wide QueuePanel's
-// light theme (which App.tsx suppresses while this page is active, mirroring
-// how it already suppresses the standalone NowPlaying panel here).
+// light theme (which App.tsx suppresses while this page is active).
 const WRLD_MAX_HISTORY_SHOWN = 10 // matches QueuePanel's MAX_HISTORY_SHOWN
 const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   onClose: () => void

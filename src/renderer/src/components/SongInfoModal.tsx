@@ -152,7 +152,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
   }
 
   // Portal to <body> so the overlay is never trapped inside a caller with a
-  // CSS transform/animation/overflow (e.g. NowPlaying's slide-in panel) — a
+  // CSS transform/animation/overflow (e.g. a slide-in panel or sheet) — a
   // transformed ancestor becomes the containing block for position: fixed,
   // which would otherwise render this "modal" clipped inside that panel.
   return createPortal(

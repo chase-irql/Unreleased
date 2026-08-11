@@ -44,7 +44,6 @@ import UrlImportModal from './components/UrlImportModal'
 import CookieNotice from './components/CookieNotice'
 import { GlobalSongInfoHost } from './components/SongInfoModal'
 import Player from './components/Player'
-import NowPlaying from './components/NowPlaying'
 import QueuePanel from './components/QueuePanel'
 import DownloadManager from './components/DownloadManager'
 import LibraryTab from './components/LibraryTab'
@@ -71,8 +70,8 @@ const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
 export default function App(): JSX.Element {
-  const { showNowPlaying, showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders, refreshPlaylists } = useStorePick(
-    'showNowPlaying', 'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders', 'refreshPlaylists')
+  const { showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders, refreshPlaylists } = useStorePick(
+    'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders', 'refreshPlaylists')
   useThemeEffects()
   // Android hardware back → close the topmost overlay / step back a view.
   // No-op off native.
@@ -180,7 +179,7 @@ export default function App(): JSX.Element {
             here opens with a flat pt-5-ish header, which physically lands
             under the cutout — so the inset is absorbed once, here, instead of
             each view remembering to. The one case that opts out: anything
-            position:fixed (NowPlaying, QueuePanel, Settings, sheets) escapes
+            position:fixed (QueuePanel, Settings, sheets) escapes
             this box entirely and owns its own inset.
             Skipped when the nav sits on top, since BottomNav already pads
             itself by the same amount and content flows below it. */}
@@ -222,7 +221,6 @@ export default function App(): JSX.Element {
               : <ApiTrackerView />}
             </Suspense>
           </ErrorBoundary>
-            {showNowPlaying && activeView !== 'wrld' && <ErrorBoundary><NowPlaying /></ErrorBoundary>}
             {showQueue && activeView !== 'wrld' && <ErrorBoundary><QueuePanel /></ErrorBoundary>}
           </div>
         </main>

@@ -49,7 +49,6 @@ export function useAndroidBackButton(): void {
       if (s.showDiagnostics) { s.setShowDiagnostics(false); return }
       if (s.showSettings)   { s.setShowSettings(false); return }
       if (s.showQueue)      { s.setShowQueue(false); return }
-      if (s.showNowPlaying) { s.setShowNowPlaying(false); return }
 
       if (history.length > 1) {
         history.pop()

@@ -17,14 +17,14 @@ import { useBackToClose } from '../hooks/useBackToClose'
 // `atTop` flips the border, the safe-area inset, and the active marker to the
 // opposite edge.
 //
-// Hard-capped at 5 tabs total, Settings always the last of them — a phone-width
-// row scrolling to reach a 7th or 8th enabled item (the previous behavior) is
+// Hard-capped at 6 tabs total, Settings always the last of them — a phone-width
+// row scrolling to reach an 8th or 9th enabled item (the original behavior) is
 // worse than just not offering that many at once. When more items are enabled
 // than fit, a "More" tab takes one of the direct slots and the rest live in a
 // bottom sheet off of it — see moreTabs below. Nothing enabled on this device
 // is ever unreachable on mobile the way it used to be (there's no Sidebar
 // fallback here, unlike desktop).
-const MAX_TABS = 5
+const MAX_TABS = 6
 
 interface Tab { view: ViewType; icon: ReactNode; label: string }
 
