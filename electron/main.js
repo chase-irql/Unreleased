@@ -281,6 +281,11 @@ const FLOAT_SIZES = {
   // Fits the convert dialog's max-w-md body (format grid + bitrate + options)
   // without scrolling; content scrolls if the user shrinks it.
   convert:       { width: 460,  height: 660, minWidth: 380, minHeight: 440 },
+  // The staff profile: proposals, comp files, reports, admin. Every one of
+  // those tabs is a master-detail split (a ~18rem list column plus a detail
+  // pane), so it needs real width — below ~760 the detail pane stops being
+  // usable and the tab strip starts scrolling.
+  profile:       { width: 1180, height: 820, minWidth: 760, minHeight: 560 },
 }
 // Window titles for the pop-outs. Every window boots the same renderer bundle,
 // whose <title> is "unreleased", so without these each pop-out would be an
@@ -294,6 +299,7 @@ const FLOAT_TITLES = {
   'mini-player':  'Mini Player',
   equalizer:      'Equalizer',
   convert:        'Convert Format',
+  profile:        'Profile',
 }
 function floatTitle(view) {
   return `${FLOAT_TITLES[view] || 'Unreleased'} — Unreleased`

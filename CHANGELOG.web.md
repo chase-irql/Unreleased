@@ -6,6 +6,39 @@ All notable changes to the web version of unreleased, from v1.10.6 onward. This 
 
 ---
 
+## [1.20.8] — 2026-08-11
+
+- **New** **Follow a shared playlist** — a live pointer to the owner's playlist that always shows their current tracks, no account needed, alongside the existing one-time "save a copy" import
+- **New** **Rotate suggested covers** — songs without a custom cover cycle through different covers found in the API's files each time they play
+- **New** Text file viewer — view `.txt`/`.lrc` and other plain-text files right in the Files tab
+- **New** Custom colors for the active/inactive synced-lyrics lines, an adjustable "blur inactive lyrics" amount, and smaller rendering for ad-libs
+- **Improve** Playback that stalls or fails to load now automatically retries (with a cap) instead of silently getting stuck; an API outage stops the queue instead of racing through every track
+- **Fix** Background playback with audio effects enabled could get killed by the OS on mobile (Android doze/screen-off) — effects now only attach once actually turned on
+
+---
+
+## [1.20.7] — 2026-08-10
+
+- **New** Copy or save a song's cover image directly from Song Info
+- **Fix** Heardle's daily puzzle now uses the server's date instead of your device's, so players in some timezones were no longer wrongly rejected
+
+---
+
+## [1.20.6] — 2026-08-09
+
+- **New** In-app and global keyboard shortcuts can now be rebound independently — a shortcut can be in-app-only, global (OS-wide), or both
+- **New** Right-click your profile in the sidebar to copy your auth token
+
+---
+
+## [1.20.5] — 2026-08-09
+
+- **New** Global shortcuts can now be toggled per-action instead of all-or-nothing
+- **Improve** Web pages now carry per-page titles and descriptions for search engines and link previews
+- **Fix** Admin's proposal search box no longer lags on large proposal lists
+
+---
+
 ## [1.20.4] — 2026-08-09
 
 - **New** Contributors can now withdraw their own pending comp-file proposals
