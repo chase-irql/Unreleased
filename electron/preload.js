@@ -75,6 +75,9 @@ contextBridge.exposeInMainWorld('electron', {
   // resolved against its parent in main, so it can't escape the folder.
   // localCreate/localRename resolve { ok, path } | { error }; localDelete
   // prompts and trashes, resolving { ok } | { canceled } | { error }.
+  // Reads a text file for the in-app viewer, capped at 2 MB. Resolves
+  // { ok, text, truncated, size } | { error }.
+  readTextFile: (filePath)           => ipcRenderer.invoke('read-text-file', filePath),
   localCreate: (dirPath, name, kind) => ipcRenderer.invoke('local-create', dirPath, name, kind),
   localRename: (filePath, name)      => ipcRenderer.invoke('local-rename', filePath, name),
   localDelete: (filePath)            => ipcRenderer.invoke('local-delete', filePath),

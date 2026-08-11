@@ -1039,6 +1039,32 @@ ipcMain.handle('browse-local', async (_, dirPath) => {
   }
 })
 
+// Reads a local file as UTF-8 for the in-app text viewer. Capped so a huge or
+// mis-identified file can't be pulled wholesale into the renderer, and the cap
+// is applied by reading a prefix rather than rejecting outright — a 2 MB log
+// is still worth showing the head of. `truncated` lets the viewer say so.
+const TEXT_VIEW_MAX = 2 * 1024 * 1024
+ipcMain.handle('read-text-file', async (_, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) return { error: 'No path' }
+  try {
+    const st = fs.statSync(filePath)
+    if (!st.isFile()) return { error: 'Not a file' }
+    const size = st.size
+    const length = Math.min(size, TEXT_VIEW_MAX)
+    const buf = Buffer.alloc(length)
+    const fd = fs.openSync(filePath, 'r')
+    try { fs.readSync(fd, buf, 0, length, 0) } finally { fs.closeSync(fd) }
+    // A NUL in the first chunk means this isn't text, whatever the extension
+    // said — report it instead of rendering mojibake.
+    if (buf.subarray(0, 8000).includes(0)) return { error: 'This looks like a binary file' }
+    return { ok: true, text: buf.toString('utf8'), truncated: size > length, size }
+  } catch (e) {
+    if (e.code === 'ENOENT') return { error: 'File not found' }
+    if (e.code === 'EACCES' || e.code === 'EPERM') return { error: 'No permission to read this file' }
+    return { error: e.message }
+  }
+})
+
 // ── IPC: local file management (create / rename / delete) ───────────────────
 // These act on the user's own filesystem from the Files > Local browser, so
 // they share the same rules as the copy/move handlers further down: a name is
