@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo, memo } from 'react'
+import { useState, useEffect, useRef, useMemo, memo, ReactNode } from 'react'
 import {
   Music, Play, Shuffle, Search, MoreVertical, ArrowLeft, User, FolderOpen, Loader2,
   Link2, Pencil, ListPlus, X, Check, ArrowUp, ArrowDown, ListMusic,
-  RefreshCw, Settings2, Circle, ChevronRight,
+  RefreshCw, Settings2, Circle, ChevronRight, SlidersHorizontal,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
@@ -41,7 +41,7 @@ const ALPHA_MIN_ROWS = 30
 
 type Tab = 'songs' | 'albums' | 'artists' | 'recent'
 type SortField = 'title' | 'artist' | 'album' | 'duration' | 'added'
-type SheetKind = 'sort' | 'more' | 'bulk' | null
+type SheetKind = 'sort' | 'more' | 'bulk' | 'filter' | null
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'songs', label: 'Songs' },
@@ -61,6 +61,59 @@ const SORTS: { key: SortField; label: string }[] = [
 const LS_TAB = 'library:view'
 const LS_SORT = 'library:sort'
 const LS_SORT_DIR = 'library:sortDir'
+const LS_FILTERS = 'library:filters'
+
+// ─── filters ──────────────────────────────────────────────────────────────────
+// Applied to the track pool itself rather than to the songs list, so albums and
+// artists made up entirely of excluded files disappear too — a "flac only"
+// filter that still listed mp3-only albums would be lying.
+
+type LengthKey = 'any' | 'short' | 'mid' | 'long' | 'epic'
+
+/** [min, max) in seconds. */
+const LENGTHS: { key: LengthKey; label: string; range: [number, number] }[] = [
+  { key: 'any',   label: 'Any',          range: [0, Infinity] },
+  { key: 'short', label: 'Under 2 min',  range: [0, 120] },
+  { key: 'mid',   label: '2–5 min',      range: [120, 300] },
+  { key: 'long',  label: '5–10 min',     range: [300, 600] },
+  { key: 'epic',  label: 'Over 10 min',  range: [600, Infinity] },
+]
+
+interface Filters {
+  length: LengthKey
+  /** Lowercase extensions, no dot. Empty = every type. */
+  exts: string[]
+  /** Empty = every genre. */
+  genres: string[]
+  artOnly: boolean
+}
+
+const NO_FILTERS: Filters = { length: 'any', exts: [], genres: [], artOnly: false }
+
+function loadFilters(): Filters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_FILTERS) || 'null')
+    if (!saved || typeof saved !== 'object') return NO_FILTERS
+    // Field-by-field rather than a spread: a hand-edited or older payload
+    // shouldn't be able to put a non-array where a list is expected and crash
+    // the whole tab on first render.
+    return {
+      length: LENGTHS.some((l) => l.key === saved.length) ? saved.length : 'any',
+      exts: Array.isArray(saved.exts) ? saved.exts.filter((s: unknown) => typeof s === 'string') : [],
+      genres: Array.isArray(saved.genres) ? saved.genres.filter((s: unknown) => typeof s === 'string') : [],
+      artOnly: !!saved.artOnly,
+    }
+  } catch { return NO_FILTERS }
+}
+
+function countFilters(f: Filters): number {
+  return (f.length !== 'any' ? 1 : 0) + (f.exts.length ? 1 : 0) + (f.genres.length ? 1 : 0) + (f.artOnly ? 1 : 0)
+}
+
+/** Toggle one value in a multi-select list. */
+function toggleIn(list: string[], value: string): string[] {
+  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
+}
 
 const byTrackNo = (a: LibraryTrack, b: LibraryTrack): number => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
 const shuffled = fisherYates
@@ -413,6 +466,40 @@ function PlayShuffleRow({ onPlay, onShuffle, disabled }: { onPlay: () => void; o
   )
 }
 
+/** One selectable pill. The same shape as the browse tabs above the list, so a
+ *  chosen filter reads as "on" the same way an active tab does. */
+function Chip({ label, active, onClick }: { label: ReactNode; active: boolean; onClick: () => void }): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={`h-9 px-3.5 rounded-full text-[13px] font-medium transition-colors ${
+        active ? 'bg-accent text-white' : 'bg-surface-overlay text-text-secondary active:bg-surface-highest'
+      }`}
+    >{label}</button>
+  )
+}
+
+function FilterGroup({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <div className="px-5 py-2.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-2">{label}</p>
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </div>
+  )
+}
+
+/** Shown where a list would be if the filters excluded everything in it. */
+function NoMatches({ what, onClear }: { what: string; onClear: () => void }): JSX.Element {
+  return (
+    <div className="flex flex-col items-center gap-3 py-16 px-8 text-center">
+      <p className="text-text-muted text-sm">No {what} match your filters</p>
+      <button onClick={onClear} className="h-10 px-5 rounded-full bg-surface-overlay text-text-primary text-[13px] font-semibold active:bg-surface-highest">
+        Clear filters
+      </button>
+    </div>
+  )
+}
+
 function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => void; onImportUrl: () => void }): JSX.Element {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
@@ -447,11 +534,11 @@ function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => voi
 
 export default function LibraryTab(): JSX.Element {
   const {
-    libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, setShowSettings,
+    libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, openSettings,
     playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds,
     toggleLike, openUrlImport, openBulkTrackEditor, currentTrack, isPlaying, setIsPlaying,
   } = useStorePick(
-    'libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'setShowSettings',
+    'libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'openSettings',
     'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds',
     'toggleLike', 'openUrlImport', 'openBulkTrackEditor', 'currentTrack', 'isPlaying', 'setIsPlaying')
 
@@ -467,6 +554,10 @@ export default function LibraryTab(): JSX.Element {
   const [sortDir, setSortDirState] = useState<'asc' | 'desc'>(() => (localStorage.getItem(LS_SORT_DIR) as 'asc' | 'desc') || 'asc')
   const setSortField = (f: SortField): void => { setSortFieldState(f); localStorage.setItem(LS_SORT, f) }
   const setSortDir = (d: 'asc' | 'desc'): void => { setSortDirState(d); localStorage.setItem(LS_SORT_DIR, d) }
+
+  const [filters, setFiltersState] = useState<Filters>(loadFilters)
+  const setFilters = (f: Filters): void => { setFiltersState(f); localStorage.setItem(LS_FILTERS, JSON.stringify(f)) }
+  const filterCount = countFilters(filters)
 
   const [sheet, setSheet] = useState<SheetKind>(null)
   const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
@@ -501,10 +592,39 @@ export default function LibraryTab(): JSX.Element {
     if (selectMode && selected.size === 0) setSelectMode(false)
   }, [selectMode, selected])
 
+  // ── filtering ──
+  // Facets come off the unfiltered library on purpose: picking "flac" must not
+  // make every other extension vanish from the sheet you picked it in.
+  const { extFacets, genreFacets } = useMemo(() => {
+    const exts = new Map<string, number>()
+    const genres = new Map<string, number>()
+    for (const t of libraryTracks) {
+      const e = (t.ext || '').toLowerCase().replace(/^\./, '')
+      if (e) exts.set(e, (exts.get(e) ?? 0) + 1)
+      const g = (t.genre || '').trim()
+      if (g) genres.set(g, (genres.get(g) ?? 0) + 1)
+    }
+    const rank = (m: Map<string, number>): { value: string; count: number }[] =>
+      [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, count]) => ({ value, count }))
+    return { extFacets: rank(exts), genreFacets: rank(genres) }
+  }, [libraryTracks])
+
+  const pool = useMemo(() => {
+    if (filterCount === 0) return libraryTracks
+    const [lo, hi] = (LENGTHS.find((l) => l.key === filters.length) ?? LENGTHS[0]).range
+    const exts = new Set(filters.exts)
+    const genres = new Set(filters.genres)
+    return libraryTracks.filter((t) =>
+      t.duration >= lo && t.duration < hi
+      && (exts.size === 0 || exts.has((t.ext || '').toLowerCase().replace(/^\./, '')))
+      && (genres.size === 0 || genres.has((t.genre || '').trim()))
+      && (!filters.artOnly || t.hasAlbumArt))
+  }, [libraryTracks, filters, filterCount])
+
   // ── derived collections ──
   const albums = useMemo<Album[]>(() => {
     const map = new Map<string, Album>()
-    for (const t of libraryTracks) {
+    for (const t of pool) {
       const key = `${t.album || 'Unknown Album'}__${t.albumArtist || t.artist || 'Unknown Artist'}`
       let a = map.get(key)
       if (!a) {
@@ -519,12 +639,12 @@ export default function LibraryTab(): JSX.Element {
       if (t.trackNumber === 1 || (!a.coverTrack.hasAlbumArt && t.hasAlbumArt)) a.coverTrack = t
     }
     return [...map.values()]
-  }, [libraryTracks])
+  }, [pool])
 
   const artists = useMemo<Artist[]>(() => {
     const map = new Map<string, Artist>()
     const albumSets = new Map<string, Set<string>>()
-    for (const t of libraryTracks) {
+    for (const t of pool) {
       const name = t.albumArtist || t.artist || 'Unknown Artist'
       let a = map.get(name)
       if (!a) { a = { name, tracks: [], albums: 0, coverTrack: t }; map.set(name, a); albumSets.set(name, new Set()) }
@@ -534,15 +654,15 @@ export default function LibraryTab(): JSX.Element {
     }
     for (const [name, a] of map) a.albums = albumSets.get(name)!.size
     return [...map.values()].sort((x, y) => x.name.localeCompare(y.name))
-  }, [libraryTracks])
+  }, [pool])
 
   const q = search.trim().toLowerCase()
 
   const songs = useMemo(() => {
     const list = q
-      ? libraryTracks.filter(t =>
+      ? pool.filter(t =>
           t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q))
-      : libraryTracks
+      : pool
     const dir = sortDir === 'asc' ? 1 : -1
     const cmp = (a: LibraryTrack, b: LibraryTrack): number => {
       switch (sortField) {
@@ -554,7 +674,7 @@ export default function LibraryTab(): JSX.Element {
       }
     }
     return [...list].sort((a, b) => cmp(a, b) * dir)
-  }, [libraryTracks, q, sortField, sortDir])
+  }, [pool, q, sortField, sortDir])
 
   const albumsFiltered = useMemo(() => {
     const base = tab === 'recent'
@@ -647,8 +767,11 @@ export default function LibraryTab(): JSX.Element {
   }
   useEffect(() => registerBackHandler(() => backRef.current()), [])
 
+  // Deliberately the unfiltered count: a filter that happens to match nothing
+  // is not the same as an empty library, and showing the "add a folder"
+  // onboarding over a full library would be nonsense.
   const showEmpty = libraryTracks.length === 0 && !libraryScanning
-  const totalDuration = useMemo(() => libraryTracks.reduce((s, t) => s + t.duration, 0), [libraryTracks])
+  const totalDuration = useMemo(() => pool.reduce((s, t) => s + t.duration, 0), [pool])
 
   const rowCommon = {
     onPlay: (t: LibraryTrack) => playFrom(t, visibleTracks),
@@ -748,9 +871,26 @@ export default function LibraryTab(): JSX.Element {
               <p className="text-text-muted text-xs truncate">
                 {libraryScanning ? 'Scanning…'
                   : libraryTracks.length === 0 ? 'Nothing added yet'
-                  : `${libraryTracks.length.toLocaleString()} songs · ${albums.length} albums · ${formatTotalDuration(totalDuration)}`}
+                  : filterCount > 0 ? `${pool.length.toLocaleString()} of ${libraryTracks.length.toLocaleString()} songs · ${formatTotalDuration(totalDuration)}`
+                  : `${pool.length.toLocaleString()} songs · ${albums.length} albums · ${formatTotalDuration(totalDuration)}`}
               </p>
             </div>
+            {!showEmpty && (
+              <button
+                onClick={() => setSheet('filter')}
+                className={`relative w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-surface-overlay ${
+                  filterCount > 0 ? 'text-accent' : 'text-text-muted'
+                }`}
+                aria-label={filterCount > 0 ? `Filters (${filterCount} active)` : 'Filters'}
+              >
+                <SlidersHorizontal size={19} />
+                {filterCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-accent text-white text-[9px] font-bold flex items-center justify-center">
+                    {filterCount}
+                  </span>
+                )}
+              </button>
+            )}
             {tab === 'songs' && (
               <button
                 onClick={() => setSheet('sort')}
@@ -780,6 +920,17 @@ export default function LibraryTab(): JSX.Element {
                     >{label}</button>
                   )
                 })}
+                {/* One-tap escape from a filter set that's hiding things —
+                    without it a persisted filter reads as a broken library on
+                    the next launch. */}
+                {filterCount > 0 && (
+                  <button
+                    onClick={() => setFilters(NO_FILTERS)}
+                    className="shrink-0 h-9 pl-3.5 pr-2.5 rounded-full bg-accent/15 text-accent text-[13px] font-medium flex items-center gap-1"
+                  >
+                    {filterCount} filter{filterCount === 1 ? '' : 's'} <X size={14} />
+                  </button>
+                )}
               </div>
 
               <div className="px-4 pt-2.5">
@@ -820,7 +971,7 @@ export default function LibraryTab(): JSX.Element {
 
       {/* ── Body ───────────────────────────────────────────────────────────── */}
       {showEmpty ? (
-        <EmptyState onOpenSettings={() => setShowSettings(true)} onImportUrl={() => openUrlImport()} />
+        <EmptyState onOpenSettings={() => openSettings('library')} onImportUrl={() => openUrlImport()} />
       ) : libraryScanning && libraryTracks.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <Loader2 size={30} className="animate-spin text-accent" />
@@ -854,7 +1005,9 @@ export default function LibraryTab(): JSX.Element {
             </>
           ) : tab === 'artists' ? (
             artistsFiltered.length === 0 ? (
-              <p className="text-text-muted text-sm text-center py-16">No artists found</p>
+              filterCount > 0 && !q
+                ? <NoMatches what="artists" onClear={() => setFilters(NO_FILTERS)} />
+                : <p className="text-text-muted text-sm text-center py-16">No artists found</p>
             ) : (
               <>
                 <VirtualRows
@@ -871,7 +1024,9 @@ export default function LibraryTab(): JSX.Element {
             )
           ) : tab === 'songs' ? (
             songs.length === 0 ? (
-              <p className="text-text-muted text-sm text-center py-16">No songs found</p>
+              filterCount > 0 && !q
+                ? <NoMatches what="songs" onClear={() => setFilters(NO_FILTERS)} />
+                : <p className="text-text-muted text-sm text-center py-16">No songs found</p>
             ) : (
               <>
                 <VirtualRows
@@ -893,7 +1048,9 @@ export default function LibraryTab(): JSX.Element {
             )
           ) : (
             albumsFiltered.length === 0 ? (
-              <p className="text-text-muted text-sm text-center py-16">No albums found</p>
+              filterCount > 0 && !q
+                ? <NoMatches what="albums" onClear={() => setFilters(NO_FILTERS)} />
+                : <p className="text-text-muted text-sm text-center py-16">No albums found</p>
             ) : (
               <div className="px-4">
                 <AlbumGrid
@@ -970,6 +1127,72 @@ export default function LibraryTab(): JSX.Element {
         </Sheet>
       )}
 
+      {/* Filters apply as you tap them — the list behind the sheet is already
+          updating, so there's nothing to "apply". The footer button just
+          dismisses, with the resulting count on it. */}
+      {sheet === 'filter' && (
+        <Sheet onClose={() => setSheet(null)} title="Filters">
+          <FilterGroup label="Length">
+            {LENGTHS.map((l) => (
+              <Chip
+                key={l.key}
+                label={l.label}
+                active={filters.length === l.key}
+                onClick={() => setFilters({ ...filters, length: l.key })}
+              />
+            ))}
+          </FilterGroup>
+
+          {extFacets.length > 1 && (
+            <FilterGroup label="File type">
+              {extFacets.map((f) => (
+                <Chip
+                  key={f.value}
+                  label={<>{f.value.toUpperCase()} <span className="opacity-60">{f.count}</span></>}
+                  active={filters.exts.includes(f.value)}
+                  onClick={() => setFilters({ ...filters, exts: toggleIn(filters.exts, f.value) })}
+                />
+              ))}
+            </FilterGroup>
+          )}
+
+          {genreFacets.length > 1 && (
+            <FilterGroup label="Genre">
+              {genreFacets.map((f) => (
+                <Chip
+                  key={f.value}
+                  label={<>{f.value} <span className="opacity-60">{f.count}</span></>}
+                  active={filters.genres.includes(f.value)}
+                  onClick={() => setFilters({ ...filters, genres: toggleIn(filters.genres, f.value) })}
+                />
+              ))}
+            </FilterGroup>
+          )}
+
+          <FilterGroup label="Other">
+            <Chip
+              label="Has artwork"
+              active={filters.artOnly}
+              onClick={() => setFilters({ ...filters, artOnly: !filters.artOnly })}
+            />
+          </FilterGroup>
+
+          <div className="flex items-center gap-2 px-5 pt-3 pb-1">
+            <button
+              onClick={() => setFilters(NO_FILTERS)}
+              disabled={filterCount === 0}
+              className="h-12 px-5 rounded-full bg-surface-overlay text-text-primary text-[15px] font-semibold disabled:opacity-40 active:bg-surface-highest"
+            >Reset</button>
+            <button
+              onClick={() => setSheet(null)}
+              className="flex-1 h-12 rounded-full bg-accent text-white text-[15px] font-semibold active:opacity-80"
+            >
+              Show {pool.length.toLocaleString()} song{pool.length === 1 ? '' : 's'}
+            </button>
+          </div>
+        </Sheet>
+      )}
+
       {sheet === 'more' && (
         <Sheet onClose={() => setSheet(null)} title="Library">
           <SheetItem
@@ -990,7 +1213,7 @@ export default function LibraryTab(): JSX.Element {
             icon={Settings2}
             label="Library settings"
             sub="Folders, auto-refresh"
-            onClick={() => { setShowSettings(true); setSheet(null) }}
+            onClick={() => { openSettings('library'); setSheet(null) }}
           />
         </Sheet>
       )}

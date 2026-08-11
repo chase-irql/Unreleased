@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
+import {
+  Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause,
+  SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX,
+  MoreHorizontal, Heart, ListMusic, Trash2, Download, History, SlidersHorizontal,
+  Mic2, Layers, ArrowUp, ArrowDown, ArrowUpDown, Loader2,
+} from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
@@ -11,31 +16,54 @@ import { getActiveRadioClient } from '../lib/radioSocketService'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
+import type { SyncedLyricLine, Track } from '../types'
 import * as userApi from '../lib/userApi'
 import SongInfoModal from './SongInfoModal'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { ProgressiveCover } from './ProgressiveCover'
 import SongContextMenu from './SongContextMenu'
 import { getSkin } from '../lib/skins'
+import { Sheet, SheetItem, SheetDivider } from './mobile/Sheet'
+import { useBackToClose } from '../hooks/useBackToClose'
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   WRLD — the full-screen player, and since the mini bar now expands into it,
+   the only "now playing" screen the app has.
+
+   Built for a phone rather than folded down from the desktop two-column layout
+   (big cover + lyrics side by side), which is gone: there is no room here to
+   show artwork and lyrics at once, and every affordance that layout leaned on
+   was pointer-only — a hover-revealed scrub knob, a version menu poking out of
+   the cover's left edge, drag-to-reorder in the queue, right-click to download
+   lyrics, an audio-output picker Android doesn't need.
+
+   What it is instead: one column — cover, title, seek, transport — with the
+   secondary surfaces (lyrics, queue, radio, versions) as chips under the
+   controls that open full-height sheets. Everything below the presentation
+   layer is unchanged: the FM socket, voting and song proposals, the version
+   lookup, the rAF-driven synced-lyrics engine and the queue store actions are
+   all the same code.
+   ══════════════════════════════════════════════════════════════════════════════ */
 
 export default function WrldView(): JSX.Element {
   const {
-    currentTrack, currentTrackFull, account, theme,
+    currentTrack, currentTrackFull, account, theme, previousView, setActiveView,
     radioFmActive, setRadioFmActive, radioFmIsLive, radioFmNowPlaying,
     radioFmVote, radioFmUpNext, radioFmQueuePreview,
     radioFmMatchedSong,
     playTrack,
-    isPlaying, setIsPlaying, volume, setVolume,
+    isPlaying, setIsPlaying,
     shuffle, repeat, toggleShuffle, toggleRepeat,
     nextTrack, prevTrack,
     showQueue, setShowQueue,
-    audioOutput, setAudioOutput,
     toggleEqPanel, eqFxActive,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
     account: s.account,
     theme: s.theme,
+    previousView: s.previousView,
+    setActiveView: s.setActiveView,
     radioFmActive: s.radioFmActive,
     setRadioFmActive: s.setRadioFmActive,
     radioFmIsLive: s.radioFmIsLive,
@@ -47,8 +75,6 @@ export default function WrldView(): JSX.Element {
     playTrack: s.playTrack,
     isPlaying: s.isPlaying,
     setIsPlaying: s.setIsPlaying,
-    volume: s.volume,
-    setVolume: s.setVolume,
     shuffle: s.shuffle,
     repeat: s.repeat,
     toggleShuffle: s.toggleShuffle,
@@ -57,8 +83,6 @@ export default function WrldView(): JSX.Element {
     prevTrack: s.prevTrack,
     showQueue: s.showQueue,
     setShowQueue: s.setShowQueue,
-    audioOutput: s.audioOutput,
-    setAudioOutput: s.setAudioOutput,
     toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
     eqFxActive: s.eqEnabled || s.playbackSpeed !== 1 || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
@@ -68,55 +92,23 @@ export default function WrldView(): JSX.Element {
   // "is this a dark look" — Ocean, Mocha, etc. need the dark treatment too.
   const isDarkSkin = getSkin(theme).dark
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const activeRef    = useRef<HTMLDivElement>(null)
   const [artError, setArtError] = useState(false)
+  const [textIsDark, setTextIsDark] = useState(false)
+  const [sheet, setSheet] = useState<'radio' | 'versions' | null>(null)
+  const [lyricsOpen, setLyricsOpen] = useState(false)
 
-  // Remember the volume before muting so unmuting restores it, instead of
-  // jumping to a hardcoded level (mirrors the Player bar's toggleMute).
-  const prevVolumeRef = useRef(volume || 0.8)
-  useEffect(() => { if (volume > 0) prevVolumeRef.current = volume }, [volume])
-  const toggleMute = (): void => setVolume(volume === 0 ? (prevVolumeRef.current || 0.8) : 0)
-
-  // Audio output device picker — mirrors the Player bar's (the bottom bar is
-  // hidden on this page, so WRLD needs its own copy of this control instead
-  // of inheriting it for free).
-  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([])
-  const [showOutputPicker, setShowOutputPicker] = useState(false)
-  const outputBtnRef = useRef<HTMLButtonElement>(null)
-  const [pickerPos, setPickerPos] = useState({ bottom: 0, right: 0 })
-
-  useEffect(() => {
-    const enumerate = async (): Promise<void> => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        setOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
-      } catch { /* ignore */ }
-    }
-    enumerate()
-    navigator.mediaDevices.addEventListener('devicechange', enumerate)
-    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate)
-  }, [])
-
-  const openOutputPicker = (): void => {
-    if (!outputBtnRef.current) return
-    const r = outputBtnRef.current.getBoundingClientRect()
-    setPickerPos({ bottom: window.innerHeight - r.top + 8, right: window.innerWidth - r.right })
-    setShowOutputPicker((v) => !v)
-  }
-
-  const [fmTab, setFmTab] = useState<'radio' | 'lyrics'>('radio')
-
-  const [suggestQuery, setSuggestQuery]     = useState('')
-  const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
-  const [voteDismissed, setVoteDismissed]    = useState(false)
-  const [myVote, setMyVote]                 = useState<'yes' | 'no' | null>(null)
+  // ── 999 FM: voting ──
+  const [voteDismissed, setVoteDismissed] = useState(false)
+  const [myVote, setMyVote] = useState<'yes' | 'no' | null>(null)
   const [localSecondsLeft, setLocalSecondsLeft] = useState<number | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [proposed, setProposed]             = useState<string | null>(null)
-  const [proposeError, setProposeError]     = useState<string | null>(null)
-  const [textIsDark, setTextIsDark]          = useState(false)
+
+  // ── 999 FM: proposing the next song ──
+  const [suggestQuery, setSuggestQuery] = useState('')
+  const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
+  const [suggestLoading, setSuggestLoading] = useState(false)
+  const [proposed, setProposed] = useState<string | null>(null)
+  const [proposeError, setProposeError] = useState<string | null>(null)
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const proposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -134,7 +126,7 @@ export default function WrldView(): JSX.Element {
     return () => { if (suggestTimer.current) clearTimeout(suggestTimer.current) }
   }, [suggestQuery])
 
-  const handlePropose = (song: JWApiSong) => {
+  const handlePropose = (song: JWApiSong): void => {
     // Only confirm if the proposal actually went out over the socket — a
     // closed/absent connection used to still flash "Proposed" while nothing
     // was ever sent.
@@ -161,10 +153,10 @@ export default function WrldView(): JSX.Element {
   useEffect(() => { setArtError(false) }, [artSrc])
 
   // Sibling versions of the currently playing song (v1/v2/TV Mix/etc, linked
-  // via juicewrldapi's /versions/ table — see versionsApi.ts), shown as
-  // a single notch menu next to the cover art.
+  // via juicewrldapi's /versions/ table — see versionsApi.ts). On desktop these
+  // hung off a notch on the cover's edge; here they're a chip under the
+  // transport that opens a picker sheet.
   const [songVersions, setSongVersions] = useState<{ songId: number; label: string | null }[]>([])
-  const [songVersionMenuOpen, setSongVersionMenuOpen] = useState(false)
   useEffect(() => {
     if (radioFmActive || !currentTrack?.id) { setSongVersions([]); return }
     const numericId = parseInt(currentTrack.id.replace('jw-', ''), 10)
@@ -198,6 +190,8 @@ export default function WrldView(): JSX.Element {
     } catch {}
   }
 
+  // Everything on this page sits on the blurred cover, so text colour has to
+  // follow the artwork's brightness rather than the theme.
   useEffect(() => {
     if (!artSrc || artError) {
       setTextIsDark(!isDarkSkin && !radioFmActive)
@@ -228,8 +222,8 @@ export default function WrldView(): JSX.Element {
   const rawLyrics = radioFmActive
     ? (radioFmMatchedSong?.syncedLyrics || radioFmMatchedSong?.lyrics || null)
     : (currentTrackFull?.syncedLyrics || currentTrackFull?.lyrics || null)
-  const isSynced  = rawLyrics ? isLrcFormat(rawLyrics) : false
-  const isEditor  = account?.is_editor || account?.is_administrator
+  const isSynced = rawLyrics ? isLrcFormat(rawLyrics) : false
+  const isEditor = account?.is_editor || account?.is_administrator
 
   const txtPri   = textIsDark ? 'rgba(0,0,0,0.85)'  : 'rgba(255,255,255,1)'
   const txtSec   = textIsDark ? 'rgba(0,0,0,0.5)'   : 'rgba(255,255,255,0.5)'
@@ -281,9 +275,6 @@ export default function WrldView(): JSX.Element {
   // Unmount-only cleanup for the countdown interval
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current) }, [])
 
-  const fmLabel    = radioFmActive
-    ? (radioFmIsLive ? '999 FM · LIVE' : '999 FM · OFF')
-    : radioFmIsLive === false ? '999 FM · OFF' : '999 FM'
   const fmDisabled = radioFmIsLive === false && !radioFmActive
 
   const displayTitle  = radioFmActive && radioFmNowPlaying ? radioFmNowPlaying.title  : currentTrack?.title
@@ -293,172 +284,6 @@ export default function WrldView(): JSX.Element {
   // Nothing to control — gray out and disable the transport so it doesn't
   // look interactive when there's no track loaded (and FM isn't filling in).
   const noTrack = !radioFmActive && !currentTrack
-
-  // ArtBox / FmRadioPanel are rendered via plain function calls, NOT <JSX/>
-  // element syntax: they're (re)defined on every WrldView render, so as JSX
-  // components React would see a brand-new type each time and unmount/
-  // remount their whole subtree — album art re-decoded and flickered, and
-  // any internal DOM/menu state was lost on every parent re-render. As plain
-  // calls they're just part of this component's own tree.
-  // (Corollary: they must not contain hooks of their own.)
-  const ArtBox = ({ mobile }: { mobile: boolean }) => (
-    <div
-      className={mobile
-        ? 'w-14 h-14 rounded-xl overflow-hidden shrink-0 shadow-lg'
-        : 'rounded-3xl overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.8)] w-full'}
-      style={mobile ? {} : { aspectRatio: '1' }}
-    >
-      {artSrc && !artError ? (
-        // The mobile box is 56px, so the degraded cover is all it ever needs;
-        // the desktop box is the biggest cover in the app and loads the full
-        // one behind a degraded first paint.
-        mobile
-          ? <img src={smallCoverUrl(artSrc)} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
-          : <ProgressiveCover src={artSrc} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
-      ) : radioFmActive ? (
-        <div className="w-full h-full bg-gradient-to-br from-red-900/60 to-black flex flex-col items-center justify-center gap-2">
-          <Radio className={`text-red-400 opacity-70 ${mobile ? 'w-6 h-6' : 'w-16 h-16'}`} />
-          {!mobile && <span className="text-red-300/70 text-2xl font-bold tracking-widest">999 FM</span>}
-        </div>
-      ) : (
-        <div className="w-full h-full bg-white/10 flex items-center justify-center">
-          <Music className={`text-white/20 ${mobile ? 'w-6 h-6' : 'w-16 h-16'}`} />
-        </div>
-      )}
-    </div>
-  )
-
-  const FmRadioPanel = () => (
-    <div className="flex-1 overflow-y-auto pb-8 px-4 md:px-6 flex flex-col gap-4 md:gap-5" style={{ scrollbarWidth: 'none' }}>
-      {/* Vote */}
-      {radioFmVote?.active && !voteDismissed ? (
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <p className="text-white/50 text-[11px] font-semibold uppercase tracking-widest">
-              {radioFmVote.kind === 'skip' ? 'Vote to Skip' : 'Vote to Queue'}
-            </p>
-            <div className="flex items-center gap-2">
-              {localSecondsLeft != null && (
-                <span className={`text-xs tabular-nums font-mono transition-colors ${localSecondsLeft <= 5 ? 'text-red-400/70' : 'text-white/30'}`}>
-                  {localSecondsLeft}s
-                </span>
-              )}
-              <button onClick={() => setVoteDismissed(true)} className="text-white/20 hover:text-white/60 transition-colors">
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-          {radioFmVote.track && <p className="text-white/80 text-sm font-medium">{radioFmVote.track}</p>}
-          <p className="text-white/30 text-xs">
-            {radioFmVote.yes ?? 0} yes · {radioFmVote.no ?? 0} no
-            {radioFmVote.votes_needed != null && <span> · need {radioFmVote.votes_needed}</span>}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setMyVote('yes'); getActiveRadioClient()?.castVote('yes') }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${
-                myVote === 'yes'
-                  ? 'bg-green-600/40 text-green-300 ring-1 ring-green-500/50'
-                  : 'bg-green-600/15 hover:bg-green-600/30 text-green-400'
-              }`}>
-              <ThumbsUp size={13} /> Yes
-            </button>
-            <button
-              onClick={() => { setMyVote('no'); getActiveRadioClient()?.castVote('no') }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium transition-all ${
-                myVote === 'no'
-                  ? 'bg-red-600/40 text-red-300 ring-1 ring-red-500/50'
-                  : 'bg-red-900/15 hover:bg-red-900/30 text-red-400'
-              }`}>
-              <ThumbsDown size={13} /> No
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={() => { setVoteDismissed(false); getActiveRadioClient()?.proposeSkip() }}
-          className="flex items-center gap-2 text-sm text-white/30 hover:text-white/65 transition-colors self-start">
-          <SkipForward size={14} /> Vote to skip
-        </button>
-      )}
-
-      {/* Suggest */}
-      <div className="flex flex-col gap-2">
-        <p className="text-white/40 text-[11px] font-semibold uppercase tracking-widest">Suggest next song</p>
-        {proposed ? (
-          <div className="flex items-center justify-between bg-green-900/20 border border-green-500/20 rounded-xl px-3 py-2">
-            <div className="flex items-center gap-2 text-green-400 text-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 animate-pulse" />
-              Proposed: <span className="text-green-300 font-medium">{proposed}</span>
-            </div>
-            <button onClick={() => { setProposed(null); if (proposeTimer.current) clearTimeout(proposeTimer.current) }}
-              className="text-green-500/50 hover:text-green-400 transition-colors ml-2 shrink-0">
-              <X size={13} />
-            </button>
-          </div>
-        ) : (
-          <>
-            {proposeError && (
-              <p className="text-red-400/80 text-xs pl-1">{proposeError}</p>
-            )}
-            <div className="relative">
-              <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25 pointer-events-none" />
-              <input
-                type="text" value={suggestQuery}
-                onChange={(e) => setSuggestQuery(e.target.value)}
-                placeholder="Search songs…"
-                className="w-full bg-white/5 text-white/80 text-sm rounded-xl py-2 pl-8 pr-3 border border-white/10 focus:outline-none focus:border-white/25 transition-colors"
-                style={{ colorScheme: 'dark' }}
-              />
-            </div>
-            {suggestLoading && <p className="text-white/25 text-xs pl-1">Searching…</p>}
-            {suggestResults.length > 0 && (
-              <div className="flex flex-col -mx-1">
-                {suggestResults.map(song => (
-                  <button key={song.id} onClick={() => handlePropose(song)}
-                    className="text-left px-3 py-2 rounded-xl hover:bg-white/10 transition-colors group">
-                    <p className="text-white/70 text-sm truncate group-hover:text-white/90 transition-colors" title={song.track_titles?.[0] || song.name}>
-                      {song.track_titles?.[0] || song.name}
-                    </p>
-                    <p className="text-white/35 text-xs truncate">{song.credited_artists}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Up next */}
-      {radioFmUpNext && (
-        <div className="flex flex-col gap-2">
-          <p className="text-white/40 text-[11px] font-semibold uppercase tracking-widest">Up next</p>
-          <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-            <p className="text-white/80 text-sm font-medium truncate" title={radioFmUpNext.title}>{radioFmUpNext.title}</p>
-            {radioFmUpNext.artist && <p className="text-white/40 text-xs mt-0.5">{radioFmUpNext.artist}</p>}
-          </div>
-        </div>
-      )}
-
-      {/* Queue preview */}
-      {radioFmQueuePreview.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <p className="text-white/40 text-[11px] font-semibold uppercase tracking-widest">Coming up</p>
-          <div className="flex flex-col">
-            {radioFmQueuePreview.map((title, i) => (
-              <div key={i} className="flex items-center gap-3 px-1 py-1.5 rounded-lg">
-                <span className="text-white/20 text-xs w-4 text-right shrink-0">{i + 1}</span>
-                <p className="text-white/50 text-sm truncate" title={title}>{title}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-
-  // LyricsPanel is now a module-level component (see below WrldView) — call via JSX.
-
-  // ── Render ────────────────────────────────────────────────────────────────────
 
   const toggleFm = (): void => {
     const next = !radioFmActive
@@ -472,591 +297,455 @@ export default function WrldView(): JSX.Element {
     setRadioFmActive(next)
   }
 
-  // Full label pill — desktop pinned corner only, where there's room for it.
-  const fmToggleButton = (
-    <button
-      onClick={toggleFm}
-      disabled={fmDisabled}
-      className={`flex items-center gap-2 text-xs font-medium rounded-full px-3 py-1 md:py-1.5 transition-all disabled:opacity-40 shrink-0
-        ${radioFmActive && radioFmIsLive
-          ? 'bg-red-600/80 text-white backdrop-blur-sm ring-1 ring-red-400/50'
-          : radioFmActive
-          ? 'bg-white/10 text-white/50 backdrop-blur-sm'
-          : 'bg-white/60 dark:bg-black/25 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/50 hover:text-black dark:hover:text-white/90 hover:bg-white/80 dark:hover:bg-black/50 backdrop-blur-sm shadow-sm'}`}
-      title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
-    >
-      <Radio size={13} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
-      <span>{fmLabel}</span>
-    </button>
-  )
+  // The chevron collapses the player back to wherever you came from — the same
+  // gesture as any full-screen player. `previousView` can point back at this
+  // page (a reload lands here), hence the fallback.
+  const collapse = (): void => setActiveView(previousView && previousView !== 'wrld' ? previousView : 'library')
 
-  // Icon-only — mobile header row, sized to match the Queue/Like/Menu buttons
-  // it sits next to. The full label pill doesn't fit that row without
-  // crowding the title out, so state is conveyed by color/pulse instead.
-  const fmToggleButtonMobile = (
-    <button
-      onClick={toggleFm}
-      disabled={fmDisabled}
-      aria-label={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
-      title={radioFmActive ? 'Turn off 999 FM' : 'Turn on 999 FM'}
-      className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
-        radioFmActive && radioFmIsLive
-          ? 'bg-red-600/80 text-white'
-          : radioFmActive
-          ? 'bg-white/10 text-white/50'
-          : 'hover:bg-white/10'
-      }`}
-      style={!radioFmActive ? { color: textIsDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)' } : undefined}
-    >
-      <Radio size={18} className={radioFmActive && radioFmIsLive ? 'animate-pulse' : ''} />
-    </button>
-  )
+  const voteActive = !!radioFmVote?.active && !voteDismissed
 
-  const inner = (
-    <div className="relative flex flex-col md:flex-row flex-1 h-full w-full overflow-hidden">
+  return (
+    <div className="relative flex-1 h-full w-full overflow-hidden flex flex-col">
+      <ArtBackdrop
+        artSrc={artSrc} artError={artError} isDarkSkin={isDarkSkin}
+        radioFmActive={radioFmActive} onError={() => setArtError(true)}
+      />
 
-      {/* 999 FM toggle — pinned top-left on desktop only. On mobile it now
-          lives inline in the header row below instead of floating above it;
-          a pinned overlay there meant the header needed reserved top padding
-          just to clear it, which read as dead space under the status bar. */}
-      <div className="hidden md:flex absolute z-30 items-center gap-2 md:top-4 md:left-4">
-        {fmToggleButton}
-      </div>
+      <div className="relative z-10 flex flex-col h-full min-h-0">
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <div className="shrink-0 flex items-center gap-1 px-2 pt-1">
+          <button
+            onClick={collapse}
+            aria-label="Collapse player"
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-white/10"
+            style={{ color: txtPri }}
+          ><ChevronDown size={22} /></button>
 
-      <>
-          {/* Blurred background */}
-          <div className="absolute inset-0 overflow-hidden">
+          <div className="flex-1 flex justify-center min-w-0">
+            <FmPill active={radioFmActive} live={radioFmIsLive} disabled={fmDisabled} onClick={toggleFm} light={textIsDark} />
+          </div>
+
+          <FmLikeButton light={textIsDark} />
+          <SongMenu light={textIsDark} />
+        </div>
+
+        {/* ── Cover ──────────────────────────────────────────────────────── */}
+        {/* max-h caps it on short screens; the image is object-cover, so the
+            box going slightly non-square there crops rather than distorts. */}
+        <div className="flex-1 min-h-0 flex items-center justify-center px-8 py-4">
+          <div
+            className="w-full max-w-[340px] max-h-[44vh] aspect-square rounded-3xl overflow-hidden shadow-[0_28px_70px_rgba(0,0,0,0.65)] transition-transform duration-500 ease-out"
+            style={{ transform: isPlaying || radioFmActive ? 'scale(1)' : 'scale(0.92)' }}
+          >
             {artSrc && !artError ? (
-              // Blurred to 60px, so resolution is meaningless here — always the
-              // degraded copy, which also gets the backdrop up on the first frame.
-              <img src={smallCoverUrl(artSrc)} alt=""
-                className="absolute inset-0 w-full h-full object-cover"
-                style={{ filter: `blur(60px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
-                onError={() => setArtError(true)}
+              <ProgressiveCover src={artSrc} alt="Album art" className="w-full h-full object-cover" onError={() => setArtError(true)} />
+            ) : radioFmActive ? (
+              <div className="w-full h-full bg-gradient-to-br from-red-900/60 to-black flex flex-col items-center justify-center gap-3">
+                <Radio className="text-red-400 opacity-70 w-14 h-14" />
+                <span className="text-red-300/70 text-xl font-bold tracking-widest">999 FM</span>
+              </div>
+            ) : (
+              <div className="w-full h-full bg-white/10 flex items-center justify-center">
+                <Music className="text-white/20 w-14 h-14" />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Controls ───────────────────────────────────────────────────── */}
+        <div
+          className="shrink-0 px-6 flex flex-col gap-3.5"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+        >
+          {/* Title block */}
+          <div className="min-w-0">
+            <p className="font-bold text-[19px] leading-tight truncate" style={{ color: txtPri }}>
+              {displayTitle || (radioFmActive ? 'Tuning in…' : 'Not playing')}
+            </p>
+            <p className="text-sm mt-1 truncate" style={{ color: txtSec }}>
+              {[displayArtist, displayAlbum].filter(Boolean).join(' · ') || ' '}
+            </p>
+          </div>
+
+          {radioFmActive ? <FmProgressBar txtPri={txtPri} txtTer={txtTer} /> : <ProgressBar txtPri={txtPri} txtTer={txtTer} />}
+
+          {/* Transport. 999 FM is a live stream — there is nothing local to
+              play, pause or seek, so that mode gets the vote card (or its
+              two entry points) in the same slot instead. */}
+          {radioFmActive ? (
+            voteActive ? (
+              <VoteCard
+                vote={radioFmVote!}
+                secondsLeft={localSecondsLeft}
+                myVote={myVote}
+                onVote={(v) => { setMyVote(v); getActiveRadioClient()?.castVote(v) }}
+                onDismiss={() => setVoteDismissed(true)}
               />
             ) : (
-              <div className={`absolute inset-0 ${radioFmActive ? 'bg-gradient-to-br from-red-950/60 to-black dark:from-red-950/60 dark:to-black' : 'bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-900 dark:to-black'}`} />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/20 dark:from-black/40 dark:via-transparent dark:to-black/70" />
-          </div>
-
-          {/* Mobile layout */}
-          <div className="md:hidden relative z-10 flex flex-col h-full min-h-0">
-
-            {/* Header: art + title. The 999FM toggle used to float pinned
-                above this row, which meant the row needed reserved top
-                padding just to clear it — now it's part of the row itself,
-                so this only needs the same top padding every other mobile
-                header on this page uses. */}
-            <div className="flex items-center gap-3 px-4 pt-4 pb-3 shrink-0">
-              {ArtBox({ mobile: true })}
-              <div className="flex-1 min-w-0">
-                {displayTitle  && <p className="font-bold text-sm leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
-                {displayArtist && <p className="text-xs mt-0.5 truncate" style={{ color: txtSec }}>{displayArtist}</p>}
-                {displayAlbum  && <p className="text-xs mt-0.5 truncate" style={{ color: txtTer }}>{displayAlbum}</p>}
-                {radioFmActive && !radioFmNowPlaying && <p className="text-xs mt-0.5" style={{ color: txtTer }}>Tuning in…</p>}
-              </div>
-              {fmToggleButtonMobile}
-              {!radioFmActive && (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowQueue(!showQueue)}
-                  aria-label="Playing Next"
-                  aria-pressed={showQueue}
-                  className="rounded-full transition-colors hover:bg-white/10 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
-                  style={{ color: showQueue ? 'var(--accent)' : (textIsDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)') }}
-                >
-                  <ListMusic size={18} />
-                </button>
-              )}
-              <FmLikeButton light={textIsDark} />
-              <SongMenu light={textIsDark} />
-            </div>
-
-            {/* Tab bar (FM mode) or divider line */}
-            {radioFmActive ? (
-              <div className="flex items-center gap-1 px-4 pb-2 shrink-0 border-b border-white/5">
-                {(['radio', 'lyrics'] as const).map(tab => (
-                  <button key={tab} onClick={() => setFmTab(tab)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors capitalize ${
-                      fmTab === tab ? 'bg-white/10 text-white/90' : 'text-white/35 hover:text-white/65 hover:bg-white/5'
-                    }`}>
-                    {tab === 'radio' ? 'Radio' : 'Lyrics'}
-                  </button>
-                ))}
+                  onClick={() => { setVoteDismissed(false); getActiveRadioClient()?.proposeSkip() }}
+                  className="flex-1 h-12 rounded-full bg-white/10 text-white text-[15px] font-semibold flex items-center justify-center gap-2 active:bg-white/20"
+                ><SkipForward size={17} /> Vote to skip</button>
+                <button
+                  onClick={() => setSheet('radio')}
+                  className="flex-1 h-12 rounded-full bg-white/10 text-white text-[15px] font-semibold flex items-center justify-center gap-2 active:bg-white/20"
+                ><Search size={17} /> Suggest</button>
               </div>
-            ) : (
-              <div className="mx-4 h-px bg-white/10 shrink-0" />
-            )}
+            )
+          ) : (
+            <div className={`flex items-center justify-between transition-opacity ${noTrack ? 'opacity-35 pointer-events-none' : ''}`}>
+              <button
+                onClick={toggleShuffle}
+                disabled={noTrack}
+                aria-label={shuffle ? 'Shuffle on' : 'Shuffle off'}
+                aria-pressed={shuffle}
+                className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/10"
+                style={{ color: shuffle ? txtPri : txtTer, opacity: shuffle ? 1 : 0.7 }}
+              ><Shuffle size={19} /></button>
+              <button
+                onClick={() => prevTrack()}
+                disabled={noTrack}
+                aria-label="Previous"
+                className="w-14 h-14 flex items-center justify-center rounded-full active:bg-white/10"
+                style={{ color: txtPri }}
+              ><SkipBack size={28} fill="currentColor" /></button>
+              <button
+                onClick={() => setIsPlaying(!isPlaying)}
+                disabled={noTrack}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+                className="w-[66px] h-[66px] rounded-full flex items-center justify-center shadow-xl active:scale-95 transition-transform"
+                style={{ background: txtPri, color: textIsDark ? 'white' : 'black' }}
+              >
+                {isPlaying
+                  ? <Pause size={28} fill="currentColor" />
+                  : <Play size={28} fill="currentColor" className="ml-1" />}
+              </button>
+              <button
+                onClick={() => nextTrack()}
+                disabled={noTrack}
+                aria-label="Next"
+                className="w-14 h-14 flex items-center justify-center rounded-full active:bg-white/10"
+                style={{ color: txtPri }}
+              ><SkipFwd size={28} fill="currentColor" /></button>
+              <button
+                onClick={toggleRepeat}
+                disabled={noTrack}
+                aria-label={repeat === 'none' ? 'No repeat' : repeat === 'all' ? 'Repeat all' : 'Repeat one'}
+                className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/10"
+                style={{ color: repeat !== 'none' ? txtPri : txtTer, opacity: repeat !== 'none' ? 1 : 0.7 }}
+              >{repeat === 'one' ? <Repeat1 size={19} /> : <Repeat size={19} />}</button>
+            </div>
+          )}
 
-            {/* Content */}
+          <VolumeRow txtPri={txtPri} txtTer={txtTer} />
+
+          {/* Everything that used to occupy a second column now hangs off
+              these — each opens a sheet over the player rather than replacing
+              it, so what's playing never leaves the screen. */}
+          <div className="flex items-center justify-center gap-2 pt-0.5">
+            <ActionChip icon={Mic2} label="Lyrics" onClick={() => setLyricsOpen(true)} light={textIsDark} />
             {radioFmActive
-              ? (fmTab === 'radio' ? FmRadioPanel() : <LyricsPanel rawLyrics={rawLyrics} isSynced={isSynced} syncedLines={syncedLines} radioFmActive={radioFmActive} currentTrack={currentTrack} isEditor={isEditor} txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint} />)
-              : <LyricsPanel rawLyrics={rawLyrics} isSynced={isSynced} syncedLines={syncedLines} radioFmActive={radioFmActive} currentTrack={currentTrack} isEditor={isEditor} txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint} />
-            }
-
-            {/* Mobile playback bar — the bottom Player bar is hidden on this
-                page, and the mobile layout never had its own controls, so
-                this is the only way to control playback here. FM has no
-                local play/pause/seek, so that mode is volume-only. */}
-            <div className="shrink-0 px-4 pt-2" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
-              {radioFmActive && <FmProgressBar txtPri={txtPri} txtTer={txtTer} />}
-              {!radioFmActive && (
-                <>
-                  <ProgressBar txtPri={txtPri} txtTer={txtTer} />
-                  <div className={`flex items-center justify-between mt-2 mb-1 transition-opacity ${noTrack ? 'opacity-35 pointer-events-none' : ''}`}>
-                    <button
-                      onClick={toggleShuffle}
-                      disabled={noTrack}
-                      title={shuffle ? 'Shuffle on' : 'Shuffle off'}
-                      className="p-2 rounded-full transition-colors"
-                      style={{ color: shuffle ? txtPri : txtTer, opacity: shuffle ? 1 : 0.6 }}
-                    >
-                      <Shuffle size={16} />
-                    </button>
-                    <button
-                      onClick={() => prevTrack()}
-                      disabled={noTrack}
-                      className="p-2 rounded-full transition-opacity hover:opacity-70"
-                      style={{ color: txtPri }}
-                      title="Previous"
-                    >
-                      <SkipBack size={24} fill="currentColor" />
-                    </button>
-                    <button
-                      onClick={() => setIsPlaying(!isPlaying)}
-                      disabled={noTrack}
-                      className="w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-opacity hover:opacity-80 active:scale-95"
-                      style={{ background: txtPri, color: textIsDark ? 'white' : 'black' }}
-                    >
-                      {isPlaying
-                        ? <Pause size={20} fill="currentColor" />
-                        : <Play  size={20} fill="currentColor" className="ml-0.5" />}
-                    </button>
-                    <button
-                      onClick={() => nextTrack()}
-                      disabled={noTrack}
-                      className="p-2 rounded-full transition-opacity hover:opacity-70"
-                      style={{ color: txtPri }}
-                      title="Next"
-                    >
-                      <SkipFwd size={24} fill="currentColor" />
-                    </button>
-                    <button
-                      onClick={toggleRepeat}
-                      disabled={noTrack}
-                      title={repeat === 'none' ? 'No repeat' : repeat === 'all' ? 'Repeat all' : 'Repeat one'}
-                      className="p-2 rounded-full transition-colors"
-                      style={{ color: repeat !== 'none' ? txtPri : txtTer, opacity: repeat !== 'none' ? 1 : 0.6 }}
-                    >
-                      {repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
-                    </button>
-                  </div>
-                </>
-              )}
-              <div className="flex items-center gap-2.5">
-                <button
-                  onClick={toggleEqPanel}
-                  title="Equalizer"
-                  className="shrink-0 transition-opacity hover:opacity-70"
-                  style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
-                >
-                  <SlidersHorizontal size={16} />
-                </button>
-                <button
-                  onClick={toggleMute}
-                  className="shrink-0 transition-opacity hover:opacity-70"
-                  style={{ color: txtTer }}
-                >
-                  {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                </button>
-                <div className="relative flex-1 h-1 rounded-full cursor-pointer group/vol"
-                  style={{ background: 'rgba(255,255,255,0.18)' }}
-                  onMouseDown={e => {
-                    const track = e.currentTarget
-                    const compute = (clientX: number) => {
-                      const rect = track.getBoundingClientRect()
-                      setVolume(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)))
-                    }
-                    compute(e.clientX)
-                    const onMove = (ev: MouseEvent) => compute(ev.clientX)
-                    const onUp = () => {
-                      document.removeEventListener('mousemove', onMove)
-                      document.removeEventListener('mouseup', onUp)
-                    }
-                    document.addEventListener('mousemove', onMove)
-                    document.addEventListener('mouseup', onUp)
-                  }}
-                  onTouchStart={e => {
-                    const track = e.currentTarget
-                    const compute = (clientX: number) => {
-                      const rect = track.getBoundingClientRect()
-                      setVolume(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)))
-                    }
-                    compute(e.touches[0].clientX)
-                    const onMove = (ev: TouchEvent) => compute(ev.touches[0].clientX)
-                    const onEnd = () => {
-                      document.removeEventListener('touchmove', onMove)
-                      document.removeEventListener('touchend', onEnd)
-                    }
-                    document.addEventListener('touchmove', onMove)
-                    document.addEventListener('touchend', onEnd)
-                  }}
-                >
-                  <div className="h-full rounded-full" style={{ width: `${volume * 100}%`, background: txtTer }} />
-                  <div
-                    className="absolute top-1/2 w-3 h-3 rounded-full shadow-lg opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none"
-                    style={{ left: `${volume * 100}%`, transform: 'translate(-50%, -50%)', background: txtPri }}
-                  />
-                </div>
-                <span className="shrink-0 text-sm font-semibold tabular-nums w-10 text-right" style={{ color: txtTer }}>
-                  {Math.round(volume * 100)}%
-                </span>
-              </div>
-            </div>
+              ? <ActionChip icon={Radio} label="Radio" onClick={() => setSheet('radio')} light={textIsDark} />
+              : <ActionChip icon={ListMusic} label="Queue" onClick={() => setShowQueue(true)} light={textIsDark} />}
+            {!radioFmActive && songVersions.length > 0 && (
+              <ActionChip icon={Layers} label="Versions" onClick={() => setSheet('versions')} light={textIsDark} />
+            )}
+            <ActionChip icon={SlidersHorizontal} label="EQ" onClick={toggleEqPanel} active={eqFxActive} light={textIsDark} />
           </div>
+        </div>
+      </div>
 
-          {/* Desktop layout */}
-          <div className="hidden md:flex relative z-10 flex-1 h-full overflow-hidden">
+      {/* ── Lyrics, full screen ──────────────────────────────────────────── */}
+      {lyricsOpen && (
+        <LyricsScreen
+          onClose={() => setLyricsOpen(false)}
+          title={displayTitle}
+          artist={displayArtist}
+          rawLyrics={rawLyrics}
+          isSynced={isSynced}
+          syncedLines={syncedLines}
+          radioFmActive={radioFmActive}
+          currentTrack={currentTrack}
+          isEditor={isEditor}
+          txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint}
+          textIsDark={textIsDark}
+          artSrc={artSrc} artError={artError} isDarkSkin={isDarkSkin}
+        />
+      )}
 
-            {/* Left column — Apple Music style. A true 50/50 split with the
-                lyrics column, not a narrow fixed-width sidebar next to a huge
-                mostly-empty lyrics pane. */}
-            {/* overflow-x-hidden is required here, not just tidy: per the CSS
-                overflow spec, when one axis is 'auto' the other's computed
-                value is promoted from 'visible' to 'auto' too — so without
-                this, the version menu popping out past this column's edge
-                was making the browser grow a horizontal scrollbar, which
-                shifted the whole column up by its height. */}
-            <div className="relative flex flex-col items-center justify-center shrink-0 px-8 xl:px-12 gap-5 overflow-y-auto overflow-x-hidden"
-              style={{ width: '50%', minWidth: 320 }}>
+      {/* ── Queue ────────────────────────────────────────────────────────── */}
+      {showQueue && !radioFmActive && <QueueSheet onClose={() => setShowQueue(false)} />}
 
-              {/* Album art */}
-              <div className="relative w-full" style={{ maxWidth: 320 }}>
-                {ArtBox({ mobile: false })}
-                {!radioFmActive && songVersions.length > 0 && (
-                  <div className="absolute right-full top-1/2 -translate-y-1/2 z-20">
-                    {/* Flush against the art's left edge rather than centered
-                        on it — only the half that pokes out past the cover is
-                        drawn (rounded-l-full, flat edge against the art),
-                        instead of a full pill floating half on top of it. */}
-                    <button
-                      onClick={() => setSongVersionMenuOpen(o => !o)}
-                      title="Other versions"
-                      className={`w-4 h-9 flex items-center justify-center rounded-l-full bg-white/15 dark:bg-white/[0.08] backdrop-blur-xl backdrop-saturate-150 border-y border-l shadow-lg transition-colors ${
-                        songVersionMenuOpen ? 'border-white/40 dark:border-white/15' : 'border-white/20 dark:border-white/10'
-                      }`}
-                    >
-                      <span className="w-[2px] h-4 bg-white/60" />
-                    </button>
-                    <div className="fixed inset-0 z-10" onClick={() => setSongVersionMenuOpen(false)} style={{ pointerEvents: songVersionMenuOpen ? 'auto' : 'none' }} />
-                    <div
-                      className={`absolute right-full top-1/2 -translate-y-1/2 mr-3 z-20 min-w-[120px] origin-right bg-black/95 backdrop-blur-xl rounded-lg border border-white/10 overflow-hidden py-1 shadow-2xl transition-all duration-200 ease-out ${
-                        songVersionMenuOpen
-                          ? 'opacity-100 scale-100 translate-x-0'
-                          : 'opacity-0 scale-90 translate-x-2 pointer-events-none'
-                      }`}
-                    >
-                      {songVersions.map((v, i) => (
-                        <button
-                          key={v.songId}
-                          onClick={() => { setSongVersionMenuOpen(false); handlePlayVersion(v.songId) }}
-                          className="w-full px-3 py-1.5 text-left text-[10px] font-medium text-white/70 hover:text-white/95 hover:bg-white/[0.08] transition-colors whitespace-nowrap"
-                        >
-                          {v.label ?? `Version ${i + 1}`}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Title + artist */}
-              <div className="w-full px-1" style={{ maxWidth: 320 }}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    {displayTitle  && <p className="font-bold text-xl leading-tight truncate" style={{ color: txtPri }} title={displayTitle}>{displayTitle}</p>}
-                    {displayArtist && <p className="text-sm mt-0.5 truncate" style={{ color: txtSec }}>{displayArtist}</p>}
-                    {radioFmActive && !radioFmNowPlaying && <p className="text-sm mt-0.5" style={{ color: txtTer }}>Tuning in…</p>}
-                  </div>
-                  {!radioFmActive && (
-                    <button
-                      onClick={() => setShowQueue(!showQueue)}
-                      aria-label="Playing Next"
-                      aria-pressed={showQueue}
-                      className="rounded-full transition-colors hover:bg-white/10 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
-                      style={{ color: showQueue ? 'var(--accent)' : (textIsDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)') }}
-                    >
-                      <ListMusic size={18} />
-                    </button>
-                  )}
-                  <FmLikeButton light={textIsDark} />
-                  <SongMenu light={textIsDark} />
+      {/* ── 999 FM panel ─────────────────────────────────────────────────── */}
+      {sheet === 'radio' && (
+        <Sheet onClose={() => setSheet(null)} title="999 FM">
+          <div className="px-5 pb-2 flex flex-col gap-4">
+            {/* Suggest */}
+            <div className="flex flex-col gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Suggest next song</p>
+              {proposed ? (
+                <div className="flex items-center justify-between gap-2 bg-green-900/20 border border-green-500/20 rounded-xl px-3 py-2.5">
+                  <p className="text-green-400 text-sm min-w-0 truncate">
+                    Proposed: <span className="text-green-300 font-medium">{proposed}</span>
+                  </p>
+                  <button
+                    onClick={() => { setProposed(null); if (proposeTimer.current) clearTimeout(proposeTimer.current) }}
+                    className="shrink-0 w-8 h-8 flex items-center justify-center text-green-500/70"
+                    aria-label="Dismiss"
+                  ><X size={15} /></button>
                 </div>
-              </div>
-
-              {/* Progress bar — FM gets a read-only version (no scrubbing on live radio) */}
-              <div className="w-full" style={{ maxWidth: 320 }}>
-                {radioFmActive
-                  ? <FmProgressBar txtPri={txtPri} txtTer={txtTer} />
-                  : <ProgressBar txtPri={txtPri} txtTer={txtTer} />}
-              </div>
-
-              {/* Playback controls */}
-              <div className="w-full flex flex-col gap-4" style={{ maxWidth: 320 }}>
-                {/* Main controls row — hidden during 999FM; it's a live stream,
-                    nothing here to locally play/pause/seek. Voting to skip
-                    lives in the FM panel itself instead of a repurposed button. */}
-                {!radioFmActive && (
-                <div className={`flex items-center justify-between transition-opacity ${noTrack ? 'opacity-35 pointer-events-none' : ''}`}>
-                  {/* Shuffle */}
-                  <button
-                    onClick={toggleShuffle}
-                    disabled={noTrack}
-                    title={shuffle ? 'Shuffle on' : 'Shuffle off'}
-                    className="p-2 rounded-full transition-colors"
-                    style={{ color: shuffle ? txtPri : txtTer, opacity: shuffle ? 1 : 0.6 }}
-                  >
-                    <Shuffle size={16} />
-                  </button>
-
-                  {/* Prev */}
-                  <button
-                    onClick={() => prevTrack()}
-                    disabled={noTrack}
-                    className="p-2 rounded-full transition-opacity hover:opacity-70"
-                    style={{ color: txtPri }}
-                    title="Previous"
-                  >
-                    <SkipBack size={26} fill="currentColor" />
-                  </button>
-
-                  {/* Play / Pause */}
-                  <button
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={noTrack}
-                    className="w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-opacity hover:opacity-80 active:scale-95"
-                    style={{ background: txtPri, color: textIsDark ? 'white' : 'black' }}
-                  >
-                    {isPlaying
-                      ? <Pause size={24} fill="currentColor" />
-                      : <Play  size={24} fill="currentColor" className="ml-0.5" />}
-                  </button>
-
-                  {/* Next */}
-                  <button
-                    onClick={() => nextTrack()}
-                    disabled={noTrack}
-                    className="p-2 rounded-full transition-opacity hover:opacity-70"
-                    style={{ color: txtPri }}
-                    title="Next"
-                  >
-                    <SkipFwd size={26} fill="currentColor" />
-                  </button>
-
-                  {/* Repeat */}
-                  <button
-                    onClick={toggleRepeat}
-                    disabled={noTrack}
-                    title={repeat === 'none' ? 'No repeat' : repeat === 'all' ? 'Repeat all' : 'Repeat one'}
-                    className="p-2 rounded-full transition-colors"
-                    style={{ color: repeat !== 'none' ? txtPri : txtTer, opacity: repeat !== 'none' ? 1 : 0.6 }}
-                  >
-                    {repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
-                  </button>
-                </div>
-                )}
-
-                {/* Volume row */}
-                <div className="flex items-center gap-2.5">
-                  <button
-                    onClick={toggleEqPanel}
-                    title="Equalizer"
-                    className="shrink-0 transition-opacity hover:opacity-70"
-                    style={{ color: eqFxActive ? 'var(--accent)' : txtTer }}
-                  >
-                    <SlidersHorizontal size={14} />
-                  </button>
-                  <button
-                    onClick={toggleMute}
-                    className="shrink-0 transition-opacity hover:opacity-70"
-                    style={{ color: txtTer }}
-                  >
-                    {volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                  </button>
-                  <div className="relative flex-1 h-1 rounded-full cursor-pointer group/vol"
-                    style={{ background: 'rgba(255,255,255,0.18)' }}
-                    onMouseDown={e => {
-                      const track = e.currentTarget
-                      const compute = (clientX: number) => {
-                        const rect = track.getBoundingClientRect()
-                        setVolume(Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)))
-                      }
-                      compute(e.clientX)
-                      const onMove = (ev: MouseEvent) => compute(ev.clientX)
-                      const onUp = () => {
-                        document.removeEventListener('mousemove', onMove)
-                        document.removeEventListener('mouseup', onUp)
-                      }
-                      document.addEventListener('mousemove', onMove)
-                      document.addEventListener('mouseup', onUp)
-                    }}
-                  >
-                    <div className="h-full rounded-full" style={{ width: `${volume * 100}%`, background: txtTer }} />
-                    <div
-                      className="absolute top-1/2 w-2.5 h-2.5 rounded-full opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none"
-                      style={{ left: `${volume * 100}%`, transform: 'translate(-50%, -50%)', background: txtPri }}
+              ) : (
+                <>
+                  {proposeError && <p className="text-red-400/90 text-xs">{proposeError}</p>}
+                  <div className="relative flex items-center">
+                    <Search size={16} className="absolute left-3.5 text-text-muted pointer-events-none" />
+                    <input
+                      type="search"
+                      value={suggestQuery}
+                      onChange={(e) => setSuggestQuery(e.target.value)}
+                      placeholder="Search songs"
+                      enterKeyHint="search"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      className="w-full h-11 bg-surface-overlay rounded-full pl-10 pr-4 text-[15px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 [&::-webkit-search-cancel-button]:hidden"
                     />
-                    <span
-                      className="absolute -top-9 -translate-x-1/2 px-2.5 py-1 rounded-lg bg-black/80 text-white text-sm font-semibold tabular-nums opacity-0 group-hover/vol:opacity-100 transition-opacity pointer-events-none"
-                      style={{ left: `${volume * 100}%` }}
-                    >
-                      {Math.round(volume * 100)}%
-                    </span>
                   </div>
-                  {outputDevices.length > 1 && (
-                    <button
-                      ref={outputBtnRef}
-                      onClick={openOutputPicker}
-                      title="Audio output"
-                      className="shrink-0 transition-opacity hover:opacity-70"
-                      style={{ color: audioOutput ? 'var(--accent)' : txtTer }}
-                    >
-                      <Volume2 size={14} />
-                    </button>
+                  {suggestLoading && (
+                    <p className="flex items-center gap-2 text-text-muted text-xs"><Loader2 size={13} className="animate-spin" /> Searching…</p>
                   )}
-                </div>
-              </div>
-
-            </div>
-
-            {/* Output device popover — portaled so it isn't clipped by the
-                (overflow-hidden) column it's anchored to. */}
-            {showOutputPicker && createPortal(
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowOutputPicker(false)} />
-                <div
-                  onMouseDown={(e) => e.stopPropagation()}
-                  className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl py-1.5 min-w-[220px]"
-                  style={{ bottom: pickerPos.bottom, right: pickerPos.right }}
-                >
-                  <p className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Audio Output</p>
-                  <button
-                    onClick={() => { setAudioOutput(''); setShowOutputPicker(false) }}
-                    className="flex items-center gap-3 w-full px-4 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors"
-                  >
-                    <span className="w-4 h-4 flex items-center justify-center shrink-0">
-                      {audioOutput === '' && <Check size={12} className="text-accent" />}
-                    </span>
-                    System default
-                  </button>
-                  {outputDevices.map((d) => (
+                  {suggestResults.map(song => (
                     <button
-                      key={d.deviceId}
-                      onClick={() => { setAudioOutput(d.deviceId); setShowOutputPicker(false) }}
-                      className="flex items-center gap-3 w-full px-4 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors"
+                      key={song.id}
+                      onClick={() => handlePropose(song)}
+                      className="text-left -mx-2 px-2 py-2 rounded-xl active:bg-surface-overlay"
                     >
-                      <span className="w-4 h-4 flex items-center justify-center shrink-0">
-                        {audioOutput === d.deviceId && <Check size={12} className="text-accent" />}
-                      </span>
-                      <span className="truncate">{d.label || `Output ${d.deviceId.slice(0, 8)}`}</span>
+                      <p className="text-text-primary text-[15px] truncate">{song.track_titles?.[0] || song.name}</p>
+                      <p className="text-text-muted text-xs truncate mt-0.5">{song.credited_artists}</p>
                     </button>
                   ))}
-                </div>
-              </>,
-              document.body
-            )}
-
-            {/* Divider — FM only */}
-            {radioFmActive && <div className="w-px bg-white/10 shrink-0 my-10" />}
-
-            {/* Right column — swaps to the queue when toggled (replacing
-                lyrics entirely, rather than floating a queue popup over the
-                left column) so it gets the full column's height instead of
-                a cramped 300px-capped overlay. */}
-            <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-              {showQueue && !radioFmActive ? (
-                <div className="h-full flex items-stretch justify-center px-6 xl:px-10 py-7">
-                  <div className="w-full max-w-[440px] h-full animate-wrld-queue-in">
-                    <WrldQueuePanel variant="panel" onClose={() => setShowQueue(false)} />
-                  </div>
-                </div>
-              ) : radioFmActive ? (
-                <>
-                  <div className="flex items-center gap-1 px-6 pt-5 pb-3 shrink-0">
-                    {(['radio', 'lyrics'] as const).map(tab => (
-                      <button key={tab} onClick={() => setFmTab(tab)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors capitalize ${
-                          fmTab === tab ? 'bg-white/10 text-white/90' : 'text-white/35 hover:text-white/65 hover:bg-white/5'
-                        }`}>
-                        {tab === 'radio' ? 'Radio' : 'Lyrics'}
-                      </button>
-                    ))}
-                  </div>
-                  {fmTab === 'radio' ? FmRadioPanel() : <LyricsPanel padded rawLyrics={rawLyrics} isSynced={isSynced} syncedLines={syncedLines} radioFmActive={radioFmActive} currentTrack={currentTrack} isEditor={isEditor} txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint} />}
                 </>
-              ) : (
-                <LyricsPanel padded rawLyrics={rawLyrics} isSynced={isSynced} syncedLines={syncedLines} radioFmActive={radioFmActive} currentTrack={currentTrack} isEditor={isEditor} txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint} />
               )}
             </div>
+
+            {radioFmUpNext && (
+              <div className="flex flex-col gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Up next</p>
+                <div className="bg-surface-overlay rounded-xl px-4 py-3">
+                  <p className="text-text-primary text-[15px] truncate">{radioFmUpNext.title}</p>
+                  {radioFmUpNext.artist && <p className="text-text-muted text-xs truncate mt-0.5">{radioFmUpNext.artist}</p>}
+                </div>
+              </div>
+            )}
+
+            {radioFmQueuePreview.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1">Coming up</p>
+                {radioFmQueuePreview.map((title, i) => (
+                  <div key={i} className="flex items-center gap-3 py-1.5">
+                    <span className="w-4 shrink-0 text-right text-text-muted text-xs tabular-nums">{i + 1}</span>
+                    <p className="text-text-secondary text-sm truncate">{title}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+          <SheetDivider />
+          <SheetItem
+            icon={SkipForward}
+            label="Vote to skip this song"
+            onClick={() => { setVoteDismissed(false); getActiveRadioClient()?.proposeSkip(); setSheet(null) }}
+          />
+        </Sheet>
+      )}
 
-      </>
-
-      {/* Mobile queue — full-screen sheet (there's no side-by-side room for
-          an inline drawer like the desktop layout gets). Hidden during 999FM,
-          a live stream with nothing to queue/reorder. */}
-      {showQueue && !radioFmActive && (
-        <div className="md:hidden">
-          <WrldQueuePanel variant="sheet" onClose={() => setShowQueue(false)} />
-        </div>
+      {/* ── Other versions ───────────────────────────────────────────────── */}
+      {sheet === 'versions' && (
+        <Sheet onClose={() => setSheet(null)} title="Other versions">
+          {songVersions.map((v, i) => (
+            <SheetItem
+              key={v.songId}
+              icon={Layers}
+              label={v.label ?? `Version ${i + 1}`}
+              onClick={() => { setSheet(null); void handlePlayVersion(v.songId) }}
+            />
+          ))}
+        </Sheet>
       )}
     </div>
   )
-
-  return inner
 }
 
-// ── ProgressBar — module-level so currentTime ticks don't re-render WrldView ──
+// ─── chrome ───────────────────────────────────────────────────────────────────
 
-import { memo as _memo2, useRef as _useRef2, useCallback as _cb2 } from 'react'
-// (re-exports already imported above; using same imports)
+/** The cover, blurred into a wash of its own colours. Every text colour on
+ *  this page is picked against it (see textIsDark), so any surface that covers
+ *  the page — the lyrics screen — has to repaint it rather than sit on an
+ *  opaque theme colour, or a dark cover under a light skin puts white text on
+ *  a white background. */
+function ArtBackdrop({ artSrc, artError, isDarkSkin, radioFmActive, onError }: {
+  artSrc: string | null
+  artError: boolean
+  isDarkSkin: boolean
+  radioFmActive: boolean
+  onError?: () => void
+}): JSX.Element {
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      {artSrc && !artError ? (
+        // Blurred to 60px, so resolution is meaningless here — always the
+        // degraded copy, which also gets the backdrop up on the first frame.
+        <img src={smallCoverUrl(artSrc)} alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ filter: `blur(60px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
+          onError={onError}
+        />
+      ) : (
+        <div className={`absolute inset-0 ${radioFmActive ? 'bg-gradient-to-br from-red-950/60 to-black' : 'bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-900 dark:to-black'}`} />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/20 dark:from-black/40 dark:via-transparent dark:to-black/70" />
+    </div>
+  )
+}
 
-// One-click "like" for the 999 FM now-playing track. FM is server-driven and
+// ─── header bits ──────────────────────────────────────────────────────────────
+
+/** The 999 FM switch. Live/off/on is carried by colour and the pulse, since
+ *  there's no room for a status line next to it. */
+function FmPill({ active, live, disabled, onClick, light }: {
+  active: boolean
+  live: boolean | null
+  disabled: boolean
+  onClick: () => void
+  light: boolean
+}): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`h-9 px-4 rounded-full flex items-center gap-2 text-[13px] font-semibold transition-colors disabled:opacity-40 ${
+        active && live ? 'bg-red-600/85 text-white'
+          : active ? 'bg-white/15 text-white/70'
+          : 'bg-white/10 active:bg-white/20'
+      }`}
+      style={!active ? { color: light ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.7)' } : undefined}
+    >
+      <Radio size={15} className={active && live ? 'animate-pulse' : ''} />
+      {active && live ? '999 FM · LIVE' : live === false ? '999 FM · OFF' : '999 FM'}
+    </button>
+  )
+}
+
+/** One of the surfaces hanging off the bottom of the player. */
+function ActionChip({ icon: Icon, label, onClick, active, light }: {
+  icon: typeof Radio
+  label: string
+  onClick: () => void
+  active?: boolean
+  light: boolean
+}): JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className="h-10 px-3.5 rounded-full flex items-center gap-2 text-[13px] font-medium bg-white/10 active:bg-white/20 transition-colors"
+      style={{ color: active ? 'var(--accent)' : (light ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.8)') }}
+    >
+      <Icon size={16} /> {label}
+    </button>
+  )
+}
+
+// ─── 999 FM vote ──────────────────────────────────────────────────────────────
+
+function VoteCard({ vote, secondsLeft, myVote, onVote, onDismiss }: {
+  vote: NonNullable<ReturnType<typeof useStore.getState>['radioFmVote']>
+  secondsLeft: number | null
+  myVote: 'yes' | 'no' | null
+  onVote: (v: 'yes' | 'no') => void
+  onDismiss: () => void
+}): JSX.Element {
+  return (
+    <div className="bg-white/10 rounded-2xl p-3.5 flex flex-col gap-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-white/60 text-[11px] font-semibold uppercase tracking-wider">
+          {vote.kind === 'skip' ? 'Vote to skip' : 'Vote to queue'}
+        </p>
+        <div className="flex items-center gap-1">
+          {secondsLeft != null && (
+            <span className={`text-xs tabular-nums font-semibold ${secondsLeft <= 5 ? 'text-red-400' : 'text-white/40'}`}>
+              {secondsLeft}s
+            </span>
+          )}
+          <button onClick={onDismiss} className="w-8 h-8 flex items-center justify-center text-white/40" aria-label="Dismiss vote">
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+      {vote.track && <p className="text-white/90 text-sm font-medium truncate">{vote.track}</p>}
+      <p className="text-white/40 text-xs">
+        {vote.yes ?? 0} yes · {vote.no ?? 0} no
+        {vote.votes_needed != null && <span> · need {vote.votes_needed}</span>}
+      </p>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onVote('yes')}
+          className={`flex-1 h-11 flex items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors ${
+            myVote === 'yes' ? 'bg-green-600/45 text-green-200 ring-1 ring-green-400/50' : 'bg-green-600/20 text-green-300 active:bg-green-600/35'
+          }`}
+        ><ThumbsUp size={15} /> Yes</button>
+        <button
+          onClick={() => onVote('no')}
+          className={`flex-1 h-11 flex items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors ${
+            myVote === 'no' ? 'bg-red-600/45 text-red-200 ring-1 ring-red-400/50' : 'bg-red-900/25 text-red-300 active:bg-red-900/40'
+          }`}
+        ><ThumbsDown size={15} /> No</button>
+      </div>
+    </div>
+  )
+}
+
+// ─── like / menu ──────────────────────────────────────────────────────────────
+
+// One-tap "like" for the 999 FM now-playing track. FM is server-driven and
 // only hands us title/artist, so the likeable target is the resolved song id
 // (stream metadata's song_id, or RadioFmPlayer's title-search fallback match).
 // Reuses the same `jw-<id>` track id / toggleLike path as every other API song,
-// so it lands in Liked Songs identically. Rendered in the WRLD header next to
-// SongMenu; self-hides off FM or until the broadcast resolves to a known song.
+// so it lands in Liked Songs identically. Self-hides off FM or until the
+// broadcast resolves to a known song.
 const FmLikeButton = memo(function FmLikeButton({ light }: { light: boolean }): JSX.Element {
-  const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike } = useStore(useShallow(s => ({
+  const { radioFmActive, radioFmNowPlaying, radioFmMatchedSong, currentTrack, likedTrackIds, toggleLike } = useStore(useShallow(s => ({
     radioFmActive: s.radioFmActive,
     radioFmNowPlaying: s.radioFmNowPlaying,
     radioFmMatchedSong: s.radioFmMatchedSong,
+    currentTrack: s.currentTrack,
     likedTrackIds: s.likedTrackIds,
     toggleLike: s.toggleLike,
   })))
 
+  // Off FM this used to render nothing at all, which meant the one screen
+  // dedicated to the current song had no like button on it.
   const fmSongId = radioFmActive ? (radioFmNowPlaying?.song_id ?? radioFmMatchedSong?.songId ?? null) : null
-  if (fmSongId == null) return <></>
+  const targetId = radioFmActive ? (fmSongId != null ? `jw-${fmSongId}` : null) : (currentTrack?.id ?? null)
+  if (!targetId) return <></>
 
-  const liked = likedTrackIds.includes(`jw-${fmSongId}`)
+  const liked = likedTrackIds.includes(targetId)
   return (
     <button
-      onClick={() => toggleLike(`jw-${fmSongId}`)}
-      title={liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
+      onClick={() => toggleLike(targetId)}
       aria-label={liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
       aria-pressed={liked}
-      className="rounded-full transition-colors hover:bg-white/10 shrink-0 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
-      style={{ color: liked ? 'var(--accent)' : (light ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)') }}
+      className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-white/10 transition-colors"
+      style={{ color: liked ? 'var(--accent)' : (light ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.7)') }}
     >
-      <Heart size={18} fill={liked ? 'currentColor' : 'none'} />
+      <Heart size={20} fill={liked ? 'currentColor' : 'none'} />
     </button>
   )
 })
 
-// Apple Music-style "···" context menu for the current track. Module-level
-// (like LyricsPanel/FmProgressBar) so it reads the store directly instead of
-// drilling props from WrldView.
+// "···" for the current track. SongContextMenu is the app-wide one and already
+// comes up as a bottom sheet on a phone, so the x/y it takes are ignored here.
 const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Element {
   const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike, account, setActiveView, setPendingEditorSongId } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
@@ -1074,7 +763,6 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
   const [open, setOpen] = useState(false)
   const [showSongInfo, setShowSongInfo] = useState(false)
   const [songInfoData, setSongInfoData] = useState<JWApiSong | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
 
   const currentSongId = !radioFmActive && currentTrack ? userApi.trackIdToSongId(currentTrack.id) : null
   // Stream metadata's song_id is sometimes missing; RadioFmPlayer's title-search
@@ -1094,20 +782,18 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
   if (!hasTarget) return <></>
 
   return (
-    <div className="relative shrink-0">
+    <>
       <button
-        ref={btnRef}
-        // Stop the mousedown from reaching SongContextMenu's document-level
-        // outside-click listener — otherwise clicking this button while the
-        // menu is open closes it (mousedown) and then reopens it (click),
-        // so it never appears to toggle shut.
+        // Stop the touch from reaching SongContextMenu's document-level
+        // outside-press listener — otherwise pressing this while the menu is
+        // open closes it and then reopens it, so it never appears to toggle.
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen(v => !v)}
         aria-label="More options"
-        className="rounded-full transition-colors hover:bg-white/10 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
-        style={{ color: light ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.55)' }}
+        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-white/10 transition-colors"
+        style={{ color: light ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.7)' }}
       >
-        <MoreHorizontal size={18} />
+        <MoreHorizontal size={20} />
       </button>
 
       {/* FM radio is server-driven — Play/Play next/Add to queue/version
@@ -1132,8 +818,8 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
               hasAlbumArt: false,
             },
             songId: fmSongId,
-            x: (btnRef.current?.getBoundingClientRect().right ?? 208) - 208,
-            y: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 6,
+            x: 0,
+            y: 0,
           }}
           onClose={() => setOpen(false)}
           canEdit={canEdit}
@@ -1147,12 +833,7 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
 
       {open && !radioFmActive && currentTrack && createPortal(
         <SongContextMenu
-          state={{
-            track: currentTrack,
-            songId: currentSongId,
-            x: (btnRef.current?.getBoundingClientRect().right ?? 208) - 208,
-            y: (btnRef.current?.getBoundingClientRect().bottom ?? 0) + 6,
-          }}
+          state={{ track: currentTrack, songId: currentSongId, x: 0, y: 0 }}
           onClose={() => setOpen(false)}
           canEdit={canEdit}
           onInfo={() => currentSongId != null && openInfo(currentSongId)}
@@ -1174,22 +855,18 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
         />,
         document.body
       )}
-    </div>
+    </>
   )
 })
 
-// Apple Music-style "Up Next" queue panel for the WRLD tab — a dark glass
-// panel matching the rest of the page instead of the app-wide QueuePanel's
-// light theme (which App.tsx suppresses while this page is active).
-const WRLD_MAX_HISTORY_SHOWN = 10 // matches QueuePanel's MAX_HISTORY_SHOWN
-const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
-  onClose: () => void
-  // 'inline' pops up directly under the interface column on desktop (the
-  // Apple Music behavior this is modeled on); 'sheet' is a full-screen
-  // overlay, used on mobile where there's no side-by-side room for it;
-  // 'panel' fills the desktop right column in place of the lyrics view.
-  variant: 'inline' | 'sheet' | 'panel'
-}): JSX.Element {
+// ─── queue ────────────────────────────────────────────────────────────────────
+
+const MAX_HISTORY_SHOWN = 10
+
+// Full-height sheet rather than the desktop side panel. Drag-to-reorder is
+// gone — there's no HTML5 drag on touch — replaced by an explicit reorder mode
+// with up/down buttons, the same pattern the Playlists tab uses.
+function QueueSheet({ onClose }: { onClose: () => void }): JSX.Element {
   const { queue, queueIndex, currentTrack, isPlaying, shuffle, radioMode, playTrack, jumpToTrack, removeFromQueue, clearQueue, reorderQueue } = useStore(useShallow(s => ({
     queue: s.queue,
     queueIndex: s.queueIndex,
@@ -1207,209 +884,216 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   const history = queue.slice(0, queueIndex) // played tracks, oldest first
   const upcoming = queue.slice(queueIndex + 1)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [dragIdx, setDragIdx] = useState<number | null>(null)
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
-
-  const handleDrop = (idx: number): void => {
-    if (dragIdx !== null && dragIdx !== idx) reorderQueue(dragIdx, idx)
-    setDragIdx(null); setDragOverIdx(null)
-  }
+  const [reorder, setReorder] = useState(false)
 
   return (
-    <div
-      className={`relative flex flex-col overflow-hidden ${
-        variant === 'sheet' ? 'fixed inset-0 z-40'
-          : variant === 'panel' ? 'w-full h-full rounded-2xl ring-1 ring-white/[0.09] shadow-[0_28px_80px_-12px_rgba(0,0,0,0.7)]'
-          : 'w-full mt-2 rounded-2xl shadow-2xl'
-      }`}
-      style={variant === 'inline' ? { maxHeight: 300 } : undefined}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* Glassy frosted panel — blurs and lifts whatever's actually behind it
-          (brightness/saturate on the backdrop-filter itself, not a flat black
-          tint) so it reads as a distinct elevated card. A plain blur() alone
-          over this page's already-dark art background just looked like more
-          flat black with no glass effect. */}
-      <div
-        className="absolute inset-0"
-        style={{ backdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)', WebkitBackdropFilter: 'blur(40px) saturate(1.8) brightness(1.4)' }}
-      />
-      <div className="absolute inset-0 bg-white/[0.06]" />
-      {/* Soft top sheen — reads as light catching the top edge of the glass. */}
-      <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-white/[0.07] to-transparent pointer-events-none" />
-
-      <div className="relative z-10 flex items-center justify-between px-4 pt-4 pb-3 shrink-0 border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <ListMusic size={14} className="text-white/60" />
-          <h2 className="text-white/90 font-semibold text-xs uppercase tracking-widest">Playing Next</h2>
-        </div>
-        <div className="flex items-center gap-3">
-          {upcoming.length > 0 && (
-            <button onClick={clearQueue} className="text-white/60 hover:text-red-400 transition-colors text-xs flex items-center gap-1">
-              <Trash2 size={12} /> Clear
-            </button>
-          )}
-          <button onClick={onClose} className="text-white/60 hover:text-white/90 transition-colors">
-            <X size={16} />
-          </button>
-        </div>
-      </div>
-
-      <div className="relative z-10 flex-1 overflow-y-auto wrld-queue-scroll" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
-        <style>{`
-          .wrld-queue-scroll::-webkit-scrollbar { width: 6px; }
-          .wrld-queue-scroll::-webkit-scrollbar-track { background: transparent; }
-          .wrld-queue-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
-          .wrld-queue-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
-        `}</style>
-        {/* ── History ── (collapsible, above now playing — same behavior as
-            the app-wide QueuePanel's history section, restyled for this
-            panel's glass theme). During radio the queue holds *only* played
-            history, so without this the panel looked empty in radio mode. */}
-        {history.length > 0 && (
-          <div className="px-3 pt-3 pb-1">
+    <Sheet
+      onClose={onClose}
+      title="Playing next"
+      header={
+        <div className="flex items-center gap-2 px-5 pt-2">
+          {upcoming.length > 1 && (
             <button
-              onClick={() => setHistoryOpen((o) => !o)}
-              className="flex items-center gap-1.5 px-1 mb-1 text-white/50 hover:text-white/80 transition-colors w-full text-left"
-            >
-              <History size={11} />
-              <span className="text-[10px] uppercase tracking-widest flex-1 font-semibold">
-                History · {history.length}
-              </span>
-              <ChevronDown size={12} className={`transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {historyOpen && (
-              <div className="opacity-60">
-                {[...history].reverse().slice(0, WRLD_MAX_HISTORY_SHOWN).map((track, i) => (
-                  <WrldQueueRow
-                    key={`hist-${track.id}-${i}`}
-                    track={track}
-                    isActive={false}
-                    isPlaying={false}
-                    onPlay={() => radioMode ? jumpToTrack(track) : playTrack(track)}
-                  />
-                ))}
-                {history.length > WRLD_MAX_HISTORY_SHOWN && (
-                  <p className="text-white/40 text-[10px] text-center py-1">
-                    +{history.length - WRLD_MAX_HISTORY_SHOWN} older
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {currentTrack ? (
-          <div className="px-3 py-3">
-            <p className="text-white/50 text-[10px] uppercase tracking-widest px-1 mb-2 font-semibold">Now Playing</p>
-            <WrldQueueRow track={currentTrack} isActive isPlaying={isPlaying} />
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-40 gap-2 text-center px-8">
-            <ListMusic className="text-white/30 w-8 h-8" />
-            <p className="text-white/60 text-sm">Queue is empty</p>
-          </div>
-        )}
-
-        {currentTrack && <div className="mx-3 border-t border-white/10" />}
-
-        {upcoming.length > 0 ? (
-          <div className="px-3 pt-3 pb-6">
-            <p className="text-white/50 text-[10px] uppercase tracking-widest px-1 mb-2 font-semibold">
-              {shuffle ? 'Shuffle' : 'Up Next'} · {upcoming.length}
-            </p>
-            {upcoming.map((track, i) => (
-              <div
-                key={`${track.id}-${queueIndex + 1 + i}`}
-                draggable
-                onDragStart={() => setDragIdx(i)}
-                onDragOver={(e) => { e.preventDefault(); setDragOverIdx(i) }}
-                onDrop={() => handleDrop(i)}
-                onDragEnd={() => { setDragIdx(null); setDragOverIdx(null) }}
-                className={`wrld-q-row transition-transform ${dragOverIdx === i && dragIdx !== i ? 'translate-y-0.5 opacity-70' : ''} ${dragIdx === i ? 'opacity-30' : ''}`}
-              >
-                <WrldQueueRow
+              onClick={() => setReorder(r => !r)}
+              className={`h-8 px-3 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
+                reorder ? 'bg-accent text-white' : 'bg-surface-overlay text-text-secondary'
+              }`}
+            ><ArrowUpDown size={13} /> Reorder</button>
+          )}
+          {upcoming.length > 0 && (
+            <button
+              onClick={clearQueue}
+              className="h-8 px-3 rounded-full text-xs font-semibold bg-surface-overlay text-red-400 flex items-center gap-1.5"
+            ><Trash2 size={13} /> Clear</button>
+          )}
+        </div>
+      }
+    >
+      {/* History — during radio the queue holds *only* played history, so
+          without this the sheet looks empty in radio mode. */}
+      {history.length > 0 && (
+        <>
+          <button
+            onClick={() => setHistoryOpen(o => !o)}
+            className="w-full flex items-center gap-2 px-5 py-2.5 text-text-muted"
+          >
+            <History size={14} />
+            <span className="text-[11px] font-semibold uppercase tracking-wider flex-1 text-left">History · {history.length}</span>
+            <ChevronDown size={15} className={`transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {historyOpen && (
+            <div className="opacity-70">
+              {[...history].reverse().slice(0, MAX_HISTORY_SHOWN).map((track, i) => (
+                <QueueRow
+                  key={`hist-${track.id}-${i}`}
                   track={track}
-                  isActive={false}
-                  isPlaying={false}
-                  showDrag
-                  onPlay={() => playTrack(track, queue.slice(queueIndex + 1 + i))}
-                  onRemove={() => removeFromQueue(queueIndex + 1 + i)}
+                  onPlay={() => radioMode ? jumpToTrack(track) : playTrack(track)}
                 />
-              </div>
-            ))}
-          </div>
-        ) : currentTrack ? (
-          <p className="text-white/50 text-xs text-center py-4">Nothing up next</p>
-        ) : null}
-      </div>
-    </div>
-  )
-})
+              ))}
+              {history.length > MAX_HISTORY_SHOWN && (
+                <p className="text-text-muted text-xs text-center py-1.5">+{history.length - MAX_HISTORY_SHOWN} older</p>
+              )}
+            </div>
+          )}
+          <SheetDivider />
+        </>
+      )}
 
-function WrldQueueRow({ track, isActive, isPlaying, showDrag, onPlay, onRemove }: {
+      {currentTrack ? (
+        <>
+          <p className="px-5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">Now playing</p>
+          <QueueRow track={currentTrack} active playing={isPlaying} />
+        </>
+      ) : (
+        <div className="flex flex-col items-center gap-2 py-12">
+          <ListMusic size={28} className="text-text-muted" />
+          <p className="text-text-muted text-sm">Queue is empty</p>
+        </div>
+      )}
+
+      {upcoming.length > 0 ? (
+        <>
+          <SheetDivider />
+          <p className="px-5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+            {shuffle ? 'Shuffle' : 'Up next'} · {upcoming.length}
+          </p>
+          {upcoming.map((track, i) => (
+            <QueueRow
+              key={`${track.id}-${queueIndex + 1 + i}`}
+              track={track}
+              reorder={reorder}
+              canUp={i > 0}
+              canDown={i < upcoming.length - 1}
+              onUp={() => reorderQueue(i, i - 1)}
+              onDown={() => reorderQueue(i, i + 1)}
+              onPlay={() => playTrack(track, queue.slice(queueIndex + 1 + i))}
+              onRemove={() => removeFromQueue(queueIndex + 1 + i)}
+            />
+          ))}
+        </>
+      ) : currentTrack ? (
+        <p className="text-text-muted text-xs text-center py-5">Nothing up next</p>
+      ) : null}
+    </Sheet>
+  )
+}
+
+function QueueRow({ track, active, playing, reorder, canUp, canDown, onUp, onDown, onPlay, onRemove }: {
   track: Track
-  isActive: boolean
-  isPlaying: boolean
-  showDrag?: boolean
+  active?: boolean
+  playing?: boolean
+  reorder?: boolean
+  canUp?: boolean
+  canDown?: boolean
+  onUp?: () => void
+  onDown?: () => void
   onPlay?: () => void
   onRemove?: () => void
 }): JSX.Element {
   return (
     <div
-      className={`flex items-center gap-2 px-1 py-1.5 rounded-lg group transition-colors ${isActive ? 'bg-white/10' : 'hover:bg-white/[0.06]'} ${onPlay && !isActive ? 'cursor-pointer' : ''}`}
-      onDoubleClick={onPlay}
-      // This row is shared by the mobile queue sheet (WrldQueuePanel
-      // variant="sheet", reachable via the queue-toggle button) as well as
-      // the desktop panel/inline variants — double-click has no touch
-      // equivalent, so tap-to-play is needed for the mobile case.
-      onClick={() => { if (window.matchMedia('(max-width: 767px)').matches && onPlay && !isActive) onPlay() }}
+      className={`flex items-center gap-3 px-5 py-2 transition-colors ${active ? 'bg-accent/10' : onPlay ? 'active:bg-surface-overlay' : ''}`}
+      onClick={() => { if (!reorder && onPlay && !active) onPlay() }}
     >
-      {showDrag ? (
-        <div className="text-white/40 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing shrink-0 transition-opacity">
-          <GripVertical size={13} />
-        </div>
-      ) : (
-        <div className="w-3.5 shrink-0" />
-      )}
-      <div className="w-9 h-9 rounded shrink-0 overflow-hidden bg-white/[0.06]">
-        <AlbumArtThumbnail track={track} size={36} fill className="w-full h-full" shimmer={false} />
+      <div className="w-11 h-11 rounded-lg shrink-0 overflow-hidden bg-surface-overlay">
+        <AlbumArtThumbnail track={track} size={44} fill className="w-full h-full" shimmer={false} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className={`text-xs font-medium truncate leading-tight ${isActive ? 'text-accent' : 'text-white/85'}`} title={track.title}>{track.title}</p>
-        <p className="text-[10px] text-white/40 truncate mt-0.5">{track.artist}</p>
+        <p className={`text-[15px] truncate leading-snug ${active ? 'text-accent font-semibold' : 'text-text-primary'}`}>{track.title}</p>
+        <p className="text-text-muted text-xs truncate mt-0.5">{track.artist}</p>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        {!isPlaying && (
-          <span className="text-white/40 text-[10px] tabular-nums">{track.duration ? formatDuration(track.duration) : ''}</span>
-        )}
-        {isPlaying && (
-          <span className="flex gap-0.5 items-end h-3">
-            {[0.4, 0.7, 1, 0.6].map((h, i) => (
-              <span key={i} className="w-0.5 bg-accent rounded-full animate-pulse" style={{ height: `${h * 100}%`, animationDelay: `${i * 0.15}s` }} />
-            ))}
-          </span>
-        )}
-        {onRemove && (
-          // Was opacity-0 group-hover:opacity-100 with no touch equivalent —
-          // invisible in the mobile queue sheet, not just the desktop panel.
+      {reorder && onUp && onDown ? (
+        <div className="flex items-center shrink-0">
           <button
-            onClick={(e) => { e.stopPropagation(); onRemove() }}
-            aria-label="Remove from queue"
-            className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-white/40 hover:text-red-400 transition-all ml-1 w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:p-0.5"
-          >
-            <X size={14} className="md:w-[11px] md:h-[11px]" />
-          </button>
-        )}
-      </div>
+            onClick={(e) => { e.stopPropagation(); onUp() }}
+            disabled={!canUp}
+            aria-label="Move up"
+            className="w-10 h-11 flex items-center justify-center text-text-secondary disabled:opacity-25"
+          ><ArrowUp size={17} /></button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDown() }}
+            disabled={!canDown}
+            aria-label="Move down"
+            className="w-10 h-11 flex items-center justify-center text-text-secondary disabled:opacity-25"
+          ><ArrowDown size={17} /></button>
+        </div>
+      ) : playing ? (
+        <span className="flex gap-[3px] items-end h-3.5 shrink-0">
+          {[0, 1, 2].map(i => (
+            <span key={i} className="w-[3px] h-full rounded-full bg-accent eq-bar" style={{ animationDelay: `${i * 0.18}s` }} />
+          ))}
+        </span>
+      ) : (
+        <>
+          <span className="text-text-muted text-[11px] tabular-nums shrink-0">
+            {track.duration ? formatDuration(track.duration) : ''}
+          </span>
+          {onRemove && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove() }}
+              aria-label="Remove from queue"
+              className="w-10 h-11 -mr-2 shrink-0 flex items-center justify-center text-text-muted active:text-red-400"
+            ><X size={17} /></button>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
-// Read-only playback bar for 999FM — it's a live stream, so no scrubbing,
-// but elapsed/duration are still known (from the radio WS) and ticked
-// locally between updates the same way the bottom Player bar does.
-const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }) {
+// ─── transport widgets ────────────────────────────────────────────────────────
+// Each keeps its own store subscription so a ticking clock, a volume drag or a
+// pause doesn't re-render the whole page (and with it the cover and lyrics).
+
+/** Volume. The knob is always drawn — a hover-only one is invisible on touch,
+ *  and there's no other cue that the line is draggable. */
+const VolumeRow = memo(function VolumeRow({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
+  const { volume, setVolume } = useStorePick('volume', 'setVolume')
+  const barRef = useRef<HTMLDivElement>(null)
+  // Remember the level before muting so unmuting restores it, instead of
+  // jumping to a hardcoded one (mirrors the Player bar's toggleMute).
+  const prevVolumeRef = useRef(volume || 0.8)
+  useEffect(() => { if (volume > 0) prevVolumeRef.current = volume }, [volume])
+
+  const setFrom = (clientX: number): void => {
+    const bar = barRef.current
+    if (!bar) return
+    const r = bar.getBoundingClientRect()
+    setVolume(Math.max(0, Math.min(1, (clientX - r.left) / r.width)))
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        onClick={() => setVolume(volume === 0 ? (prevVolumeRef.current || 0.8) : 0)}
+        aria-label={volume === 0 ? 'Unmute' : 'Mute'}
+        className="w-9 h-9 -ml-1.5 shrink-0 flex items-center justify-center"
+        style={{ color: txtTer }}
+      >{volume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
+      <div
+        ref={barRef}
+        // touch-none, or the browser claims the drag as a scroll and the
+        // slider never sees it.
+        className="relative flex-1 h-6 flex items-center touch-none"
+        onTouchStart={(e) => setFrom(e.touches[0].clientX)}
+        onTouchMove={(e) => setFrom(e.touches[0].clientX)}
+      >
+        <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
+          <div className="h-full rounded-full" style={{ width: `${volume * 100}%`, background: txtTer }} />
+        </div>
+        <div
+          className="absolute w-3.5 h-3.5 rounded-full shadow pointer-events-none"
+          style={{ left: `${volume * 100}%`, transform: 'translateX(-50%)', background: txtPri }}
+        />
+      </div>
+    </div>
+  )
+})
+
+// Read-only bar for 999FM — it's a live stream, so no scrubbing, but
+// elapsed/duration are still known (from the radio WS) and ticked locally
+// between updates the same way the bottom Player bar does.
+const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
   const radioFmNowPlaying = useStore(s => s.radioFmNowPlaying)
   const [elapsedMs, setElapsedMs] = useState(0)
   const baseRef = useRef<{ elapsed: number; at: number }>({ elapsed: 0, at: 0 })
@@ -1430,22 +1114,22 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
 
   return (
     <div className="w-full flex flex-col gap-1.5 select-none">
-      <div className="relative h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}>
+      <div className="relative h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
       </div>
       <div className="flex justify-between">
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{formatDuration(elapsedMs / 1000)}</span>
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{durationMs > 0 ? formatDuration(durationMs / 1000) : '-∞'}</span>
+        <span className="text-[11px] tabular-nums" style={{ color: txtTer }}>{formatDuration(elapsedMs / 1000)}</span>
+        <span className="text-[11px] tabular-nums" style={{ color: txtTer }}>{durationMs > 0 ? formatDuration(durationMs / 1000) : '-∞'}</span>
       </div>
     </div>
   )
 })
 
-const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }) {
+const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
   const { progress, currentTime } = useStore(useShallow(s => ({ progress: s.progress, currentTime: s.currentTime })))
   const barRef = useRef<HTMLDivElement>(null)
   // Buffer the scrub position visually while dragging — only call seekAudio
-  // on release, since seeking on every mousemove makes playback glitch/stutter.
+  // on release, since seeking on every move makes playback glitch/stutter.
   const [dragPct, setDragPct] = useState<number | null>(null)
 
   const pctFromClientX = useCallback((clientX: number): number | null => {
@@ -1464,29 +1148,10 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
     <div className="w-full flex flex-col gap-1.5 select-none">
       <div
         ref={barRef}
-        // touch-none: without touch-action:none the browser claims the drag as
-        // a scroll/pan gesture and the bar never gets to scrub (why dragging to
-        // seek did nothing on mobile). Paired with the onTouchStart handler.
-        className="relative h-1 rounded-full cursor-pointer group/bar touch-none"
-        style={{ background: 'rgba(255,255,255,0.18)' }}
-        onMouseDown={e => {
-          const startPct = pctFromClientX(e.clientX)
-          if (startPct !== null) setDragPct(startPct)
-          const onMove = (ev: MouseEvent) => {
-            const p = pctFromClientX(ev.clientX)
-            if (p !== null) setDragPct(p)
-          }
-          const onUp = (ev: MouseEvent) => {
-            const p = pctFromClientX(ev.clientX)
-            const dur = getAudioDuration()
-            if (p !== null && dur > 0) seekAudio(p * dur)
-            setDragPct(null)
-            document.removeEventListener('mousemove', onMove)
-            document.removeEventListener('mouseup', onUp)
-          }
-          document.addEventListener('mousemove', onMove)
-          document.addEventListener('mouseup', onUp)
-        }}
+        // The hit area is 24px tall so it's grabbable; only the inner 6px
+        // paints. touch-none stops the browser claiming the drag as a scroll,
+        // which is what used to make seeking do nothing here.
+        className="relative h-6 flex items-center touch-none"
         onTouchStart={e => {
           const startPct = pctFromClientX(e.touches[0].clientX)
           if (startPct !== null) setDragPct(startPct)
@@ -1506,23 +1171,118 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
           document.addEventListener('touchend', onEnd)
         }}
       >
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
+        <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
+          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
+        </div>
         <div
-          className="absolute top-1/2 w-3 h-3 rounded-full shadow-lg opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none"
-          style={{ left: `${pct}%`, transform: 'translate(-50%, -50%)', background: txtPri }}
+          className="absolute w-3.5 h-3.5 rounded-full shadow pointer-events-none transition-transform"
+          style={{ left: `${pct}%`, transform: `translateX(-50%) scale(${dragPct !== null ? 1.35 : 1})`, background: txtPri }}
         />
       </div>
       <div className="flex justify-between">
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{formatDuration(displayTime)}</span>
-        <span className="text-[10px] tabular-nums" style={{ color: txtTer }}>{duration > 0 ? `-${formatDuration(remaining)}` : '-∞'}</span>
+        <span className="text-[11px] tabular-nums" style={{ color: txtTer }}>{formatDuration(displayTime)}</span>
+        <span className="text-[11px] tabular-nums" style={{ color: txtTer }}>{duration > 0 ? `-${formatDuration(remaining)}` : '-∞'}</span>
       </div>
     </div>
   )
 })
 
-// ── LyricsPanel — module-level component so it has its own Zustand selector ──
+// ─── lyrics ───────────────────────────────────────────────────────────────────
 
-import type { SyncedLyricLine, Track } from '../types'
+/** Lyrics get the whole screen: at a readable size a phone fits about six
+ *  lines, so sharing the page with the cover left room for neither. Playback
+ *  stays reachable through the strip pinned at the bottom. */
+function LyricsScreen({
+  onClose, title, artist, rawLyrics, isSynced, syncedLines,
+  radioFmActive, currentTrack, isEditor, txtPri, txtSec, txtTer, txtFaint,
+  textIsDark, artSrc, artError, isDarkSkin,
+}: {
+  onClose: () => void
+  title?: string
+  artist?: string
+  textIsDark: boolean
+  artSrc: string | null
+  artError: boolean
+  isDarkSkin: boolean
+} & Omit<LyricsPanelProps, 'padded'>): JSX.Element {
+  const { isPlaying, setIsPlaying, nextTrack, prevTrack } = useStore(useShallow(s => ({
+    isPlaying: s.isPlaying,
+    setIsPlaying: s.setIsPlaying,
+    nextTrack: s.nextTrack,
+    prevTrack: s.prevTrack,
+  })))
+  useBackToClose(onClose)
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex flex-col animate-sheet-in">
+      {/* Repaints the page's own backdrop instead of an opaque theme colour —
+          the text colours below were picked against the artwork, not against
+          --surface. */}
+      <ArtBackdrop artSrc={artSrc} artError={artError} isDarkSkin={isDarkSkin} radioFmActive={radioFmActive} />
+
+      <div
+        className="relative shrink-0 flex items-center gap-1 px-2"
+        style={{ paddingTop: 'max(0.25rem, env(safe-area-inset-top, 0px))' }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close lyrics"
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-white/10"
+          style={{ color: txtPri }}
+        ><ChevronDown size={22} /></button>
+        <div className="flex-1 min-w-0 text-center">
+          <p className="text-[13px] font-semibold truncate" style={{ color: txtPri }}>{title || 'Lyrics'}</p>
+          {artist && <p className="text-[11px] truncate" style={{ color: txtTer }}>{artist}</p>}
+        </div>
+        {/* Downloading the .lrc was a right-click on desktop, with no touch
+            equivalent at all — it's a button now, and only for LRC lyrics
+            since plain text has no timestamps worth exporting. */}
+        {isSynced && rawLyrics ? (
+          <button
+            onClick={() => downloadSyncedLyrics(currentTrack?.title ?? 'lyrics', currentTrack?.artist ?? '', rawLyrics)}
+            aria-label="Download synced lyrics"
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-white/10"
+            style={{ color: txtTer }}
+          ><Download size={19} /></button>
+        ) : <span className="w-11 shrink-0" />}
+      </div>
+
+      <LyricsPanel
+        padded
+        rawLyrics={rawLyrics}
+        isSynced={isSynced}
+        syncedLines={syncedLines}
+        radioFmActive={radioFmActive}
+        currentTrack={currentTrack}
+        isEditor={isEditor}
+        txtPri={txtPri} txtSec={txtSec} txtTer={txtTer} txtFaint={txtFaint}
+      />
+
+      {!radioFmActive && (
+        <div
+          className="relative shrink-0 px-6 pt-1 flex items-center justify-center gap-8"
+          style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+        >
+          <button onClick={() => prevTrack()} aria-label="Previous" className="w-12 h-12 flex items-center justify-center" style={{ color: txtPri }}>
+            <SkipBack size={24} fill="currentColor" />
+          </button>
+          <button
+            onClick={() => setIsPlaying(!isPlaying)}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            className="w-14 h-14 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+            style={{ background: txtPri, color: textIsDark ? 'white' : 'black' }}
+          >
+            {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" className="ml-0.5" />}
+          </button>
+          <button onClick={() => nextTrack()} aria-label="Next" className="w-12 h-12 flex items-center justify-center" style={{ color: txtPri }}>
+            <SkipFwd size={24} fill="currentColor" />
+          </button>
+        </div>
+      )}
+    </div>,
+    document.body,
+  )
+}
 
 interface LyricsPanelProps {
   rawLyrics: string | null
@@ -1551,10 +1311,9 @@ const LyricsPanel = memo(function LyricsPanel({
   // 'timeupdate' event, ~4x/sec) — that throttling is what made the active
   // line snap every ~250ms instead of transitioning smoothly.
   // Lazily computed from the live audio position (not just -1) so that a
-  // remount (e.g. switching the FM tab away from and back to Lyrics) doesn't
-  // momentarily render with no active line (translateY snaps to 0 / the
-  // first line) before the next rAf tick corrects it — that produced a
-  // visible "jump to the top, then glide back down" flash.
+  // remount doesn't momentarily render with no active line (translateY snaps
+  // to 0 / the first line) before the next rAf tick corrects it — that
+  // produced a visible "jump to the top, then glide back down" flash.
   const [currentLineIdx, setCurrentLineIdx] = useState(() =>
     isSynced && syncedLines.length > 0
       ? getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
@@ -1591,9 +1350,9 @@ const LyricsPanel = memo(function LyricsPanel({
 
   // Manual-scroll override — the lyric column isn't a native scroll container
   // (its position is driven by a `transform`, not `scrollTop`), so a plain
-  // wheel/touch drag would otherwise do nothing. When the user scrolls
-  // manually we take over `translateY` here and stop auto-centering the
-  // active line until they opt back in via the "Resume" button.
+  // touch drag would otherwise do nothing. When the user scrolls manually we
+  // take over `translateY` here and stop auto-centering the active line until
+  // they opt back in via the "Resume" button.
   const [autoFollow, setAutoFollow] = useState(true)
   const [manualTranslateY, setManualTranslateY] = useState(0)
   const dragRef = useRef<{ startY: number; startTranslate: number } | null>(null)
@@ -1604,14 +1363,6 @@ const LyricsPanel = memo(function LyricsPanel({
     if (!vp || !lines) return Math.max(v, 0)
     const max = Math.max(0, lines.scrollHeight - vp.clientHeight)
     return Math.min(Math.max(v, 0), max)
-  }
-
-  const handleWheel = (e: React.WheelEvent): void => {
-    if (!isSynced || syncedLines.length === 0) return
-    e.preventDefault()
-    const base = autoFollow ? translateY : manualTranslateY
-    setManualTranslateY(clampTranslate(base + e.deltaY))
-    if (autoFollow) setAutoFollow(false)
   }
 
   const handleTouchStart = (e: React.TouchEvent): void => {
@@ -1648,45 +1399,9 @@ const LyricsPanel = memo(function LyricsPanel({
     setTranslateY(active.offsetTop + active.offsetHeight / 2 - vpHalf)
   }, [currentLineIdx, vpHalf, lyricsScale])
 
-  // Right-click → "Download synced lyrics" — only offered for LRC-format
-  // lyrics (the .lrc file needs the timestamps; plain unsynced text has
-  // nothing worth exporting in that format).
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
-  useEffect(() => {
-    if (!menuPos) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setMenuPos(null) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [menuPos])
-  const handleContextMenu = (e: React.MouseEvent): void => {
-    if (!isSynced || !rawLyrics) return
-    e.preventDefault()
-    setMenuPos({ x: e.clientX, y: e.clientY })
-  }
-  const downloadMenu = menuPos && rawLyrics && createPortal(
-    <>
-      <div className="fixed inset-0 z-40" onClick={() => setMenuPos(null)} onContextMenu={(e) => { e.preventDefault(); setMenuPos(null) }} />
-      <div
-        className="fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[200px]"
-        style={{ top: menuPos.y, left: menuPos.x }}
-      >
-        <button
-          onClick={() => {
-            downloadSyncedLyrics(currentTrack?.title ?? 'lyrics', currentTrack?.artist ?? '', rawLyrics)
-            setMenuPos(null)
-          }}
-          className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-left text-text-primary hover:bg-surface-overlay transition-colors"
-        >
-          <Download size={14} className="text-text-muted" /> Download synced lyrics
-        </button>
-      </div>
-    </>,
-    document.body
-  )
-
   if (!rawLyrics) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8">
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-3 px-8">
         {!radioFmActive && !currentTrack
           ? <p className="text-sm text-center" style={{ color: txtTer }}>No track playing</p>
           : radioFmActive
@@ -1694,7 +1409,7 @@ const LyricsPanel = memo(function LyricsPanel({
             : <>
                 <div className="text-5xl opacity-10">♪</div>
                 <p className="text-sm text-center" style={{ color: txtTer }}>No lyrics available</p>
-                {isEditor && <p className="text-xs text-center mt-1" style={{ color: txtTer }}>Open the editor to add lyrics</p>}
+                {isEditor && <p className="text-xs text-center" style={{ color: txtTer }}>Open the editor to add lyrics</p>}
               </>
         }
       </div>
@@ -1703,26 +1418,22 @@ const LyricsPanel = memo(function LyricsPanel({
 
   if (isSynced && syncedLines.length > 0) {
     // Edge fade is done with a mask on the lines themselves, not an opaque
-    // overlay — painting flat rgba(0,0,0,0.55) bands on top added darkness
-    // confined to this panel's box, creating a visible "aura" rectangle that
-    // didn't match the rest of the tab's background. A mask instead fades the
-    // text to transparent, letting the page's own blurred-art background
-    // show through underneath, exactly like the rest of the tab.
+    // overlay — painting flat bands on top added darkness confined to this
+    // panel's box, creating a visible "aura" rectangle. A mask fades the text
+    // to transparent, letting the page's own background show through.
     const edgeMask = 'linear-gradient(to bottom, transparent, black 80px, black calc(100% - 80px), transparent)'
     const displayTranslateY = autoFollow ? translateY : manualTranslateY
     return (
       <div
         ref={viewportRef}
         className="relative flex-1 min-h-0 overflow-hidden"
-        onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        onContextMenu={handleContextMenu}
       >
         <div
           ref={linesRef}
-          className={`relative flex flex-col ${padded ? 'gap-5 px-10' : 'gap-4 px-5 md:px-8'}`}
+          className={`relative flex flex-col ${padded ? 'gap-5 px-7' : 'gap-4 px-5'}`}
           style={{
             transform: `translateY(${-displayTranslateY}px)`,
             transition: autoFollow ? 'transform 0.6s cubic-bezier(0.22,1,0.36,1)' : 'none',
@@ -1754,27 +1465,24 @@ const LyricsPanel = memo(function LyricsPanel({
                 key={i}
                 ref={isActive ? activeRef : undefined}
                 onClick={() => seekAudio(line.time)}
-                className={`cursor-pointer select-none ${lyricsAlign === 'center' ? 'origin-center mx-auto text-center' : 'origin-left'}`}
+                className={`select-none ${lyricsAlign === 'center' ? 'origin-center mx-auto text-center' : 'origin-left'}`}
                 style={{
-                  // The active line grows via `scale()`, anchored at its left
-                  // edge (`origin-left`) so it doesn't jump around — but scale
-                  // is purely visual and doesn't reflow layout, so a line
-                  // already near the container's full width would have its
-                  // right edge pushed past the viewport once scaled up, and
-                  // get clipped by this panel's overflow-hidden. Capping each
-                  // line's own width to 1/maxScale leaves enough headroom
-                  // that even the largest growth (the active state) still
-                  // fits.
-                  maxWidth:   padded ? '80%' : '82%',
+                  // scale() is purely visual and doesn't reflow layout, so a
+                  // line already near the container's full width would have
+                  // its right edge pushed past the viewport once scaled up,
+                  // and get clipped by this panel's overflow-hidden. Capping
+                  // each line's own width leaves enough headroom that even the
+                  // largest growth still fits.
+                  maxWidth:   padded ? '84%' : '82%',
                   fontFamily: 'var(--font-lyrics)',
                   fontSize:   baseFontSize,
-                  // Bold weight is the active line's CSS class only — not
-                  // animated. Most fonts (including this app's system-font
-                  // stack) aren't variable fonts, so `font-weight` can't
-                  // actually interpolate between steps like 400→800; the
-                  // browser just snaps partway through the transition,
-                  // reading as the text suddenly going bold once the (truly
-                  // smooth) scale/opacity/color animation appears to settle.
+                  // Bold weight is the active line's style only — not
+                  // animated. Most fonts here aren't variable fonts, so
+                  // `font-weight` can't interpolate between steps like
+                  // 400→800; the browser snaps partway through the
+                  // transition, reading as the text suddenly going bold once
+                  // the (truly smooth) scale/opacity/colour animation appears
+                  // to settle.
                   fontWeight: isActive ? 800 : 500,
                   lineHeight: 1.25,
                   color:      isActive ? txtPri : txtSec,
@@ -1795,27 +1503,26 @@ const LyricsPanel = memo(function LyricsPanel({
         {!autoFollow && (
           <button
             onClick={() => setAutoFollow(true)}
-            className="absolute left-1/2 -translate-x-1/2 bottom-4 z-10 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white/85 text-xs font-medium hover:bg-black/75 transition-colors"
+            className="absolute left-1/2 -translate-x-1/2 bottom-4 z-10 flex items-center gap-1.5 px-4 h-9 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white/85 text-[13px] font-medium"
           >
-            <ChevronDown size={13} />
+            <ChevronDown size={14} />
             Resume
           </button>
         )}
-        {downloadMenu}
       </div>
     )
   }
 
   return (
-    <div className={`flex-1 min-h-0 overflow-y-auto ${padded ? 'py-16 pr-16 pl-8' : 'py-4 px-4 md:py-8 md:pr-12 md:pl-6'}`} style={{ scrollbarWidth: 'none' }}>
+    <div className={`relative flex-1 min-h-0 overflow-y-auto ${padded ? 'py-8 px-7' : 'py-4 px-5'}`} style={{ scrollbarWidth: 'none' }}>
       <pre
-        className="text-xs md:text-sm leading-6 md:leading-7 whitespace-pre-wrap"
+        className="text-sm leading-7 whitespace-pre-wrap"
         style={{
           color: txtSec,
           fontFamily: 'var(--font-lyrics)',
           textAlign: lyricsAlign,
-          // Only override the responsive size classes when the user actually
-          // changed the size; unitless line-height keeps spacing proportional.
+          // Only override the base size when the user actually changed it;
+          // unitless line-height keeps spacing proportional.
           ...(lyricsScale !== 1 ? { fontSize: `${0.875 * lyricsScale}rem`, lineHeight: 1.9 } : {}),
         }}
       >{rawLyrics}</pre>
