@@ -1,74 +1,135 @@
 import { ReactNode } from 'react'
-import { Play, MoreHorizontal, CheckSquare2, Square } from 'lucide-react'
+import { ChevronRight, Check, Circle, MoreVertical } from 'lucide-react'
+import { useLongPress } from './mobile/useLongPress'
 
-// One playlist tile in the library grid. Presentational only — the caller owns
-// the cover node and every handler, so the same card renders a synced playlist,
-// a local one, and (now) a playlist nested inside a folder without duplicating
-// this markup three times. Extracted from PlaylistsView when folders needed a
-// third place to draw the exact same tile.
+// One playlist in the library — as a grid tile or a list row, since the library
+// offers both. Presentational only: the caller owns the cover node and every
+// handler, so the same component draws a synced playlist, a device-local one,
+// and one nested inside a folder.
+//
+// Touch model matches the rest of the app: tap opens, long-press starts (or
+// extends) a selection, and the "⋯" button opens the actions sheet. There is no
+// hover-revealed play button any more — it had no touch equivalent, and "play
+// without opening" now lives in that sheet.
 
-function CardPlayOverlay({ onPlay }: { onPlay: () => void }): JSX.Element {
+export interface PlaylistCardProps {
+  name: string
+  subtitle: string
+  cover: ReactNode
+  /** Corner tag (e.g. "Offline", "Local"). Hidden while selecting. */
+  badge?: ReactNode
+  layout: 'grid' | 'list'
+  selected: boolean
+  selectMode: boolean
+  onOpen: () => void
+  onLongPress: () => void
+  onMenu: () => void
+}
+
+/** Selection drawn ON the cover: a leading checkbox would shove the row
+ *  sideways the moment select mode turns on, which happens mid-long-press. */
+function SelectOverlay({ selected }: { selected: boolean }): JSX.Element {
   return (
-    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors">
-      <button
-        onClick={(e) => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onPlay() }}
-        className="absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-black shadow-lg flex items-center justify-center opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all hover:scale-110"
-        title="Play"
-      >
-        <Play size={15} fill="currentColor" className="ml-0.5" />
-      </button>
+    <div className={`absolute inset-0 flex items-center justify-center transition-colors ${selected ? 'bg-accent/75' : 'bg-black/45'}`}>
+      {selected ? <Check size={22} className="text-white" strokeWidth={3} /> : <Circle size={20} className="text-white/85" />}
     </div>
   )
 }
 
 export default function PlaylistCard({
-  name, subtitle, cover, badge, selected, selectMode,
-  onClick, onContextMenu, onMenuButton, onPlay,
-}: {
+  name, subtitle, cover, badge, layout, selected, selectMode, onOpen, onLongPress, onMenu,
+}: PlaylistCardProps): JSX.Element {
+  const press = useLongPress({
+    onTap: () => (selectMode ? onLongPress() : onOpen()),
+    onLongPress,
+  })
+
+  if (layout === 'list') {
+    return (
+      <div
+        className={`flex items-center gap-3 px-4 py-2 rounded-2xl transition-colors ${selected ? 'bg-accent/15' : 'active:bg-surface-overlay'}`}
+        {...press}
+      >
+        <div className="relative shrink-0 w-14 h-14 rounded-xl overflow-hidden bg-surface-overlay flex items-center justify-center">
+          {cover}
+          {selectMode && <SelectOverlay selected={selected} />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-text-primary text-[15px] leading-snug truncate">{name}</p>
+          <p className="text-text-muted text-xs truncate mt-0.5">{subtitle}</p>
+        </div>
+        {!selectMode && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onMenu() }}
+            className="shrink-0 w-10 h-11 -mr-2 flex items-center justify-center text-text-muted active:text-accent"
+            aria-label={`More options for ${name}`}
+          >
+            <MoreVertical size={18} />
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative text-left" {...press}>
+      <div className={`relative aspect-square rounded-2xl overflow-hidden bg-surface-overlay flex items-center justify-center transition-opacity ${selected ? '' : 'active:opacity-70'}`}>
+        {cover}
+        {selectMode
+          ? <SelectOverlay selected={selected} />
+          : badge && <div className="absolute top-1.5 left-1.5">{badge}</div>}
+      </div>
+      <div className="flex items-start gap-1 pt-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-text-primary text-[13px] font-medium truncate leading-tight">{name}</p>
+          <p className="text-text-muted text-[11px] truncate mt-0.5">{subtitle}</p>
+        </div>
+        {!selectMode && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onMenu() }}
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 flex items-center justify-center text-text-muted active:text-accent"
+            aria-label={`More options for ${name}`}
+          >
+            <MoreVertical size={16} />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** A folder header row in the library list — same height and rhythm as a
+ *  playlist row, with a disclosure chevron instead of cover art. */
+export function FolderRow({ name, count, expanded, icon, onToggle, onMenu }: {
   name: string
-  subtitle: string
-  cover: ReactNode
-  /** Corner badge (e.g. the "Local" tag) shown when not in select mode. */
-  badge?: ReactNode
-  selected: boolean
-  selectMode: boolean
-  onClick: (e: React.MouseEvent) => void
-  onContextMenu: (e: React.MouseEvent) => void
-  /** The always-visible "⋯" button (distinct from right-click). */
-  onMenuButton: (e: React.MouseEvent) => void
-  onPlay: () => void
+  count: number
+  expanded: boolean
+  icon: ReactNode
+  onToggle: () => void
+  onMenu: () => void
 }): JSX.Element {
   return (
-    <div className="group text-left relative cursor-pointer" onClick={onClick} onContextMenu={onContextMenu}>
-      <div className={`relative aspect-square rounded-2xl overflow-hidden bg-surface-overlay flex items-center justify-center mb-2.5 shadow-md group-hover:shadow-xl group-hover:-translate-y-1 transition-all duration-200 ${selected ? 'ring-2 ring-accent' : ''}`}>
-        {cover}
-        <CardPlayOverlay onPlay={onPlay} />
+    <div className="flex items-center gap-3 px-4 py-2.5 rounded-2xl active:bg-surface-overlay transition-colors" onClick={onToggle}>
+      <div className="w-14 h-14 shrink-0 rounded-xl bg-surface-overlay flex items-center justify-center text-accent">
+        {icon}
       </div>
-
-      {selectMode ? (
-        <div className="absolute top-1.5 left-1.5 z-10 bg-black/60 rounded-md p-0.5">
-          {selected
-            ? <CheckSquare2 size={16} className="text-accent" />
-            : <Square size={16} className="text-white/70" />}
-        </div>
-      ) : badge ? (
-        <div className="absolute top-1.5 left-1.5 z-10">{badge}</div>
-      ) : null}
-
-      {!selectMode && (
-        <button
-          // Always visible on touch (there's no hover to reveal it), and sized
-          // for a finger there rather than the 21px desktop hit area.
-          className="absolute top-1.5 right-1.5 md:opacity-0 md:group-hover:opacity-100 w-9 h-9 md:w-auto md:h-auto flex items-center justify-center md:p-1 rounded-lg bg-black/60 text-white hover:bg-black/80 transition-opacity"
-          onClick={(e) => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onMenuButton(e) }}
-          aria-label={`More options for ${name}`}
-        >
-          <MoreHorizontal size={16} className="md:w-[13px] md:h-[13px]" />
-        </button>
-      )}
-
-      <p className="text-text-primary text-sm font-semibold truncate">{name}</p>
-      <p className="text-text-muted text-xs mt-0.5">{subtitle}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-text-primary text-[15px] leading-snug truncate">{name}</p>
+        <p className="text-text-muted text-xs truncate mt-0.5">
+          {count} {count === 1 ? 'playlist' : 'playlists'}
+        </p>
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); onMenu() }}
+        className="shrink-0 w-10 h-11 flex items-center justify-center text-text-muted active:text-accent"
+        aria-label={`More options for ${name}`}
+      >
+        <MoreVertical size={18} />
+      </button>
+      <ChevronRight
+        size={18}
+        className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+      />
     </div>
   )
 }
