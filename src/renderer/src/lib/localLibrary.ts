@@ -153,17 +153,24 @@ export async function scanSources(
   return out
 }
 
-/** Subscribes to scan progress. Returns an unsubscribe function. */
-export function onScanProgress(fn: (p: ScanProgress) => void): () => void {
+/**
+ * Subscribes to scan progress. Resolves an unsubscribe function once the
+ * listener is actually attached on the native side — the caller MUST await
+ * this before starting a scan. `scan()` spawns its walker thread the instant
+ * the plugin method runs, and on a small/fast library that thread can finish
+ * (emitting every progress event, including the final one) before the
+ * addListener bridge round-trip here would otherwise have completed, so a
+ * fire-and-forget registration silently misses the whole scan's progress.
+ */
+export async function onScanProgress(fn: (p: ScanProgress) => void): Promise<() => void> {
   const p = plugin()
   if (!p) return () => undefined
-  let handle: { remove: () => void } | null = null
-  let cancelled = false
-  p.addListener('scanProgress', fn).then((h) => {
-    if (cancelled) h.remove()
-    else handle = h
-  }).catch(() => undefined)
-  return () => { cancelled = true; handle?.remove() }
+  try {
+    const handle = await p.addListener('scanProgress', fn)
+    return () => handle.remove()
+  } catch {
+    return () => undefined
+  }
 }
 
 /** Embedded cover art for one track, or null when it has none. */

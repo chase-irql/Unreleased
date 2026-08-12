@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, ReactNode, ElementType } from 'react'
 import {
   Brush, Palette, Volume2, Zap, Clock, Info, Github, MessageCircle, Check,
-  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronUp, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw,
+  PenLine, BookOpen, Copy, Eye, EyeOff, ChevronDown, ChevronRight, ArrowLeft, KeyRound, Globe, RefreshCw,
   FolderOpen, FolderPlus, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Music2,
   PanelLeft, PanelTop, PanelBottom, Waves, RotateCcw, ExternalLink,
   ListOrdered, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
-  ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle,
+  ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle, GripVertical,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
 import { localLibraryAvailable, pickFolder, pickFiles, decodeSourceLabel } from '../lib/localLibrary'
@@ -23,6 +23,7 @@ import { formatBytes } from '../lib/format'
 import { registerBackHandler } from '../lib/backHandlers'
 import { useBackToClose } from '../hooks/useBackToClose'
 import { Sheet } from './mobile/Sheet'
+import { useDragReorder } from './mobile/useDragReorder'
 import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
@@ -375,6 +376,7 @@ export default function Settings(): JSX.Element {
     next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragView)
     setNavOrder(next)
   }
+  const navDrag = useDragReorder(navRows.length, moveNavItem)
 
   // The foot-of-menu controls (Profile, Log out, Diagnostics, Download) had a
   // reorder/hide list here too. They belong to the desktop side menu; the phone
@@ -1011,7 +1013,7 @@ export default function Settings(): JSX.Element {
                     icon={ListOrdered}
                     iconColor="#6366f1"
                     label="Tabs"
-                    sub="Reorder with the arrows · tap the eye to show or hide"
+                    sub="Drag the handle to reorder · tap the eye to show or hide"
                     action={!navIsDefault ? (
                       <button
                         onClick={resetNav}
@@ -1021,36 +1023,31 @@ export default function Settings(): JSX.Element {
                       </button>
                     ) : undefined}
                   >
-                    {/* HTML5 drag events never fire for touch, so the drag
-                        handle this list used to carry is a pair of arrow
-                        buttons — 36px each, the largest that stack without the
-                        row growing taller than the icon beside them. */}
+                    {/* HTML5 drag events never fire for touch, so this is a
+                        real touch drag (see mobile/useDragReorder) driven by
+                        the grip handle, not the row itself — the row still
+                        needs to host the visibility toggle without that tap
+                        being mistaken for the start of a drag. */}
                     <div className="rounded-xl bg-[var(--surface-highest)] overflow-hidden">
                       {navRows.map((item, idx) => {
                         const shown = isNavItemVisible(item, navVisibility)
+                        const dragging = navDrag.dragIndex === idx
                         return (
                           <div
                             key={item.view}
-                            className="flex items-center gap-2 pl-1 pr-1 py-1 border-b border-[var(--border)] last:border-b-0"
+                            data-drag-row
+                            style={navDrag.rowStyle(idx)}
+                            className={`flex items-center gap-2 pl-1 pr-1 py-1 border-b border-[var(--border)] last:border-b-0 bg-[var(--surface-highest)] ${
+                              dragging ? 'shadow-xl rounded-lg' : ''
+                            }`}
                           >
-                            <div className="flex flex-col shrink-0">
-                              <button
-                                onClick={() => { if (idx > 0) moveNavItem(idx, idx - 1) }}
-                                disabled={idx === 0}
-                                aria-label={`Move ${item.label} up`}
-                                className="w-9 h-6 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
-                              >
-                                <ChevronUp size={16} />
-                              </button>
-                              <button
-                                onClick={() => { if (idx < navRows.length - 1) moveNavItem(idx, idx + 1) }}
-                                disabled={idx === navRows.length - 1}
-                                aria-label={`Move ${item.label} down`}
-                                className="w-9 h-6 flex items-center justify-center text-text-muted disabled:opacity-25 active:text-text-primary transition-colors"
-                              >
-                                <ChevronDown size={16} />
-                              </button>
-                            </div>
+                            <button
+                              {...navDrag.handleProps(idx)}
+                              aria-label={`Drag to reorder ${item.label}`}
+                              className="w-9 h-11 shrink-0 flex items-center justify-center text-text-muted touch-none active:text-text-primary transition-colors"
+                            >
+                              <GripVertical size={16} />
+                            </button>
                             <span className={`w-6 h-6 shrink-0 flex items-center justify-center ${shown ? 'text-text-secondary' : 'opacity-40'}`}>{item.icon}</span>
                             <span className={`flex-1 min-w-0 truncate text-sm ${shown ? 'text-text-primary' : 'text-text-muted'}`}>{item.label}</span>
                             <button

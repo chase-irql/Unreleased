@@ -38,4 +38,9 @@
          grant "install unknown apps" for this app, which the plugin routes
          them to when it isn't granted yet. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Saving a downloaded file (playlist ZIP, lyrics export) into the public
+         Downloads folder — see DownloadsPlugin. API 29+ writes there through
+         MediaStore with no permission needed at all; only pre-29 needs this,
+         capped with maxSdkVersion so it's a no-op grant on everything newer. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 </manifest>

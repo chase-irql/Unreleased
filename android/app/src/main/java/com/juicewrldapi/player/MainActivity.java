@@ -12,6 +12,8 @@ public class MainActivity extends BridgeActivity {
         // which is what builds the bridge.
         registerPlugin(ApkInstallerPlugin.class);
         registerPlugin(LocalLibraryPlugin.class);
+        registerPlugin(OfflinePlugin.class);
+        registerPlugin(DownloadsPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -4,14 +4,14 @@ import {
   Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, Play, Pause,
   SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX,
   MoreHorizontal, Heart, ListMusic, Trash2, Download, History, SlidersHorizontal,
-  Mic2, Layers, ArrowUp, ArrowDown, ArrowUpDown, Loader2,
+  Mic2, Layers, ArrowUpDown, Loader2, GripVertical,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
 import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
-import { buildImageUrl, apiFetch, songToTrack, smallCoverUrl } from '../lib/juicewrldApi'
+import { buildImageUrl, apiFetch, songToTrack } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
@@ -24,6 +24,7 @@ import { ProgressiveCover } from './ProgressiveCover'
 import SongContextMenu from './SongContextMenu'
 import { getSkin } from '../lib/skins'
 import { Sheet, SheetItem, SheetDivider } from './mobile/Sheet'
+import { useDragReorder } from './mobile/useDragReorder'
 import { useBackToClose } from '../hooks/useBackToClose'
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -57,6 +58,7 @@ export default function WrldView(): JSX.Element {
     nextTrack, prevTrack,
     showQueue, setShowQueue,
     toggleEqPanel, eqFxActive,
+    sidebarPosition,
   } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     currentTrackFull: s.currentTrackFull,
@@ -86,6 +88,7 @@ export default function WrldView(): JSX.Element {
     toggleEqPanel: s.toggleEqPanel,
     // Same "anything non-neutral" indicator as the player bar's EQ button.
     eqFxActive: s.eqEnabled || s.playbackSpeed !== 1 || s.eqBalance !== 0 || s.eqMono || s.skipSilence || s.reverbEnabled,
+    sidebarPosition: s.sidebarPosition,
   })))
 
   // Skins beyond the classic pair mean `theme === 'dark'` no longer covers
@@ -304,6 +307,15 @@ export default function WrldView(): JSX.Element {
 
   const voteActive = !!radioFmVote?.active && !voteDismissed
 
+  // App.tsx skips its usual safe-area-inset-top padding for this view
+  // specifically, so WRLD's backdrop can paint full-bleed under the status
+  // bar — which means WRLD has to pad its own header down to compensate
+  // instead (every other view gets that inset for free from the shell).
+  // Skipped when the nav bar sits on top: the shell doesn't reserve that
+  // padding there either (BottomNav pads itself instead), so WRLD shouldn't
+  // add its own on top of that.
+  const ownsTopInset = sidebarPosition !== 'top'
+
   return (
     <div className="relative flex-1 h-full w-full overflow-hidden flex flex-col">
       <ArtBackdrop
@@ -313,7 +325,10 @@ export default function WrldView(): JSX.Element {
 
       <div className="relative z-10 flex flex-col h-full min-h-0">
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="shrink-0 flex items-center gap-1 px-2 pt-1">
+        <div
+          className="shrink-0 flex items-center gap-1 px-2"
+          style={{ paddingTop: ownsTopInset ? 'max(0.25rem, env(safe-area-inset-top, 0px))' : '0.25rem' }}
+        >
           <button
             onClick={collapse}
             aria-label="Collapse player"
@@ -332,7 +347,7 @@ export default function WrldView(): JSX.Element {
         {/* ── Cover ──────────────────────────────────────────────────────── */}
         {/* max-h caps it on short screens; the image is object-cover, so the
             box going slightly non-square there crops rather than distorts. */}
-        <div className="flex-1 min-h-0 flex items-center justify-center px-8 py-4">
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 px-8 py-4">
           <div
             className="w-full max-w-[340px] max-h-[44vh] aspect-square rounded-3xl overflow-hidden shadow-[0_28px_70px_rgba(0,0,0,0.65)] transition-transform duration-500 ease-out"
             style={{ transform: isPlaying || radioFmActive ? 'scale(1)' : 'scale(0.92)' }}
@@ -349,6 +364,16 @@ export default function WrldView(): JSX.Element {
                 <Music className="text-white/20 w-14 h-14" />
               </div>
             )}
+          </div>
+          {/* Fixed-height slot even when empty, so the cover above doesn't
+              jump vertically switching between a track with synced lyrics and
+              one without. */}
+          <div className="h-6 w-full flex items-center justify-center">
+            <MiniLyricLine
+              rawLyrics={rawLyrics} isSynced={isSynced} syncedLines={syncedLines}
+              onOpen={() => setLyricsOpen(true)}
+              txtSec={txtSec}
+            />
           </div>
         </div>
 
@@ -594,17 +619,49 @@ function ArtBackdrop({ artSrc, artError, isDarkSkin, radioFmActive, onError }: {
   return (
     <div className="absolute inset-0 overflow-hidden">
       {artSrc && !artError ? (
-        // Blurred to 60px, so resolution is meaningless here — always the
-        // degraded copy, which also gets the backdrop up on the first frame.
-        <img src={smallCoverUrl(artSrc)} alt=""
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ filter: `blur(60px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`, transform: 'scale(1.2)' }}
+        // The full-res cover, not the ~128px `small=1` degraded variant — see
+        // the resolution note below, this is a separate problem from that one.
+        //
+        // The img is laid out at HALF the container's size (width/height:50%,
+        // recentred) and blurred at HALF the radius, then blown back up with
+        // `transform: scale(2.4)` — 2x to restore full size, further scaled by
+        // the same 1.2 "zoom in" the old single-element version used, so
+        // 2 * 1.2 = 2.4. `filter` rasterizes at the element's actual layout
+        // size, before transform ever runs, so this computes the Gaussian
+        // blur over a quarter of the pixels a full-size element would need —
+        // both cheaper AND less likely to trip a renderer's "blur radius is
+        // large relative to layer size" fallback, which on a software
+        // rasterizer (a GPU-less emulator, notably) approximates by
+        // downsampling first and produces exactly the hard-edged blocky
+        // patches this was reported against. transform's own upscale is a
+        // separate, always-smooth bilinear step, so the visible result is
+        // softer even though the source blur radius is smaller.
+        <img src={artSrc} alt=""
+          className="absolute object-cover"
+          style={{
+            width: '50%', height: '50%', left: '50%', top: '50%',
+            transform: 'translate(-50%, -50%) scale(2.4)',
+            filter: `blur(30px) brightness(${isDarkSkin ? 0.22 : 0.45}) saturate(${isDarkSkin ? 2.4 : 1.8})`,
+          }}
           onError={onError}
         />
       ) : (
         <div className={`absolute inset-0 ${radioFmActive ? 'bg-gradient-to-br from-red-950/60 to-black' : 'bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-900 dark:to-black'}`} />
       )}
       <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/20 dark:from-black/40 dark:via-transparent dark:to-black/70" />
+      {/* A near-black diagonal gradient (or a 60px blur pushed to very low
+          brightness) has almost no per-pixel colour variation, which is
+          exactly what triggers 8-bit banding on phone panels — flat
+          rings/patches instead of a smooth wash. A faint noise texture breaks
+          the flat bands up; at 3% opacity it isn't visible as texture, only
+          as the absence of banding. */}
+      <div
+        className="absolute inset-0 opacity-[0.035] mix-blend-overlay"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        }}
+      />
     </div>
   )
 }
@@ -885,6 +942,9 @@ function QueueSheet({ onClose }: { onClose: () => void }): JSX.Element {
   const upcoming = queue.slice(queueIndex + 1)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [reorder, setReorder] = useState(false)
+  // reorderQueue's (from, to) are indices within `upcoming` itself — see its
+  // definition in queueSlice.ts — which is exactly what useDragReorder tracks.
+  const drag = useDragReorder(upcoming.length, reorderQueue)
 
   return (
     <Sheet
@@ -962,10 +1022,9 @@ function QueueSheet({ onClose }: { onClose: () => void }): JSX.Element {
               key={`${track.id}-${queueIndex + 1 + i}`}
               track={track}
               reorder={reorder}
-              canUp={i > 0}
-              canDown={i < upcoming.length - 1}
-              onUp={() => reorderQueue(i, i - 1)}
-              onDown={() => reorderQueue(i, i + 1)}
+              dragging={drag.dragIndex === i}
+              rowStyle={drag.rowStyle(i)}
+              handleProps={drag.handleProps(i)}
               onPlay={() => playTrack(track, queue.slice(queueIndex + 1 + i))}
               onRemove={() => removeFromQueue(queueIndex + 1 + i)}
             />
@@ -978,21 +1037,24 @@ function QueueSheet({ onClose }: { onClose: () => void }): JSX.Element {
   )
 }
 
-function QueueRow({ track, active, playing, reorder, canUp, canDown, onUp, onDown, onPlay, onRemove }: {
+function QueueRow({ track, active, playing, reorder, dragging, rowStyle, handleProps, onPlay, onRemove }: {
   track: Track
   active?: boolean
   playing?: boolean
   reorder?: boolean
-  canUp?: boolean
-  canDown?: boolean
-  onUp?: () => void
-  onDown?: () => void
+  dragging?: boolean
+  rowStyle?: React.CSSProperties
+  handleProps?: { onTouchStart: (e: React.TouchEvent<HTMLElement>) => void }
   onPlay?: () => void
   onRemove?: () => void
 }): JSX.Element {
   return (
     <div
-      className={`flex items-center gap-3 px-5 py-2 transition-colors ${active ? 'bg-accent/10' : onPlay ? 'active:bg-surface-overlay' : ''}`}
+      data-drag-row
+      style={rowStyle}
+      className={`flex items-center gap-3 px-5 py-2 transition-colors ${
+        active ? 'bg-accent/10' : dragging ? 'bg-white/10 shadow-xl rounded-xl' : onPlay ? 'active:bg-surface-overlay' : ''
+      }`}
       onClick={() => { if (!reorder && onPlay && !active) onPlay() }}
     >
       <div className="w-11 h-11 rounded-lg shrink-0 overflow-hidden bg-surface-overlay">
@@ -1002,21 +1064,13 @@ function QueueRow({ track, active, playing, reorder, canUp, canDown, onUp, onDow
         <p className={`text-[15px] truncate leading-snug ${active ? 'text-accent font-semibold' : 'text-text-primary'}`}>{track.title}</p>
         <p className="text-text-muted text-xs truncate mt-0.5">{track.artist}</p>
       </div>
-      {reorder && onUp && onDown ? (
-        <div className="flex items-center shrink-0">
-          <button
-            onClick={(e) => { e.stopPropagation(); onUp() }}
-            disabled={!canUp}
-            aria-label="Move up"
-            className="w-10 h-11 flex items-center justify-center text-text-secondary disabled:opacity-25"
-          ><ArrowUp size={17} /></button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDown() }}
-            disabled={!canDown}
-            aria-label="Move down"
-            className="w-10 h-11 flex items-center justify-center text-text-secondary disabled:opacity-25"
-          ><ArrowDown size={17} /></button>
-        </div>
+      {reorder && handleProps ? (
+        <button
+          {...handleProps}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Drag to reorder ${track.title}`}
+          className="w-10 h-11 -mr-1 shrink-0 flex items-center justify-center text-text-secondary touch-none"
+        ><GripVertical size={18} /></button>
       ) : playing ? (
         <span className="flex gap-[3px] items-end h-3.5 shrink-0">
           {[0, 1, 2].map(i => (
@@ -1295,6 +1349,81 @@ interface LyricsPanelProps {
   txtPri: string; txtSec: string; txtTer: string; txtFaint: string
 }
 
+// Tracks which synced line is current, against the LIVE audio.currentTime via
+// requestAnimationFrame rather than the Zustand-stored value (which only
+// updates on the native 'timeupdate' event, ~4x/sec — that throttling is what
+// made the active line snap every ~250ms instead of transitioning smoothly).
+// Shared by the full lyrics screen and the mini line under the cover art, so
+// both agree on exactly which line is "now" without a second rAF loop.
+function useActiveSyncedLine(isSynced: boolean, syncedLines: SyncedLyricLine[]): number {
+  const lyricsOffset = useStore(s => s.lyricsOffset)
+  // Lazily computed from the live audio position (not just -1) so a remount
+  // doesn't momentarily render with no active line before the next rAf tick
+  // corrects it — for the lyrics screen that was a visible "jump to the top,
+  // then glide back down" flash.
+  const [idx, setIdx] = useState(() =>
+    isSynced && syncedLines.length > 0
+      ? getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
+      : -1
+  )
+  const idxRef = useRef(idx)
+
+  useEffect(() => {
+    if (!isSynced || syncedLines.length === 0) {
+      setIdx(-1)
+      idxRef.current = -1
+      return
+    }
+    let raf = 0
+    const tick = (): void => {
+      const i = getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
+      if (i !== idxRef.current) {
+        idxRef.current = i
+        setIdx(i)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [isSynced, syncedLines, lyricsOffset])
+
+  return idx
+}
+
+/** The Spotify-style snippet under the cover art: just the current synced
+ *  line, tap to open the full lyrics screen. Self-contained (own rAF via
+ *  useActiveSyncedLine) so the per-line tick doesn't re-render the rest of
+ *  the page. Renders nothing during an instrumental gap or when there's no
+ *  synced lyrics at all — unsynced plain-text lyrics have no "current line"
+ *  concept to show here. */
+const MiniLyricLine = memo(function MiniLyricLine({
+  rawLyrics, isSynced, syncedLines, onOpen, txtSec,
+}: {
+  rawLyrics: string | null
+  isSynced: boolean
+  syncedLines: SyncedLyricLine[]
+  onOpen: () => void
+  txtSec: string
+}): JSX.Element | null {
+  const currentLineIdx = useActiveSyncedLine(isSynced, syncedLines)
+  if (!rawLyrics || !isSynced || syncedLines.length === 0) return null
+  const text = currentLineIdx >= 0 ? syncedLines[currentLineIdx].text?.trim() : ''
+  if (!text) return null
+  return (
+    <button
+      onClick={onOpen}
+      aria-label="Open lyrics"
+      className="max-w-full px-4 active:opacity-60 transition-opacity"
+    >
+      {/* Keying on the line index restarts the fade-in each time the active
+          line changes, reading as a soft crossfade rather than a hard swap. */}
+      <p key={currentLineIdx} className="text-[15px] font-semibold text-center truncate animate-lyric-line-in" style={{ color: txtSec }}>
+        {text}
+      </p>
+    </button>
+  )
+})
+
 const LyricsPanel = memo(function LyricsPanel({
   rawLyrics, isSynced, syncedLines, padded,
   radioFmActive, currentTrack, isEditor,
@@ -1303,42 +1432,9 @@ const LyricsPanel = memo(function LyricsPanel({
   const viewportRef = useRef<HTMLDivElement>(null)
   const linesRef    = useRef<HTMLDivElement>(null)
   const activeRef   = useRef<HTMLDivElement>(null)
-  const lyricsOffset = useStore(s => s.lyricsOffset)
   const { lyricsScale, lyricsAlign, lyricsBlur } = useStorePick('lyricsScale', 'lyricsAlign', 'lyricsBlur')
 
-  // Driven by requestAnimationFrame against the LIVE audio.currentTime rather
-  // than the Zustand-stored value (which only updates on the native
-  // 'timeupdate' event, ~4x/sec) — that throttling is what made the active
-  // line snap every ~250ms instead of transitioning smoothly.
-  // Lazily computed from the live audio position (not just -1) so that a
-  // remount doesn't momentarily render with no active line (translateY snaps
-  // to 0 / the first line) before the next rAf tick corrects it — that
-  // produced a visible "jump to the top, then glide back down" flash.
-  const [currentLineIdx, setCurrentLineIdx] = useState(() =>
-    isSynced && syncedLines.length > 0
-      ? getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
-      : -1
-  )
-  const lineIdxRef = useRef(currentLineIdx)
-
-  useEffect(() => {
-    if (!isSynced || syncedLines.length === 0) {
-      setCurrentLineIdx(-1)
-      lineIdxRef.current = -1
-      return
-    }
-    let raf = 0
-    const tick = (): void => {
-      const idx = getCurrentLineIndex(syncedLines, getAudioCurrentTime() - lyricsOffset)
-      if (idx !== lineIdxRef.current) {
-        lineIdxRef.current = idx
-        setCurrentLineIdx(idx)
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [isSynced, syncedLines, lyricsOffset])
+  const currentLineIdx = useActiveSyncedLine(isSynced, syncedLines)
 
   // Center the active line by translating the whole lyric column rather than
   // using native `scrollIntoView({behavior:'smooth'})`. Native smooth-scroll

@@ -3,7 +3,7 @@ import {
   ListMusic, Play, Loader2, Plus, Trash2, Pencil, ArrowLeft, X, Check, Heart, Shuffle,
   Music2, ListPlus, Archive, FolderInput, MoreVertical, Search, ChevronUp, ChevronDown,
   ImageOff, Globe, Lock, Link, ListEnd, HardDrive, CircleArrowDown, Layers, LayoutGrid, Rows3,
-  Download, Image as ImageIcon, ArrowUpDown, AlignLeft,
+  Download, Image as ImageIcon, ArrowUpDown, AlignLeft, GripVertical,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -23,11 +23,13 @@ import { CompactGroupRow, CompactEmptyIcon, useExpandedGroups } from './CompactG
 import { groupItemsByVersion, filterCompactGroups, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
 import { versionsEnabled } from '../lib/versionsApi'
-import { shareOrigin } from '../lib/androidUpdate'
+import { shareOrigin, isAndroidApp } from '../lib/androidUpdate'
+import { saveFile } from '../lib/fileSave'
 import { useVirtualWindowEl } from '../hooks/useVirtualWindow'
 import PlaylistCard, { FolderRow } from './PlaylistCard'
 import { Sheet, SheetItem, SheetDivider } from './mobile/Sheet'
 import { useLongPress } from './mobile/useLongPress'
+import { useDragReorder } from './mobile/useDragReorder'
 import { registerBackHandler } from '../lib/backHandlers'
 import { allFolderedKeys, folderOfPlaylist, parsePlaylistKey } from '../lib/playlistFolders'
 import type { PlaylistFolder } from '../lib/playlistFolders'
@@ -237,27 +239,28 @@ const TrackRow = memo(function TrackRow({
   )
 })
 
-/** The reorder-mode row: no artwork, no menu — just the title and the two
- *  buttons that move it. Drag-to-reorder was an HTML5 dragstart/drop pair,
- *  which touch never fires, so the whole feature was unreachable here. */
-function ReorderRow({ title, first, last, onUp, onDown }: {
-  title: string; first: boolean; last: boolean; onUp: () => void; onDown: () => void
+/** The reorder-mode row: no artwork, no menu — just the title and a grip
+ *  handle you drag it by. Used to be a pair of up/down buttons: real
+ *  drag-to-reorder is an HTML5 dragstart/drop pair, which touch never fires,
+ *  so this is the touch equivalent instead (see mobile/useDragReorder). */
+function ReorderRow({ title, dragging, style, handleProps }: {
+  title: string
+  dragging: boolean
+  style: React.CSSProperties
+  handleProps: { onTouchStart: (e: React.TouchEvent<HTMLElement>) => void }
 }): JSX.Element {
   return (
-    <div className="flex items-center gap-2 px-2 h-full">
+    <div
+      data-drag-row
+      style={style}
+      className={`flex items-center gap-2 px-2 h-full bg-surface rounded-xl transition-shadow ${dragging ? 'shadow-xl' : ''}`}
+    >
       <span className="flex-1 min-w-0 text-text-primary text-[15px] truncate pl-2">{title}</span>
       <button
-        onClick={onUp}
-        disabled={first}
-        aria-label={`Move ${title} up`}
-        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-secondary disabled:opacity-25 active:bg-surface-overlay"
-      ><ChevronUp size={20} /></button>
-      <button
-        onClick={onDown}
-        disabled={last}
-        aria-label={`Move ${title} down`}
-        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-secondary disabled:opacity-25 active:bg-surface-overlay"
-      ><ChevronDown size={20} /></button>
+        {...handleProps}
+        aria-label={`Drag to reorder ${title}`}
+        className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted touch-none active:text-text-primary active:bg-surface-overlay"
+      ><GripVertical size={20} /></button>
     </div>
   )
 }
@@ -356,7 +359,7 @@ export default function PlaylistsView(): JSX.Element {
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
     playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder,
-    appTextScale, currentTrack } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'removeFromLocalPlaylist', 'reorderLocalPlaylist', 'createLocalPlaylist', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'currentTrack')
+    appTextScale, currentTrack, sidebarPosition, setHeroBleedTop } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'removeFromLocalPlaylist', 'reorderLocalPlaylist', 'createLocalPlaylist', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'currentTrack', 'sidebarPosition', 'setHeroBleedTop')
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -924,6 +927,8 @@ export default function PlaylistsView(): JSX.Element {
     } catch { await loadDetail(selectedId) }
   }, [tracks.length, isLocal, localPl, localLibTracks, reorderLocalPlaylist, detail, selectedId, loadDetail])
 
+  const trackDrag = useDragReorder(tracks.length, moveTrack)
+
   const openSongInfo = useCallback(async (songId: number) => {
     try { setInfoSong(await apiFetch<JWApiSong>(`/songs/${songId}/`)) } catch {}
   }, [])
@@ -979,12 +984,17 @@ export default function PlaylistsView(): JSX.Element {
       const contentType = res.headers.get('content-type') || ''
       if (contentType.includes('zip') || contentType.includes('octet-stream')) {
         const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a'); a.href = url; a.download = `${name}.zip`; a.click()
-        URL.revokeObjectURL(url)
+        await saveFile(`${name}.zip`, blob)
       } else {
         const data = await res.json()
-        if (data.download_url) { const a = document.createElement('a'); a.href = data.download_url; a.download = `${name}.zip`; a.click() }
+        if (data.download_url) {
+          // A big playlist's ZIP is built async server-side and handed back
+          // as a link instead of a body — on Android that link needs a real
+          // browser to turn into an actual download (this WebView doesn't do
+          // it), so hand it to the system browser instead of clicking it.
+          if (isAndroidApp()) window.open(data.download_url, '_blank', 'noopener')
+          else { const a = document.createElement('a'); a.href = data.download_url; a.download = `${name}.zip`; a.click() }
+        }
       }
       setZipState('done')
     } catch { setZipState('error') }
@@ -1282,11 +1292,19 @@ export default function PlaylistsView(): JSX.Element {
     icon: React.ReactNode,
     onClick: () => void,
     active = false,
+    // Detail screens with a hero backdrop extend that art in behind the app
+    // bar (see renderDetail/renderGuestDetail) — text-muted is a dark tone in
+    // a light theme and unreadable over the now-darkened art sitting behind
+    // it there, so those callers pass light=true to match the hero title
+    // below, which already switches to white the same way.
+    light = false,
   ): JSX.Element => (
     <button
       onClick={onClick}
       aria-label={label}
-      className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-surface-overlay ${active ? 'text-accent' : 'text-text-muted'}`}
+      className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-surface-overlay ${
+        active ? 'text-accent' : light ? 'text-white/90' : 'text-text-muted'
+      }`}
     >{icon}</button>
   )
 
@@ -1448,17 +1466,28 @@ export default function PlaylistsView(): JSX.Element {
     }
 
     return (
-      <>
+      // Hero, app bar and the scrollable list are siblings in one relative
+      // root, not the app bar sitting outside the scroller with the hero
+      // nested deep inside it (the old shape) — the hero has to be a sibling
+      // to bleed *behind* the app bar and up under the status bar, and it
+      // can't do that from inside the scroller's own clipped box. App.tsx
+      // pulled its usual safe-area padding for this render (see heroActive
+      // above), so the app bar pads itself back down to compensate.
+      <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+        {backdropSrc && <HeroBackdrop src={backdropSrc} />}
         {/* App bar. It deliberately does not collapse in select mode — swapping
             it out mid-long-press moves the list under the finger; the selection
             controls live in the bottom bar instead. */}
-        <div className="shrink-0 flex items-center gap-1 px-2">
+        <div
+          className="relative shrink-0 flex items-center gap-1 px-2"
+          style={{ paddingTop: ownsTopInset ? 'max(0.25rem, env(safe-area-inset-top, 0px))' : '0.25rem' }}
+        >
           <button
             onClick={() => (reorderMode ? setReorderMode(false) : goBackToLibrary())}
             aria-label="Back"
-            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+            className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-surface-overlay ${backdropSrc ? 'text-white' : 'text-text-primary'}`}
           ><ArrowLeft size={20} /></button>
-          <span className="flex-1 min-w-0 text-text-primary text-[15px] font-semibold truncate">
+          <span className={`flex-1 min-w-0 text-[15px] font-semibold truncate ${backdropSrc ? 'text-white' : 'text-text-primary'}`}>
             {reorderMode ? 'Reorder' : (name ?? '')}
           </span>
           {reorderMode ? (
@@ -1468,14 +1497,14 @@ export default function PlaylistsView(): JSX.Element {
             >Done</button>
           ) : (
             <>
-              {tracks.length > 0 && appBarButton('Search tracks', <Search size={19} />, () => setSearchOpen(v => !v), searchOpen)}
-              {appBarButton('Playlist options', <MoreVertical size={19} />, () => setSheet({ kind: 'detail' }))}
+              {tracks.length > 0 && appBarButton('Search tracks', <Search size={19} />, () => setSearchOpen(v => !v), searchOpen, !!backdropSrc)}
+              {appBarButton('Playlist options', <MoreVertical size={19} />, () => setSheet({ kind: 'detail' }), false, !!backdropSrc)}
             </>
           )}
         </div>
 
         {searchOpen && !reorderMode && (
-          <div className="shrink-0 px-4 pt-2">
+          <div className="relative shrink-0 px-4 pt-2">
             <div className="relative flex items-center">
               <Search size={16} className="absolute left-3.5 text-text-muted pointer-events-none" />
               <input
@@ -1514,7 +1543,6 @@ export default function PlaylistsView(): JSX.Element {
               width for a title that then wrapped anyway. Light-on-dark text
               only when there's art to sit on. ── */}
           <div className="relative px-4 pb-4 overflow-hidden">
-            {backdropSrc && <HeroBackdrop src={backdropSrc} />}
             <div className="relative flex flex-col items-center text-center pt-1 pb-4">
               <div className="relative w-44 h-44 rounded-2xl overflow-hidden shadow-2xl bg-surface-overlay">
                 {isLocal ? (
@@ -1619,15 +1647,13 @@ export default function PlaylistsView(): JSX.Element {
             // under the finger.
             <div className="px-2">
               {tracks.map((t, i) => (
-                <div key={t.id} style={{ height: trackRowH }}>
-                  <ReorderRow
-                    title={t.title}
-                    first={i === 0}
-                    last={i === tracks.length - 1}
-                    onUp={() => moveTrack(i, i - 1)}
-                    onDown={() => moveTrack(i, i + 1)}
-                  />
-                </div>
+                <ReorderRow
+                  key={t.id}
+                  title={t.title}
+                  dragging={trackDrag.dragIndex === i}
+                  style={{ height: trackRowH, ...trackDrag.rowStyle(i) }}
+                  handleProps={trackDrag.handleProps(i)}
+                />
               ))}
             </div>
           ) : compactView && !isLocal ? (
@@ -1706,7 +1732,7 @@ export default function PlaylistsView(): JSX.Element {
             </div>
           )}
         </div>
-      </>
+      </div>
     )
   }
 
@@ -1717,20 +1743,23 @@ export default function PlaylistsView(): JSX.Element {
     if (!gp) { setGuestSelectedId(null); return <div /> }
     const art = gp.tracks.map(t => t.imageUrl).find(a => !!a) ?? null
     return (
-      <>
-        <div className="shrink-0 flex items-center gap-1 px-2">
+      <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+        {art && <HeroBackdrop src={art} />}
+        <div
+          className="relative shrink-0 flex items-center gap-1 px-2"
+          style={{ paddingTop: ownsTopInset ? 'max(0.25rem, env(safe-area-inset-top, 0px))' : '0.25rem' }}
+        >
           <button
             onClick={() => setGuestSelectedId(null)}
             aria-label="Back"
-            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+            className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full active:bg-surface-overlay ${art ? 'text-white' : 'text-text-primary'}`}
           ><ArrowLeft size={20} /></button>
-          <span className="flex-1 min-w-0 text-text-primary text-[15px] font-semibold truncate">{gp.name}</span>
-          {appBarButton('Playlist options', <MoreVertical size={19} />, () => setSheet({ kind: 'guest', id: gp.id }))}
+          <span className={`flex-1 min-w-0 text-[15px] font-semibold truncate ${art ? 'text-white' : 'text-text-primary'}`}>{gp.name}</span>
+          {appBarButton('Playlist options', <MoreVertical size={19} />, () => setSheet({ kind: 'guest', id: gp.id }), false, !!art)}
         </div>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain pb-6">
+        <div className="relative flex-1 overflow-y-auto overscroll-contain pb-6">
           <div className="relative px-4 pb-4 overflow-hidden">
-            {art && <HeroBackdrop src={art} />}
             <div className="relative flex flex-col items-center text-center pt-1 pb-4">
               <div className="w-44 h-44 rounded-2xl overflow-hidden shadow-2xl bg-surface-overlay">
                 <GuestPlaylistMosaic tracks={gp.tracks} className="w-full h-full" />
@@ -1772,7 +1801,7 @@ export default function PlaylistsView(): JSX.Element {
             </div>
           )}
         </div>
-      </>
+      </div>
     )
   }
 
@@ -2165,6 +2194,22 @@ export default function PlaylistsView(): JSX.Element {
   // ── One tree ──────────────────────────────────────────────────────────────
 
   const inDetail = selectedId != null || localSelectedId !== null
+
+  // A playlist's own cover is worth bleeding under the status bar for (see
+  // renderDetail/renderGuestDetail's HeroBackdrop) — the plain library browse
+  // list isn't, so this only raises the shell's shared heroBleedTop flag
+  // while an actual detail screen is open, and always drops it again on the
+  // way out (unmount included, via the effect cleanup) so the flag can't get
+  // stuck on after navigating elsewhere.
+  const heroActive = inDetail || guestSelectedId !== null
+  useEffect(() => {
+    setHeroBleedTop(heroActive)
+    return () => setHeroBleedTop(false)
+  }, [heroActive, setHeroBleedTop])
+  // Matches WRLD's own ownsTopInset: when the nav bar sits on top, the shell
+  // never reserved this padding in the first place (BottomNav pads itself
+  // instead), so there's nothing for the hero to compensate for.
+  const ownsTopInset = sidebarPosition !== 'top'
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">

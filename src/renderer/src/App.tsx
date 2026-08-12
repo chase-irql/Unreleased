@@ -70,8 +70,8 @@ const Settings = lazy(() => import('./components/Settings'))
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal'))
 
 export default function App(): JSX.Element {
-  const { showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders, refreshPlaylists } = useStorePick(
-    'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders', 'refreshPlaylists')
+  const { showQueue, showSettings, setShowSettings, showDiagnostics, setShowDiagnostics, activeView, sidebarPosition, loadAccount, completeDiscordLogin, showUserAuth, setShowUserAuth, prefetchApiData, loadLibrary, scanLibrary, libraryAutoRefresh, libraryFolders, refreshPlaylists, loadOfflineLibrary, heroBleedTop } = useStorePick(
+    'showQueue', 'showSettings', 'setShowSettings', 'showDiagnostics', 'setShowDiagnostics', 'activeView', 'sidebarPosition', 'loadAccount', 'completeDiscordLogin', 'showUserAuth', 'setShowUserAuth', 'prefetchApiData', 'loadLibrary', 'scanLibrary', 'libraryAutoRefresh', 'libraryFolders', 'refreshPlaylists', 'loadOfflineLibrary', 'heroBleedTop')
   useThemeEffects()
   // Android hardware back → close the topmost overlay / step back a view.
   // No-op off native.
@@ -127,6 +127,13 @@ export default function App(): JSX.Element {
   // instead of waiting on a file read plus a bridge round trip. loadLibrary
   // is idempotent, so this never double-reads with a tab-mount call.
   useEffect(() => runWhenIdle(() => { loadLibrary() }), [loadLibrary])
+
+  // Offline-downloaded playlists/tracks are disk truth, not persisted store
+  // state — every mutation (download/remove) re-reads and overwrites this,
+  // but nothing populated it on a fresh launch at all, so a relaunch showed a
+  // playlist that's genuinely offline as not-offline until the next edit.
+  // getOfflineApi() is null on the plain web build, so this is a no-op there.
+  useEffect(() => runWhenIdle(() => { loadOfflineLibrary() }), [loadOfflineLibrary])
 
   // "Auto-refresh" (Settings → Library) — opt-in background rescan so files
   // added or re-tagged outside the app show up without an explicit "Scan now".
@@ -185,7 +192,17 @@ export default function App(): JSX.Element {
             itself by the same amount and content flows below it. */}
         <main
           className="flex-1 overflow-hidden flex flex-col relative"
-          style={sidebarPosition !== 'top' ? { paddingTop: 'env(safe-area-inset-top, 0px)' } : undefined}
+          // WRLD, and any view that's raised heroBleedTop (Playlists' detail
+          // screen, while it has a hero cover to bleed), want a full-bleed
+          // backdrop under the status bar and pad their own header to
+          // compensate instead (see WRLD's and PlaylistsView's own comments)
+          // — giving them padding here too would just reserve blank space
+          // this box clips before their content could ever paint into it (a
+          // negative-margin trick on a child's own root can't reach past this
+          // overflow-hidden ancestor either, which is why that was tried and
+          // didn't work). Every other view keeps the shared inset.
+          style={sidebarPosition !== 'top' && !((activeView === 'wrld' || heroBleedTop) && !showSettings)
+            ? { paddingTop: 'env(safe-area-inset-top, 0px)' } : undefined}
         >
           <div className="flex-1 overflow-hidden flex">
             <ErrorBoundary>

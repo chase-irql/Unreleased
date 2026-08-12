@@ -396,10 +396,14 @@ public class LocalLibraryPlugin extends Plugin {
     /**
      * Throttled progress. An event per file would be thousands of bridge
      * crossings and re-renders on a real library, so this only reports every
-     * {@link #PROGRESS_EVERY} files unless `force` says otherwise.
+     * {@link #PROGRESS_EVERY} files unless `force` says otherwise — except the
+     * very first file, which always reports immediately. Without that a
+     * library smaller than PROGRESS_EVERY (very plausible while testing, or
+     * just a small collection) would never see an incremental update at all,
+     * only the final one once the whole scan is already done.
      */
     private void emitProgress(int[] counters, boolean force) {
-        if (!force && counters[0] % PROGRESS_EVERY != 0) return;
+        if (!force && counters[0] != 1 && counters[0] % PROGRESS_EVERY != 0) return;
         JSObject p = new JSObject();
         p.put("found", counters[0]);
         p.put("parsed", counters[1]);

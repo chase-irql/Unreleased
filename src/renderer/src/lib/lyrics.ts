@@ -1,4 +1,5 @@
 import { SyncedLyricLine } from '../types'
+import { saveFile } from './fileSave'
 
 /**
  * Parse LRC format into timed lines.
@@ -51,19 +52,13 @@ export function getCurrentLineIndex(lines: SyncedLyricLine[], currentTime: numbe
 
 /**
  * Save a synced (LRC) lyrics string as a local .lrc file — a plain client-side
- * Blob download, not a server fetch, since the lyrics text is already in
- * memory (loaded with the track).
+ * Blob save, not a server fetch, since the lyrics text is already in memory
+ * (loaded with the track). Goes through lib/fileSave so it actually reaches
+ * the Downloads folder on Android too, not just desktop/web.
  */
 export function downloadSyncedLyrics(title: string, artist: string, lrcContent: string): void {
   // Strip characters that are invalid in filenames on Windows/macOS.
   const safeName = `${title} - ${artist}`.replace(/[/\\?%*:|"<>]/g, '').trim() || 'lyrics'
   const blob = new Blob([lrcContent], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${safeName}.lrc`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  void saveFile(`${safeName}.lrc`, blob)
 }

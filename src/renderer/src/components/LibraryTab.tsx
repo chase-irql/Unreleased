@@ -115,6 +115,17 @@ function toggleIn(list: string[], value: string): string[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
 }
 
+/** A bare "Scanning…" with no counts reads as hung on a big library — the
+ *  native walk can take minutes, and it already reports found/parsed via
+ *  `scanProgress` (see localLibrary.onScanProgress). This is that number,
+ *  formatted for the two spots in this tab that show scan state. */
+function scanStatusText(progress: { found: number; parsed: number } | null): string {
+  if (!progress || progress.found === 0) return 'Scanning…'
+  return progress.parsed > 0
+    ? `Found ${progress.found.toLocaleString()} · read tags for ${progress.parsed.toLocaleString()}`
+    : `Found ${progress.found.toLocaleString()} file${progress.found === 1 ? '' : 's'}…`
+}
+
 const byTrackNo = (a: LibraryTrack, b: LibraryTrack): number => (a.trackNumber ?? 999) - (b.trackNumber ?? 999)
 const shuffled = fisherYates
 
@@ -534,11 +545,11 @@ function EmptyState({ onOpenSettings, onImportUrl }: { onOpenSettings: () => voi
 
 export default function LibraryTab(): JSX.Element {
   const {
-    libraryTracks, libraryScanning, scanLibrary, libraryFolders, loadLibrary, openSettings,
+    libraryTracks, libraryScanning, libraryScanProgress, scanLibrary, libraryFolders, loadLibrary, openSettings,
     playTrack, playCollection, playNext, addToQueue, account, openLocalEditor, likedTrackIds,
     toggleLike, openUrlImport, openBulkTrackEditor, currentTrack, isPlaying, setIsPlaying,
   } = useStorePick(
-    'libraryTracks', 'libraryScanning', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'openSettings',
+    'libraryTracks', 'libraryScanning', 'libraryScanProgress', 'scanLibrary', 'libraryFolders', 'loadLibrary', 'openSettings',
     'playTrack', 'playCollection', 'playNext', 'addToQueue', 'account', 'openLocalEditor', 'likedTrackIds',
     'toggleLike', 'openUrlImport', 'openBulkTrackEditor', 'currentTrack', 'isPlaying', 'setIsPlaying')
 
@@ -869,7 +880,7 @@ export default function LibraryTab(): JSX.Element {
             <div className="flex-1 min-w-0 pl-2.5">
               <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">Library</h1>
               <p className="text-text-muted text-xs truncate">
-                {libraryScanning ? 'Scanning…'
+                {libraryScanning ? scanStatusText(libraryScanProgress)
                   : libraryTracks.length === 0 ? 'Nothing added yet'
                   : filterCount > 0 ? `${pool.length.toLocaleString()} of ${libraryTracks.length.toLocaleString()} songs · ${formatTotalDuration(totalDuration)}`
                   : `${pool.length.toLocaleString()} songs · ${albums.length} albums · ${formatTotalDuration(totalDuration)}`}
@@ -975,7 +986,7 @@ export default function LibraryTab(): JSX.Element {
       ) : libraryScanning && libraryTracks.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <Loader2 size={30} className="animate-spin text-accent" />
-          <p className="text-text-muted text-sm">Scanning your music…</p>
+          <p className="text-text-muted text-sm">{scanStatusText(libraryScanProgress)}</p>
         </div>
       ) : (
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto overscroll-contain pt-2 pb-6">
@@ -1198,7 +1209,8 @@ export default function LibraryTab(): JSX.Element {
           <SheetItem
             icon={libraryScanning ? Loader2 : RefreshCw}
             label={libraryScanning ? 'Scanning…' : 'Scan for new music'}
-            sub={libraryFolders.length === 0 ? 'Add a folder first' : `${libraryFolders.length} folder${libraryFolders.length === 1 ? '' : 's'}`}
+            sub={libraryScanning ? scanStatusText(libraryScanProgress)
+              : libraryFolders.length === 0 ? 'Add a folder first' : `${libraryFolders.length} folder${libraryFolders.length === 1 ? '' : 's'}`}
             disabled={libraryScanning || libraryFolders.length === 0}
             onClick={() => { scanLibrary(); setSheet(null) }}
           />

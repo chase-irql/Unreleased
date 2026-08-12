@@ -36,6 +36,7 @@ import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, D
 import { getLastfmSession } from '../lib/lastfm'
 import * as localLibrary from '../lib/localLibrary'
 import { runWhenIdle } from '../lib/platform'
+import { getOfflineApi } from '../lib/offlineBackend'
 
 // Key used to track songs downloaded individually (song context menu →
 // "Download offline"), rather than through a synced playlist. It's just
@@ -135,6 +136,15 @@ interface AppState {
   settingsTab: SettingsTab | null
   showDiagnostics: boolean
   showQueue: boolean
+  // Set by a mobile view that wants to paint its own full-bleed background
+  // under the status bar (a hero cover, an immersive player) instead of the
+  // shell's usual reserved inset strip — see App.tsx's `main` padding logic.
+  // WRLD is the other such view but doesn't need this: it's a whole distinct
+  // activeView, so App.tsx keys off that directly. Playlists' hero-backed
+  // detail is a *sub-state* of one view, hence a flag instead of another
+  // activeView check. The setting view MUST clear this on unmount/exit, or
+  // the shell stays bleeding after navigating elsewhere.
+  heroBleedTop: boolean
   // Equalizer popover visibility. Store-level (not Player-local) so the WRLD
   // tab's button and the 'equalizer' hotkey can open it from anywhere — the
   // always-mounted Player owns the actual portal.
@@ -391,6 +401,7 @@ interface AppActions {
   toggleSettings: () => void
   setShowDiagnostics: (show: boolean) => void
   setShowQueue: (show: boolean) => void
+  setHeroBleedTop: (bleed: boolean) => void
   setShowEqPanel: (show: boolean) => void
   /** Single entry point for every equalizer opener (player bar, WRLD tab,
    *  hotkey): focuses the pop-out when one is open instead of showing a
@@ -886,6 +897,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   settingsTab: null,
   showDiagnostics: false,
   showQueue: false,
+  heroBleedTop: false,
   showEqPanel: false,
   infoSongId: null,
   playerCollapsed: ls.get<boolean>('playerCollapsed') ?? false,
@@ -959,6 +971,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   toggleSettings: () => set((s) => ({ showSettings: !s.showSettings })),
   setShowDiagnostics: (showDiagnostics) => set({ showDiagnostics }),
   setShowQueue: (showQueue) => set({ showQueue }),
+  setHeroBleedTop: (heroBleedTop) => set({ heroBleedTop }),
   setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
   toggleEqPanel: () => set((s) => ({ showEqPanel: !s.showEqPanel })),
   setInfoSongId: (infoSongId) => set({ infoSongId }),
@@ -1808,8 +1821,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (libraryFolders.length === 0) return
     set({ libraryScanning: true, libraryScanProgress: null })
     // The native walk reports as it goes; a big first scan is minutes of
-    // tag-reading, and without this the UI would sit on a bare spinner.
-    const offProgress = localLibrary.onScanProgress((p) => set({ libraryScanProgress: p }))
+    // tag-reading, and without this the UI would sit on a bare spinner. MUST
+    // be awaited before scanSources() below — see onScanProgress's own
+    // comment on the race that otherwise drops every event on a fast scan.
+    const offProgress = await localLibrary.onScanProgress((p) => set({ libraryScanProgress: p }))
     try {
       // Passing the previous scan's tracks lets the native side skip files
       // whose size/mtime haven't changed — makes this cheap enough to run
@@ -1945,16 +1960,16 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // ── Offline playlist sync ────────────────────────────────────────────────
   loadOfflineLibrary: async () => {
-    const el = (window as any).electron
+    const el = getOfflineApi()
     if (!el) return
     try {
-      const lib = await el.offlineGetLibrary()
+      const lib = await el.getLibrary()
       set({ offlineTracks: lib.tracks || {}, offlinePlaylists: lib.playlists || {} })
     } catch (e) { console.error('loadOfflineLibrary error:', e) }
   },
 
   downloadPlaylistOffline: async (key, name, songIds, opts) => {
-    const el = (window as any).electron
+    const el = getOfflineApi()
     if (!el) return
     await enqueueOfflineWork(key, async () => {
       const silent = !!opts?.silent
@@ -2026,7 +2041,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
         // downloading a mostly-synced playlist with a few new songs feel like
         // the whole thing was being fetched again.
         if (offlineTracksNow[id]) continue
-        const offProgress = el.onOfflineDownloadProgress?.((d: { id: string; percent: number; received?: number; total?: number }) => {
+        // Awaited — a fire-and-forget registration here can lose an entire
+        // fast track's progress on the Android backend, whose listener is a
+        // real bridge round-trip rather than Electron's synchronous one (see
+        // localLibrary.onScanProgress for the same race, hit and fixed
+        // earlier for library scanning).
+        const offProgress = await el.onDownloadProgress((d) => {
           if (d.id !== id || !announced) return
           const totalBytes = cumulativeBytes + (d.received || 0)
           const now = Date.now()
@@ -2051,7 +2071,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
             syncedLyrics: song.synced_lyrics || null,
             duration: parseDuration(song.length),
           }
-          const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
+          const result = await el.downloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
           if (result?.error) throw new Error(result.error)
           if (!result?.skipped) {
             announce()
@@ -2092,7 +2112,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
 
       try {
-        await el.offlineSetPlaylist(key, trackIds, name)
+        await el.setPlaylist(key, trackIds, name)
         set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: trackIds, name, updatedAt: Date.now() } } }))
       } catch (e) { console.error('offlineSetPlaylist error:', e) }
 
@@ -2105,7 +2125,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   removePlaylistOffline: async (key) => {
-    const el = (window as any).electron
+    const el = getOfflineApi()
     if (!el) return
     // Cancel any in-flight download for this key (epoch bump) and wait for it
     // to notice — it checks between tracks, so this waits at most one file —
@@ -2113,7 +2133,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // playlist after removal and the next sync would re-download all of it.
     _offlineKeyEpochs.set(key, (_offlineKeyEpochs.get(key) ?? 0) + 1)
     await (_offlineKeyQueues.get(key) ?? Promise.resolve()).catch(() => {})
-    try { await el.offlineRemovePlaylist(key) } catch (e) { console.error('offlineRemovePlaylist error:', e) }
+    try { await el.removePlaylist(key) } catch (e) { console.error('offlineRemovePlaylist error:', e) }
     set((s) => {
       const next = { ...s.offlinePlaylists }
       delete next[key]
@@ -2129,7 +2149,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // offlineSetPlaylist omitted the first song — and the prune deleted its
   // freshly-downloaded file.
   downloadTrackOffline: async (songId) => {
-    const el = (window as any).electron
+    const el = getOfflineApi()
     if (!el) return
     const key = INDIVIDUAL_DOWNLOADS_KEY
     const id = `jw-${songId}`
@@ -2146,7 +2166,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
           syncedLyrics: song.synced_lyrics || null,
           duration: parseDuration(song.length),
         }
-        const result = await el.offlineDownloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
+        const result = await el.downloadTrack({ id, url: buildStreamUrl(song.path), ext, path: song.path, meta })
         if (result?.error) throw new Error(result.error)
         set((s) => ({
           offlineTracks: {
@@ -2156,7 +2176,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         }))
         const existingIds = get().offlinePlaylists[key]?.songIds ?? []
         const nextIds = existingIds.includes(id) ? existingIds : [...existingIds, id]
-        await el.offlineSetPlaylist(key, nextIds, 'Downloaded songs')
+        await el.setPlaylist(key, nextIds, 'Downloaded songs')
         set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { songIds: nextIds, name: 'Downloaded songs', updatedAt: Date.now() } } }))
       } catch (e) {
         console.error('downloadTrackOffline error:', e)
@@ -2169,9 +2189,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // part of a synced offline playlist, the next background resync will just
   // re-download it — this only clears the local copy, not playlist membership.
   removeOfflineTrack: async (trackId) => {
-    const el = (window as any).electron
+    const el = getOfflineApi()
     if (!el) return
-    try { await el.offlineRemoveTrack(trackId) } catch (e) { console.error('offlineRemoveTrack error:', e) }
+    try { await el.removeTrack(trackId) } catch (e) { console.error('offlineRemoveTrack error:', e) }
     set((s) => {
       const next = { ...s.offlineTracks }
       delete next[trackId]
@@ -2183,7 +2203,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const entry = get().offlinePlaylists[key]
     if (entry?.songIds.includes(trackId)) {
       const nextIds = entry.songIds.filter((t) => t !== trackId)
-      try { await el.offlineSetPlaylist(key, nextIds, entry.name) } catch (e) { console.error('offlineSetPlaylist error:', e) }
+      try { await el.setPlaylist(key, nextIds, entry.name) } catch (e) { console.error('offlineSetPlaylist error:', e) }
       set((s) => ({ offlinePlaylists: { ...s.offlinePlaylists, [key]: { ...entry, songIds: nextIds, updatedAt: Date.now() } } }))
     }
   },

@@ -13,6 +13,10 @@ export const IS_IOS =
 
 export const IS_ANDROID = /Android/i.test(ua)
 
+// Coarse "is this a phone/tablet" check — used to gate mobile-only behavior
+// (the audio effects chain's lazy-attach; see audioEffects.ts).
+export const IS_MOBILE = IS_IOS || IS_ANDROID
+
 /** Runs `fn` once the browser is idle, or after `timeoutMs` at the latest.
  *  Returns a canceller.
  *
