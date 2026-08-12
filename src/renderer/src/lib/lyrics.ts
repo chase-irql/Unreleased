@@ -50,6 +50,37 @@ export function getCurrentLineIndex(lines: SyncedLyricLine[], currentTime: numbe
   return idx
 }
 
+/** Ad-libs render at the same size as the line around them, just dimmer.
+ *  Applied as `opacity` on the run, which multiplies with whatever opacity the
+ *  line already carries (active vs. distant), so it reads as a consistent step
+ *  down from its own line rather than a fixed tone. */
+export const ADLIB_OPACITY = 0.7
+
+/**
+ * Split a lyric line into plain runs and parenthesized ad-lib runs, so the
+ * renderers can dim the ad-libs ("I'm still here (still here)"). The
+ * brackets stay in the output — they're part of how ad-libs read.
+ *
+ * Only balanced `(...)` pairs on a single line count; an unclosed bracket is
+ * left as ordinary text rather than swallowing the rest of the lyrics (this
+ * also runs over whole multi-line plain-text lyrics, where a stray "(" would
+ * otherwise shrink everything down to the next line's ")"). Nesting isn't
+ * handled — it doesn't occur in practice, and the failure mode is just a
+ * normally-sized fragment.
+ */
+export function splitAdLibs(text: string): { text: string; adLib: boolean }[] {
+  const parts: { text: string; adLib: boolean }[] = []
+  let last = 0
+  for (const m of text.matchAll(/\([^)\r\n]*\)/g)) {
+    const start = m.index ?? 0
+    if (start > last) parts.push({ text: text.slice(last, start), adLib: false })
+    parts.push({ text: m[0], adLib: true })
+    last = start + m[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), adLib: false })
+  return parts.length > 0 ? parts : [{ text, adLib: false }]
+}
+
 /**
  * Save a synced (LRC) lyrics string as a local .lrc file — a plain client-side
  * Blob save, not a server fetch, since the lyrics text is already in memory

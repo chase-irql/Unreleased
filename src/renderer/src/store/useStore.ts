@@ -7,6 +7,8 @@ import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
 import { apiFetch, apiPeek, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl } from '../lib/juicewrldApi'
+import { peekRotatedCover } from '../lib/coverRotation'
+import { advanceRotatedCover, resetCoverRotation } from '../lib/coverSuggestions'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import {
   emptySongPref, isEmptySongPref, normalizePrefText, setSongPrefsCache,
@@ -204,8 +206,20 @@ interface AppState {
   lyricsFont: string
   lyricsScale: number
   lyricsAlign: 'left' | 'center'
-  // Soften not-yet-played synced lines with a slight blur (on by default).
+  // Soften every synced line except the one currently playing with a slight
+  // blur (on by default) — played and upcoming lines alike.
   lyricsBlur: boolean
+  // Strength of that blur, as a multiplier on each surface's own base radius
+  // (the WRLD tab blurs less than the now-playing/mini panels, and a
+  // multiplier keeps that relationship intact at every setting). 1 = the
+  // amount every version before this shipped.
+  lyricsBlurAmount: number
+  // Custom colors for synced lyric lines — the line currently being sung, and
+  // the rest (already-played + upcoming). null = auto, i.e. keep the surface's
+  // own colors (theme text vars in LyricsDisplay, art-derived ones in the WRLD
+  // tab), which is what every install had before these existed.
+  lyricsColorActive: string | null
+  lyricsColorInactive: string | null
   // Accent-tinted gradient washes on the app shell/sidebar/player and a sheen
   // on accent buttons (index.css `html.gradients` rules; class applied by
   // useThemeEffects). They ride the accent vars, so the Now Playing skin's
@@ -215,6 +229,11 @@ interface AppState {
   // the versions system, labeled e.g. "OG"/"OG File"), play that version's
   // file instead of the currently selected one.
   preferOgVersion: boolean
+  // When enabled, a song with no cover of its own (and no user override) shows
+  // a different one of the API storage's suggestions on each play (see
+  // lib/coverRotation). Songs with a custom cover, and songs the storage has
+  // no images for, are unaffected.
+  rotateSuggestedCovers: boolean
   // When disabled, the app stops publishing Media Session metadata/action
   // handlers. Kept on for Android — the background / lock-screen session
   // depends on it.
@@ -434,8 +453,15 @@ interface AppActions {
   setLyricsScale: (scale: number) => void
   setLyricsAlign: (align: 'left' | 'center') => void
   setLyricsBlur: (enabled: boolean) => void
+  setLyricsBlurAmount: (amount: number) => void
+  setLyricsColorActive: (color: string | null) => void
+  setLyricsColorInactive: (color: string | null) => void
   setGradientsEnabled: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
+  setRotateSuggestedCovers: (enabled: boolean) => void
+  /** Rotates a song onto its next suggested cover, if the setting is on and
+   *  the user hasn't set a cover of their own. Called when a track starts. */
+  _maybeRotateCover: (songId: number) => void
   setMediaOverlayEnabled: (enabled: boolean) => void
   setLastfmUser: (name: string | null) => void
   setLastfmEnabled: (enabled: boolean) => void
@@ -690,7 +716,11 @@ function patchPrefMap(prefs: SongPrefMap, songId: number, patch: SongPrefPatch):
  *  the canonical apiTitle/apiImageUrl kept on every API Track means an
  *  override can be applied, changed, or removed in place. */
 function applyPrefToTrack(track: Track, pref: SongPreference | undefined): Track {
+  // Mirrors songToTrack: user cover first, then a rotated suggestion (only
+  // ever set while the rotate-covers setting is on), then the song's own art.
+  const songId = userApi.trackIdToSongId(track.id)
   const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
+    ?? (songId != null ? peekRotatedCover(songId) : undefined)
   return {
     ...track,
     title: pref?.name || track.apiTitle || track.title,
@@ -950,6 +980,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'wrld': '/wrld',
       'news': '/news',
       'heardle': '/heardle',
+      'wordle': '/wordle',
       'stats': '/stats',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
@@ -1024,8 +1055,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
   lyricsScale: ls.get<number>('lyricsScale') ?? 1,
   lyricsAlign: ls.get<'left' | 'center'>('lyricsAlign') ?? 'left',
   lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
+  lyricsBlurAmount: ls.get<number>('lyricsBlurAmount') ?? 1,
+  lyricsColorActive: ls.get<string>('lyricsColorActive') ?? null,
+  lyricsColorInactive: ls.get<string>('lyricsColorInactive') ?? null,
   gradientsEnabled: ls.get<boolean>('gradientsEnabled') ?? true,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
+  rotateSuggestedCovers: ls.get<boolean>('rotateSuggestedCovers') ?? false,
   mediaOverlayEnabled: ls.get<boolean>('mediaOverlayEnabled') ?? true,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
@@ -1041,6 +1076,48 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
+
+  setRotateSuggestedCovers: (enabled) => {
+    set({ rotateSuggestedCovers: enabled })
+    ls.set('rotateSuggestedCovers', enabled)
+    if (enabled) return
+    // Turning it off has to forget the chosen covers, or every song stays
+    // frozen on whichever suggestion it happened to land on. Re-derive the
+    // visible tracks afterwards so the current song snaps back immediately
+    // rather than at the next track change.
+    resetCoverRotation()
+    const { queue, currentTrack, currentTrackFull, songPrefs } = get()
+    // Only API songs — a local file has no apiImageUrl to fall back on, so
+    // running it through applyPrefToTrack would blank its album art.
+    const redraw = (t: Track): Track => {
+      const id = userApi.trackIdToSongId(t.id)
+      return id == null ? t : applyPrefToTrack(t, songPrefs[id])
+    }
+    const nextQueue = queue.map(redraw)
+    const nextCurrent = currentTrack ? redraw(currentTrack) : currentTrack
+    set({
+      queue: nextQueue,
+      currentTrack: nextCurrent,
+      // Only when the current track was actually re-derived: for a local file
+      // currentTrackFull.albumArt is the embedded full-size art, which must not
+      // be overwritten with the track's thumbnail URL.
+      ...(currentTrackFull && nextCurrent !== currentTrack
+        ? { currentTrackFull: { ...currentTrackFull, albumArt: nextCurrent?.imageUrl ?? null } }
+        : {}),
+    })
+  },
+
+  _maybeRotateCover: (songId) => {
+    if (!get().rotateSuggestedCovers) return
+    // A cover the user picked always wins — rotation fills gaps, it doesn't
+    // override choices.
+    if (get().songPrefs[songId]?.cover_url) return
+    advanceRotatedCover(songId)
+      // The rotated URL lives outside the store (lib/coverRotation), so the
+      // re-derive is what actually moves it onto the visible tracks.
+      .then((url) => { if (url) get()._reapplySongPref(songId) })
+      .catch(() => {})
+  },
   setMediaOverlayEnabled: (enabled) => { set({ mediaOverlayEnabled: enabled }); ls.set('mediaOverlayEnabled', enabled) },
   setLastfmUser: (lastfmUser) => set({ lastfmUser }),
   setLastfmEnabled: (enabled) => { set({ lastfmEnabled: enabled }); ls.set('lastfmEnabled', enabled) },
@@ -1051,6 +1128,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setLyricsScale: (lyricsScale) => { set({ lyricsScale }); ls.set('lyricsScale', lyricsScale) },
   setLyricsAlign: (lyricsAlign) => { set({ lyricsAlign }); ls.set('lyricsAlign', lyricsAlign) },
   setLyricsBlur: (lyricsBlur) => { set({ lyricsBlur }); ls.set('lyricsBlur', lyricsBlur) },
+  setLyricsBlurAmount: (lyricsBlurAmount) => { set({ lyricsBlurAmount }); ls.set('lyricsBlurAmount', lyricsBlurAmount) },
+  setLyricsColorActive: (lyricsColorActive) => { set({ lyricsColorActive }); ls.set('lyricsColorActive', lyricsColorActive) },
+  setLyricsColorInactive: (lyricsColorInactive) => { set({ lyricsColorInactive }); ls.set('lyricsColorInactive', lyricsColorInactive) },
   setGradientsEnabled: (gradientsEnabled) => { set({ gradientsEnabled }); ls.set('gradientsEnabled', gradientsEnabled) },
 
   setHotkeyBinding: (actionId, combo) => {

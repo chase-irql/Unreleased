@@ -1,4 +1,5 @@
-import { useEffect, Suspense, lazy } from 'react'
+import { useEffect, Suspense } from 'react'
+import { lazyView as lazy } from './lib/lazyView'
 import { useStore, useStorePick } from './store/useStore'
 import { setToken, getToken } from './lib/userApi'
 import { useThemeEffects } from './lib/themeEffects'
@@ -18,6 +19,7 @@ function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/wrld') return 'wrld'
   if (pathname === '/news') return 'news'
   if (pathname === '/heardle') return 'heardle'
+  if (pathname === '/wordle') return 'wordle'
   if (pathname === '/stats') return 'stats'
   if (pathname.startsWith('/shared/')) return 'shared-playlist'
   if (pathname === '/library') return 'library'
@@ -61,6 +63,7 @@ const DocsPage = lazy(() => import('./components/DocsPage'))
 const WrldView = lazy(() => import('./components/WrldView'))
 const NewsView = lazy(() => import('./components/NewsView'))
 const HeardleView = lazy(() => import('./components/HeardleView'))
+const WordleView = lazy(() => import('./components/WordleView'))
 const StatsView = lazy(() => import('./components/StatsView'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const ContributorPage = lazy(() => import('./components/ContributorPage'))
@@ -229,6 +232,7 @@ export default function App(): JSX.Element {
               : activeView === 'wrld' ? <WrldView />
               : activeView === 'news' ? <NewsView />
               : activeView === 'heardle' ? <HeardleView />
+              : activeView === 'wordle' ? <WordleView />
               : activeView === 'stats' ? <StatsView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />

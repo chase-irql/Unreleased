@@ -8,11 +8,13 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
-import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics } from '../lib/lyrics'
+import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics, splitAdLibs, ADLIB_OPACITY } from '../lib/lyrics'
 import { formatDuration } from '../lib/format'
 import { seekAudio, getAudioDuration, getAudioCurrentTime } from './Player'
 import { buildImageUrl, apiFetch, songToTrack } from '../lib/juicewrldApi'
 import { getActiveRadioClient } from '../lib/radioSocketService'
+import { searchRadioLibrary } from '../lib/radioLibrary'
+import type { RadioLibraryTrack } from '../lib/radioLibrary'
 import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
@@ -108,7 +110,7 @@ export default function WrldView(): JSX.Element {
 
   // ── 999 FM: proposing the next song ──
   const [suggestQuery, setSuggestQuery] = useState('')
-  const [suggestResults, setSuggestResults] = useState<JWApiSong[]>([])
+  const [suggestResults, setSuggestResults] = useState<RadioLibraryTrack[]>([])
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [proposed, setProposed] = useState<string | null>(null)
   const [proposeError, setProposeError] = useState<string | null>(null)
@@ -121,20 +123,19 @@ export default function WrldView(): JSX.Element {
     setSuggestLoading(true)
     suggestTimer.current = setTimeout(async () => {
       try {
-        const data = await apiFetch<{ results: JWApiSong[] }>('/songs/', { search: suggestQuery, page_size: 5 })
-        setSuggestResults(data.results ?? [])
+        setSuggestResults(await searchRadioLibrary(suggestQuery))
       } catch { setSuggestResults([]) }
       setSuggestLoading(false)
     }, 400)
     return () => { if (suggestTimer.current) clearTimeout(suggestTimer.current) }
   }, [suggestQuery])
 
-  const handlePropose = (song: JWApiSong): void => {
+  const handlePropose = (track: RadioLibraryTrack): void => {
     // Only confirm if the proposal actually went out over the socket — a
     // closed/absent connection used to still flash "Proposed" while nothing
     // was ever sent.
-    const sent = getActiveRadioClient()?.proposeQueue(song.id) ?? false
-    const name = song.track_titles?.[0] || song.name
+    const sent = getActiveRadioClient()?.proposeQueue(track.id) ?? false
+    const name = track.title
     setSuggestQuery('')
     setSuggestResults([])
     if (proposeTimer.current) clearTimeout(proposeTimer.current)
@@ -540,14 +541,14 @@ export default function WrldView(): JSX.Element {
                   {suggestLoading && (
                     <p className="flex items-center gap-2 text-text-muted text-xs"><Loader2 size={13} className="animate-spin" /> Searching…</p>
                   )}
-                  {suggestResults.map(song => (
+                  {suggestResults.map(track => (
                     <button
-                      key={song.id}
-                      onClick={() => handlePropose(song)}
+                      key={track.id}
+                      onClick={() => handlePropose(track)}
                       className="text-left -mx-2 px-2 py-2 rounded-xl active:bg-surface-overlay"
                     >
-                      <p className="text-text-primary text-[15px] truncate">{song.track_titles?.[0] || song.name}</p>
-                      <p className="text-text-muted text-xs truncate mt-0.5">{song.credited_artists}</p>
+                      <p className="text-text-primary text-[15px] truncate">{track.title}</p>
+                      <p className="text-text-muted text-xs truncate mt-0.5">{track.artist}</p>
                     </button>
                   ))}
                 </>
@@ -1432,7 +1433,8 @@ const LyricsPanel = memo(function LyricsPanel({
   const viewportRef = useRef<HTMLDivElement>(null)
   const linesRef    = useRef<HTMLDivElement>(null)
   const activeRef   = useRef<HTMLDivElement>(null)
-  const { lyricsScale, lyricsAlign, lyricsBlur } = useStorePick('lyricsScale', 'lyricsAlign', 'lyricsBlur')
+  const { lyricsScale, lyricsAlign, lyricsBlur, lyricsBlurAmount, lyricsColorActive, lyricsColorInactive } = useStorePick(
+    'lyricsScale', 'lyricsAlign', 'lyricsBlur', 'lyricsBlurAmount', 'lyricsColorActive', 'lyricsColorInactive')
 
   const currentLineIdx = useActiveSyncedLine(isSynced, syncedLines)
 
@@ -1581,15 +1583,17 @@ const LyricsPanel = memo(function LyricsPanel({
                   // to settle.
                   fontWeight: isActive ? 800 : 500,
                   lineHeight: 1.25,
-                  color:      isActive ? txtPri : txtSec,
+                  color:      isActive ? (lyricsColorActive ?? txtPri) : (lyricsColorInactive ?? txtSec),
                   opacity:    isActive ? 1 : dist === 1 ? 0.55 : dist === 2 ? 0.35 : 0.2,
-                  filter:     (!isActive && !isPast && dist >= 2 && lyricsBlur) ? 'blur(0.6px)' : 'none',
+                  filter:     (!isActive && !isPast && dist >= 2 && lyricsBlur) ? `blur(${(0.6 * lyricsBlurAmount).toFixed(2)}px)` : 'none',
                   transform:  `scale(${scale})`,
                   transition: 'opacity 0.4s cubic-bezier(0.4,0,0.2,1), color 0.4s cubic-bezier(0.4,0,0.2,1), transform 0.4s cubic-bezier(0.4,0,0.2,1), filter 0.4s cubic-bezier(0.4,0,0.2,1)',
                   textShadow: isActive ? '0 0 30px rgba(255,255,255,0.12)' : 'none',
                 }}
               >
-                {line.text}
+                {splitAdLibs(line.text).map((seg, si) => (
+                  <span key={si} style={seg.adLib ? { opacity: ADLIB_OPACITY } : undefined}>{seg.text}</span>
+                ))}
               </div>
             )
           })}
@@ -1614,14 +1618,16 @@ const LyricsPanel = memo(function LyricsPanel({
       <pre
         className="text-sm leading-7 whitespace-pre-wrap"
         style={{
-          color: txtSec,
+          color: lyricsColorInactive ?? txtSec,
           fontFamily: 'var(--font-lyrics)',
           textAlign: lyricsAlign,
           // Only override the base size when the user actually changed it;
           // unitless line-height keeps spacing proportional.
           ...(lyricsScale !== 1 ? { fontSize: `${0.875 * lyricsScale}rem`, lineHeight: 1.9 } : {}),
         }}
-      >{rawLyrics}</pre>
+      >{splitAdLibs(rawLyrics).map((seg, si) => (
+        <span key={si} style={seg.adLib ? { opacity: ADLIB_OPACITY } : undefined}>{seg.text}</span>
+      ))}</pre>
     </div>
   )
 })

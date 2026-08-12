@@ -6,6 +6,7 @@ import {
 import { useStorePick } from '../store/useStore'
 import { Sheet } from './mobile/Sheet'
 import { Avatar } from './adminShared'
+import { GameSwitcher, GameBackdrop, Field, Segmented, numberInput } from './gameShell'
 import { apiFetch, songToTrack, buildStreamUrl, smallCoverUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { eraFullName, loadEraFullNames } from '../lib/eras'
@@ -16,14 +17,15 @@ import {
   searchPool, matchedAlias, isCorrectGuess, stageLadder, settingsForMode, clampTries,
   todayKey, puzzleNumber, msUntilNextPuzzle, unlockedSeconds,
   loadRound, saveRound, loadStats, recordResult, shareText,
-  loadSettings, saveSettings,
+  loadSettings, saveSettings, loadGameMode, saveGameMode,
+  loadPracticeRound, savePracticeRound,
 } from '../lib/heardle'
 import type {
   HeardleSong, Guess, GameStatus, PoolId, Stats, DailyMode, VersionMap, HeardleSettings,
 } from '../lib/heardle'
 import {
   HEARDLE_LEADERBOARD_ENABLED, fetchLeaderboard, submitResult, flushResults, outboxSize, versusWins,
-  startPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
+  startTodayPuzzle, submitGuess as apiSubmitGuess, skipGuess as apiSkipGuess, absoluteClipUrl,
 } from '../lib/heardleApi'
 import type { LeaderboardBoard, LeaderboardEntry, PuzzleResponse } from '../lib/heardleApi'
 import HeardleVersusPanel from './HeardleVersusPanel'
@@ -193,44 +195,6 @@ function GuessRow({ guess, index, correct, showEraHint }: {
 }
 
 // ─── Settings panel ───────────────────────────────────────────────────────────
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="py-3 border-b border-[var(--border)] last:border-b-0">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0">
-          <div className="text-sm text-text-primary font-medium">{label}</div>
-          {hint && <div className="text-xs text-text-muted mt-0.5">{hint}</div>}
-        </div>
-        <div className="ml-auto shrink-0">{children}</div>
-      </div>
-    </div>
-  )
-}
-
-function Segmented<T extends string>({ options, value, onChange }: {
-  options: { id: T; label: string }[]
-  value: T
-  onChange: (v: T) => void
-}) {
-  return (
-    <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          onClick={() => onChange(o.id)}
-          className={`h-8 px-2.5 text-xs font-semibold transition-colors ${
-            value === o.id ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-const numberInput = 'w-16 h-8 px-2 rounded-lg bg-[var(--surface-overlay)] border border-[var(--border)] text-sm text-text-primary text-right focus:outline-none focus:border-accent/50'
 
 /** Game rules for Unlimited. The daily modes ignore all of them (see
  *  settingsForMode), so the panel says which mode it's editing rather than
@@ -482,7 +446,6 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
   const [me, setMe] = useState<LeaderboardEntry | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const day = useMemo(() => todayKey(), [])
   const pending = useMemo(() => outboxSize(), [])
 
   // The 1v1 table is a public ranking — readable signed out, unlike the daily
@@ -497,7 +460,9 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
     setLoading(true)
     setError(null)
     const fetchMode = board === 'versus' ? 'versus' : mode
-    fetchLeaderboard(board, fetchMode, day)
+    // No day param — the server answers for its own today, which is the same
+    // calendar the rounds are graded against (see startTodayPuzzle).
+    fetchLeaderboard(board, fetchMode)
       .then((res) => {
         if (cancelled) return
         setEntries(res.entries ?? [])
@@ -506,7 +471,7 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [board, mode, day, needsSignIn])
+  }, [board, mode, needsSignIn])
 
   const score = (e: LeaderboardEntry): string => {
     if (board === 'versus') return `${versusWins(e)}W · ${e.win_rate ?? 0}%`
@@ -608,7 +573,13 @@ export default function HeardleView(): JSX.Element {
   const { setActiveView, playTrack, setIsPlaying, isPlaying, volume, setVolume, account } = useStorePick(
     'setActiveView', 'playTrack', 'setIsPlaying', 'isPlaying', 'volume', 'setVolume', 'account')
 
-  const [mode, setMode] = useState<Mode>('daily')
+  const [mode, setModeState] = useState<Mode>(() => loadGameMode())
+  // 1v1 is deliberately not persisted (see loadGameMode) — everything else
+  // remembers the last tab so reopening the game doesn't always land on Daily.
+  const setMode = (m: Mode): void => {
+    setModeState(m)
+    if (m !== 'versus') saveGameMode(m)
+  }
   const [settings, setSettings] = useState<HeardleSettings>(() => loadSettings())
   const [pool, setPool] = useState<HeardleSong[]>([])
   const [poolLoading, setPoolLoading] = useState(true)
@@ -642,7 +613,15 @@ export default function HeardleView(): JSX.Element {
   const isDaily = mode !== 'unlimited' && mode !== 'versus'
   const useServerRound = isDaily && !!account
   const dailyMode: DailyMode = mode === 'personal' ? 'personal' : 'daily'
-  const day = useMemo(() => todayKey(), [])
+  const localDay = useMemo(() => todayKey(), [])
+  // The server's calendar, once a server round has actually responded — see
+  // startTodayPuzzle. A locally-computed date can disagree with the server's
+  // for hours around midnight depending on timezone, and everything below
+  // (streak bookkeeping, the submitted result, the share text, the puzzle
+  // number) has to agree with whichever day the round was actually graded
+  // against, not the browser's guess.
+  const [serverDay, setServerDay] = useState<string | null>(null)
+  const day = useServerRound && serverDay ? serverDay : localDay
 
   // Which settings actually apply here — Daily ignores all of them, Personal
   // takes the difficulty half. Everything below reads `rules`, never
@@ -719,6 +698,7 @@ export default function HeardleView(): JSX.Element {
   const fullWindow = ladder[ladder.length - 1]
 
   const applyServerPuzzle = useCallback((res: PuzzleResponse) => {
+    setServerDay(res.day)
     setRoundToken(res.round_token)
     // Fall back to the local ladder only when the server didn't send one —
     // a short/absent ladder must not silently shrink the round.
@@ -736,32 +716,47 @@ export default function HeardleView(): JSX.Element {
   useEffect(() => {
     if (!useServerRound) return
     let cancelled = false
-    startPuzzle(dailyMode, day)
+    // Not startPuzzle(dailyMode, localDay) — the browser's local date isn't
+    // safe to send (see startTodayPuzzle's doc comment).
+    startTodayPuzzle(dailyMode)
       .then((res) => { if (!cancelled) applyServerPuzzle(res) })
       .catch((err: Error) => { if (!cancelled) setPoolError(err.message) })
     return () => { cancelled = true }
-  }, [useServerRound, dailyMode, day, applyServerPuzzle])
+  }, [useServerRound, dailyMode, applyServerPuzzle])
 
   useEffect(() => {
     if (playablePool.length === 0 || useServerRound) return
     const seed = playerSeed()
     if (isDaily) {
       const song = dailyMode === 'personal'
-        ? pickPersonalSong(playablePool, day, seed)
-        : pickDailySong(playablePool, day)
+        ? pickPersonalSong(playablePool, localDay, seed)
+        : pickDailySong(playablePool, localDay)
       if (!song) return
       setAnswer(song)
-      const saved = loadRound(dailyMode, day, song.id)
+      const saved = loadRound(dailyMode, localDay, song.id)
       setGuesses(saved?.guesses ?? [])
       setStatus(saved?.status ?? 'playing')
       // Same seed every load, so a refresh can't shop for a kinder offset.
-      setStartAt(clipStart(song, fullWindow, rules.startPoint, `${seed}-${dailyMode}-${day}`))
+      setStartAt(clipStart(song, fullWindow, rules.startPoint, `${seed}-${dailyMode}-${localDay}`))
     } else {
-      const song = pickRandomSong(playablePool)
-      setAnswer(song)
-      setGuesses([])
-      setStatus('playing')
-      setStartAt(song ? clipStart(song, fullWindow, rules.startPoint, null) : 0)
+      // Resume whatever practice round was left open, rather than dealing a
+      // fresh song out from under an in-progress one — only when it still
+      // matches the current pool/filters; otherwise fall through to a fresh
+      // deal exactly like before.
+      const saved = loadPracticeRound()
+      const savedSong = saved ? playablePool.find((s) => s.id === saved.answerId) ?? null : null
+      if (saved && savedSong) {
+        setAnswer(savedSong)
+        setGuesses(saved.guesses)
+        setStatus(saved.status)
+        setStartAt(saved.startAt)
+      } else {
+        const song = pickRandomSong(playablePool)
+        setAnswer(song)
+        setGuesses([])
+        setStatus('playing')
+        setStartAt(song ? clipStart(song, fullWindow, rules.startPoint, null) : 0)
+      }
     }
     setQuery('')
     setElapsed(0)
@@ -769,7 +764,7 @@ export default function HeardleView(): JSX.Element {
     // freshly-picked song starts, and re-running this on a settings change
     // would re-roll the round.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playablePool, isDaily, dailyMode, day])
+  }, [playablePool, isDaily, dailyMode, localDay])
 
   // A tries cut can leave a saved round already at or past the new limit.
   // Settle it as a loss rather than showing a round that can't be played on.
@@ -787,6 +782,13 @@ export default function HeardleView(): JSX.Element {
     if (!isDaily || useServerRound || !answer) return
     saveRound(dailyMode, { day, answerId: answer.id, guesses, status })
   }, [isDaily, useServerRound, dailyMode, answer, day, guesses, status])
+
+  // Same, for the practice round — unscored, but still worth not throwing
+  // away when the tab closes mid-guess.
+  useEffect(() => {
+    if (mode !== 'unlimited' || !answer) return
+    savePracticeRound({ answerId: answer.id, guesses, status, startAt })
+  }, [mode, answer, guesses, status, startAt])
 
   // Fold a finished round into that mode's stats (once — see recordResult's
   // lastDay guard) and hand it to the leaderboard. submitResult queues rather
@@ -1162,29 +1164,7 @@ export default function HeardleView(): JSX.Element {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="relative flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
-      {/* Starfield + a wash of the accent behind the card. Built from
-          gradients rather than an image so it inherits whatever skin is
-          active instead of fighting it. */}
-      <div
-        aria-hidden
-        className="absolute inset-0 pointer-events-none opacity-[0.5]"
-        style={{
-          backgroundImage: [
-            'radial-gradient(1px 1px at 18% 24%, var(--text-muted), transparent)',
-            'radial-gradient(1px 1px at 73% 12%, var(--text-muted), transparent)',
-            'radial-gradient(1px 1px at 41% 67%, var(--text-muted), transparent)',
-            'radial-gradient(1px 1px at 89% 58%, var(--text-muted), transparent)',
-            'radial-gradient(1px 1px at 8% 82%, var(--text-muted), transparent)',
-            'radial-gradient(1px 1px at 57% 91%, var(--text-muted), transparent)',
-          ].join(','),
-          backgroundSize: '220px 220px',
-        }}
-      />
-      <div
-        aria-hidden
-        className="absolute inset-x-0 top-0 h-80 pointer-events-none"
-        style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent)' }}
-      />
+      <GameBackdrop />
       {/* crossOrigin is load-bearing: the silence analyser routes this element
           through a MediaElementSource, which emits pure silence for media
           fetched without CORS clearance. Must be set before src (it is — this
@@ -1239,10 +1219,15 @@ export default function HeardleView(): JSX.Element {
           has to be positioned too or they paint over it. */}
       <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-2 pb-10">
         <div className="mx-auto w-full max-w-xl">
-          {/* Hero — margin-top clears the corner buttons (top-2, h-11 → bottom
-              edge at 52px) rather than guessing; the hero used to start above
-              that line and sit half-hidden under them. */}
-          <div className="text-center mb-5 mt-14">
+          {/* mt-14 clears the corner buttons (top-2, h-11 → bottom edge at
+              52px) rather than guessing — this used to start above that line
+              and sit half-hidden under them. */}
+          <div className="mt-14">
+            <GameSwitcher current="heardle" />
+          </div>
+
+          {/* Hero */}
+          <div className="text-center mb-5">
             <h1 className="text-text-primary text-3xl font-black tracking-tight inline-flex items-start gap-1">
               Juice WRLD Heardle
               <span className="text-accent text-sm font-mono font-bold mt-1">999</span>

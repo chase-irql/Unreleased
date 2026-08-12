@@ -12,7 +12,10 @@ import {
 import { isSubscribed, setSubscribed, ensureNotifyPermission } from '../lib/newsNotifications'
 import NewsComposeModal from './NewsComposeModal'
 import NewsChannelsModal from './NewsChannelsModal'
+import ChangesFeedPanel from './ChangesFeedPanel'
 import Markdown from './Markdown'
+
+type ViewMode = 'news' | 'feed'
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
@@ -246,6 +249,7 @@ export default function NewsView(): JSX.Element {
   const canManageItem = (item: NewsItem): boolean =>
     !!account && (account.is_administrator || (account.is_editor && item.author_id != null && item.author_id === account.id))
 
+  const [mode, setMode] = useState<ViewMode>('news')
   const [channel, setChannel] = useState<string>(DEFAULT_NEWS_CHANNEL)
   const [sort, setSort] = useState<NewsSort>('newest')
   const [channels, setChannels] = useState<NewsChannel[]>(NEWS_CHANNELS)
@@ -365,8 +369,25 @@ export default function NewsView(): JSX.Element {
             <ChevronLeft size={18} />
           </button>
           <h1 className="text-text-primary text-xl font-bold">News</h1>
+          {/* News/Feed switcher — the changes feed (tracker edits + comp-file
+              activity) is a real, live endpoint independent of NEWS_ENABLED, so
+              it stays reachable here even while News itself shows an empty
+              gated state. */}
+          <div className="flex gap-0.5 rounded-lg bg-[var(--surface-overlay)] p-0.5">
+            {(['news', 'feed'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`h-8 px-3 text-xs font-semibold rounded-md transition-colors ${
+                  mode === m ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
+                }`}
+              >
+                {m === 'news' ? 'News' : 'Feed'}
+              </button>
+            ))}
+          </div>
           <div className="ml-auto flex items-center gap-1">
-            {channel !== ALL_CHANNEL && (
+            {mode === 'news' && channel !== ALL_CHANNEL && (
               <button
                 onClick={toggleSubscribe}
                 title={subscribed ? `Following — notify me of new ${channelLabel(channel) ?? ''} posts` : 'Follow for notifications'}
@@ -375,7 +396,7 @@ export default function NewsView(): JSX.Element {
                 {subscribed ? <Bell size={16} /> : <BellOff size={16} />}
               </button>
             )}
-            {canManageChannels && (
+            {mode === 'news' && canManageChannels && (
               <button
                 onClick={() => setChannelsOpen(true)}
                 title="Manage channels"
@@ -384,23 +405,27 @@ export default function NewsView(): JSX.Element {
                 <Settings2 size={16} />
               </button>
             )}
-            <button
-              onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
-              title={sort === 'newest' ? 'Newest first — switch to oldest' : 'Oldest first — switch to newest'}
-              className="flex items-center gap-1 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-            >
-              {sort === 'newest' ? <ArrowDownWideNarrow size={15} /> : <ArrowUpWideNarrow size={15} />}
-              <span className="text-xs hidden sm:inline">{sort === 'newest' ? 'Newest' : 'Oldest'}</span>
-            </button>
-            <button
-              onClick={load}
-              disabled={loading}
-              title="Refresh"
-              className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            </button>
-            {canPost && (
+            {mode === 'news' && (
+              <button
+                onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+                title={sort === 'newest' ? 'Newest first — switch to oldest' : 'Oldest first — switch to newest'}
+                className="flex items-center gap-1 p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+              >
+                {sort === 'newest' ? <ArrowDownWideNarrow size={15} /> : <ArrowUpWideNarrow size={15} />}
+                <span className="text-xs hidden sm:inline">{sort === 'newest' ? 'Newest' : 'Oldest'}</span>
+              </button>
+            )}
+            {mode === 'news' && (
+              <button
+                onClick={load}
+                disabled={loading}
+                title="Refresh"
+                className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+              </button>
+            )}
+            {mode === 'news' && canPost && (
               <button
                 onClick={openNew}
                 className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-accent text-white hover:opacity-90 transition-opacity"
@@ -411,6 +436,7 @@ export default function NewsView(): JSX.Element {
           </div>
         </div>
         {/* Channels */}
+        {mode === 'news' && (
         <div className="flex gap-1 overflow-x-auto scrollbar-none">
           {tabs.map((ch) => (
             <button
@@ -426,11 +452,14 @@ export default function NewsView(): JSX.Element {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {selected ? (
+        {mode === 'feed' ? (
+          <ChangesFeedPanel />
+        ) : selected ? (
           <ArticleDetail
             item={selected}
             channelLabel={channelLabel(selected.channel)}

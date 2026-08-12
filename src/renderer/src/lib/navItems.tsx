@@ -1,4 +1,4 @@
-import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, Newspaper, Music4, BarChart3, User, LogOut, Info, Settings } from 'lucide-react'
+import { SearchCode, HardDrive, Library, ListMusic, Heart, BookOpen, Newspaper, Gamepad2, BarChart3, User, LogOut, Info, Settings } from 'lucide-react'
 import type { ReactNode } from 'react'
 import logo from '../assets/logo.png'
 import type { ViewType } from '../types'
@@ -21,7 +21,9 @@ export const NAV_ITEMS: NavItemDef[] = [
   { view: 'api-files', label: 'Files', icon: <HardDrive size={18} /> },
   { view: 'library', label: 'Library', icon: <Library size={18} /> },
   { view: 'playlists', label: 'Playlists', icon: <ListMusic size={18} /> },
-  { view: 'heardle', label: 'Heardle', icon: <Music4 size={18} /> },
+  // `view` stays 'heardle' — it's the persisted id (and the /heardle route);
+  // only the label is Games, so the tab can hold more than one game later.
+  { view: 'heardle', label: 'Games', icon: <Gamepad2 size={18} /> },
   { view: 'stats', label: 'Wrapped', icon: <BarChart3 size={18} /> },
   // Extras — off by default, addable from Settings → Appearance → Menu items.
   { view: 'news', label: 'News', icon: <Newspaper size={18} />, defaultHidden: true },
@@ -30,6 +32,42 @@ export const NAV_ITEMS: NavItemDef[] = [
 ]
 
 export const DEFAULT_NAV_ORDER: ViewType[] = NAV_ITEMS.map((i) => i.view)
+
+// Views that live inside another tab rather than owning one. The Games tab is
+// entered as 'heardle' but holds a view per game, so the menu has to highlight
+// it for all of them — a nav item that goes dark the moment you switch game
+// reads as having navigated out of the tab.
+const TAB_OF: Partial<Record<ViewType, ViewType>> = {
+  wordle: 'heardle',
+}
+
+/** The nav tab `view` belongs to — itself, unless it's a sub-view. */
+export function navTabFor(view: ViewType): ViewType {
+  return TAB_OF[view] ?? view
+}
+
+const LS_LAST_GAME = 'unreleased:games:last'
+
+/** The view a tab click actually lands on. Games reopens on the game last
+ *  played: with a round in progress in one of them, coming back to the tab and
+ *  landing on the other reads as having lost it. */
+export function tabEntryView(view: ViewType): ViewType {
+  if (view !== 'heardle') return view
+  try {
+    return localStorage.getItem(LS_LAST_GAME) === 'wordle' ? 'wordle' : 'heardle'
+  } catch {
+    return 'heardle'
+  }
+}
+
+/** Remember `view` as where its tab reopens. Called by whichever game is on
+ *  screen, so a /wordle link counts the same as the switcher does. */
+export function rememberTabView(view: ViewType): void {
+  if (navTabFor(view) !== 'heardle') return
+  try {
+    localStorage.setItem(LS_LAST_GAME, view)
+  } catch {}
+}
 
 // Default visibility per item, keyed by view. Persisted overrides are merged
 // onto this (see the store), so an item added in a newer version picks up its

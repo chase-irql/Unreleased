@@ -102,11 +102,47 @@ export function absoluteClipUrl(relative: string): string {
   return `${API_ORIGIN}${relative}`
 }
 
-export async function startPuzzle(mode: DailyMode, day: string): Promise<PuzzleResponse> {
+export async function startPuzzle(mode: DailyMode, day?: string): Promise<PuzzleResponse> {
   return authed<PuzzleResponse>(`${HEARDLE_BASE}/puzzle/`, {
     method: 'POST',
-    body: JSON.stringify({ mode, day }),
+    body: JSON.stringify(day ? { mode, day } : { mode }),
   })
+}
+
+/** UTC calendar day — the only "today" both sides can agree on without
+ *  knowing each other's timezone. */
+function utcDay(offsetDays = 0): string {
+  const d = new Date(Date.now() + offsetDays * 86_400_000)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+}
+
+/** Today's round, with the server deciding what "today" means.
+ *
+ *  The browser's local date is not a safe thing to send: the API validates the
+ *  day as "not in the future" against its own clock, so any player east of the
+ *  server's timezone gets rejected for hours every night — which is exactly
+ *  the "Must be YYYY-MM-DD and not in the future" failure. The server owns the
+ *  answer, so it owns the calendar too; the day it returns is authoritative
+ *  and callers should key their state off `res.day`, not off a locally
+ *  computed date.
+ *
+ *  Candidates are tried in order and the first success wins: no day at all
+ *  (correct if the server defaults to its own today), then the UTC day, then
+ *  the UTC day before — which between them cover a server on any offset,
+ *  whether or not it requires the field. Only a failure costs an extra call.
+ */
+export async function startTodayPuzzle(mode: DailyMode): Promise<PuzzleResponse> {
+  const candidates: (string | undefined)[] = [undefined, utcDay(), utcDay(-1)]
+  let lastError: unknown
+  for (const day of candidates) {
+    try {
+      return await startPuzzle(mode, day)
+    } catch (err) {
+      lastError = err
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Could not start the round')
 }
 
 export async function submitGuess(roundToken: string, songId: number): Promise<PuzzleResponse> {
@@ -184,15 +220,19 @@ export async function flushResults(): Promise<void> {
   }
 }
 
+/** Standings. `day` is optional and best left off — the server then answers for
+ *  its own today, which is the same calendar the rounds are graded against.
+ *  Passing a locally-computed date risks asking for a day the server hasn't
+ *  reached (see startTodayPuzzle). */
 export async function fetchLeaderboard(
   board: LeaderboardBoard,
   mode: DailyMode | 'versus',
-  day: string,
+  day?: string,
 ): Promise<LeaderboardResponse> {
   const url = new URL(`${HEARDLE_BASE}/leaderboard/`)
   url.searchParams.set('board', board)
   if (board !== 'versus') url.searchParams.set('mode', mode)
-  url.searchParams.set('day', day)
+  if (day) url.searchParams.set('day', day)
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Token ${token}`

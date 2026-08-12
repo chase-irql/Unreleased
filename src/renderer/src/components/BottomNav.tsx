@@ -4,7 +4,7 @@ import { Settings, ShieldCheck, MoreHorizontal } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
-import { orderedNavItems, isNavItemVisible } from '../lib/navItems'
+import { orderedNavItems, isNavItemVisible, navTabFor, tabEntryView } from '../lib/navItems'
 import { useBackToClose } from '../hooks/useBackToClose'
 
 // The mobile nav bar — the counterpart to the desktop Sidebar, which it now
@@ -78,7 +78,7 @@ export default function BottomNav(): JSX.Element {
   // stayed lit accent-colored the whole time Settings was open on top of it,
   // while the Settings button itself (hardcoded to tabCls(false) below) never
   // showed as current at all — neither end of the swap reflected reality.
-  const moreActive = !showSettings && moreTabs.some((t) => t.view === activeView)
+  const moreActive = !showSettings && moreTabs.some((t) => navTabFor(activeView) === t.view)
   const [moreOpen, setMoreOpen] = useState(false)
   useBackToClose(() => setMoreOpen(false), moreOpen)
 
@@ -92,7 +92,9 @@ export default function BottomNav(): JSX.Element {
       setShowSettings(false)
       window.dispatchEvent(new CustomEvent('playlists:back'))
     } else {
-      setActiveView(view)
+      // A tab holding several views (Games: Heardle/Wordle) reopens on
+      // whichever one was last played.
+      setActiveView(tabEntryView(view))
     }
   }
 
@@ -134,7 +136,7 @@ export default function BottomNav(): JSX.Element {
         : { borderTop: '1px solid var(--border)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
       {tabs.map((tab) => {
-        const active = !showSettings && activeView === tab.view
+        const active = !showSettings && navTabFor(activeView) === tab.view
         return (
           <button key={tab.view} onClick={() => navigateTo(tab.view)} className={tabCls(active)}>
             {marker(active)}
@@ -172,7 +174,7 @@ export default function BottomNav(): JSX.Element {
             </div>
             <div className="pb-2">
               {moreTabs.map((tab) => {
-                const active = activeView === tab.view
+                const active = navTabFor(activeView) === tab.view
                 return (
                   <button
                     key={tab.view}

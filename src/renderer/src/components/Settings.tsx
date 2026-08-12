@@ -5,7 +5,7 @@ import {
   FolderOpen, FolderPlus, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Music2,
   PanelLeft, PanelTop, PanelBottom, Waves, RotateCcw, ExternalLink,
   ListOrdered, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
-  ScrollText, ShieldCheck, User, LogOut, LogIn, AlertCircle, GripVertical,
+  ScrollText, ShieldCheck, User, LogOut, LogIn, AlertCircle, GripVertical, Images,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
 import { localLibraryAvailable, pickFolder, pickFiles, decodeSourceLabel } from '../lib/localLibrary'
@@ -48,6 +48,61 @@ const LYRIC_TEXT_SIZES: { label: string; value: number }[] = [
   { label: 'Large', value: 1.2 },
   { label: 'Huge', value: 1.4 },
 ]
+
+const LYRIC_ACTIVE_PRESETS = ['#ffffff', '#1db954', '#a78bfa', '#60a5fa', '#f472b6', '#facc15']
+const LYRIC_INACTIVE_PRESETS = ['#9ca3af', '#6b7280', '#94a3b8', '#c4b5fd', '#7dd3fc', '#fda4af']
+
+// One row of the "Lyric colors" setting: presets + a custom picker, with
+// "Auto" (value === null) meaning "leave it to the surface's own colors" —
+// the theme's text vars in the mini/now-playing lyrics, the cover-art-derived
+// ones in the WRLD tab. The native color input always needs a concrete hex,
+// so `fallback` is what it shows while the setting is on Auto.
+function LyricColorRow({ label, presets, value, fallback, onChange }: {
+  label: string
+  presets: string[]
+  value: string | null
+  fallback: string
+  onChange: (color: string | null) => void
+}): JSX.Element {
+  const [custom, setCustom] = useState(value ?? fallback)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-text-muted text-xs w-full">{label}</span>
+      <button
+        onClick={() => onChange(null)}
+        className={`h-8 px-2.5 rounded-lg text-[11px] font-semibold border transition-colors ${
+          value === null
+            ? 'bg-accent/15 text-accent border-[var(--accent)]'
+            : 'text-text-muted border-[var(--border)] active:bg-[var(--surface-raised)]'
+        }`}
+      >
+        Auto
+      </button>
+      {presets.map((c) => (
+        <button
+          key={c}
+          onClick={() => { onChange(c); setCustom(c) }}
+          className="w-8 h-8 rounded-full border border-[var(--border)] shrink-0"
+          style={{ backgroundColor: c, outline: value?.toLowerCase() === c ? `2px solid ${c}` : 'none', outlineOffset: '2px' }}
+          title={c}
+        />
+      ))}
+      <input
+        type="color"
+        value={custom}
+        onChange={(e) => {
+          const next = e.target.value
+          setCustom(next)
+          if (debounceRef.current) clearTimeout(debounceRef.current)
+          debounceRef.current = setTimeout(() => onChange(next), 80)
+        }}
+        className="w-8 h-8 rounded-full border border-[var(--border)] shrink-0 bg-transparent p-0"
+      />
+    </div>
+  )
+}
 
 // A vertical rail doesn't fit a phone, so only the two edges the tab bar can
 // actually take are offered. `left`/`right` still exist in the store (a value
@@ -300,6 +355,7 @@ export default function Settings(): JSX.Element {
     crossfadeEnabled, crossfadeDuration, setCrossfade,
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
+    rotateSuggestedCovers, setRotateSuggestedCovers,
     mediaOverlayEnabled, setMediaOverlayEnabled,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
@@ -311,10 +367,13 @@ export default function Settings(): JSX.Element {
     lyricsScale, setLyricsScale,
     lyricsAlign, setLyricsAlign,
     lyricsBlur, setLyricsBlur,
+    lyricsBlurAmount, setLyricsBlurAmount,
+    lyricsColorActive, setLyricsColorActive,
+    lyricsColorInactive, setLyricsColorInactive,
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'rotateSuggestedCovers', 'setRotateSuggestedCovers', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'lyricsBlurAmount', 'setLyricsBlurAmount', 'lyricsColorActive', 'setLyricsColorActive', 'lyricsColorInactive', 'setLyricsColorInactive', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -991,11 +1050,40 @@ export default function Settings(): JSX.Element {
                   <Row
                     icon={Eye}
                     iconColor="#64748b"
-                    label="Blur upcoming lyrics"
-                    sub="Soften synced lines that haven't played yet"
+                    label="Blur inactive lyrics"
+                    sub="Soften every synced line except the one playing"
+                    labelExtra={<Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />}
                   >
-                    <Toggle on={lyricsBlur} onClick={() => setLyricsBlur(!lyricsBlur)} />
+                    {lyricsBlur && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <input
+                          type="range" min={0.25} max={4} step={0.25}
+                          value={lyricsBlurAmount}
+                          onChange={(e) => setLyricsBlurAmount(parseFloat(e.target.value))}
+                          className="w-20 accent-[var(--accent)]"
+                        />
+                        <span className="text-text-muted text-xs tabular-nums w-8 text-right">{lyricsBlurAmount}×</span>
+                      </div>
+                    )}
                   </Row>
+                  <Block icon={Palette} iconColor="#9333ea" label="Lyric colors" sub="Color the line being sung and the ones that aren't — WRLD tab, now playing, mini player">
+                    <div className="flex flex-col gap-3">
+                      <LyricColorRow
+                        label="Current line"
+                        presets={LYRIC_ACTIVE_PRESETS}
+                        value={lyricsColorActive}
+                        fallback="#ffffff"
+                        onChange={setLyricsColorActive}
+                      />
+                      <LyricColorRow
+                        label="Other lines"
+                        presets={LYRIC_INACTIVE_PRESETS}
+                        value={lyricsColorInactive}
+                        fallback="#9ca3af"
+                        onChange={setLyricsColorInactive}
+                      />
+                    </div>
+                  </Block>
                 </SettingsCard>
 
                 <SettingsCard title="Navigation">
@@ -1123,6 +1211,13 @@ export default function Settings(): JSX.Element {
                   <Row icon={FileText} iconColor="#059669" label="Prefer OG version">
                     <Toggle on={preferOgVersion} onClick={() => setPreferOgVersion(!preferOgVersion)} />
                   </Row>
+                  <Row
+                    icon={Images}
+                    iconColor="#d946ef"
+                    label="Rotate suggested covers"
+                    sub="Songs without a custom cover show a different cover from the API files each play"
+                    labelExtra={<Toggle on={rotateSuggestedCovers} onClick={() => setRotateSuggestedCovers(!rotateSuggestedCovers)} />}
+                  />
                 </SettingsCard>
 
                 <SettingsCard title="Lyrics">

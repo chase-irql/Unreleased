@@ -174,7 +174,13 @@ export default function Player(): JSX.Element {
       setFmElapsedMs(elapsed + (Date.now() - at))
     }, 500)
     return () => clearInterval(t)
-  }, [radioFmActive, radioFmNowPlaying])
+    // Keyed on elapsed_ms, not the whole radioFmNowPlaying object — that
+    // object is replaced on every metadata broadcast, and broadcasts can
+    // arrive faster than this interval ticks, so depending on the object
+    // tore the interval down and rebuilt it before it ever fired, freezing
+    // the progress bar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [radioFmActive, radioFmNowPlaying?.elapsed_ms])
   const fmDurationMs = radioFmNowPlaying?.duration_ms ?? 0
   const fmProgress = fmDurationMs > 0 ? Math.min(fmElapsedMs / fmDurationMs, 1) : 0
   const openSongInfo = (): void => {
@@ -431,6 +437,15 @@ export default function Player(): JSX.Element {
     applyRate(audio)
     if (isPlaying) audio.play().catch(console.error)
   }, [currentTrack?.id])
+
+  // Rotate suggested covers (when the setting is on and the song has no cover
+  // the user set). Keyed on the track id rather than the play-credit threshold
+  // so the cover is picked as the song starts and then holds for the whole
+  // play — advancing mid-song would swap the art out from under the user.
+  useEffect(() => {
+    if (currentSongId == null) return
+    useStore.getState()._maybeRotateCover(currentSongId)
+  }, [currentSongId])
 
   // Play / pause
   useEffect(() => {
@@ -1550,7 +1565,10 @@ export default function Player(): JSX.Element {
                 ? <img src={radioFmMatchedSong.imageUrl} alt="" className="w-full h-full object-cover" />
                 : <div className="w-full h-full bg-gradient-to-br from-red-900/70 to-black flex items-center justify-center"><Radio size={16} className="text-red-400 opacity-80" /></div>
             ) : (!coverArtError && (currentTrackFull?.albumArt ?? currentTrack?.imageUrl)) ? (
-              <img src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
+              // Keyed per cover — this element persists across track changes,
+              // so without a key the previous song's art stays painted until
+              // the new one decodes.
+              <img key={currentTrackFull?.albumArt ?? currentTrack?.imageUrl} src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-text-muted">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
@@ -1672,7 +1690,7 @@ export default function Player(): JSX.Element {
                 ? <img src={radioFmMatchedSong.imageUrl} alt="" className="w-full h-full object-cover" />
                 : <div className="w-full h-full bg-gradient-to-br from-red-900/70 to-black flex items-center justify-center"><Radio size={22} className="text-red-400 opacity-80" /></div>
             ) : (!coverArtError && (currentTrackFull?.albumArt ?? currentTrack?.imageUrl)) ? (
-              <img src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="Album art" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
+              <img key={currentTrackFull?.albumArt ?? currentTrack?.imageUrl} src={smallCoverUrl(currentTrackFull?.albumArt ?? currentTrack?.imageUrl)} alt="Album art" className="w-full h-full object-cover" onError={() => setCoverArtError(true)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-text-muted">
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">

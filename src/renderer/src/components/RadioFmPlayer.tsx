@@ -52,7 +52,10 @@ export default function RadioFmPlayer(): JSX.Element {
         setRadioFmUpNext(data.up_next)
         setRadioFmQueuePreview(data.queue_preview ?? [])
       })
-      .catch(() => setRadioFmIsLive(false))
+      // A failed REST probe means "unknown", not "offline" — forcing isLive
+      // false here used to flip the FM toggle off while the socket was
+      // streaming fine, just because one HTTP probe blipped.
+      .catch((error) => console.warn('[radio] live probe failed', error))
 
     return () => {
       client.disconnect()

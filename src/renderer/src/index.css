@@ -379,10 +379,24 @@ input[type='range']:active::-webkit-slider-thumb {
 }
 .animate-lyric-line-in { animation: lyric-line-in 0.3s ease-out both; }
 
+/* Wordle: the row a rejected guess was typed into. The message under the board
+   says what's wrong; this is what makes it land without being read. */
+@keyframes wordle-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-5px); }
+  40%      { transform: translateX(5px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(3px); }
+}
+.animate-wordle-shake {
+  animation: wordle-shake 0.3s ease-in-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-menu-pop { animation-duration: 0.01ms; animation-delay: 0ms; }
   .animate-sheet-in,
   .animate-sheet-out { animation-duration: 0.01ms; }
   .animate-lyric-line-in { animation: none; }
+  .animate-wordle-shake { animation-duration: 0.01ms; animation-delay: 0ms; }
   .eq-bar { animation: none; transform: scaleY(0.7); }
 }
