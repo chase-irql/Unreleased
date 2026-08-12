@@ -47,6 +47,7 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 ### Games & stats
 
 - **Heardle** — name the song from its opening seconds. Daily mode shares one puzzle a day with everyone; Personal replays the same rules on demand; Unlimited is fully configurable (guess count, reveal speed, start point, era/category filters); **1v1** matches you live against another player. Live leaderboards for Today, Streaks, and 1v1. Share your result to the clipboard, Wordle-style
+- **Wordle** — guess the song title letter by letter. Every guess is a real track whose title is exactly as long as the answer's, so the board narrows the catalog as you go; an A–Z tracker keeps the letters you've ruled out. Daily shares one title a day with everyone, Unlimited draws them at random (guess count, era/category filters). Streaks, distribution and a spoiler-free share grid
 - **Wrapped** — a listening summary built from your play counts, filterable by All time / 30 days / 7 days, with a recent-plays timeline
 
 ### Personalization

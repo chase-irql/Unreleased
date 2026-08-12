@@ -307,10 +307,56 @@ function floatTitle(view) {
 
 // Extra per-view BrowserWindow options on top of FLOAT_SIZES. The mini
 // player floats above other apps by default (its pin button toggles this).
+// `alwaysOnTop` here only gets it topmost from the first paint — the level is
+// upgraded to 'screen-saver' on ready-to-show (see applyAlwaysOnTop).
 const FLOAT_OPTIONS = {
   'mini-player': { alwaysOnTop: true, maximizable: false, fullscreenable: false },
 }
 const floatWindows = new Map()
+
+// ── Always-on-top (mini player pin) ──────────────────────────────────────────
+// A bare setAlwaysOnTop(true) uses the 'floating' level, which loses to plenty
+// of other windows — most visibly apps running borderless fullscreen, i.e.
+// games. 'screen-saver' is the highest level Electron exposes and is what
+// actually keeps the mini player visible over one.
+function applyAlwaysOnTop(win, on) {
+  if (!win || win.isDestroyed()) return
+  win.setAlwaysOnTop(on, 'screen-saver')
+  // macOS: ride along onto other apps' fullscreen Spaces instead of staying
+  // stuck to the desktop the mini player was opened on. skipTransformProcessType
+  // avoids the dock-icon flicker the call otherwise causes.
+  if (process.platform === 'darwin') {
+    win.setVisibleOnAllWorkspaces(on, { visibleOnFullScreen: true, skipTransformProcessType: true })
+  }
+}
+
+// Windows keeps topmost windows in their own z-order band, ordered by when
+// each was last raised — so a game going fullscreen (or any other topmost
+// app activating) can land ABOVE an already-topmost mini player. That's the
+// "pin randomly stops working" case: the flag is still set, the window just
+// isn't at the front of the band anymore. Re-asserting it puts it back.
+//
+// Only runs while pinned, visible and unfocused — a focused window is already
+// on top, and re-asserting then would be pure churn.
+const TOP_REASSERT_MS = 3000
+let miniTopKeeper = null
+
+function startTopKeeper(win) {
+  stopTopKeeper()
+  miniTopKeeper = setInterval(() => {
+    if (!win || win.isDestroyed()) { stopTopKeeper(); return }
+    if (!win.isAlwaysOnTop() || !win.isVisible() || win.isMinimized() || win.isFocused()) return
+    // Toggle off→on rather than re-applying 'screen-saver': setting the level
+    // it already has is a no-op internally, and it's the re-add that actually
+    // moves the window to the front of the topmost band.
+    win.setAlwaysOnTop(false)
+    applyAlwaysOnTop(win, true)
+  }, TOP_REASSERT_MS)
+}
+
+function stopTopKeeper() {
+  if (miniTopKeeper) { clearInterval(miniTopKeeper); miniTopKeeper = null }
+}
 
 // Renderer-supplied params ride the URL / float-params events — keep them to
 // plain string/number/boolean values.
@@ -421,6 +467,12 @@ function createFloatWindow(view, params) {
   broadcastFloatWindows()
   win.once('ready-to-show', () => {
     win.show()
+    if (view === 'mini-player') {
+      // Upgrade from the constructor's default 'floating' level to the one
+      // that actually clears fullscreen games, and start holding it there.
+      applyAlwaysOnTop(win, true)
+      startTopKeeper(win)
+    }
     // Hide the other windows only once the mini player is actually on screen,
     // so there's never a moment with no visible window.
     if (view === 'mini-player' && appSettings.miniPlayerHidesWindows) hideWindowsForMiniPlayer()
@@ -430,7 +482,10 @@ function createFloatWindow(view, params) {
     broadcastFloatWindows()
     // Always restore on close (even if the setting was turned off meanwhile) so
     // hidden windows can never be stranded.
-    if (view === 'mini-player') restoreWindowsAfterMiniPlayer()
+    if (view === 'mini-player') {
+      stopTopKeeper()
+      restoreWindowsAfterMiniPlayer()
+    }
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -975,7 +1030,14 @@ ipcMain.handle('mini-player-set-expanded', (event, expanded) => {
 ipcMain.handle('toggle-always-on-top-self', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (!win) return false
-  win.setAlwaysOnTop(!win.isAlwaysOnTop())
+  const next = !win.isAlwaysOnTop()
+  applyAlwaysOnTop(win, next)
+  // The keeper only makes sense while pinned, and only for the mini player —
+  // it's the one window that's meant to survive a fullscreen app taking over.
+  if (win === floatWindows.get('mini-player')) {
+    if (next) startTopKeeper(win)
+    else stopTopKeeper()
+  }
   return win.isAlwaysOnTop()
 })
 
