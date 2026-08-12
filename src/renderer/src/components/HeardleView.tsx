@@ -1202,7 +1202,7 @@ export default function HeardleView(): JSX.Element {
           z-20 (over the scroll container's z-10): the scroll container fills
           the whole view and comes later in the DOM, so at equal z it took every
           click in these corners and left the buttons visible but dead. */}
-      <div className="absolute top-3 left-2 z-20">
+      <div className="absolute top-2 left-2 z-20">
         <button
           onClick={() => setActiveView('wrld')}
           aria-label="Back"
@@ -1211,7 +1211,7 @@ export default function HeardleView(): JSX.Element {
           <ChevronLeft size={20} />
         </button>
       </div>
-      <div className="absolute top-3 right-2 z-20 flex items-center gap-0.5">
+      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
         <button
           onClick={() => setShowSettings(true)}
           aria-label="Game settings"
@@ -1239,8 +1239,10 @@ export default function HeardleView(): JSX.Element {
           has to be positioned too or they paint over it. */}
       <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-2 pb-10">
         <div className="mx-auto w-full max-w-xl">
-          {/* Hero */}
-          <div className="text-center mb-5 mt-8">
+          {/* Hero — margin-top clears the corner buttons (top-2, h-11 → bottom
+              edge at 52px) rather than guessing; the hero used to start above
+              that line and sit half-hidden under them. */}
+          <div className="text-center mb-5 mt-14">
             <h1 className="text-text-primary text-3xl font-black tracking-tight inline-flex items-start gap-1">
               Juice WRLD Heardle
               <span className="text-accent text-sm font-mono font-bold mt-1">999</span>

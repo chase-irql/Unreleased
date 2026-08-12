@@ -97,7 +97,7 @@ function Badge({ children, color = 'default' }: { children: string; color?: 'get
 
 function Code({ children }: { children: string }) {
   return (
-    <code className="bg-[var(--surface-raised)] text-accent border border-[var(--border)] text-[11px] font-mono px-1.5 py-0.5 rounded">
+    <code className="bg-[var(--surface-raised)] text-accent border border-[var(--border)] text-[11px] font-mono px-1.5 py-0.5 rounded break-all">
       {children}
     </code>
   )
@@ -180,8 +180,8 @@ function Endpoint({ method, path, description }: { method: 'GET' | 'POST' | 'DEL
   return (
     <div className="flex items-start gap-3 py-2">
       <Badge color={method.toLowerCase() as 'get' | 'post' | 'delete' | 'patch'}>{method}</Badge>
-      <div className="min-w-0">
-        <code className="text-[12px] font-mono text-text-primary">{hl(path)}</code>
+      <div className="min-w-0 flex-1">
+        <code className="text-[12px] font-mono text-text-primary break-all">{hl(path)}</code>
         <p className="text-xs text-text-muted mt-0.5">{hl(description)}</p>
       </div>
     </div>
@@ -521,20 +521,20 @@ function FilesTab() {
       <Section title="ZIP Operations">
         <div className="space-y-3">
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/start-zip-job/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary break-all">/start-zip-job/</code></div>
             <p className="text-xs text-text-muted">Start a background ZIP job. Returns a <Code>job_id</Code> for polling.</p>
             <Pre>{`{ "paths": ["Compilation/song1.mp3", "Compilation/song2.mp3"] }`}</Pre>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/zip-job-status/{'{job_id}'}/ </code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/zip-job-status/{'{job_id}'}/ </code></div>
             <p className="text-xs text-text-muted">Poll ZIP job progress.</p>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/cancel-zip-job/{'{job_id}'}/ </code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary break-all">/cancel-zip-job/{'{job_id}'}/ </code></div>
             <p className="text-xs text-text-muted">Cancel an in-progress ZIP job.</p>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/files/zip-selection/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary break-all">/files/zip-selection/</code></div>
             <p className="text-xs text-text-muted">Immediate ZIP stream (not background).</p>
             <Pre>{`{ "paths": ["Compilation/Folder"] }`}</Pre>
           </div>
@@ -553,7 +553,7 @@ function PlaylistsTab() {
         </p>
         <div className="space-y-3">
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/playlists/share/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary break-all">/playlists/share/</code></div>
             <Pre>{`// Request
 { "paths": ["Compilation/song1.mp3", "Compilation/song2.mp3"] }
 
@@ -561,11 +561,11 @@ function PlaylistsTab() {
 { "share_id": "abc123..." }`}</Pre>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/playlists/shared/{'{share_id}'}/ </code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/playlists/shared/{'{share_id}'}/ </code></div>
             <p className="text-xs text-text-muted">Full shared playlist with all track metadata.</p>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/playlists/shared/{'{share_id}'}/info/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/playlists/shared/{'{share_id}'}/info/</code></div>
             <p className="text-xs text-text-muted">Lightweight preview — name + track count without full fetch.</p>
           </div>
         </div>
@@ -706,7 +706,7 @@ function AuthTab() {
 
       <Section title="Discord Login (recommended)">
         <ol className="space-y-3 text-sm text-text-secondary list-decimal list-inside">
-          <li><code className="text-accent font-mono text-xs">GET /accounts/auth/discord/url/</code> → returns <Code>authorize_url</Code> and <Code>state</Code></li>
+          <li><code className="text-accent font-mono text-xs break-all">GET /accounts/auth/discord/url/</code> → returns <Code>authorize_url</Code> and <Code>state</Code></li>
           <li>Redirect the user through Discord OAuth using <Code>authorize_url</Code></li>
           <li>Exchange the code Discord returns:</li>
         </ol>
@@ -742,7 +742,7 @@ Authorization: Token <token>`}</Pre>
       <Section title="Who Am I — Two Endpoints">
         <div className="space-y-4">
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/account/me/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/accounts/account/me/</code></div>
             <p className="text-xs text-text-muted mb-2">Public-facing. No <Code>role</Code> string — booleans only. Use this for music player UI gating.</p>
             <Pre>{`{
   "id": 42,
@@ -773,14 +773,14 @@ Authorization: Token <token>`}</Pre>
             </p>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="patch">PATCH</Badge><code className="text-xs font-mono text-text-primary">/accounts/account/me/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="patch">PATCH</Badge><code className="text-xs font-mono text-text-primary break-all">/accounts/account/me/</code></div>
             <p className="text-xs text-text-muted mb-2">
               Updates the logged-in user&apos;s own <Code>user_preferences</Code>, <Code>playlist_folders</Code>, and/or{' '}
               <Code>listening_plays</Code> blobs — see the sections below for what goes in each.
             </p>
           </div>
           <div>
-            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/me/</code></div>
+            <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/accounts/me/</code></div>
             <p className="text-xs text-text-muted mb-2">Editor/admin dashboards. Includes raw <Code>role</Code> string and extra stats.</p>
             <Pre>{`{
   "username": "discord_123456789",
@@ -1010,7 +1010,7 @@ Content-Type: application/json
       </Section>
 
       <Section title="Editor Leaderboard">
-        <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary">/accounts/editor/leaderboard/</code></div>
+        <div className="flex items-center gap-2 mb-1"><Badge color="get">GET</Badge><code className="text-xs font-mono text-text-primary break-all">/accounts/editor/leaderboard/</code></div>
         <p className="text-xs text-text-muted mb-2">Ranked by approved proposal count. No auth required to view.</p>
         <Pre>{`[
   {
@@ -1042,7 +1042,7 @@ Content-Type: application/json
       </Section>
 
       <Section title="Feedback">
-        <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary">/juicewrld/feedback/</code></div>
+        <div className="flex items-center gap-2 mb-1"><Badge color="post">POST</Badge><code className="text-xs font-mono text-text-primary break-all">/juicewrld/feedback/</code></div>
         <p className="text-xs text-text-muted mb-2">General API/app feedback. No auth required. Forwards to a webhook + the mod server.</p>
         <Pre>{`{
   "message": "required",
@@ -1926,7 +1926,7 @@ export default function DocsPage(): JSX.Element {
         </a>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-6">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pt-1 pb-6">
         {/* Search */}
         <div className="relative mb-3">
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
