@@ -33,6 +33,7 @@ import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
 import EqualizerPanel from './EqualizerPanel'
+import { Sheet } from './mobile/Sheet'
 import {
   attachAudioElement, applyAudioEffects, resumeEffectsContext, setEffectsChainWanted,
   setEffectsOutputDevice, getCurrentPeak,
@@ -1378,24 +1379,10 @@ export default function Player(): JSX.Element {
   const activeDuration = getActive()?.duration
   const duration = (activeDuration && isFinite(activeDuration) ? activeDuration : 0) || currentTrack?.duration || 0
 
-  // Equalizer popover (also hosts balance/mono/skip-silence + playback speed).
+  // Equalizer sheet (also hosts balance/mono/skip-silence + playback speed).
   // Visibility lives in the store so the 'equalizer' hotkey and the WRLD tab's
-  // button can open it too — this always-mounted component owns the portal.
+  // button can open it too — this always-mounted component owns the sheet.
   const { showEqPanel, setShowEqPanel, toggleEqPanel } = useStorePick('showEqPanel', 'setShowEqPanel', 'toggleEqPanel')
-  const eqBtnRef = useRef<HTMLButtonElement>(null)
-  const [eqPos, setEqPos] = useState({ bottom: 0, right: 0 })
-  // Anchor above the bar button when it's on screen; openers without an
-  // anchor (hotkey, WRLD tab, collapsed bar) get a fixed bottom-right spot.
-  useEffect(() => {
-    if (!showEqPanel) return
-    const btn = eqBtnRef.current
-    if (btn?.isConnected) {
-      const r = btn.getBoundingClientRect()
-      setEqPos({ bottom: window.innerHeight - r.top + 8, right: Math.max(8, window.innerWidth - r.right - 170) })
-    } else {
-      setEqPos({ bottom: 104, right: 16 })
-    }
-  }, [showEqPanel])
   // Accent the button when anything in the panel deviates from neutral.
   const eqActive = eqEnabled || playbackSpeed !== 1 || eqBalance !== 0 || eqMono || skipSilence || reverbEnabled
 
@@ -1460,22 +1447,12 @@ export default function Player(): JSX.Element {
         onError={(e) => handleAudioError(e.currentTarget, 'slotB')}
       />
 
-      {/* Equalizer popover — outside the WRLD-page conditional below so the
+      {/* Equalizer sheet — outside the WRLD-page conditional below so the
           hotkey and the WRLD tab's own button can open it on any view. */}
-      {showEqPanel && createPortal(
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setShowEqPanel(false)} />
-          <div
-            onMouseDown={(e) => e.stopPropagation()}
-            className="fixed z-50 bg-surface-highest border border-[var(--border)] rounded-xl shadow-2xl overflow-y-auto"
-            // Cap below the title bar so a full panel scrolls internally
-            // instead of growing under the window controls.
-            style={{ bottom: eqPos.bottom, right: eqPos.right, maxHeight: `calc(100vh - ${eqPos.bottom + 48}px)` }}
-          >
-            <EqualizerPanel />
-          </div>
-        </>,
-        document.body
+      {showEqPanel && (
+        <Sheet onClose={() => setShowEqPanel(false)} title="Equalizer">
+          <EqualizerPanel />
+        </Sheet>
       )}
 
       {/* Song info — mounted outside the bottom-bar block below, which is
@@ -1866,7 +1843,6 @@ export default function Player(): JSX.Element {
               Stays visible during FM — the effects chain applies to the live
               stream too; only the speed row hides inside the panel. */}
           <button
-            ref={eqBtnRef}
             onClick={toggleEqPanel}
             title="Equalizer"
             className={`transition-colors ${eqActive ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}

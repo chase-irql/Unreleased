@@ -4,7 +4,7 @@ import {
   BarChart3, Share2, RefreshCw, AlertCircle, Loader2, Volume2, SlidersHorizontal, RotateCcw, Trophy,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
-import { useBackToClose } from '../hooks/useBackToClose'
+import { Sheet } from './mobile/Sheet'
 import { Avatar } from './adminShared'
 import { apiFetch, songToTrack, buildStreamUrl, smallCoverUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
@@ -219,8 +219,8 @@ function Segmented<T extends string>({ options, value, onChange }: {
         <button
           key={o.id}
           onClick={() => onChange(o.id)}
-          className={`px-2.5 py-1 text-xs font-semibold transition-colors ${
-            value === o.id ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+          className={`h-8 px-2.5 text-xs font-semibold transition-colors ${
+            value === o.id ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
           }`}
         >
           {o.label}
@@ -256,33 +256,22 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
     if (next.length > 0) set('categories', next)
   }
 
-  useBackToClose(onClose)
-
   return (
-    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
-      <div
-        className="w-full md:max-w-md max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
-        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 mb-1">
-          <SlidersHorizontal size={16} className="text-accent" />
-          <h2 className="text-text-primary font-bold">Game settings</h2>
+    <Sheet
+      onClose={onClose}
+      title="Game settings"
+      header={
+        <div className="px-5 pt-2 flex justify-end">
           <button
             onClick={() => onChange({ ...DEFAULT_SETTINGS })}
-            aria-label="Reset to defaults"
-            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
+            className="flex items-center gap-1.5 h-9 px-3 rounded-full text-xs font-semibold text-text-muted active:bg-surface-overlay transition-colors"
           >
-            <RotateCcw size={14} />
-          </button>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
-          >
-            <X size={16} />
+            <RotateCcw size={12} /> Reset to defaults
           </button>
         </div>
+      }
+    >
+      <div className="px-5 pb-2">
         <p className="text-xs text-text-muted mb-3">
           These apply to <span className="text-text-secondary font-semibold">Unlimited</span> only. Daily and
           Personal always run the standard rules — their results are headed for a leaderboard, and a
@@ -367,7 +356,7 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
                 className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
                   settings.categories.includes(c)
                     ? 'border-accent/50 bg-accent/15 text-accent'
-                    : 'border-[var(--border)] text-text-muted hover:text-text-primary'
+                    : 'border-[var(--border)] text-text-muted active:text-text-primary'
                 }`}
               >
                 {POOL_LABELS[c]}
@@ -382,7 +371,7 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
               {settings.eras.length === 0 ? 'All' : `${settings.eras.length} selected`}
             </span>
             {settings.eras.length > 0 && (
-              <button onClick={() => set('eras', [])} className="ml-auto text-xs text-accent hover:underline">
+              <button onClick={() => set('eras', [])} className="ml-auto text-xs text-accent active:opacity-70">
                 Clear
               </button>
             )}
@@ -396,7 +385,7 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
                 className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
                   settings.eras.includes(era)
                     ? 'border-accent/50 bg-accent/15 text-accent'
-                    : 'border-[var(--border)] text-text-muted hover:text-text-primary'
+                    : 'border-[var(--border)] text-text-muted active:text-text-primary'
                 }`}
               >
                 {era} <span className="opacity-60">{count}</span>
@@ -406,7 +395,7 @@ function SettingsPanel({ settings, onChange, eras, mode, onClose }: {
           </div>
         </div>
       </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -425,32 +414,16 @@ function StatsPanel({ initialMode, onClose }: { initialMode: DailyMode; onClose:
   const stats: Stats = useMemo(() => loadStats(tab), [tab])
   const max = Math.max(1, ...stats.distribution)
   const winRate = stats.played ? Math.round((stats.won / stats.played) * 100) : 0
-  useBackToClose(onClose)
   return (
-    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
-      <div
-        className="w-full md:max-w-sm max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
-        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <BarChart3 size={16} className="text-accent" />
-          <h2 className="text-text-primary font-bold">Statistics</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
-          >
-            <X size={16} />
-          </button>
-        </div>
+    <Sheet onClose={onClose} title="Statistics">
+      <div className="px-5 pb-2">
         <div className="flex rounded-lg border border-[var(--border)] overflow-hidden mb-4">
           {(['daily', 'personal'] as DailyMode[]).map((m) => (
             <button
               key={m}
               onClick={() => setTab(m)}
-              className={`flex-1 px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
-                tab === m ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+              className={`flex-1 h-9 text-xs font-semibold capitalize transition-colors ${
+                tab === m ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
               }`}
             >
               {m}
@@ -489,17 +462,15 @@ function StatsPanel({ initialMode, onClose }: { initialMode: DailyMode; onClose:
           ))}
         </div>
       </div>
-    </div>
+    </Sheet>
   )
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
 
 /** Standings for the two once-a-day modes. Both run fixed rules (see
- *  settingsForMode), which is what makes a ranking mean anything.
- *
- *  The endpoint doesn't exist yet — see lib/heardleApi. Until it does this
- *  shows what's waiting to be sent rather than pretending to be empty. */
+ *  settingsForMode), which is what makes a ranking mean anything. Backed by
+ *  the real `/heardle/leaderboard/` endpoint — see lib/heardleApi. */
 function LeaderboardPanel({ initialMode, signedIn, onClose }: {
   initialMode: DailyMode
   signedIn: boolean
@@ -567,34 +538,17 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
     </div>
   )
 
-  useBackToClose(onClose)
   return (
-    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
-      <div
-        className="w-full md:max-w-md max-h-[85svh] overflow-y-auto rounded-t-2xl md:rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-5"
-        style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <Trophy size={16} className="text-accent" />
-          <h2 className="text-text-primary font-bold">Leaderboard</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="ml-auto rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-10 h-10 flex items-center justify-center md:w-auto md:h-auto md:p-1"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
+    <Sheet onClose={onClose} title="Leaderboard">
+      <div className="px-5 pb-2">
         <div className="flex gap-2 mb-4">
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
             {([['today', 'Today'], ['streak', 'Streaks'], ['versus', '1v1']] as [LeaderboardBoard, string][]).map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setBoard(id)}
-                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  board === id ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+                className={`h-9 px-3 text-xs font-semibold transition-colors ${
+                  board === id ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
                 }`}
               >
                 {label}
@@ -606,8 +560,8 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
-                  mode === m ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'
+                className={`h-9 px-3 text-xs font-semibold capitalize transition-colors ${
+                  mode === m ? 'bg-accent text-white' : 'text-text-muted active:text-text-primary'
                 }`}
               >
                 {m}
@@ -644,7 +598,7 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
           </>
         )}
       </div>
-    </div>
+    </Sheet>
   )
 }
 
@@ -1247,56 +1201,47 @@ export default function HeardleView(): JSX.Element {
           panels sit out of its way.
           z-20 (over the scroll container's z-10): the scroll container fills
           the whole view and comes later in the DOM, so at equal z it took every
-          click in these corners and left the buttons visible but dead.
-          no-drag: in Electron the frameless window's drag strip runs along the
-          top of this pane, and an app-region rect swallows mouse events no
-          matter what pointer-events says. */}
-      <div
-        className="absolute top-4 left-4 z-20"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+          click in these corners and left the buttons visible but dead. */}
+      <div className="absolute top-3 left-2 z-20">
         <button
           onClick={() => setActiveView('wrld')}
           aria-label="Back"
-          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+          className="w-11 h-11 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay transition-colors"
         >
-          <ChevronLeft size={18} />
+          <ChevronLeft size={20} />
         </button>
       </div>
-      <div
-        className="absolute top-4 right-4 z-20 flex items-center gap-1"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+      <div className="absolute top-3 right-2 z-20 flex items-center gap-0.5">
         <button
           onClick={() => setShowSettings(true)}
           aria-label="Game settings"
-          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+          className="w-11 h-11 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay transition-colors"
         >
-          <SlidersHorizontal size={16} />
+          <SlidersHorizontal size={17} />
         </button>
         <button
           onClick={() => setShowLeaderboard(true)}
           aria-label="Leaderboard"
-          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+          className="w-11 h-11 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay transition-colors"
         >
-          <Trophy size={16} />
+          <Trophy size={17} />
         </button>
         <button
           onClick={() => setShowStats(true)}
           aria-label="Statistics"
-          className="rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+          className="w-11 h-11 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay transition-colors"
         >
-          <BarChart3 size={16} />
+          <BarChart3 size={17} />
         </button>
       </div>
 
       {/* z-10: the backdrop layers above are absolutely positioned, so content
           has to be positioned too or they paint over it. */}
-      <div className="relative z-10 flex-1 overflow-y-auto px-4 sm:px-6 py-10">
+      <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-2 pb-10">
         <div className="mx-auto w-full max-w-xl">
           {/* Hero */}
-          <div className="text-center mb-6">
-            <h1 className="text-text-primary text-4xl sm:text-5xl font-black tracking-tight inline-flex items-start gap-1">
+          <div className="text-center mb-5 mt-8">
+            <h1 className="text-text-primary text-3xl font-black tracking-tight inline-flex items-start gap-1">
               Juice WRLD Heardle
               <span className="text-accent text-sm font-mono font-bold mt-1">999</span>
             </h1>
@@ -1305,17 +1250,18 @@ export default function HeardleView(): JSX.Element {
             </p>
           </div>
 
-          {/* Mode tabs */}
-          <div className="flex items-center justify-center gap-6 mb-2">
+          {/* Mode tabs — a scrollable pill row rather than underline tabs, same
+              idiom as the other rewritten tabs' chip switchers. */}
+          <div className="flex items-center justify-center gap-2 mb-2 overflow-x-auto scrollbar-none">
             {MODES.map((m) => (
               <button
                 key={m.id}
                 onClick={() => setMode(m.id)}
                 title={m.hint}
-                className={`pb-1.5 text-xs font-bold uppercase tracking-[0.2em] border-b-2 transition-colors ${
+                className={`shrink-0 h-9 px-3.5 rounded-full text-xs font-bold uppercase tracking-[0.14em] transition-colors ${
                   mode === m.id
-                    ? 'text-text-primary border-accent'
-                    : 'text-text-muted border-transparent hover:text-text-secondary'
+                    ? 'bg-accent text-white'
+                    : 'bg-[var(--surface-overlay)] text-text-muted active:text-text-secondary'
                 }`}
               >
                 {m.label}
@@ -1343,7 +1289,7 @@ export default function HeardleView(): JSX.Element {
                 onClick={newRound}
                 disabled={playablePool.length === 0}
                 title="Skip this song and draw another"
-                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[var(--border)] hover:border-accent/40 text-text-muted hover:text-text-primary text-[10px] font-bold uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-[var(--surface-overlay)] text-text-muted active:text-text-primary text-[10px] font-bold uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
               >
                 <RefreshCw size={12} /> Reroll
               </button>
@@ -1376,7 +1322,7 @@ export default function HeardleView(): JSX.Element {
               {rules.eras.length > 0 && (
                 <button
                   onClick={() => setSettings((s) => ({ ...s, eras: [] }))}
-                  className="text-xs font-semibold text-accent hover:underline"
+                  className="text-xs font-semibold text-accent active:opacity-70"
                 >
                   Clear era filter
                 </button>
@@ -1385,7 +1331,7 @@ export default function HeardleView(): JSX.Element {
           ) : (
             <>
               {/* Play card */}
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)]/60 p-4 sm:p-5 space-y-4">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)]/60 p-4 space-y-4">
                 <SlotRow ladder={ladder} guesses={guesses} status={status} showEraHint={rules.eraHint} />
 
                 <Waveform
@@ -1401,7 +1347,7 @@ export default function HeardleView(): JSX.Element {
                   <button
                     onClick={() => (playing ? stopPlayback() : startPlayback())}
                     title={playing ? 'Stop' : `Play ${unlocked}s${startAt > 0 ? ' from the clip start' : ' from the beginning'}`}
-                    className="w-full h-12 rounded-xl border border-accent/40 bg-accent/10 hover:bg-accent/20 text-text-primary text-sm font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-colors"
+                    className="w-full h-12 rounded-xl border border-accent/40 bg-accent/10 active:bg-accent/20 text-text-primary text-sm font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-colors"
                   >
                     {preparing
                       ? <><Loader2 size={16} className="animate-spin" /> Loading</>
@@ -1467,8 +1413,8 @@ export default function HeardleView(): JSX.Element {
                                 key={s.id}
                                 onMouseEnter={() => setHighlighted(i)}
                                 onClick={() => submitGuess(s)}
-                                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${
-                                  i === highlighted ? 'bg-accent/15' : 'hover:bg-surface-overlay'
+                                className={`w-full text-left px-3 py-3 flex items-center gap-2 transition-colors ${
+                                  i === highlighted ? 'bg-accent/15' : 'active:bg-surface-overlay'
                                 }`}
                               >
                                 <span className="min-w-0">
@@ -1490,7 +1436,7 @@ export default function HeardleView(): JSX.Element {
                     <div className="grid grid-cols-2 gap-2 sm:gap-3">
                       <button
                         onClick={skip}
-                        className="h-12 rounded-xl border border-[var(--border)] hover:border-accent/40 text-text-secondary hover:text-text-primary text-xs font-bold uppercase tracking-[0.18em] transition-colors"
+                        className="h-12 rounded-xl border border-[var(--border)] text-text-secondary active:text-text-primary text-xs font-bold uppercase tracking-[0.18em] transition-colors"
                       >
                         Skip
                         {guesses.length < ladder.length - 1 &&
@@ -1499,7 +1445,7 @@ export default function HeardleView(): JSX.Element {
                       <button
                         onClick={() => { const s = suggestions[highlighted]; if (s) submitGuess(s) }}
                         disabled={suggestions.length === 0}
-                        className="h-12 rounded-xl border border-accent/40 bg-accent/10 hover:bg-accent/20 text-text-primary text-xs font-bold uppercase tracking-[0.18em] transition-colors disabled:opacity-40 disabled:hover:bg-accent/10"
+                        className="h-12 rounded-xl border border-accent/40 bg-accent/10 active:bg-accent/20 text-text-primary text-xs font-bold uppercase tracking-[0.18em] transition-colors disabled:opacity-40"
                       >
                         Submit
                       </button>
@@ -1558,21 +1504,21 @@ export default function HeardleView(): JSX.Element {
                   <div className="flex flex-wrap items-center gap-2 mt-4">
                     <button
                       onClick={playFullSong}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-accent text-white hover:opacity-90 transition-opacity"
+                      className="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg text-sm font-semibold bg-accent text-white active:opacity-90 transition-opacity"
                     >
                       <Volume2 size={15} /> Play full song
                     </button>
                     {isDaily ? (
                       <button
                         onClick={share}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                        className="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg text-sm font-semibold bg-[var(--surface-overlay)] text-text-secondary active:text-text-primary transition-colors"
                       >
                         <Share2 size={15} /> {copied ? 'Copied!' : 'Share'}
                       </button>
                     ) : (
                       <button
                         onClick={newRound}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                        className="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg text-sm font-semibold bg-[var(--surface-overlay)] text-text-secondary active:text-text-primary transition-colors"
                       >
                         <RefreshCw size={15} /> Next song
                       </button>
@@ -1580,7 +1526,7 @@ export default function HeardleView(): JSX.Element {
                     {isDaily && (
                       <button
                         onClick={() => setShowLeaderboard(true)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border border-[var(--border)] text-text-secondary hover:text-text-primary transition-colors"
+                        className="inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg text-sm font-semibold bg-[var(--surface-overlay)] text-text-secondary active:text-text-primary transition-colors"
                       >
                         <Trophy size={15} /> Leaderboard
                       </button>

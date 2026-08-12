@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo, type ReactNode } from 'react'
 import {
-  Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown, ChevronLeft,
-  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, PictureInPicture2, Minimize2,
-  FolderOpen,
+  Loader2, Check, AlertCircle, LogIn, Clock, X, ChevronDown, ArrowLeft,
+  ChevronUp, Award, Music2, FileText, Pencil, Plus, Trash2, FolderOpen,
 } from 'lucide-react'
 import FilePickerModal from './FilePickerModal'
 import { useStore, useStorePick } from '../store/useStore'
@@ -59,7 +58,7 @@ function diff(before: Record<string, unknown>, after: Record<string, unknown>): 
   return patch
 }
 
-/* ── Card — grouped section container ─────────────────────────────────────── */
+/* ── Card — grouped section, mobile Settings-style (caption + inset card) ──── */
 export function Card({ title, icon, action, children, className = '', overflowVisible = false }: {
   title?: string; icon?: ReactNode; action?: ReactNode
   children: ReactNode; className?: string
@@ -68,64 +67,54 @@ export function Card({ title, icon, action, children, className = '', overflowVi
   overflowVisible?: boolean
 }): JSX.Element {
   return (
-    <section className={`rounded-2xl border border-[var(--border)] bg-surface-raised/50 ${overflowVisible ? '' : 'overflow-hidden'} ${className}`}>
-      {title && (
-        <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[var(--border)]">
+    <section className={`mb-3.5 ${className}`}>
+      {(title || action) && (
+        <div className="flex items-center gap-1.5 px-1 pb-1.5">
           {icon && <span className="text-text-muted opacity-70 shrink-0">{icon}</span>}
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-text-muted opacity-80">{title}</h3>
-          {action && <div className="ml-auto">{action}</div>}
+          {title
+            ? <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted flex-1 min-w-0">{title}</p>
+            : <span className="flex-1" />}
+          {action}
         </div>
       )}
-      <div className="p-5">{children}</div>
+      <div className={`rounded-2xl bg-[var(--surface-overlay)] p-3.5 space-y-2.5 ${overflowVisible ? '' : 'overflow-hidden'}`}>
+        {children}
+      </div>
     </section>
   )
 }
 
-/* ── Grid — responsive field grid for use inside a Card ───────────────────── */
+/* ── Grid — 1 or 2 columns (a phone has no room for 3) ────────────────────── */
 export function FieldGrid({ children, cols = 2 }: { children: ReactNode; cols?: 1 | 2 | 3 }): JSX.Element {
-  const colClass = cols === 3 ? 'sm:grid-cols-3' : cols === 1 ? '' : 'sm:grid-cols-2'
-  return <div className={`grid grid-cols-1 ${colClass} gap-x-5 gap-y-4`}>{children}</div>
+  return <div className={`grid gap-2 ${cols === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>{children}</div>
 }
 
-/* ── Field label with dirty dot ───────────────────────────────────────────── */
-function FieldLabel({ label, changed }: { label: string; changed: boolean }): JSX.Element {
-  return (
-    <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted opacity-75 select-none mb-1.5">
-      {label}
-      {changed && <span className="w-1 h-1 rounded-full bg-accent shrink-0" />}
-    </span>
-  )
-}
-
-const fieldInputClass = (changed: boolean, mono: boolean): string =>
-  `w-full bg-surface-overlay/70 rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-30 border transition-colors ${mono ? 'font-mono' : ''} ${
-    changed ? 'border-accent/40 bg-accent/[0.04]' : 'border-[var(--border)] focus:border-accent/40'
-  }`
-
-/* ── Field ─────────────────────────────────────────────────────────────────── */
-export function FieldRow({ label, value, original, onChange, placeholder, mono = false, span, onBrowse }: {
-  label: string; value: string; original: string
+/* ── Field — bordered box with the label inline at the top, touch-sized ───── */
+export function FieldRow({ label, value, original = '', onChange, placeholder, mono = false, span, onBrowse }: {
+  label: string; value: string; original?: string
   onChange: (v: string) => void; placeholder?: string; mono?: boolean; span?: 2 | 3
   /** Shows a folder button inside the field that opens a file picker. */
   onBrowse?: () => void
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
   return (
-    <label className={`flex flex-col min-w-0 ${span === 2 ? 'sm:col-span-2' : span === 3 ? 'sm:col-span-3' : ''}`}>
-      <FieldLabel label={label} changed={changed} />
-      <div className="relative">
+    <label className={`block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
+      changed ? 'border-accent/40 bg-accent/[0.06]' : 'border-[var(--border)] bg-surface-raised/50'
+    }`}>
+      <span className="block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight">{label}</span>
+      <div className="flex items-center gap-1">
         <input
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder ?? (original || '—')}
-          className={`${fieldInputClass(changed, mono)} ${onBrowse ? 'pr-9' : ''}`}
+          className={`flex-1 min-w-0 bg-transparent border-0 p-0 text-[13.5px] leading-snug text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-40 ${mono ? 'font-mono text-xs' : ''}`}
         />
         {onBrowse && (
           <button
             type="button"
             onClick={e => { e.preventDefault(); onBrowse() }}
             title="Browse API files"
-            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            className="shrink-0 -my-0.5 p-1.5 rounded text-text-muted active:text-text-primary transition-colors"
           >
             <FolderOpen size={14} />
           </button>
@@ -135,49 +124,28 @@ export function FieldRow({ label, value, original, onChange, placeholder, mono =
   )
 }
 
-/* ── Select field ──────────────────────────────────────────────────────────── */
-function SelectRow({ label, value, original, onChange, options, placeholder }: {
-  label: string; value: string; original: string
-  onChange: (v: string) => void
-  options: { value: string; label: string }[]; placeholder?: string
-}): JSX.Element {
-  const changed = value !== original
-  return (
-    <label className="flex flex-col min-w-0">
-      <FieldLabel label={label} changed={changed} />
-      <select
-        value={value} onChange={e => onChange(e.target.value)}
-        className={`${fieldInputClass(changed, false)} appearance-none cursor-pointer`}
-      >
-        <option value="" style={{ color: '#111', backgroundColor: '#fff' }}>{placeholder || '—'}</option>
-        {options.map(o => <option key={o.value} value={o.value} style={{ color: '#111', backgroundColor: '#fff' }}>{o.label}</option>)}
-      </select>
-    </label>
-  )
-}
-
 /* ── Textarea field ────────────────────────────────────────────────────────── */
-export function TextareaRow({ label, value, original, onChange, rows = 3, placeholder, mono = false, span }: {
-  label: string; value: string; original: string
+export function TextareaRow({ label, value, original = '', onChange, rows = 3, placeholder, mono = false, span }: {
+  label: string; value: string; original?: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean; span?: 2 | 3
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
   return (
-    <label className={`flex flex-col min-w-0 ${span === 2 ? 'sm:col-span-2' : span === 3 ? 'sm:col-span-3' : ''}`}>
-      <FieldLabel label={label} changed={changed} />
+    <label className={`block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
+      changed ? 'border-accent/40 bg-accent/[0.06]' : 'border-[var(--border)] bg-surface-raised/50'
+    }`}>
+      <span className="block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight">{label}</span>
       <textarea
         rows={rows} value={value} onChange={e => onChange(e.target.value)}
-        placeholder={placeholder || '—'}
-        className={`${fieldInputClass(changed, mono)} resize-none leading-relaxed py-2.5`}
+        placeholder={placeholder}
+        className={`w-full bg-transparent border-0 p-0 mt-0.5 text-[13.5px] leading-snug text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-40 ${mono ? 'font-mono text-xs' : ''}`}
       />
     </label>
   )
 }
 
-/* ── Basic view fields ─────────────────────────────────────────────────────── */
-/* The "basic" editor view is a flat, top-to-bottom form: every field visible at
-   once, no left rail, no cards, no collapsible sections or tabs. Hoisted to
-   module scope so React keeps the inputs mounted across re-renders. */
+/* ── Basic-view fields (still used by EditorProfileView's create-song form) ─ */
+/* Hoisted to module scope so React keeps the inputs mounted across re-renders. */
 const basicControlClass =
   'w-full bg-transparent border-0 p-0 text-[13px] leading-snug text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-40'
 
@@ -271,8 +239,8 @@ export function BasicSelect({ label, value, original, onChange, options, placeho
               <button
                 key={o.value || '__none'}
                 onClick={e => { e.stopPropagation(); onChange(o.value); setOpen(false) }}
-                className={`w-full flex items-center gap-1.5 text-left px-2.5 py-1.5 text-xs transition-colors ${
-                  active ? 'text-accent font-semibold bg-accent/10' : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary'
+                className={`w-full flex items-center gap-1.5 text-left px-2.5 py-2 text-xs transition-colors ${
+                  active ? 'text-accent font-semibold bg-accent/10' : 'text-text-secondary active:bg-surface-overlay'
                 }`}
               >
                 <span className="flex-1 min-w-0 truncate">{o.label}</span>
@@ -317,8 +285,8 @@ export function SyncedLyricsTable({ value, onChange }: {
     commit([...rows.slice(0, i + 1), { time: '', text: '' }, ...rows.slice(i + 1)])
 
   return (
-    <div className="mt-1.5">
-      <div className="max-h-[340px] overflow-y-auto pr-0.5 space-y-1">
+    <div>
+      <div className="max-h-[320px] overflow-y-auto pr-0.5 space-y-1">
         {rows.map((r, i) => (
           <div key={i} className="group flex items-center gap-1.5">
             <input
@@ -326,7 +294,7 @@ export function SyncedLyricsTable({ value, onChange }: {
               onChange={e => update(i, { time: e.target.value })}
               placeholder="0:00.00"
               title="Timestamp for this line"
-              className={`w-[76px] shrink-0 rounded border px-1.5 py-1 font-mono text-[11px] text-center focus:outline-none focus:border-accent/50 transition-colors ${
+              className={`w-[72px] shrink-0 rounded border px-1.5 py-1.5 font-mono text-[11px] text-center focus:outline-none focus:border-accent/50 transition-colors ${
                 r.time.trim()
                   ? 'border-[var(--border)] bg-surface-overlay text-text-primary'
                   : 'border-dashed border-[var(--border)] bg-transparent text-text-muted'
@@ -337,14 +305,14 @@ export function SyncedLyricsTable({ value, onChange }: {
               onChange={e => update(i, { text: e.target.value })}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); insertAfter(i) } }}
               placeholder="Lyric line…"
-              className="flex-1 min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1 text-[13px] text-text-primary focus:outline-none focus:border-accent/50 focus:bg-surface-overlay transition-colors placeholder:text-text-muted placeholder:opacity-40"
+              className="flex-1 min-w-0 rounded border border-transparent bg-transparent px-1.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent/50 focus:bg-surface-overlay transition-colors placeholder:text-text-muted placeholder:opacity-40"
             />
             <button
               onClick={() => commit(rows.filter((_, j) => j !== i))}
               title="Remove line"
-              className="shrink-0 p-1 rounded text-text-muted opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-400 transition-all"
+              className="shrink-0 p-1.5 rounded text-text-muted opacity-60 active:opacity-100 active:text-red-400 transition-all"
             >
-              <X size={12} />
+              <X size={13} />
             </button>
           </div>
         ))}
@@ -354,7 +322,7 @@ export function SyncedLyricsTable({ value, onChange }: {
       </div>
       <button
         onClick={() => commit([...rows, { time: '', text: '' }])}
-        className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-text-muted opacity-70 hover:opacity-100 hover:text-accent transition-colors"
+        className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-text-muted opacity-70 active:opacity-100 active:text-accent transition-colors"
       >
         <Plus size={11} /> Add line
       </button>
@@ -494,10 +462,6 @@ export default function EditorPage({ initialSongId = null }: {
   const [deleteState,  setDeleteState]  = useState<'idle' | 'confirm' | 'submitting' | 'submitted' | 'error'>('idle')
   const [deleteError,  setDeleteError]  = useState<string | null>(null)
   const [showMore,     setShowMore]     = useState(false)
-  // 'full' = the card/left-rail layout, 'basic' = one flat stacked form with
-  // every field on screen. Remembered across sessions (and shared with the
-  // pop-out editor window, which reads the same key).
-  const [basicView,    setBasicView]    = useState(() => localStorage.getItem('editor:view') === 'basic')
   // File picker for the audio path field (File URL / File path).
   const [pickingFile, setPickingFile] = useState(false)
   // Synced lyrics as a timestamp+text table (default) or the raw LRC text.
@@ -817,6 +781,10 @@ export default function EditorPage({ initialSongId = null }: {
     if (song) populate(song)
   }
 
+  const closeSong = (): void => {
+    setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null)
+  }
+
   const submit = async (): Promise<void> => {
     if ((!song && !isNewSongDraft) || changedCount === 0) return
     setSubmitState('submitting')
@@ -932,7 +900,7 @@ export default function EditorPage({ initialSongId = null }: {
         <p className="text-text-muted text-sm max-w-[220px]">Editors propose corrections to song entries.</p>
       </div>
       <button onClick={() => setShowUserAuth(true)}
-        className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-semibold transition-colors shadow-lg">
+        className="flex items-center gap-2.5 px-5 py-3 rounded-xl bg-[#5865F2] active:bg-[#4752c4] text-white text-sm font-semibold transition-colors shadow-lg">
         <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.03.06a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 13.978 13.978 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
         Continue with Discord
       </button>
@@ -946,47 +914,34 @@ export default function EditorPage({ initialSongId = null }: {
     />
   )
 
+  const showFooter = (song || isNewSongDraft) && !loading
+
   /* ── Editor UI ───────────────────────────────────────────────────────────── */
   return (
     <div className="flex-1 flex flex-col min-h-0">
 
-      {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]">
+      {/* App bar — matches Settings' header shape */}
+      <div className="shrink-0 flex items-center gap-1 px-2">
         <button
           onClick={() => setActiveView(backView)}
-          title="Back"
-          className="p-1.5 -ml-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0"
+          aria-label="Back"
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
         >
-          <ChevronLeft size={16} />
+          <ArrowLeft size={20} />
         </button>
-        <span className="font-bold text-[15px] text-text-primary">Song editor</span>
-        <span className="flex-1" />
-        {/* Layout switch — full cards vs. the flat basic form */}
-        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-overlay border border-[var(--border)]">
-          {([['full', 'Full'], ['basic', 'Basic']] as const).map(([mode, label]) => {
-            const active = (mode === 'basic') === basicView
-            return (
-              <button
-                key={mode}
-                onClick={() => { setBasicView(mode === 'basic'); localStorage.setItem('editor:view', mode) }}
-                className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ${
-                  active ? 'bg-surface-raised text-text-primary' : 'text-text-muted opacity-65 hover:opacity-100'
-                }`}
-              >
-                {label}
-              </button>
-            )
-          })}
+        <div className="flex-1 min-w-0 px-0.5">
+          <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">Song editor</h1>
+          <p className="text-text-muted text-xs truncate">
+            {isAdmin ? 'Admin' : 'Editor'} · {account.display_name || account.discord_username}
+          </p>
         </div>
-        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${isAdmin ? 'bg-accent/20 text-accent' : 'bg-emerald-500/20 text-emerald-400'}`}>
-          {isAdmin ? 'admin' : 'editor'}
-        </span>
-        <span className="text-text-muted opacity-75 text-xs truncate max-w-[140px]">{account.display_name || account.discord_username}</span>
-        <button onClick={() => logoutAccount()} className="text-text-muted opacity-65 hover:opacity-100 text-xs transition-colors">Sign out</button>
+        <button onClick={() => logoutAccount()} className="shrink-0 px-2.5 py-2 text-xs font-medium text-text-muted opacity-75 active:opacity-100 transition-opacity">
+          Sign out
+        </button>
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto overscroll-contain min-h-0">
 
         {loading ? (
           <div className="flex items-center justify-center h-40">
@@ -1004,7 +959,7 @@ export default function EditorPage({ initialSongId = null }: {
             {lastLoadIdRef.current != null && (
               <button
                 onClick={() => { const id = lastLoadIdRef.current; if (id != null) loadSong(id) }}
-                className="text-xs font-medium text-accent hover:opacity-80 transition-opacity"
+                className="text-xs font-medium text-accent active:opacity-70 transition-opacity"
               >
                 Try again
               </button>
@@ -1021,511 +976,306 @@ export default function EditorPage({ initialSongId = null }: {
             </div>
           </div>
         ) : (
-          <div className={`mx-auto w-full ${basicView ? 'max-w-4xl px-5 py-4' : 'max-w-6xl px-6 py-6'}`}>
+          <div className="px-3.5 pt-3 pb-5">
 
             {/* ── Editing proposal banner ── */}
             {editingPropId != null && (
-              <div className="flex items-center gap-2 px-4 py-2.5 mb-5 rounded-xl bg-accent/10 border border-accent/20">
+              <div className="flex items-center gap-2 px-4 py-2.5 mb-3.5 rounded-xl bg-accent/10 border border-accent/20">
                 <Pencil size={12} className="text-accent shrink-0" />
                 <span className="text-xs text-accent font-medium flex-1">Editing proposal #{editingPropId}</span>
                 <button onClick={cancelEditProposal}
-                  className="text-accent opacity-60 hover:opacity-100 text-xs transition-colors">
+                  className="text-accent opacity-60 active:opacity-100 text-xs transition-colors">
                   Cancel
                 </button>
               </div>
             )}
 
-            {basicView ? (
-              /* ── Basic view: one flat form, every field in order ── */
-              <div className="flex flex-col gap-1.5">
-                <BasicRow label="Name" value={name} original={String(base.name || '')} onChange={setName} />
-                {/* Short fields pair up so the form doesn't run twice as long as it needs to */}
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicSelect
-                    label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
-                    onChange={setEraId}
-                    options={eras.map(e => ({ value: String(e.id), label: e.name }))}
-                    placeholder={song?.era?.name || '—'}
-                  />
-                  <BasicSelect
-                    label="Category" value={cat} original={String(base.category || '')}
-                    onChange={setCat} options={CATEGORIES}
-                  />
-                </div>
-                <BasicRow label="Album" value={album} original={String(base.album || '')} onChange={setAlbum} />
-                <BasicRow
-                  label="Alternate titles (one per line)" value={altNames}
-                  original={Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : ''}
-                  onChange={setAltNames} rows={3}
-                />
-                <BasicRow label="Credited artists" value={artists} original={String(base.credited_artists || '')} onChange={setArtists} />
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
-                  <BasicRow label="Engineers" value={eng} original={String(base.engineers || '')} onChange={setEng} />
-                </div>
-                <BasicRow label="Recording locations" value={loc} original={String(base.recording_locations || '')} onChange={setLoc} rows={2} />
-                <BasicRow label="Record dates" value={recDate} original={String(base.record_dates || '')} onChange={setRecDate} rows={2} />
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Length" value={songLength} original={String(base.length || '')} onChange={setSongLength} mono />
-                  <BasicRow label="Bitrate" value={bitrate} original={String(base.bitrate || '')} onChange={setBitrate} mono />
-                </div>
-                <BasicRow label="Additional information" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} />
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="File names" value={fileNames} original={String(base.file_names || '')} onChange={setFileNames} rows={2} />
-                  <BasicRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')} onChange={setInstrumentals} rows={2} />
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Preview date" value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} mono />
-                  <BasicRow label="Release date" value={relDate} original={String(base.release_date || '')} onChange={setRelDate} mono />
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Instrumental names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} rows={2} />
-                  <BasicRow label="Notes" value={notes} original={String(base.notes || '')} onChange={setNotes} rows={2} />
-                </div>
-                {/* One lyrics box, toggled between plain and synced — showing both
-                    at once was most of the form's remaining height. */}
-                {(() => {
-                  const showSynced = lyricsTab === 'synced'
-                  const value      = showSynced ? synced : lyrics
-                  const originalLy = String((showSynced ? base.synced_lyrics : base.lyrics) || '')
-                  const changed    = value !== originalLy && !(value === '' && originalLy === '')
-                  return (
-                    <div className={basicShellClass(changed)}>
-                      <div className="flex items-center gap-1.5">
-                        <span className={basicLabelClass}>Lyrics</span>
-                        <span className="flex-1" />
-                        {showSynced && (
-                          <button
-                            onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
-                            title={syncedTable ? 'Edit the raw LRC text' : 'Edit as timestamped lines'}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity"
-                          >
-                            {syncedTable ? 'Raw' : 'Lines'}
-                          </button>
-                        )}
-                        {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
-                          const active = lyricsTab === tab
-                          const dirty  = tab === 'lyrics'
-                            ? lyrics !== String(base.lyrics || '')
-                            : synced !== String(base.synced_lyrics || '')
-                          return (
-                            <button key={tab} onClick={() => setLyricsTab(tab)}
-                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                                active ? 'bg-surface-raised text-text-primary' : 'text-text-muted opacity-60 hover:opacity-100'
-                              }`}>
-                              {tab === 'lyrics' ? 'Plain' : 'Synced'}
-                              {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {showSynced && syncedTable ? (
-                        <SyncedLyricsTable value={synced} onChange={setSynced} />
-                      ) : (
-                        <textarea
-                          rows={12}
-                          value={value}
-                          onChange={e => (showSynced ? setSynced : setLyrics)(e.target.value)}
-                          placeholder={showSynced ? '[00:00.00] Line one\n[00:05.20] Line two\n…' : 'Full lyrics…'}
-                          className={`${basicControlClass} resize-y mt-1 ${showSynced ? 'font-mono text-xs' : ''}`}
-                        />
-                      )}
+            {/* ── Identity hero strip ── */}
+            <Card>
+              <div className="flex items-center gap-3">
+                {imageUrl
+                  ? <img src={buildImageUrl(imageUrl)} alt=""
+                      className="w-14 h-14 rounded-xl object-cover shrink-0 shadow-lg ring-1 ring-white/10" />
+                  : <div className="w-14 h-14 rounded-xl bg-surface-raised border border-[var(--border)] flex items-center justify-center shrink-0">
+                      <Music2 size={20} className="text-text-muted" />
                     </div>
-                  )
-                })()}
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Date leaked" value={dateLeaked} original={String(base.date_leaked || '')} onChange={setDateLeaked} mono />
-                  <BasicRow label="Leak type" value={leak} original={String(base.leak_type || '')} onChange={setLeak} />
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <BasicRow label="Image URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} mono />
-                  <BasicRow label="File path" value={filePath} original={String(base.path || '')} onChange={setFilePath} mono onBrowse={() => setPickingFile(true)} />
-                </div>
-                <BasicRow label="Notes for the reviewer (optional)" value={edNotes} onChange={setEdNotes} />
-
-                {submitError && (
-                  <div className="flex items-center gap-2 text-red-400 text-xs mt-1">
-                    <AlertCircle size={12} className="shrink-0" /> {submitError}
+                }
+                <div className="min-w-0 flex-1">
+                  <p className="text-text-primary font-bold text-[15px] leading-snug truncate">
+                    {name || song?.track_titles?.[0] || song?.name || 'Untitled'}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${CAT_BADGE[cat] || 'bg-surface-raised text-text-muted'}`}>
+                      {CATEGORY_LABELS[cat] || cat || 'Uncategorized'}
+                    </span>
+                    <span className="text-text-muted opacity-40 text-[11px]">{song ? `#${song.id}` : 'new song'}</span>
                   </div>
-                )}
-                {deleteError && (
-                  <div className="flex items-center gap-2 text-red-400 text-xs mt-1">
-                    <AlertCircle size={12} className="shrink-0" /> {deleteError}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2.5 mt-2">
-                  <button
-                    onClick={submit}
-                    disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
-                    className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5 ${
-                      submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
-                      submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
-                      changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
-                      'bg-surface-overlay border border-[var(--border)] text-text-primary hover:border-accent/40'
-                    }`}>
-                    {submitState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-                    {submitState === 'submitted'  && <Check size={12} />}
-                    {submitState === 'error'      && <AlertCircle size={12} />}
-                    {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit update proposal')}
-                    {submitState === 'submitting' && 'Submitting…'}
-                    {submitState === 'submitted'  && 'Submitted!'}
-                    {submitState === 'error'      && 'Try again'}
-                  </button>
-                  <span className="text-[11px] text-text-muted opacity-65 tabular-nums">
-                    {changedCount} field{changedCount !== 1 ? 's' : ''} changed
-                  </span>
-                  <span className="flex-1" />
-                  {song && !isNewSongDraft && editingPropId == null && (
-                    <button
-                      onClick={submitDeletion}
-                      onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
-                      disabled={deleteState === 'submitting' || deleteState === 'submitted'}
-                      title="Propose that this song entry be deleted. Admins review before it's removed."
-                      className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold transition-colors flex items-center gap-1.5 ${
-                        deleteState === 'submitted' ? 'text-emerald-400' :
-                        deleteState === 'error'     ? 'text-red-400' :
-                        deleteState === 'confirm'   ? 'bg-red-500 text-white' :
-                        'text-red-400/70 hover:text-red-400'
-                      }`}>
-                      {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-                      {deleteState === 'idle'       && 'Delete song'}
-                      {deleteState === 'confirm'    && 'Click again to confirm'}
-                      {deleteState === 'submitting' && 'Submitting…'}
-                      {deleteState === 'submitted'  && 'Submitted!'}
-                      {deleteState === 'error'      && 'Try again'}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
-                    className="px-2.5 py-1.5 text-[11px] font-bold text-text-muted opacity-65 hover:opacity-100 transition-opacity">
-                    Close
-                  </button>
                 </div>
+                <button onClick={closeSong} title="Close" aria-label="Close"
+                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-text-muted opacity-65 active:opacity-100 active:bg-surface-raised transition-colors">
+                  <X size={16} />
+                </button>
               </div>
-            ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start">
+            </Card>
 
-              {/* ── Left rail: preview + actions ── */}
-              <aside className="flex flex-col gap-4 lg:sticky lg:top-6">
-                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden">
-                  <div className="relative overflow-hidden">
-                    {imageUrl && (
-                      <img src={buildImageUrl(imageUrl)} alt=""
-                        className="absolute inset-0 w-full h-full object-cover scale-150 blur-3xl opacity-[0.22] pointer-events-none select-none" />
-                    )}
-                    <div className="relative flex flex-col items-center gap-3 px-5 pt-6 pb-5">
-                      {imageUrl
-                        ? <img src={buildImageUrl(imageUrl)} alt=""
-                            className="w-28 h-28 rounded-xl object-cover shadow-xl ring-1 ring-white/10" />
-                        : <div className="w-28 h-28 rounded-xl bg-surface-overlay border border-[var(--border)] flex items-center justify-center">
-                            <Music2 size={26} className="text-text-muted" />
-                          </div>
-                      }
-                      <div className="min-w-0 w-full text-center">
-                        <p className="text-text-primary font-bold text-sm leading-snug truncate">
-                          {name || song?.track_titles?.[0] || song?.name || 'Untitled'}
-                        </p>
-                        <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
-                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${CAT_BADGE[cat] || 'bg-surface-overlay text-text-muted'}`}>
-                            {CATEGORY_LABELS[cat] || cat || 'Uncategorized'}
-                          </span>
-                          <span className="text-text-muted opacity-25 text-[11px]">{song ? `#${song.id}` : 'new song'}</span>
-                        </div>
-                        {album && <p className="text-text-muted opacity-75 text-[11px] truncate mt-1">{album}</p>}
-                      </div>
-                      <button
-                        onClick={() => { setSong(null); setEditingPropId(null); setIsNewSongDraft(false); setDeleteState('idle'); setDeleteError(null) }}
-                        className="flex items-center gap-1.5 text-[11px] text-text-muted opacity-60 hover:opacity-100 transition-colors">
-                        <X size={11} /> Close
-                      </button>
-                    </div>
+            <Card title="Identity">
+              <FieldRow label="Title" value={name} original={String(base.name || '')} onChange={setName} />
+              <FieldRow label="Album" value={album} original={String(base.album || '')} onChange={setAlbum} />
+              <TextareaRow
+                label="Alt titles (one per line)" value={altNames}
+                original={Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : ''}
+                onChange={setAltNames} rows={2}
+              />
+            </Card>
+
+            <Card title="Category">
+              <div className="flex flex-wrap gap-1.5">
+                {CATEGORIES.map(c => (
+                  <button key={c.value} onClick={() => setCat(c.value)}
+                    className={`px-3 py-1.5 rounded-full text-[12px] font-semibold transition-all ${
+                      cat === c.value
+                        ? CAT_PILL[c.value] || 'bg-accent text-white'
+                        : 'bg-surface-raised text-text-muted active:text-text-primary border border-[var(--border)]'
+                    }`}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              <BasicSelect
+                label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
+                onChange={setEraId}
+                options={eras.map(e => ({ value: String(e.id), label: e.name }))}
+                placeholder={song?.era?.name || '—'}
+              />
+            </Card>
+
+            <Card title="Credits">
+              <FieldRow label="Credited artists" value={artists} original={String(base.credited_artists || '')} onChange={setArtists} />
+              <FieldGrid>
+                <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
+                <FieldRow label="Engineers" value={eng}  original={String(base.engineers || '')} onChange={setEng} />
+              </FieldGrid>
+            </Card>
+
+            <Card title="Recording">
+              <TextareaRow label="Locations"    value={loc}     original={String(base.recording_locations || '')} onChange={setLoc}     rows={2} placeholder="Studio / city" />
+              <TextareaRow label="Record dates" value={recDate} original={String(base.record_dates || '')}        onChange={setRecDate} rows={2} placeholder="YYYY-MM-DD" mono />
+            </Card>
+
+            <Card title="Dates">
+              <FieldGrid>
+                <FieldRow label="Preview"    value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
+                <FieldRow label="Released"   value={relDate}     original={String(base.release_date || '')} onChange={setRelDate}     placeholder="YYYY-MM-DD" mono />
+                <FieldRow label="Leaked"     value={dateLeaked}  original={String(base.date_leaked || '')}  onChange={setDateLeaked}  placeholder="YYYY-MM-DD" mono />
+                <FieldRow label="Leak type"  value={leak}        original={String(base.leak_type || '')}    onChange={setLeak}        placeholder="HQ, LQ…" />
+              </FieldGrid>
+            </Card>
+
+            {versionsEnabled && song && (
+              <Card title="Versions" overflowVisible>
+                <FieldGrid>
+                  <FieldRow label="Version" value={versionNum} original={versionNum} onChange={setVersionNum} placeholder="v1, TV Mix" />
+                  <div className="relative">
+                    <FieldRow
+                      label="Version title" value={versionTitle} original={versionTitle} onChange={setVersionTitle}
+                      placeholder="Shared by linked songs"
+                    />
                   </div>
-                </div>
-
-                {/* Category pills */}
-                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-4">
-                  <FieldLabel label="Category" changed={cat !== String(base.category || '')} />
-                  <div className="flex flex-wrap gap-1.5 mt-0.5">
-                    {CATEGORIES.map(c => (
-                      <button key={c.value} onClick={() => setCat(c.value)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all ${
-                          cat === c.value
-                            ? CAT_PILL[c.value] || 'bg-accent text-white'
-                            : 'bg-surface-overlay text-text-muted hover:text-text-primary border border-[var(--border)]'
-                        }`}>
-                        {c.label}
+                </FieldGrid>
+                {titleSuggestions.length > 0 && versionTitle.trim() && (
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-[var(--border)] bg-surface-raised">
+                    {titleSuggestions.map(s => (
+                      <button
+                        key={s.groupId}
+                        onClick={() => handlePickTitleSuggestion(s)}
+                        title="Joins this song into that existing version group"
+                        className="w-full text-left px-2.5 py-2 text-xs text-text-secondary active:bg-surface-overlay active:text-text-primary transition-colors truncate"
+                      >
+                        {s.title}
                       </button>
                     ))}
                   </div>
-                  <div className="mt-3.5">
-                    <SelectRow
-                      label="Era" value={eraId} original={song?.era?.id ? String(song.era.id) : ''}
-                      onChange={setEraId}
-                      options={eras.map(e => ({ value: String(e.id), label: e.name }))}
-                      placeholder={song?.era?.name || '—'}
-                    />
-                  </div>
-                </div>
+                )}
+                <button
+                  onClick={saveVersionInfo}
+                  disabled={versionSaveStatus === 'saving'}
+                  className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    versionSaveStatus === 'saved' ? 'bg-emerald-500/20 text-emerald-400' :
+                    versionSaveStatus === 'error' ? 'bg-red-500/20 text-red-400' :
+                    'bg-surface-raised border border-[var(--border)] text-text-primary active:bg-surface'
+                  }`}
+                >
+                  {versionSaveStatus === 'saving' && <Loader2 size={12} className="animate-spin" />}
+                  {versionSaveStatus === 'saved'  && <Check size={12} />}
+                  {versionSaveStatus === 'error'  && <AlertCircle size={12} />}
+                  {versionSaveStatus === 'idle'    ? 'Save version info' : versionSaveStatus === 'saving' ? 'Saving…' : versionSaveStatus === 'saved' ? 'Saved!' : 'Try again'}
+                </button>
+                {linkError && <p className="text-red-400 text-xs">{linkError}</p>}
+              </Card>
+            )}
 
-                {/* Submit / delete actions */}
-                <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 p-4 space-y-2.5">
-                  <input
-                    value={edNotes} onChange={e => setEdNotes(e.target.value)}
-                    placeholder="Editor notes…"
-                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-text-primary placeholder:text-text-muted placeholder:opacity-30 focus:outline-none focus:border-accent/40 transition-colors"
-                  />
-                  {submitError && (
-                    <div className="flex items-center gap-2 text-red-400 text-xs">
-                      <AlertCircle size={12} className="shrink-0" /> {submitError}
-                    </div>
-                  )}
-                  {deleteError && (
-                    <div className="flex items-center gap-2 text-red-400 text-xs">
-                      <AlertCircle size={12} className="shrink-0" /> {deleteError}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between px-0.5">
-                    <span className="text-[11px] text-text-muted opacity-65">Changes</span>
-                    <span className={`text-xs font-bold tabular-nums ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
-                      {changedCount} field{changedCount !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <button
-                    onClick={submit}
-                    disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
-                    className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
-                      submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
-                      changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30 cursor-not-allowed' :
-                      'bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/20'
-                    }`}>
-                    {submitState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-                    {submitState === 'submitted'  && <Check size={12} />}
-                    {submitState === 'error'      && <AlertCircle size={12} />}
-                    {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
-                    {submitState === 'submitting' && 'Submitting…'}
-                    {submitState === 'submitted'  && 'Submitted!'}
-                    {submitState === 'error'      && 'Try again'}
-                  </button>
+            {/* More fields */}
+            <button
+              onClick={() => setShowMore(v => !v)}
+              className="flex items-center gap-1.5 px-1 mb-3.5 text-[11px] font-semibold text-text-muted opacity-70 active:opacity-100 transition-colors select-none">
+              {showMore ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {showMore ? 'Fewer fields' : 'More fields'}
+            </button>
 
-                  {/* Propose deletion — only for an existing song, not a new-song draft or an in-progress edit proposal */}
-                  {song && !isNewSongDraft && editingPropId == null && (
+            {showMore && (
+              <Card title="More fields">
+                <FieldGrid>
+                  <FieldRow label="Length"  value={songLength} original={String(base.length || '')}  onChange={setSongLength} placeholder="3:59" mono />
+                  <FieldRow label="Bitrate" value={bitrate}    original={String(base.bitrate || '')}  onChange={setBitrate}    placeholder="320 kbps" mono />
+                  <FieldRow label="File names"        value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
+                  <FieldRow label="Instrumentals"     value={instrumentals}    original={String(base.instrumentals || '')}         onChange={setInstrumentals} placeholder="Versions available" />
+                  <FieldRow label="Inst. names"       value={instrumentalNames} original={String(base.instrumental_names || '')}   onChange={setInstrumentalNames} />
+                  <FieldRow label="Cover URL"         value={imageUrl}         original={String(base.image_url || '')}             onChange={setImageUrl} mono />
+                </FieldGrid>
+                <FieldRow label="File path" value={filePath} original={String(base.path || '')} onChange={setFilePath} mono onBrowse={() => setPickingFile(true)} />
+                <TextareaRow label="Additional info" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} />
+                <TextareaRow label="Notes"           value={notes}   original={String(base.notes || '')}                  onChange={setNotes}   rows={2} />
+              </Card>
+            )}
+
+            {/* LYRICS */}
+            <Card
+              title="Lyrics"
+              action={
+                <div className="flex items-center gap-0.5">
+                  {lyricsTab === 'synced' && (
                     <button
-                      onClick={submitDeletion}
-                      onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
-                      disabled={deleteState === 'submitting' || deleteState === 'submitted'}
-                      title="Propose that this song entry be deleted. Admins review before it's removed."
-                      className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                        deleteState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
-                        deleteState === 'error'     ? 'bg-red-500/20 text-red-400' :
-                        deleteState === 'confirm'   ? 'bg-red-500 text-white hover:bg-red-600' :
-                        'bg-transparent text-red-400/70 hover:text-red-400 hover:bg-red-500/10'
-                      }`}>
-                      {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
-                      {deleteState === 'submitted'  && <Check size={12} />}
-                      {(deleteState === 'idle' || deleteState === 'confirm') && <Trash2 size={12} />}
-                      {deleteState === 'error'      && <AlertCircle size={12} />}
-                      {deleteState === 'idle'       && 'Propose deletion'}
-                      {deleteState === 'confirm'    && 'Click again to confirm'}
-                      {deleteState === 'submitting' && 'Submitting…'}
-                      {deleteState === 'submitted'  && 'Submitted!'}
-                      {deleteState === 'error'      && 'Try again'}
+                      onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
+                      title={syncedTable ? 'Edit the raw LRC text' : 'Edit as timestamped lines'}
+                      className="px-1.5 py-1 rounded-lg text-[10px] font-semibold text-text-muted opacity-60 active:opacity-100 transition-opacity"
+                    >
+                      {syncedTable ? 'Raw' : 'Lines'}
                     </button>
                   )}
-                </div>
-              </aside>
-
-              {/* ── Right: field cards ── */}
-              <div className="flex flex-col gap-5 min-w-0">
-
-                <Card title="Identity">
-                  <FieldGrid>
-                    <FieldRow label="Title"    value={name}     original={String(base.name || '')}    onChange={setName} />
-                    <FieldRow label="Artists"  value={artists}  original={String(base.credited_artists || '')} onChange={setArtists} />
-                    <FieldRow label="Album"    value={album}    original={String(base.album || '')}   onChange={setAlbum} />
-                    <FieldRow label="Cover URL" value={imageUrl} original={String(base.image_url || '')} onChange={setImageUrl} placeholder="https://…" mono />
-                    <FieldRow label="File URL"  value={filePath} original={String(base.path || '')}      onChange={setFilePath} placeholder="Path/URL to the audio file" mono span={2} onBrowse={() => setPickingFile(true)} />
-                    <FieldRow label="Length"    value={songLength} original={String(base.length || '')}  onChange={setSongLength} placeholder="3:59" mono />
-                    <FieldRow label="Bitrate"   value={bitrate}  original={String(base.bitrate || '')}   onChange={setBitrate} placeholder="320 kbps" mono />
-                    <TextareaRow
-                      label="Alt names" value={altNames}
-                      original={(Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : '')}
-                      onChange={setAltNames} rows={2} placeholder="One name per line" span={2}
-                    />
-                  </FieldGrid>
-                </Card>
-
-                {versionsEnabled && song && (
-                  <Card title="Versions" overflowVisible>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={versionNum}
-                        onChange={(e) => setVersionNum(e.target.value)}
-                        placeholder="Version (e.g. v1, TV Mix)"
-                        className="w-36 bg-surface-overlay/70 border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent/40"
-                      />
-                      <div className="relative flex-1 min-w-0">
-                        <input
-                          type="text"
-                          value={versionTitle}
-                          onChange={(e) => setVersionTitle(e.target.value)}
-                          onFocus={() => setShowTitleSuggestions(true)}
-                          onBlur={() => setTimeout(() => setShowTitleSuggestions(false), 150)}
-                          placeholder="Version title (shared by all linked songs)"
-                          className="w-full bg-surface-overlay/70 border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent/40"
-                        />
-                        {showTitleSuggestions && titleSuggestions.length > 0 && (
-                          <div className="absolute z-10 top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto bg-surface border border-[var(--border)] rounded-lg shadow-2xl py-1">
-                            {titleSuggestions.map(s => (
-                              <button
-                                key={s.groupId}
-                                onMouseDown={(e) => { e.preventDefault(); handlePickTitleSuggestion(s) }}
-                                title="Joins this song into that existing version group"
-                                className="w-full text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors truncate"
-                              >
-                                {s.title}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={saveVersionInfo}
-                        disabled={versionSaveStatus === 'saving'}
-                        title="Save version info (writes directly, not part of the proposal)"
-                        className={`shrink-0 p-1.5 rounded-lg transition-colors ${
-                          versionSaveStatus === 'saved' ? 'text-emerald-400' :
-                          versionSaveStatus === 'error' ? 'text-red-400' :
-                          'bg-surface-overlay border border-[var(--border)] text-text-muted hover:text-text-primary'
-                        }`}
-                      >
-                        {versionSaveStatus === 'saving' && <Loader2 size={13} className="animate-spin" />}
-                        {versionSaveStatus === 'saved'  && <Check size={13} />}
-                        {versionSaveStatus === 'error'  && <AlertCircle size={13} />}
-                        {versionSaveStatus === 'idle'    && <Check size={13} />}
+                  {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
+                    const active = lyricsTab === tab
+                    const dirty = tab === 'lyrics'
+                      ? lyrics !== String(base.lyrics || '')
+                      : !!synced
+                    return (
+                      <button key={tab} onClick={() => setLyricsTab(tab)}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-all ${
+                          active ? 'bg-surface-raised text-text-primary' : 'text-text-muted opacity-75'
+                        }`}>
+                        {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
+                        {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
                       </button>
+                    )
+                  })}
+                </div>
+              }
+            >
+              {lyricsTab === 'lyrics' ? (
+                <div className="relative">
+                  <textarea
+                    rows={12} value={lyrics} onChange={e => setLyrics(e.target.value)}
+                    onPaste={handleLyricsPaste}
+                    disabled={lyricsLoading}
+                    placeholder="Full lyrics… or paste a Genius URL"
+                    className={`w-full bg-surface-raised/70 rounded-xl px-3 py-2.5 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
+                      lyrics !== String(base.lyrics || '') ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                    } ${lyricsLoading ? 'opacity-40' : ''}`}
+                  />
+                  {lyricsLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-xl pointer-events-none">
+                      <div className="flex items-center gap-2 text-text-muted text-xs bg-surface-overlay/90 px-3 py-1.5 rounded-lg">
+                        <Loader2 size={13} className="animate-spin" /> Fetching from Genius…
+                      </div>
                     </div>
-                    {linkError && (
-                      <p className="mt-1.5 text-red-400 text-xs">{linkError}</p>
-                    )}
-                  </Card>
-                )}
-
-                <Card title="Credits">
-                  <FieldGrid>
-                    <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
-                    <FieldRow label="Engineers" value={eng}  original={String(base.engineers || '')} onChange={setEng} />
-                  </FieldGrid>
-                </Card>
-
-                <Card title="Dates">
-                  <FieldGrid cols={3}>
-                    <FieldRow label="Recorded"  value={recDate} original={String(base.record_dates || '')}  onChange={setRecDate} placeholder="YYYY-MM-DD" mono />
-                    <FieldRow label="Released"  value={relDate} original={String(base.release_date || '')}  onChange={setRelDate} placeholder="YYYY-MM-DD" mono />
-                    <FieldRow label="Preview"   value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
-                  </FieldGrid>
-                </Card>
-
-                {/* More fields */}
-                <button
-                  onClick={() => setShowMore(v => !v)}
-                  className="flex items-center gap-1.5 self-start text-[11px] font-semibold text-text-muted opacity-70 hover:opacity-100 transition-colors select-none">
-                  {showMore ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  {showMore ? 'Fewer fields' : 'More fields'}
-                </button>
-
-                {showMore && (
-                  <Card title="Additional details">
-                    <FieldGrid>
-                      <FieldRow label="Location"   value={loc}              original={String(base.recording_locations || '')}   onChange={setLoc} placeholder="Studio / city" />
-                      <FieldRow label="Leak type"  value={leak}             original={String(base.leak_type || '')}             onChange={setLeak} placeholder="HQ, LQ, snippet…" />
-                      <FieldRow label="Date leaked" value={dateLeaked}      original={String(base.date_leaked || '')}           onChange={setDateLeaked} placeholder="YYYY-MM-DD" mono />
-                      <FieldRow label="File names" value={fileNames}        original={String(base.file_names || '')}            onChange={setFileNames} />
-                      <FieldRow label="Instrumentals" value={instrumentals} original={String(base.instrumentals || '')}       onChange={setInstrumentals} placeholder="Instrumental versions available" />
-                      <FieldRow label="Inst. names" value={instrumentalNames} original={String(base.instrumental_names || '')} onChange={setInstrumentalNames} />
-                      <TextareaRow label="Add. info" value={addInfo} original={String(base.additional_information || '')} onChange={setAddInfo} rows={3} span={2} />
-                      <TextareaRow label="Notes"     value={notes}   original={String(base.notes || '')}                  onChange={setNotes}   rows={2} span={2} />
-                    </FieldGrid>
-                  </Card>
-                )}
-
-                {/* LYRICS */}
-                <Card
-                  title="Lyrics"
-                  action={
-                    <div className="flex items-center gap-1">
-                      {lyricsTab === 'synced' && (
-                        <button
-                          onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
-                          title={syncedTable ? 'Edit the raw LRC text' : 'Edit as timestamped lines'}
-                          className="px-2 py-1 rounded-lg text-[11px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity"
-                        >
-                          {syncedTable ? 'Raw' : 'Lines'}
-                        </button>
-                      )}
-                      {(['lyrics', 'synced'] as LyricsTab[]).map(tab => {
-                        const active = lyricsTab === tab
-                        const dirty = tab === 'lyrics'
-                          ? lyrics !== String(base.lyrics || '')
-                          : !!synced
-                        return (
-                          <button key={tab} onClick={() => setLyricsTab(tab)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
-                              active ? 'bg-surface-overlay text-text-primary' : 'text-text-muted opacity-75 hover:text-text-muted'
-                            }`}>
-                            {tab === 'lyrics' ? 'Lyrics' : 'Synced'}
-                            {dirty && <span className="w-1 h-1 rounded-full bg-accent inline-block" />}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  }
-                >
-                  {lyricsTab === 'lyrics' ? (
-                    <div className="relative">
-                      <textarea
-                        rows={15} value={lyrics} onChange={e => setLyrics(e.target.value)}
-                        onPaste={handleLyricsPaste}
-                        disabled={lyricsLoading}
-                        placeholder="Full lyrics… or paste a Genius URL"
-                        className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors leading-relaxed ${
-                          lyrics !== String(base.lyrics || '') ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
-                        } ${lyricsLoading ? 'opacity-40' : ''}`}
-                      />
-                      {lyricsLoading && (
-                        <div className="absolute inset-0 flex items-center justify-center rounded-xl pointer-events-none">
-                          <div className="flex items-center gap-2 text-text-muted text-xs bg-surface-overlay/80 px-3 py-1.5 rounded-lg">
-                            <Loader2 size={13} className="animate-spin" /> Fetching from Genius…
-                          </div>
-                        </div>
-                      )}
-                      {lyricsError && (
-                        <div className="absolute bottom-2 inset-x-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-red-400 text-xs pointer-events-none">
-                          <AlertCircle size={12} className="shrink-0" /> {lyricsError}
-                        </div>
-                      )}
-                    </div>
-                  ) : syncedTable ? (
-                    <SyncedLyricsTable value={synced} onChange={setSynced} />
-                  ) : (
-                    <textarea
-                      rows={15} value={synced} onChange={e => setSynced(e.target.value)}
-                      placeholder={"[00:00.00] Line one\n[00:05.20] Line two\n…"}
-                      className={`w-full bg-surface-overlay/70 rounded-xl px-3.5 py-3 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
-                        synced ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
-                      }`}
-                    />
                   )}
-                </Card>
-              </div>
-            </div>
-            )}
+                  {lyricsError && (
+                    <div className="absolute bottom-2 inset-x-2 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/20 text-red-400 text-xs pointer-events-none">
+                      <AlertCircle size={12} className="shrink-0" /> {lyricsError}
+                    </div>
+                  )}
+                </div>
+              ) : syncedTable ? (
+                <SyncedLyricsTable value={synced} onChange={setSynced} />
+              ) : (
+                <textarea
+                  rows={12} value={synced} onChange={e => setSynced(e.target.value)}
+                  placeholder={"[00:00.00] Line one\n[00:05.20] Line two\n…"}
+                  className={`w-full bg-surface-raised/70 rounded-xl px-3 py-2.5 text-sm font-mono text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-25 border transition-colors ${
+                    synced ? 'border-accent/40' : 'border-[var(--border)] focus:border-accent/40'
+                  }`}
+                />
+              )}
+            </Card>
+
+            <FieldRow label="Notes for the reviewer (optional)" value={edNotes} onChange={setEdNotes} />
           </div>
         )}
 
       </div>
+
+      {/* Sticky footer actions */}
+      {showFooter && (
+        <div className="shrink-0 border-t border-[var(--border)] px-3.5 pt-2.5 pb-3 space-y-2">
+          {submitError && (
+            <div className="flex items-center gap-2 text-red-400 text-xs">
+              <AlertCircle size={12} className="shrink-0" /> {submitError}
+            </div>
+          )}
+          {deleteError && (
+            <div className="flex items-center gap-2 text-red-400 text-xs">
+              <AlertCircle size={12} className="shrink-0" /> {deleteError}
+            </div>
+          )}
+          <div className="flex items-center justify-between px-0.5">
+            <span className="text-[11px] text-text-muted opacity-65">Changes</span>
+            <span className={`text-xs font-bold tabular-nums ${changedCount > 0 ? 'text-accent' : 'text-text-muted opacity-30'}`}>
+              {changedCount} field{changedCount !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <button
+            onClick={submit}
+            disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
+            className={`w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
+              submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+              submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
+              changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30' :
+              'bg-accent text-white active:bg-accent/90 shadow-lg shadow-accent/20'
+            }`}>
+            {submitState === 'submitting' && <Loader2 size={14} className="animate-spin" />}
+            {submitState === 'submitted'  && <Check size={14} />}
+            {submitState === 'error'      && <AlertCircle size={14} />}
+            {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
+            {submitState === 'submitting' && 'Submitting…'}
+            {submitState === 'submitted'  && 'Submitted!'}
+            {submitState === 'error'      && 'Try again'}
+          </button>
+
+          {/* Propose deletion — only for an existing song, not a new-song draft or an in-progress edit proposal */}
+          {song && !isNewSongDraft && editingPropId == null && (
+            <button
+              onClick={submitDeletion}
+              onBlur={() => { if (deleteState === 'confirm') setDeleteState('idle') }}
+              disabled={deleteState === 'submitting' || deleteState === 'submitted'}
+              title="Propose that this song entry be deleted. Admins review before it's removed."
+              className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                deleteState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
+                deleteState === 'error'     ? 'bg-red-500/20 text-red-400' :
+                deleteState === 'confirm'   ? 'bg-red-500 text-white' :
+                'bg-transparent text-red-400/70 active:text-red-400 active:bg-red-500/10'
+              }`}>
+              {deleteState === 'submitting' && <Loader2 size={12} className="animate-spin" />}
+              {deleteState === 'submitted'  && <Check size={12} />}
+              {(deleteState === 'idle' || deleteState === 'confirm') && <Trash2 size={12} />}
+              {deleteState === 'error'      && <AlertCircle size={12} />}
+              {deleteState === 'idle'       && 'Propose deletion'}
+              {deleteState === 'confirm'    && 'Tap again to confirm'}
+              {deleteState === 'submitting' && 'Submitting…'}
+              {deleteState === 'submitted'  && 'Submitted!'}
+              {deleteState === 'error'      && 'Try again'}
+            </button>
+          )}
+        </div>
+      )}
 
       {pickingFile && (
         <FilePickerModal
@@ -1596,7 +1346,7 @@ const ApplicationView = memo(function ApplicationView({ application, loading, on
         <p className="text-text-primary font-bold">Application pending</p>
         <p className="text-text-muted text-sm max-w-[220px] leading-relaxed">Your application is under review. You'll be notified on Discord.</p>
       </div>
-      <button onClick={onSignOut} className="text-xs text-text-muted opacity-65 hover:text-text-muted transition-colors mt-1">Sign out</button>
+      <button onClick={onSignOut} className="text-xs text-text-muted opacity-65 active:text-text-muted transition-colors mt-1">Sign out</button>
     </div>
   )
 
@@ -1609,15 +1359,15 @@ const ApplicationView = memo(function ApplicationView({ application, loading, on
         <p className="text-text-primary font-bold">Not approved</p>
         {application.review_notes && <p className="text-text-muted text-sm max-w-[220px] italic leading-relaxed">"{application.review_notes}"</p>}
       </div>
-      <button onClick={onSignOut} className="text-xs text-text-muted opacity-65 hover:text-text-muted transition-colors mt-1">Sign out</button>
+      <button onClick={onSignOut} className="text-xs text-text-muted opacity-65 active:text-text-muted transition-colors mt-1">Sign out</button>
     </div>
   )
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-      <div className="mx-auto w-full max-w-xl px-6 py-8">
+      <div className="w-full px-4 py-6">
         <div className="rounded-2xl border border-[var(--border)] bg-surface-raised/50 overflow-hidden">
-          <div className="px-6 pt-6 pb-5 border-b border-[var(--border)] flex items-center gap-3">
+          <div className="px-5 pt-5 pb-4 border-b border-[var(--border)] flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
               <Award size={19} className="text-accent" />
             </div>
@@ -1626,11 +1376,9 @@ const ApplicationView = memo(function ApplicationView({ application, loading, on
               <p className="text-text-muted opacity-75 text-xs mt-0.5">Propose corrections. Admins review and apply them.</p>
             </div>
           </div>
-          <div className="px-6 py-6 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <AppField label="Display name"      value={displayName} onChange={setDisplayName} placeholder="How you want to be credited" />
-              <AppField label="Contact"           value={contact}     onChange={setContact}     placeholder="Discord, email…" />
-            </div>
+          <div className="px-5 py-5 space-y-3.5">
+            <AppField label="Display name"      value={displayName} onChange={setDisplayName} placeholder="How you want to be credited" />
+            <AppField label="Contact"           value={contact}     onChange={setContact}     placeholder="Discord, email…" />
             <AppField label="Areas of focus"    value={areas}       onChange={setAreas}       placeholder="Lyrics, sessions, recording dates…" />
             <AppField label="Experience"        value={experience}  onChange={setExperience}  rows={3}
               placeholder="Other databases you've contributed to, sources you have access to…" />
@@ -1642,11 +1390,11 @@ const ApplicationView = memo(function ApplicationView({ application, loading, on
               </div>
             )}
             <button onClick={submit} disabled={submitting}
-              className="w-full py-2.5 rounded-xl bg-accent text-white hover:bg-accent/90 text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-accent/20">
+              className="w-full py-3 rounded-xl bg-accent text-white active:bg-accent/90 text-sm font-bold transition-colors flex items-center justify-center gap-2 shadow-lg shadow-accent/20">
               {submitting && <Loader2 size={14} className="animate-spin" />}
               Submit application
             </button>
-            <button onClick={onSignOut} className="w-full text-xs text-text-muted opacity-65 hover:opacity-100 transition-colors py-1">Sign out</button>
+            <button onClick={onSignOut} className="w-full text-xs text-text-muted opacity-65 active:opacity-100 transition-colors py-1">Sign out</button>
           </div>
         </div>
       </div>

@@ -62,7 +62,6 @@ const WrldView = lazy(() => import('./components/WrldView'))
 const NewsView = lazy(() => import('./components/NewsView'))
 const HeardleView = lazy(() => import('./components/HeardleView'))
 const StatsView = lazy(() => import('./components/StatsView'))
-const AlbumsAdminView = lazy(() => import('./components/AlbumsAdminView'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const ContributorPage = lazy(() => import('./components/ContributorPage'))
 const ContributorProfileView = lazy(() => import('./components/ContributorProfileView'))
@@ -233,7 +232,6 @@ export default function App(): JSX.Element {
               : activeView === 'stats' ? <StatsView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />
-              : activeView === 'albums-admin' ? <AlbumsAdminView />
               : activeView === 'not-found' ? <NotFoundView />
               : <ApiTrackerView />}
             </Suspense>

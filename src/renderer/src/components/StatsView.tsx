@@ -54,12 +54,12 @@ const PERIOD_OPTIONS: { id: ListeningPeriod; label: string }[] = [
 
 function StatCard({ icon, value, label }: { icon: JSX.Element; value: string; label: string }): JSX.Element {
   return (
-    <div className="flex-1 min-w-[140px] rounded-xl border border-[var(--border)] bg-surface-overlay/40 px-4 py-3.5">
+    <div className="rounded-xl bg-[var(--surface-overlay)] px-3.5 py-3">
       <div className="flex items-center gap-1.5 text-text-muted mb-1.5">
         {icon}
         <span className="text-[10px] font-semibold uppercase tracking-widest">{label}</span>
       </div>
-      <p className="text-text-primary text-2xl font-bold tabular-nums truncate" title={value}>{value}</p>
+      <p className="text-text-primary text-xl font-bold tabular-nums truncate" title={value}>{value}</p>
     </div>
   )
 }
@@ -69,7 +69,7 @@ function BarList({ title, entries, empty }: { title: string; entries: RankedEntr
   // tail of small shares renders as a row of invisible slivers.
   const max = entries[0]?.plays ?? 0
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-surface-overlay/40 px-4 py-3.5">
+    <div className="rounded-xl bg-[var(--surface-overlay)] px-3.5 py-3.5">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-text-muted mb-3">{title}</p>
       {entries.length === 0 ? (
         <p className="text-text-muted text-xs">{empty}</p>
@@ -178,55 +178,44 @@ export default function StatsView(): JSX.Element {
   const nothingEverPlayed = playedPrefs(songPrefs).length === 0 && listeningPlays.length === 0
   if (nothingEverPlayed) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-        <BarChart3 size={40} className="text-text-muted mb-4" />
-        <h2 className="text-text-primary text-lg font-semibold mb-1">Nothing to wrap yet</h2>
-        <p className="text-text-muted text-sm max-w-sm leading-relaxed">
-          Play some songs and they'll show up here. A song counts once you've listened
-          to 30 seconds of it (or half of it, if it's shorter than a minute).
-        </p>
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="shrink-0 px-2 pl-4">
+          <h1 className="text-text-primary text-[20px] font-bold leading-tight">Wrapped</h1>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+          <BarChart3 size={40} className="text-text-muted mb-4" />
+          <h2 className="text-text-primary text-lg font-semibold mb-1">Nothing to wrap yet</h2>
+          <p className="text-text-muted text-sm max-w-sm leading-relaxed">
+            Play some songs and they'll show up here. A song counts once you've listened
+            to 30 seconds of it (or half of it, if it's shorter than a minute).
+          </p>
+        </div>
       </div>
     )
   }
 
   return (
     <>
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        <div className="px-5 pt-5 pb-8">
-          {/* ── Hero ── */}
-          <div className="flex items-center gap-4 mb-5 flex-wrap">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-accent/40 to-accent/10 flex items-center justify-center shrink-0">
-              <BarChart3 size={32} className="text-accent" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-text-primary text-2xl font-bold">Your Wrapped</h1>
-                <span className="px-2 py-0.5 rounded-full bg-surface-raised text-text-muted text-[10px] font-semibold uppercase tracking-widest shrink-0">
-                  {periodLabel}
-                </span>
-              </div>
-              <p className="text-text-muted text-sm mt-1">
-                {stats.distinctSongs.toLocaleString()} {stats.distinctSongs === 1 ? 'song' : 'songs'} · {stats.totalPlays.toLocaleString()} {stats.totalPlays === 1 ? 'play' : 'plays'}
-              </p>
-            </div>
-            {topTracks.length > 0 && (
-              <button
-                onClick={() => playCollection(topTracks.slice(0, PLAY_TOP_N))}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-accent text-black text-sm font-semibold hover:scale-105 transition-transform shrink-0"
-                title={`Play your top ${Math.min(PLAY_TOP_N, topTracks.length)} songs`}
-              >
-                <Play size={16} fill="currentColor" /> Play top songs
-              </button>
-            )}
-          </div>
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {/* App bar — same shape as the other root tabs' */}
+        <div className="shrink-0 px-2 pl-4">
+          <h1 className="text-text-primary text-[20px] font-bold leading-tight">Wrapped</h1>
+          <p className="text-text-muted text-xs truncate">
+            {periodLabel} · {stats.distinctSongs.toLocaleString()} {stats.distinctSongs === 1 ? 'song' : 'songs'} · {stats.totalPlays.toLocaleString()} {stats.totalPlays === 1 ? 'play' : 'plays'}
+          </p>
+        </div>
 
-          <div className="flex gap-2 mb-5 flex-wrap">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-3 pb-6">
+
+          {/* ── Period switcher ── */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--surface-highest)] mb-3">
             {PERIOD_OPTIONS.map((opt) => (
               <button
                 key={opt.id}
                 onClick={() => { setPeriod(opt.id); setExpanded(false) }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  period === opt.id ? 'bg-accent text-black' : 'bg-surface-overlay text-text-muted hover:text-text-primary'
+                aria-pressed={period === opt.id}
+                className={`flex-1 min-w-0 h-9 rounded-lg text-[13px] font-medium transition-colors ${
+                  period === opt.id ? 'bg-accent text-white' : 'text-text-secondary active:bg-[var(--surface-overlay)]'
                 }`}
               >
                 {opt.label}
@@ -235,7 +224,7 @@ export default function StatsView(): JSX.Element {
           </div>
 
           {coverage.untracked > 0 && (
-            <p className="text-text-muted text-xs mb-5 leading-relaxed">
+            <p className="text-text-muted text-xs mb-3 leading-relaxed">
               {period === 'all' ? (
                 <>
                   All {coverage.allTimePlays.toLocaleString()} plays counted.{' '}
@@ -265,7 +254,7 @@ export default function StatsView(): JSX.Element {
           )}
 
           {loading && (
-            <div className="flex items-center gap-2 text-text-muted text-xs mb-4">
+            <div className="flex items-center gap-2 text-text-muted text-xs mb-3">
               <Loader2 size={13} className="animate-spin" />
               {progress?.phase === 'songs' ? (
                 <span>Loading song details… {progress.done}/{progress.total}</span>
@@ -277,8 +266,17 @@ export default function StatsView(): JSX.Element {
             </div>
           )}
 
+          {topTracks.length > 0 && (
+            <button
+              onClick={() => playCollection(topTracks.slice(0, PLAY_TOP_N))}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-accent text-white text-sm font-semibold active:bg-accent/90 transition-colors mb-4 shadow-lg shadow-accent/20"
+            >
+              <Play size={16} fill="currentColor" /> Play top {Math.min(PLAY_TOP_N, topTracks.length)} songs
+            </button>
+          )}
+
           {/* ── Headline numbers ── */}
-          <div className="flex flex-wrap gap-3 mb-3">
+          <div className="grid grid-cols-2 gap-2.5 mb-3">
             <StatCard icon={<Play size={12} fill="currentColor" />} value={stats.totalPlays.toLocaleString()} label="Total plays" />
             <StatCard icon={<ListMusic size={12} />} value={stats.distinctSongs.toLocaleString()} label="Songs played" />
             <StatCard icon={<Clock size={12} />} value={formatListeningTime(stats.totalSeconds)} label="Time listened" />
@@ -286,7 +284,7 @@ export default function StatsView(): JSX.Element {
           </div>
 
           {/* ── Breakdowns ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-1 gap-2.5 mb-5">
             <BarList title="Top eras" entries={stats.eras} empty="No era data on your played songs." />
             <BarList title="By category" entries={stats.categories} empty="No category data." />
             <BarList title="Top producers" entries={stats.producers} empty="No producer credits on your played songs." />
@@ -294,12 +292,12 @@ export default function StatsView(): JSX.Element {
           </div>
 
           {/* ── Top songs ── */}
-          <div className="flex items-baseline justify-between mb-2">
+          <div className="flex items-baseline justify-between mb-1.5 px-0.5">
             <h2 className="text-text-primary text-sm font-semibold">Top songs</h2>
             {stats.played.length > TOP_SONGS_COLLAPSED && (
               <button
                 onClick={() => setExpanded((v) => !v)}
-                className="text-accent hover:text-accent/80 text-xs font-semibold transition-colors"
+                className="text-accent active:opacity-70 text-xs font-semibold transition-opacity"
               >
                 {expanded ? 'Show less' : `Show all ${stats.played.length}`}
               </button>
@@ -313,42 +311,27 @@ export default function StatsView(): JSX.Element {
               return (
                 <div
                   key={songId}
-                  className="group flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-raised transition-colors"
-                  onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ track, songId, x: e.clientX, y: e.clientY }) }}
+                  className="flex items-center gap-2.5 px-0.5 py-2 rounded-lg active:bg-surface-raised transition-colors"
                 >
-                  <span className="w-6 text-center text-xs text-text-muted tabular-nums shrink-0 hidden md:block">{i + 1}</span>
-                  <button onClick={() => playTrack(track, topTracks)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
-                    <AlbumArtThumbnail track={track} size={40} className="rounded-md" />
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 md:group-hover:opacity-100 rounded-md transition-opacity">
-                      <Play size={16} className="text-white" fill="currentColor" />
-                    </span>
+                  <span className="w-5 text-center text-xs text-text-muted tabular-nums shrink-0">{i + 1}</span>
+                  <button onClick={() => playTrack(track, topTracks)} className="shrink-0" aria-label={`Play ${track.title}`}>
+                    <AlbumArtThumbnail track={track} size={44} className="rounded-md" />
                   </button>
-                  <div className="min-w-0 flex-1 cursor-pointer" onClick={() => playTrack(track, topTracks)}>
+                  <div className="min-w-0 flex-1" onClick={() => playTrack(track, topTracks)}>
                     <p className="text-text-primary text-sm font-medium truncate" title={track.title}>{track.title}</p>
                     <p className="text-text-muted text-xs truncate">
                       {track.artist}{entry.song.era?.name ? ` · ${entry.song.era.name}` : ''}
                     </p>
                   </div>
-                  {/* Per-song share bar, scaled against the most-played song. */}
-                  <div className="hidden sm:block w-24 shrink-0">
-                    <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-accent/70"
-                        style={{ width: `${topPlays > 0 ? Math.max(3, (entry.playcount / topPlays) * 100) : 0}%` }}
-                      />
-                    </div>
-                  </div>
-                  <span className="text-text-secondary text-xs tabular-nums shrink-0 w-16 text-right">
-                    {entry.playcount.toLocaleString()} {entry.playcount === 1 ? 'play' : 'plays'}
+                  <span className="text-text-secondary text-xs tabular-nums shrink-0">
+                    {entry.playcount.toLocaleString()}
                   </span>
-                  {/* Was opacity-0 group-hover:opacity-100 with no touch
-                      equivalent — invisible and undiscoverable on mobile. */}
                   <button
                     onClick={(e) => { e.stopPropagation(); setCtxMenu((prev) => prev?.track.id === track.id ? null : { track, songId, x: e.clientX, y: e.clientY }) }}
-                    className="text-text-muted hover:text-text-primary opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all shrink-0 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center md:p-1.5"
+                    className="text-text-muted active:text-text-primary transition-colors shrink-0 w-9 h-9 flex items-center justify-center"
                     aria-label="More options"
                   >
-                    <MoreHorizontal size={18} className="md:w-4 md:h-4" />
+                    <MoreHorizontal size={18} />
                   </button>
                 </div>
               )
@@ -358,39 +341,37 @@ export default function StatsView(): JSX.Element {
           {/* Songs whose metadata couldn't be resolved still hold play counts,
               so say so rather than silently under-reporting the totals. */}
           {!loading && stats.played.length < prefs.length && (
-            <p className="text-text-muted text-xs mt-4">
+            <p className="text-text-muted text-xs mt-3 px-0.5">
               {prefs.length - stats.played.length} played {prefs.length - stats.played.length === 1 ? 'song' : 'songs'} couldn't be loaded and {prefs.length - stats.played.length === 1 ? 'is' : 'are'} not counted above.
             </p>
           )}
 
           {periodEvents.length > 0 && (
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="mt-5 mb-5">
+              <div className="flex items-center gap-2 mb-2 px-0.5">
                 <CalendarDays size={14} className="text-text-muted" />
                 <h2 className="text-text-primary text-sm font-semibold">Listening timeline</h2>
               </div>
-              <div className="rounded-xl border border-[var(--border)] bg-surface-overlay/40 divide-y divide-[var(--border)] overflow-hidden">
+              <div className="rounded-xl bg-[var(--surface-overlay)] divide-y divide-[var(--border)] overflow-hidden">
                 {periodEvents.slice(0, TIMELINE_LIMIT).map((event, index) => {
                   const song = songs.get(event.song)
                   const title = song?.name ?? `Song #${event.song}`
                   return (
-                    <div key={`${event.song}-${event.played_at}-${index}`} className="flex items-center gap-3 px-3 py-2.5">
-                      <span className="text-text-muted text-[11px] tabular-nums shrink-0 w-24">{relativeTime(event.played_at)}</span>
-                      <button
-                        onClick={() => song && playTrack(statsSongToTrack(song))}
-                        className="min-w-0 flex-1 text-left text-sm text-text-primary truncate hover:text-accent transition-colors"
-                        title={title}
-                      >
-                        {title}
-                      </button>
-                    </div>
+                    <button
+                      key={`${event.song}-${event.played_at}-${index}`}
+                      onClick={() => song && playTrack(statsSongToTrack(song))}
+                      className="w-full flex items-center gap-3 px-3.5 py-3 text-left active:bg-surface-raised transition-colors"
+                    >
+                      <span className="text-text-muted text-[11px] tabular-nums shrink-0 w-20">{relativeTime(event.played_at)}</span>
+                      <span className="min-w-0 flex-1 text-sm text-text-primary truncate" title={title}>{title}</span>
+                    </button>
                   )
                 })}
               </div>
             </div>
           )}
 
-          <div className="mt-6 pt-4 border-t border-[var(--border)] space-y-1.5">
+          <div className="pt-3 border-t border-[var(--border)] space-y-1.5">
             <p className="text-text-muted text-[11px] leading-relaxed flex items-start gap-1.5">
               <Music2 size={12} className="mt-0.5 shrink-0 opacity-60" />
               <span>

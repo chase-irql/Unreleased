@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Settings, ShieldCheck, Disc, MoreHorizontal } from 'lucide-react'
+import { Settings, ShieldCheck, MoreHorizontal } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
 import { CONTRIBUTOR_ENABLED, primaryProfileView } from '../lib/userApi'
@@ -50,14 +50,11 @@ export default function BottomNav(): JSX.Element {
       icon: <span className="[&_svg]:w-6 [&_svg]:h-6 [&_img]:w-7 [&_img]:h-7 flex items-center justify-center">{item.icon}</span>,
     }))
 
-  // Albums and the staff profile aren't in NAV_ITEMS (they're role-gated extras
-  // with no desktop side-menu row), so they stay special-cased here and read
-  // their toggle out of the same map under their view id.
+  // The staff profile isn't in NAV_ITEMS (it's a role-gated extra with no
+  // desktop side-menu row), so it stays special-cased here and reads its
+  // toggle out of the same map under its view id.
   const navShown = (view: ViewType): boolean => navVisibility[view] ?? true
   const extraTabs: Tab[] = []
-  if ((isAdmin || isEditor) && navShown('albums-admin')) {
-    extraTabs.push({ view: 'albums-admin', icon: <Disc size={24} />, label: 'Albums' })
-  }
   if ((isAdmin || isEditor || isContributor || isManager) && navShown(profileView)) {
     extraTabs.push({
       view: profileView,

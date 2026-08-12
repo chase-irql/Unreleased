@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen, Copy } from 'lucide-react'
+import { Loader2, Trophy, FileEdit, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen, Copy } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, CompFileProposal } from '../lib/userApi'
 import { apiFetch, JWApiEra, JWApiSong } from '../lib/juicewrldApi'
@@ -63,7 +63,7 @@ function CopyFromSong({ onCopy, copiedFrom, onClear }: {
     <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20">
       <Copy size={12} className="text-accent shrink-0" />
       <span className="text-[11px] text-accent font-medium flex-1 min-w-0 truncate">Copied from "{copiedFrom}"</span>
-      <button onClick={onClear} className="text-accent opacity-60 hover:opacity-100 text-[11px] transition-opacity shrink-0">Clear</button>
+      <button onClick={onClear} className="text-accent opacity-60 active:opacity-100 text-[11px] transition-opacity shrink-0">Clear</button>
     </div>
   )
 
@@ -82,7 +82,7 @@ function CopyFromSong({ onCopy, copiedFrom, onClear }: {
             <button
               key={r.id}
               onClick={() => pick(r)}
-              className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 text-xs text-text-secondary hover:bg-[var(--surface-overlay)] hover:text-text-primary transition-colors"
+              className="w-full flex items-center gap-2 text-left px-2.5 py-2 text-xs text-text-secondary active:bg-[var(--surface-overlay)] active:text-text-primary transition-colors"
             >
               <span className="flex-1 min-w-0 truncate">{r.track_titles?.[0] || r.name}</span>
               {r.era?.name && <span className="text-[10px] text-text-muted opacity-60 shrink-0">{r.era.name}</span>}
@@ -226,7 +226,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
             <p className="text-text-primary font-bold text-sm">Propose new song</p>
             <p className="text-text-muted text-xs opacity-60 mt-0.5">Admins review and add it to the database</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-[var(--surface-overlay)] transition-colors shrink-0">
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-lg text-text-muted active:text-text-primary active:bg-[var(--surface-overlay)] transition-colors shrink-0">
             <X size={15} />
           </button>
         </div>
@@ -249,7 +249,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
           <BasicRow label="Credited artists" value={artists} onChange={setArtists} placeholder="Juice WRLD ft. …" />
 
           <button onClick={() => setShowMore(v => !v)}
-            className="flex items-center gap-1.5 self-start px-1 py-1 text-[11px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity select-none">
+            className="flex items-center gap-1.5 self-start px-1 py-1.5 text-[11px] font-semibold text-text-muted opacity-60 active:opacity-100 transition-opacity select-none">
             {showMore ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
             {showMore ? 'Fewer fields' : 'More fields'}
           </button>
@@ -289,7 +289,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
                   <span className="flex-1" />
                   <button
                     onClick={() => { setSyncedTable(v => !v); localStorage.setItem('editor:syncedFormat', syncedTable ? 'raw' : 'table') }}
-                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-text-muted opacity-60 hover:opacity-100 transition-opacity">
+                    className="px-1.5 py-1 rounded text-[10px] font-semibold text-text-muted opacity-60 active:opacity-100 transition-opacity">
                     {syncedTable ? 'Raw' : 'Lines'}
                   </button>
                 </div>
@@ -513,97 +513,74 @@ export default function EditorProfileView(): JSX.Element {
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
 
       {/* ── Header ── */}
-      <div className="px-6 pb-5 border-b border-[var(--border)] shrink-0 pt-5">
-        <div className="flex items-center justify-between mb-4">
-          <button
-            onClick={() => setActiveView('api-tracker')}
-            className="flex items-center gap-1.5 text-text-muted hover:text-text-primary text-xs transition-colors"
-          >
-            <ChevronLeft size={14} /> Back
-          </button>
-          <div className="flex items-center gap-1.5">
-            {(account?.is_editor || account?.is_administrator) && (
-              <>
-                <button
-                  onClick={() => setActiveView('albums-admin')}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-raised hover:bg-surface-highest text-text-secondary hover:text-text-primary text-xs font-semibold transition-colors"
-                  title="Edit albums (wrlddata.json)"
-                >
-                  Edit albums
-                </button>
-                <button
-                  onClick={() => setShowAddSong(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent text-xs font-semibold transition-colors"
-                  title="Propose a new song"
-                >
-                  <Plus size={12} /> New song
-                </button>
-              </>
+      <div className="shrink-0 px-2 pt-1">
+        <div className="flex items-center gap-1">
+          <div className="flex-1 min-w-0 pl-2.5 flex items-center gap-3">
+            {account?.discord_avatar ? (
+              <img src={account.discord_avatar} alt="" className="w-11 h-11 rounded-full object-cover shrink-0 ring-2 ring-[var(--border)]" />
+            ) : (
+              <div className="w-11 h-11 rounded-full bg-accent/20 text-accent flex items-center justify-center text-lg font-bold shrink-0">
+                {(account?.display_name || account?.discord_username || '?').charAt(0).toUpperCase()}
+              </div>
             )}
-            {profileTab === 'comp' && isContributor && (
-              <button
-                onClick={() => setActiveView('contributor')}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-accent/15 hover:bg-accent/25 text-accent text-xs font-semibold transition-colors"
-                title="Propose a comp file change"
-              >
-                <Plus size={12} /> New comp proposal
-              </button>
-            )}
-            <button
-              onClick={() => setRefreshKey(k => k + 1)}
-              disabled={refreshing}
-              className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-[var(--surface-raised)] transition-colors disabled:opacity-40"
-              title="Refresh"
-            >
-              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {account?.discord_avatar ? (
-            <img src={account.discord_avatar} alt="" className="w-14 h-14 rounded-full object-cover shrink-0 ring-2 ring-[var(--border)]" />
-          ) : (
-            <div className="w-14 h-14 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xl font-bold shrink-0">
-              {(account?.display_name || account?.discord_username || '?').charAt(0).toUpperCase()}
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-text-primary text-xl font-bold truncate">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-text-primary text-[17px] font-bold leading-tight truncate">
                 {account?.display_name || account?.discord_username || 'My Profile'}
               </h1>
-              {account?.is_administrator && (
-                <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-semibold uppercase tracking-wide shrink-0">Admin</span>
-              )}
-              {account?.is_editor && !account.is_administrator && (
-                <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary text-[10px] font-semibold uppercase tracking-wide shrink-0">Editor</span>
-              )}
-              {isManager && !isAdmin && (
-                <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Manager</span>
-              )}
-              {isContributor && !account?.is_administrator && (
-                <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Contributor</span>
-              )}
-            </div>
-            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-              {myEntry && (
-                <p className="text-text-muted text-xs flex items-center gap-1.5">
-                  <Trophy size={11} className="text-accent" />
-                  Rank #{myEntry.rank} · {myEntry.approved_count} approved
-                </p>
-              )}
-              {!loadingProposals && (
-                <p className="text-text-muted opacity-60 text-xs">{proposals.length} proposal{proposals.length !== 1 ? 's' : ''} submitted</p>
-              )}
+              <p className="text-text-muted text-xs truncate">
+                {myEntry
+                  ? `Rank #${myEntry.rank} · ${myEntry.approved_count} approved`
+                  : !loadingProposals ? `${proposals.length} proposal${proposals.length !== 1 ? 's' : ''} submitted` : ''}
+              </p>
             </div>
           </div>
+          <button
+            onClick={() => setRefreshKey(k => k + 1)}
+            disabled={refreshing}
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay transition-colors disabled:opacity-40"
+            title="Refresh"
+          >
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 pl-2.5 pt-1.5 pb-1 flex-wrap">
+          {account?.is_administrator && (
+            <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent text-[10px] font-semibold uppercase tracking-wide shrink-0">Admin</span>
+          )}
+          {account?.is_editor && !account.is_administrator && (
+            <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary text-[10px] font-semibold uppercase tracking-wide shrink-0">Editor</span>
+          )}
+          {isManager && !isAdmin && (
+            <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Manager</span>
+          )}
+          {isContributor && !account?.is_administrator && (
+            <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 text-[10px] font-semibold uppercase tracking-wide shrink-0">Contributor</span>
+          )}
+          {(account?.is_editor || account?.is_administrator) && (
+            <button
+              onClick={() => setShowAddSong(true)}
+              className="flex items-center gap-1 h-7 px-2.5 rounded-full bg-accent/15 active:bg-accent/25 text-accent text-[11px] font-semibold transition-colors ml-auto"
+            >
+              <Plus size={11} /> New song
+            </button>
+          )}
+          {profileTab === 'comp' && isContributor && (
+            <button
+              onClick={() => setActiveView('contributor')}
+              className={`flex items-center gap-1 h-7 px-2.5 rounded-full bg-accent/15 active:bg-accent/25 text-accent text-[11px] font-semibold transition-colors ${
+                (account?.is_editor || account?.is_administrator) ? '' : 'ml-auto'
+              }`}
+            >
+              <Plus size={11} /> New comp proposal
+            </button>
+          )}
         </div>
       </div>
 
       {/* ── Tabs ── */}
       {(canReviewReports || isContributor || isManager) && (
-        <div className="flex items-center gap-1 px-6 pt-3 shrink-0 border-b border-[var(--border)]">
+        <div className="flex items-center gap-2 px-2 pt-1 pb-2 shrink-0 overflow-x-auto scrollbar-none">
           {([
             { id: 'proposals' as const, label: 'Proposals', icon: <FileEdit size={13} /> },
             ...(isContributor ? [{ id: 'comp' as const, label: 'Comp files', icon: <FolderOpen size={13} /> }] : []),
@@ -612,12 +589,10 @@ export default function EditorProfileView(): JSX.Element {
               : isManager ? [{ id: 'admin' as const, label: 'Manager', icon: <ShieldCheck size={13} /> }] : []),
           ]).map(t => (
             <button key={t.id} onClick={() => setProfileTab(t.id)}
-              className={`relative flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium transition-colors border-b-2 ${
-                profileTab === t.id
-                  ? 'text-accent border-accent'
-                  : 'text-text-muted hover:text-text-primary border-transparent'
+              className={`shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-full text-xs font-semibold transition-colors ${
+                profileTab === t.id ? 'bg-accent text-white' : 'bg-[var(--surface-overlay)] text-text-muted'
               }`}>
-              <span className={profileTab === t.id ? 'text-accent' : ''}>{t.icon}</span>
+              {t.icon}
               {t.label}
             </button>
           ))}
@@ -625,17 +600,13 @@ export default function EditorProfileView(): JSX.Element {
       )}
 
       {profileTab === 'admin' && (isAdmin || isManager) ? (
-        <div className="flex-1 overflow-hidden p-4 md:p-5">
-          <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden flex flex-col">
-            <AdminPage embedded />
-          </div>
-        </div>
+        <AdminPage embedded />
       ) : profileTab === 'comp' && isContributor ? (
-        <div className="flex-1 overflow-y-auto p-5">
-          <div className="max-w-2xl flex items-center gap-3 flex-wrap mb-2">
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex items-center gap-2 flex-wrap mb-2">
             <CompFilterBar filter={compFilter} setFilter={setCompFilter} />
           </div>
-          <p className="max-w-2xl text-xs text-text-muted mb-4">
+          <p className="text-xs text-text-muted mb-4">
             {compProposals.filter(p => p.status === 'approved').length} approved comp proposals
           </p>
           <CompProposalList
@@ -645,57 +616,45 @@ export default function EditorProfileView(): JSX.Element {
           />
         </div>
       ) : profileTab === 'reports' && canReviewReports ? (
-        <div className="flex-1 overflow-hidden p-5">
-          <div className="h-full rounded-2xl border border-[var(--border)] bg-surface-raised/40 overflow-hidden relative">
-            {loadingReports && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg)]/60 backdrop-blur-[1px]">
-                <Loader2 size={20} className="animate-spin text-text-muted" />
-              </div>
-            )}
-            <ReportsTab
-              reports={reports}
-              status={reportStatus}
-              setStatus={setReportStatus}
-              onChanged={() => setRefreshKey(k => k + 1)}
-            />
-          </div>
+        <div className="flex-1 overflow-hidden relative">
+          {loadingReports && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg)]/60 backdrop-blur-[1px]">
+              <Loader2 size={20} className="animate-spin text-text-muted" />
+            </div>
+          )}
+          <ReportsTab
+            reports={reports}
+            status={reportStatus}
+            setStatus={setReportStatus}
+            onChanged={() => setRefreshKey(k => k + 1)}
+          />
         </div>
       ) : (
-      // Stacked below md — side by side, the fixed-width leaderboard left
-      // the proposals column 2px wide on a phone.
-      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-5 overflow-hidden p-4 md:p-5">
+      <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* ── Left: My Proposals ── */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-surface-raised/40">
+        {/* ── My Proposals ── */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Section header */}
-          <div className="px-5 pt-4 pb-3 shrink-0 border-b border-[var(--border)]">
-            <div className="flex items-center gap-2 mb-3">
-              <FileEdit size={13} className="text-text-muted" />
-              <h2 className="text-text-secondary text-xs font-semibold uppercase tracking-widest">My Proposals</h2>
-              {!loadingProposals && (
-                <span className="ml-auto text-text-muted text-xs">{proposals.length} total</span>
-              )}
-            </div>
-
+          <div className="px-3 pt-1 pb-2 shrink-0">
             {/* Search */}
-            <div className="relative mb-3">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <div className="relative mb-2">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search proposals…"
-                className="w-full bg-surface-overlay text-text-primary text-xs pl-7 pr-7 py-2 rounded-lg outline-none border border-transparent focus:ring-1 ring-accent focus:border-accent/40 placeholder:text-text-muted"
+                className="w-full bg-surface-overlay text-text-primary text-sm pl-9 pr-9 py-2.5 rounded-xl outline-none border border-transparent focus:border-accent/40 placeholder:text-text-muted"
               />
               {search && (
-                <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+                <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-text-muted active:text-text-primary">
                   <X size={13} />
                 </button>
               )}
             </div>
 
             {/* Filter tabs */}
-            <div className="flex gap-1">
+            <div className="flex gap-2 overflow-x-auto scrollbar-none">
               {TABS.map(({ key, label }) => {
                 const count = tabCount(key)
                 const active = filter === key
@@ -703,8 +662,8 @@ export default function EditorProfileView(): JSX.Element {
                   <button
                     key={key}
                     onClick={() => setFilter(key)}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                      active ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-surface-overlay'
+                    className={`shrink-0 flex items-center gap-1 h-8 px-3 rounded-full text-xs font-semibold transition-colors ${
+                      active ? 'bg-accent/15 text-accent' : 'text-text-muted bg-surface-overlay'
                     }`}
                   >
                     {label}
@@ -720,7 +679,7 @@ export default function EditorProfileView(): JSX.Element {
           </div>
 
           {/* Proposals list */}
-          <div className="flex-1 overflow-y-auto min-h-0 p-3">
+          <div className="flex-1 overflow-y-auto min-h-0 px-3 pb-3">
             {loadingProposals ? (
               <div className="flex justify-center py-12">
                 <Loader2 size={18} className="animate-spin text-text-muted" />
@@ -739,10 +698,10 @@ export default function EditorProfileView(): JSX.Element {
                 {filteredProposals.map((p) => {
                   const s = STATUS_STYLES[p.status]
                   return (
-                    <div key={p.id} className="flex items-stretch gap-0 rounded-xl overflow-hidden bg-surface/60 border border-[var(--border)] hover:border-accent/30 transition-colors group">
+                    <div key={p.id} className="flex items-stretch gap-0 rounded-xl overflow-hidden bg-surface/60 border border-[var(--border)]">
                       {/* Status bar */}
                       <div className={`w-1 shrink-0 ${s.bar}`} />
-                      <div className="flex items-center gap-3 px-3.5 py-3 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 px-3 py-3 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <p className="text-text-primary text-sm font-medium truncate">{p.title || `Song #${p.song}`}</p>
                           <p className="text-text-muted text-xs mt-0.5">{changeTypeLabel(p.change_type)} · {formatDate(p.created_at)}</p>
@@ -751,35 +710,34 @@ export default function EditorProfileView(): JSX.Element {
                           {s.label}
                         </span>
                         {p.status === 'pending' && (
-                          /* Always visible on touch (no hover to reveal them) */
-                          <div className="flex items-center gap-0.5 shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-0.5 shrink-0">
                             <button
                               onClick={() => handleEdit(p)}
-                              className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-raised transition-all"
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted active:text-text-primary active:bg-surface-raised transition-colors"
                               title="Edit proposal"
                             >
-                              <Pencil size={12} />
+                              <Pencil size={13} />
                             </button>
                             <button
                               onClick={() => handleResubmit(p)}
                               disabled={resubmittingId === p.id || deletingId === p.id}
-                              className="p-1.5 rounded-lg text-text-muted hover:text-accent hover:bg-accent/10 transition-all disabled:opacity-40"
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted active:text-accent active:bg-accent/10 transition-colors disabled:opacity-40"
                               title="Resubmit proposal (withdraws and re-submits fresh)"
                             >
                               {resubmittingId === p.id
-                                ? <Loader2 size={12} className="animate-spin" />
-                                : <RefreshCw size={12} />
+                                ? <Loader2 size={13} className="animate-spin" />
+                                : <RefreshCw size={13} />
                               }
                             </button>
                             <button
                               onClick={() => handleDelete(p.id)}
                               disabled={deletingId === p.id || resubmittingId === p.id}
-                              className="p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40"
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted active:text-red-400 active:bg-red-500/10 transition-colors disabled:opacity-40"
                               title="Withdraw proposal"
                             >
                               {deletingId === p.id
-                                ? <Loader2 size={12} className="animate-spin" />
-                                : <Trash2 size={12} />
+                                ? <Loader2 size={13} className="animate-spin" />
+                                : <Trash2 size={13} />
                               }
                             </button>
                           </div>
@@ -793,23 +751,21 @@ export default function EditorProfileView(): JSX.Element {
           </div>
         </div>
 
-        {/* ── Right: Leaderboard ── */}
-        {/* Mobile: fixed-height strip under the proposals list (which keeps
-            the remaining height); desktop: full-height side column. */}
-        <div className="h-44 md:h-auto w-full md:w-80 flex flex-col min-h-0 overflow-hidden shrink-0 rounded-2xl border border-[var(--border)] bg-surface-raised/40">
-          <div className="px-5 pt-4 pb-3 shrink-0 flex items-center gap-2 border-b border-[var(--border)]">
+        {/* ── Leaderboard ── */}
+        <div className="h-56 shrink-0 flex flex-col min-h-0 overflow-hidden border-t border-[var(--border)]">
+          <div className="px-3 pt-3 pb-2 shrink-0 flex items-center gap-2">
             <Trophy size={13} className="text-text-muted" />
             <h2 className="text-text-secondary text-xs font-semibold uppercase tracking-widest">Leaderboard</h2>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 p-3">
+          <div className="flex-1 overflow-y-auto min-h-0 px-3 pb-2">
             {loadingLeaderboard ? (
-              <div className="flex justify-center py-12">
+              <div className="flex justify-center py-8">
                 <Loader2 size={18} className="animate-spin text-text-muted" />
               </div>
             ) : leaderboard.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2 text-text-muted opacity-50">
-                <Trophy size={28} />
+              <div className="flex flex-col items-center justify-center py-8 gap-2 text-text-muted opacity-50">
+                <Trophy size={24} />
                 <p className="text-sm">No data</p>
               </div>
             ) : (
@@ -820,12 +776,12 @@ export default function EditorProfileView(): JSX.Element {
                   return (
                     <div
                       key={entry.user_id}
-                      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
-                        isMe ? 'bg-accent/8 ring-1 ring-accent/20' : 'hover:bg-surface-overlay'
+                      className={`flex items-center gap-3 px-2 py-2 rounded-xl transition-colors ${
+                        isMe ? 'bg-accent/8 ring-1 ring-accent/20' : ''
                       }`}
                     >
                       {/* Rank */}
-                      <span className={`w-5 shrink-0 flex items-center justify-center`}>
+                      <span className="w-5 shrink-0 flex items-center justify-center">
                         <span className={`text-xs tabular-nums rounded-md px-1 py-0.5 ${
                           rankStyle ? `${rankStyle.num} ${rankStyle.badge}` : 'text-text-muted font-medium'
                         }`}>

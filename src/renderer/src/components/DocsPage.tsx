@@ -160,15 +160,15 @@ function Section({ title, children, defaultOpen = true }: { title: string; child
   const expanded = query ? true : open
 
   return (
-    <div className="border border-[var(--border)] rounded-2xl overflow-hidden" hidden={!hit}>
+    <div className="rounded-2xl overflow-hidden bg-[var(--surface-overlay)]" hidden={!hit}>
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-5 py-4 bg-[var(--surface-raised)] hover:bg-[var(--surface-overlay)] transition-colors text-left"
+        className="w-full flex items-center justify-between px-4 py-3.5 active:bg-[var(--surface-raised)] transition-colors text-left"
       >
         <span className="text-text-primary font-semibold text-sm">{highlightText(title, query)}</span>
-        {expanded ? <ChevronDown size={16} className="text-text-muted" /> : <ChevronRight size={16} className="text-text-muted" />}
+        {expanded ? <ChevronDown size={16} className="text-text-muted shrink-0" /> : <ChevronRight size={16} className="text-text-muted shrink-0" />}
       </button>
-      <div ref={bodyRef} hidden={!expanded} className="p-5 space-y-4 bg-[var(--surface)]">
+      <div ref={bodyRef} hidden={!expanded} className="px-4 pb-4 space-y-4">
         {highlightChildren(children, query)}
       </div>
     </div>
@@ -1861,7 +1861,7 @@ function TabPanel({ tab, query, register, visible, showLabel }: {
 export default function DocsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [rawQuery, setRawQuery] = useState('')
-  const { setActiveView } = useStorePick('setActiveView')
+  const { setActiveView, previousView } = useStorePick('setActiveView', 'previousView')
 
   // Sections self-report their text on mount. The registry is a ref (identity
   // must stay stable so `register` doesn't retrigger every Section's effect);
@@ -1895,84 +1895,94 @@ export default function DocsPage(): JSX.Element {
     [hitsByTab]
   )
 
+  // Wherever this was opened from (Settings, most likely) is where "back"
+  // should return to — matching the app's other pushed pages (EditorPage,
+  // LocalEditorPage) rather than a hardcoded destination.
+  const backView = previousView && previousView !== 'docs' ? previousView : 'wrld'
+
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
-      {/* Header */}
-      <div className="flex-shrink-0 px-6 pt-6 pb-0 border-b border-[var(--border)]">
-        <div className="flex items-baseline gap-3 mb-4">
-          <button
-            onClick={() => setActiveView('wrld')}
-            title="Back"
-            className="p-1 -ml-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors shrink-0 self-center"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <h1 className="text-text-primary text-xl font-bold">API Docs</h1>
-          <span className="text-xs text-text-muted font-mono">juicewrldapi.com</span>
-          <a
-            href="https://juicewrldapi.com/api-docs"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors"
-          >
-            Open live docs <ExternalLink size={11} />
-          </a>
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* App bar — same shape as the other pushed pages' */}
+      <div className="shrink-0 flex items-center gap-1 px-2">
+        <button
+          onClick={() => setActiveView(backView)}
+          aria-label="Back"
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <div className="flex-1 min-w-0 px-0.5">
+          <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">API Docs</h1>
+          <p className="text-text-muted text-xs font-mono truncate">juicewrldapi.com</p>
         </div>
+        <a
+          href="https://juicewrldapi.com/api-docs"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open live docs"
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay"
+        >
+          <ExternalLink size={18} />
+        </a>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-6">
         {/* Search */}
         <div className="relative mb-3">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           <input
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Escape') setRawQuery('') }}
-            placeholder="Search all docs — endpoints, fields, params…"
-            className="w-full bg-[var(--surface-raised)] border border-[var(--border)] rounded-xl pl-9 pr-16 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+            placeholder="Search endpoints, fields, params…"
+            className="w-full bg-[var(--surface-overlay)] rounded-xl pl-10 pr-16 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none transition-colors"
           />
           {rawQuery && (
             <>
-              <span className="absolute right-9 top-1/2 -translate-y-1/2 text-[10px] text-text-muted tabular-nums">
+              <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-text-muted tabular-nums">
                 {totalHits}
               </span>
               <button
                 onClick={() => setRawQuery('')}
-                title="Clear search"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+                aria-label="Clear search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-text-muted active:bg-surface-raised transition-colors"
               >
-                <X size={13} />
+                <X size={14} />
               </button>
             </>
           )}
         </div>
-        {/* Tabs */}
-        <div className="flex gap-1 overflow-x-auto pb-0 scrollbar-none">
+
+        {/* Tabs — a horizontally scrollable chip row rather than an
+            underline tab bar (underlines read as desktop chrome and give no
+            touch feedback of their own). */}
+        <div className="flex gap-2 overflow-x-auto pb-3 -mx-4 px-4 scrollbar-none">
           {TABS.map(tab => {
             const hits = hitsByTab.get(tab.id) ?? 0
             const dimmed = !!query && hits === 0
+            const active = !query && activeTab === tab.id
             return (
               <button
                 key={tab.id}
-                // Clicking a tab while searching is a "take me there" action —
+                // Tapping a tab while searching is a "take me there" action —
                 // clear the query so the tab shows in full.
                 onClick={() => { setActiveTab(tab.id); setRawQuery('') }}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                  !query && activeTab === tab.id
-                    ? 'text-accent border-accent'
-                    : `border-transparent hover:text-text-primary ${dimmed ? 'text-text-muted/40' : 'text-text-muted'}`
+                className={`shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-full text-[13px] font-medium transition-colors ${
+                  active ? 'bg-accent text-white'
+                    : dimmed ? 'bg-[var(--surface-overlay)] text-text-muted/40'
+                    : 'bg-[var(--surface-overlay)] text-text-secondary active:bg-[var(--surface-raised)]'
                 }`}
               >
                 {tab.label}
                 {!!query && hits > 0 && (
-                  <span className="text-[10px] tabular-nums bg-accent/15 text-accent rounded px-1 py-0.5">{hits}</span>
+                  <span className="text-[10px] tabular-nums bg-black/15 rounded px-1 py-0.5">{hits}</span>
                 )}
               </button>
             )
           })}
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto space-y-6">
+        <div className="space-y-3">
           {query && totalHits === 0 && (
             <div className="text-center py-16">
               <Search size={28} className="mx-auto text-text-muted mb-3 opacity-40" />

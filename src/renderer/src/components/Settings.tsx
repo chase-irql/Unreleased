@@ -5,7 +5,7 @@ import {
   FolderOpen, FolderPlus, Minus, Loader2, Plus, AlignLeft, FileText, Trash2, Music2,
   PanelLeft, PanelTop, PanelBottom, Waves, RotateCcw, ExternalLink,
   ListOrdered, CloudUpload, Type, AlignCenter, Menu, Pencil, Upload,
-  ScrollText, ShieldCheck, Disc, User, LogOut, LogIn, AlertCircle, GripVertical,
+  ScrollText, ShieldCheck, User, LogOut, LogIn, AlertCircle, GripVertical,
 } from 'lucide-react'
 import { useStore, useStorePick, type SidebarPosition } from '../store/useStore'
 import { localLibraryAvailable, pickFolder, pickFiles, decodeSourceLabel } from '../lib/localLibrary'
@@ -1062,11 +1062,10 @@ export default function Settings(): JSX.Element {
                       })}
                     </div>
                   </Block>
-                  {/* Albums and the Editor/Admin tab aren't in the NAV_ITEMS
-                      registry the list above is built from, so they get their
-                      own switches — shown only to the accounts that have them. */}
+                  {/* The Editor/Admin tab isn't in the NAV_ITEMS registry the
+                      list above is built from, so it gets its own switch —
+                      shown only to the accounts that have it. */}
                   {(account?.is_editor || account?.is_administrator) && ([
-                    { view: 'albums-admin' as ViewType, label: 'Albums', icon: Disc },
                     { view: 'editor-profile' as ViewType, label: account?.is_administrator ? 'Admin' : 'Editor', icon: ShieldCheck },
                   ]).map((item) => {
                     const shown = navVisibility[item.view] ?? true

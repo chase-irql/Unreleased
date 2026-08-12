@@ -23,7 +23,7 @@ export function CompFilterBar({ filter, setFilter }: {
     <div className="flex gap-2 flex-wrap">
       {COMP_FILTERS.map((key) => (
         <button key={key} onClick={() => setFilter(key)}
-          className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${filter === key ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
+          className={`h-9 px-3 rounded-full text-xs font-semibold capitalize transition-colors ${filter === key ? 'bg-accent text-white' : 'bg-[var(--surface-overlay)] text-text-muted'}`}>
           {key}
         </button>
       ))}
@@ -66,7 +66,7 @@ export default function CompProposalList({ proposals, loading, onSelect, onWithd
         return (
           <div key={p.id} className="rounded-xl border border-[var(--border)] bg-surface-raised/40 flex items-start">
             {onSelect ? (
-              <button onClick={() => onSelect(p)} className="flex-1 min-w-0 text-left px-4 py-3 hover:bg-surface-raised transition-colors rounded-xl">
+              <button onClick={() => onSelect(p)} className="flex-1 min-w-0 text-left px-4 py-3 active:bg-surface-raised transition-colors rounded-xl">
                 {body}
               </button>
             ) : (
@@ -75,7 +75,7 @@ export default function CompProposalList({ proposals, loading, onSelect, onWithd
             {onWithdraw && p.status === 'pending' && (
               <button onClick={() => onWithdraw(p.id)} disabled={withdrawingId === p.id}
                 title="Withdraw this proposal"
-                className="p-2 m-2 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0">
+                className="w-9 h-9 m-1.5 flex items-center justify-center rounded-lg text-text-muted active:text-red-400 active:bg-red-500/10 transition-colors shrink-0">
                 {withdrawingId === p.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
               </button>
             )}

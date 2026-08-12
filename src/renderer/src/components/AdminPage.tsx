@@ -16,6 +16,7 @@ import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSe
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { useBackToClose } from '../hooks/useBackToClose'
 
 type Tab = 'proposals' | 'comp-proposals' | 'applications' | 'reports' | 'users' | 'stats' | 'security'
 
@@ -62,16 +63,17 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
         <div className="flex items-center gap-2">
           {unchanged && <span className="text-[9px] italic text-text-muted">unchanged</span>}
           {isLong && (
-            <button onClick={() => setExp(e => !e)} className="text-[10px] text-accent/70 hover:text-accent">
+            <button onClick={() => setExp(e => !e)} className="text-[10px] text-accent/70 active:text-accent">
               {exp ? 'collapse' : 'expand'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Side-by-side before / after */}
+      {/* Before / after — stacked, not side-by-side (a phone-width column each
+          would leave both unreadable). */}
       {sideBySide && (
-        <div className="grid grid-cols-2 divide-x divide-[var(--border)]">
+        <div className="grid grid-cols-1 divide-y divide-[var(--border)]">
           {/* Before */}
           <div className="bg-red-500/8 min-w-0">
             <div className="flex items-center gap-1.5 px-3 py-1 border-b border-red-500/15">
@@ -212,7 +214,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
       <Shield size={28} className="text-text-muted" />
       <p className="text-text-primary font-semibold text-sm">Admins only</p>
-      <button onClick={() => setActiveView('api-tracker')} className="text-xs text-accent hover:underline">Go back</button>
+      <button onClick={() => setActiveView('api-tracker')} className="text-xs text-accent active:underline">Go back</button>
     </div>
   )
 
@@ -244,41 +246,41 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className={`shrink-0 flex items-center gap-3 pb-0 border-b border-[var(--border)] ${embedded ? 'px-4' : 'px-6'}`}
-        style={{ paddingTop: embedded ? 4 : 16 }}>
-        {!embedded && (
-          <button onClick={() => setActiveView('api-tracker')}
-            className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3">
-            <ChevronLeft size={16} />
+      <div className={`shrink-0 ${embedded ? 'px-3 pt-1' : 'px-2 pt-1'}`}>
+        <div className="flex items-center gap-1">
+          {!embedded && (
+            <button onClick={() => setActiveView('api-tracker')}
+              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay transition-colors">
+              <ChevronLeft size={20} />
+            </button>
+          )}
+          {!embedded && (
+            <div className="flex-1 min-w-0 pl-1.5">
+              <h1 className="text-text-primary text-[20px] font-bold leading-tight truncate">{managerOnly ? 'Manager' : 'Admin'}</h1>
+              {account?.discord_username && <p className="text-text-muted text-xs truncate">{account.discord_username}</p>}
+            </div>
+          )}
+          {embedded && <div className="flex-1" />}
+          <button onClick={() => setRefreshKey(k => k + 1)} disabled={loading}
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-muted active:bg-surface-overlay transition-colors disabled:opacity-40">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
-        )}
-        {!embedded && (
-          <div className="mb-3">
-            <span className="text-text-primary font-bold text-sm">{managerOnly ? 'Manager' : 'Admin'}</span>
-            {account?.discord_username && (
-              <span className="text-text-muted text-xs ml-2">{account.discord_username}</span>
-            )}
-          </div>
-        )}
-        <button onClick={() => setRefreshKey(k => k + 1)} disabled={loading}
-          className="p-1.5 rounded-lg hover:bg-surface-overlay transition-colors text-text-muted hover:text-text-primary mb-3 disabled:opacity-40">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-        </button>
+        </div>
 
-        {/* Tabs — scroll horizontally rather than wrap/overflow on narrow
-            (mobile) widths, where six of them don't fit. */}
-        <div className="flex items-end gap-0 ml-2 min-w-0 flex-1 overflow-x-auto">
+        {/* Tabs — scrollable pill row rather than underline tabs, which don't
+            fit six of them at once on a phone width. */}
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-2 pt-1">
           {nav.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)}
-              className={`relative flex items-center gap-1.5 px-4 py-3 text-[12px] font-medium transition-colors border-b-2 shrink-0 whitespace-nowrap ${
-                tab === n.id
-                  ? 'text-accent border-accent'
-                  : 'text-text-muted hover:text-text-primary border-transparent'
+              className={`shrink-0 flex items-center gap-1.5 h-9 px-3.5 rounded-full text-xs font-semibold transition-colors whitespace-nowrap ${
+                tab === n.id ? 'bg-accent text-white' : 'bg-[var(--surface-overlay)] text-text-muted'
               }`}>
-              <span className={tab === n.id ? 'text-accent' : ''}>{n.icon}</span>
+              {n.icon}
               {n.label}
               {n.badge ? (
-                <span className="bg-accent text-[var(--bg)] text-[9px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                <span className={`text-[9px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1 ${
+                  tab === n.id ? 'bg-white/25' : 'bg-accent text-[var(--bg)]'
+                }`}>
                   {n.badge > 9 ? '9+' : n.badge}
                 </span>
               ) : null}
@@ -288,7 +290,7 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
       </div>
 
       {error && (
-        <div className="mx-6 mt-3 flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs shrink-0">
+        <div className="mx-3 mb-2 flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs shrink-0">
           <AlertCircle size={13} className="shrink-0 mt-0.5" /> {error}
         </div>
       )}
@@ -389,14 +391,14 @@ function RevisePanel({ proposal, onClose, onDone }: {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden border-l-2 border-accent/30 bg-[var(--surface)]">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--surface)]">
       {/* Panel header */}
-      <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-raised)]">
-        <Pencil size={13} className="text-accent" />
-        <span className="text-text-primary text-xs font-semibold flex-1">Revise proposal</span>
-        <button onClick={onClose} className="p-1 rounded text-text-muted hover:text-text-primary transition-colors">
-          <XIcon size={14} />
+      <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">
+        <button onClick={onClose} className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay transition-colors">
+          <ChevronLeft size={20} />
         </button>
+        <Pencil size={14} className="text-accent shrink-0" />
+        <span className="text-text-primary text-[15px] font-bold flex-1 min-w-0 truncate">Revise proposal</span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -405,7 +407,7 @@ function RevisePanel({ proposal, onClose, onDone }: {
           <div key={key} className="rounded-xl border border-[var(--border)] overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--surface-raised)] border-b border-[var(--border)]">
               <span className="font-mono text-[10px] text-text-muted flex-1">{key.replace(/_/g, ' ')}</span>
-              <button onClick={() => removeField(key)} className="text-[10px] text-red-400 hover:text-red-300 transition-colors">
+              <button onClick={() => removeField(key)} className="text-[10px] text-red-400 active:text-red-300 transition-colors">
                 remove
               </button>
             </div>
@@ -451,7 +453,7 @@ function RevisePanel({ proposal, onClose, onDone }: {
             <button
               onClick={() => addField(addKey)}
               disabled={!addKey}
-              className="px-3 py-1.5 rounded-lg bg-accent/10 hover:bg-accent/20 text-accent text-xs font-semibold disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 rounded-lg bg-accent/10 active:bg-accent/20 text-accent text-xs font-semibold disabled:opacity-40 transition-colors"
             >
               Add
             </button>
@@ -481,16 +483,16 @@ function RevisePanel({ proposal, onClose, onDone }: {
       </div>
 
       {/* Footer */}
-      <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-t border-[var(--border)] bg-[var(--surface-raised)]">
-        <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-primary transition-colors">
+      <div className="shrink-0 flex items-center gap-2 p-3 border-t border-[var(--border)]">
+        <button onClick={onClose} className="h-11 px-4 rounded-xl text-sm text-text-muted active:bg-surface-overlay transition-colors">
           Cancel
         </button>
         <button
           onClick={submit}
           disabled={saving || Object.keys(fields).length === 0}
-          className="flex-1 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent/90 text-[var(--bg)] text-xs font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+          className="flex-1 h-11 rounded-xl bg-accent active:bg-accent/90 text-[var(--bg)] text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
         >
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           Save revision
         </button>
       </div>
@@ -511,12 +513,6 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   const [selected,    setSelected]    = useState<SongEditProposal | null>(null)
   const [revising,    setRevising]    = useState(false)
 
-  // Auto-select first item
-  useEffect(() => {
-    setSelected(proposals[0] ?? null)
-    setRevising(false)
-  }, [proposals])
-
   // Approving/reversing a proposal changes a song's live data — drop its
   // cached lyrics so the next play reflects it.
   const dropCache = (id: number) => {
@@ -526,14 +522,14 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   const doReview = async (id: number, action: 'approve' | 'reject') => {
     setActionId(id)
-    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); onChanged() }
+    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); onChanged(); setSelected(null) }
     catch {} finally { setActionId(null) }
   }
 
   const doReverse = async (id: number) => {
     if (!confirm('Reverse this approval?')) return
     setActionId(id)
-    try { await userApi.adminReverseProposal(id); dropCache(id); onChanged() }
+    try { await userApi.adminReverseProposal(id); dropCache(id); onChanged(); setSelected(null) }
     catch {} finally { setActionId(null) }
   }
 
@@ -547,158 +543,143 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   const p = selected
 
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left: list */}
-      <div className="w-80 shrink-0 border-r border-[var(--border)] flex flex-col overflow-hidden">
-        {/* Filter bar */}
-        <div className="shrink-0 flex gap-1 flex-wrap px-3 py-2.5 border-b border-[var(--border)] bg-surface-raised">
-          {FILTERS.map(f => (
-            <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
-              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors ${
-                status === f.id
-                  ? 'bg-accent text-[var(--bg)]'
-                  : 'text-text-muted hover:text-text-muted bg-surface-overlay'
-              }`}>{f.label}
-            </button>
-          ))}
-        </div>
+  useBackToClose(() => (revising ? setRevising(false) : setSelected(null)), p != null)
 
-        {/* List */}
-        <div className="flex-1 overflow-y-auto">
-          {proposals.length === 0 && <Empty label="No proposals" />}
-          {proposals.map(item => {
-            const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
-            const isActive = selected?.id === item.id
-            return (
-              <button key={item.id} onClick={() => setSelected(item)}
-                className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors ${
-                  isActive ? 'bg-accent/10' : 'hover:bg-surface-raised'
-                }`}>
-                <div className="flex items-center gap-1.5 mb-1">
-                  <StatusChip status={item.status} />
-                  <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
-                    {item.change_type}
-                  </span>
-                  {item.song_public_id != null && (
-                    <span className="text-[9px] text-text-muted ml-auto flex items-center gap-0.5">
-                      <Hash size={8} />{item.song_public_id}
-                    </span>
-                  )}
-                </div>
-                <p className={`text-[12px] font-semibold truncate leading-snug mb-0.5 text-text-primary`}>
-                  {item.title || `Proposal #${item.id}`}
-                </p>
-                <p className="text-[10px] text-text-muted truncate">
-                  {item.editor_username} · {relativeTime(item.created_at)}
-                </p>
-              </button>
-            )
-          })}
-        </div>
+  if (p && revising) return (
+    <RevisePanel
+      proposal={p}
+      onClose={() => setRevising(false)}
+      onDone={() => { setRevising(false); setSelected(null); onChanged() }}
+    />
+  )
+
+  if (p) return (
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      {/* Detail header */}
+      <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">
+        <button onClick={() => setSelected(null)}
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay transition-colors">
+          <ChevronLeft size={20} />
+        </button>
+        <h2 className="flex-1 min-w-0 truncate text-text-primary text-[15px] font-bold">{p.title || `Proposal #${p.id}`}</h2>
+        <StatusChip status={p.status} />
       </div>
 
-      {/* Right: detail */}
-      <div className="flex-1 flex overflow-hidden">
-        {!p ? (
-          <Empty label="Select a proposal" />
-        ) : revising ? (
-          <RevisePanel
-            proposal={p}
-            onClose={() => setRevising(false)}
-            onDone={() => { setRevising(false); onChanged() }}
-          />
-        ) : (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Detail header */}
-            <div className="shrink-0 px-6 py-4 border-b border-[var(--border)] bg-surface-raised">
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                    <StatusChip status={p.status} />
-                    <span className="text-[10px] text-text-muted bg-surface-raised px-2 py-0.5 rounded font-medium">{p.change_type}</span>
-                    {p.song_public_id != null && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-text-muted">
-                        <Hash size={9} />{p.song_public_id}
-                      </span>
-                    )}
-                  </div>
-                  <h2 className="text-text-primary font-bold text-base leading-snug">{p.title || `Proposal #${p.id}`}</h2>
-                  <div className="flex items-center gap-4 mt-1.5 text-[11px] text-text-muted flex-wrap">
-                    <span>by <span className="text-text-muted font-medium">{p.editor_username}</span></span>
-                    <span className="flex items-center gap-1"><Calendar size={10} />{shortDate(p.created_at)}</span>
-                    {p.reviewer_username && <span>reviewed by <span className="text-text-muted">{p.reviewer_username}</span></span>}
-                    {p.edit_count > 0 && <span>{p.edit_count} edit{p.edit_count !== 1 ? 's' : ''}</span>}
-                  </div>
-                </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-text-muted bg-surface-overlay px-2 py-0.5 rounded font-medium">{p.change_type}</span>
+            {p.song_public_id != null && (
+              <span className="flex items-center gap-0.5 text-xs text-text-muted"><Hash size={10} />{p.song_public_id}</span>
+            )}
+            <span className="text-xs text-text-muted">by {p.editor_username}</span>
+            <span className="flex items-center gap-1 text-xs text-text-muted"><Calendar size={10} />{shortDate(p.created_at)}</span>
+            {p.reviewer_username && <span className="text-xs text-text-muted">reviewed by {p.reviewer_username}</span>}
+            {p.edit_count > 0 && <span className="text-xs text-text-muted">{p.edit_count} edit{p.edit_count !== 1 ? 's' : ''}</span>}
+          </div>
 
-                {/* Actions */}
-                {p.status === 'pending' && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    {actionId === p.id ? <Loader2 size={14} className="animate-spin text-text-muted" /> : (
-                      <>
-                        <button onClick={() => setRevising(true)}
-                          className="px-3 py-1.5 rounded-lg bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] text-text-secondary text-xs font-semibold transition-colors flex items-center gap-1.5 border border-[var(--border)]">
-                          <Pencil size={13} /> Revise
-                        </button>
-                        <button onClick={() => doReview(p.id, 'reject')}
-                          className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold transition-colors flex items-center gap-1.5">
-                          <XCircle size={13} /> Reject
-                        </button>
-                        <button onClick={() => doReview(p.id, 'approve')}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs font-semibold transition-colors flex items-center gap-1.5">
-                          <CheckCircle size={13} /> Approve
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-                {p.status === 'approved' && (
-                  <button onClick={() => doReverse(p.id)} disabled={actionId === p.id}
-                    className="px-3 py-1.5 rounded-lg text-xs text-text-muted hover:text-amber-400 hover:bg-amber-500/10 transition-colors flex items-center gap-1.5 disabled:opacity-40">
-                    {actionId === p.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} Reverse
-                  </button>
+          {(p.editor_notes || p.review_notes) && (
+            <div className="flex flex-col gap-2">
+              {p.editor_notes && (
+                <div className="flex items-start gap-1.5 px-3 py-2 bg-surface-overlay rounded-lg text-xs text-text-muted italic border border-[var(--border)]">
+                  <MessageSquare size={11} className="text-text-muted shrink-0 mt-0.5" />
+                  {p.editor_notes}
+                </div>
+              )}
+              {p.review_notes && (
+                <div className="flex items-start gap-1.5 px-3 py-2 bg-surface-overlay rounded-lg text-xs text-text-muted italic border border-[var(--border)]">
+                  <Check size={11} className="text-text-muted shrink-0 mt-0.5" />
+                  {p.review_notes}
+                </div>
+              )}
+            </div>
+          )}
+
+          {p.status === 'pending' && (
+            <input
+              type="text"
+              value={notes[p.id] || ''}
+              onChange={e => setNotes(n => ({ ...n, [p.id]: e.target.value }))}
+              placeholder="Add review note (optional)…"
+              className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg px-3 py-2.5 text-text-primary text-sm focus:outline-none focus:border-accent/40"
+            />
+          )}
+        </div>
+
+        {/* Diff body */}
+        <ProposalDiff proposal={p} />
+      </div>
+
+      {/* Actions */}
+      <div className="shrink-0 p-3 border-t border-[var(--border)] flex items-center gap-2">
+        {actionId === p.id ? (
+          <div className="flex-1 flex justify-center py-2.5"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
+        ) : p.status === 'pending' ? (
+          <>
+            <button onClick={() => setRevising(true)}
+              className="h-11 px-3.5 rounded-xl bg-[var(--surface-overlay)] active:bg-[var(--surface-raised)] text-text-secondary text-sm font-semibold transition-colors flex items-center gap-1.5">
+              <Pencil size={14} /> Revise
+            </button>
+            <button onClick={() => doReview(p.id, 'reject')}
+              className="flex-1 h-11 rounded-xl bg-red-500/10 active:bg-red-500/20 text-red-400 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5">
+              <XCircle size={15} /> Reject
+            </button>
+            <button onClick={() => doReview(p.id, 'approve')}
+              className="flex-1 h-11 rounded-xl bg-emerald-500/15 active:bg-emerald-500/25 text-emerald-400 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5">
+              <CheckCircle size={15} /> Approve
+            </button>
+          </>
+        ) : p.status === 'approved' ? (
+          <button onClick={() => doReverse(p.id)} disabled={actionId === p.id}
+            className="w-full h-11 rounded-xl text-sm text-text-muted active:text-amber-400 active:bg-amber-500/10 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40">
+            <RotateCcw size={15} /> Reverse
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      {/* Filter bar */}
+      <div className="shrink-0 flex gap-2 overflow-x-auto scrollbar-none px-3 py-2.5 border-b border-[var(--border)]">
+        {FILTERS.map(f => (
+          <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+              status === f.id ? 'bg-accent text-[var(--bg)]' : 'text-text-muted bg-surface-overlay'
+            }`}>{f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* List */}
+      <div className="flex-1 overflow-y-auto">
+        {proposals.length === 0 && <Empty label="No proposals" />}
+        {proposals.map(item => {
+          const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
+          return (
+            <button key={item.id} onClick={() => setSelected(item)}
+              className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors active:bg-surface-raised`}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <StatusChip status={item.status} />
+                <span className="text-[10px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
+                  {item.change_type}
+                </span>
+                {item.song_public_id != null && (
+                  <span className="text-[10px] text-text-muted ml-auto flex items-center gap-0.5">
+                    <Hash size={9} />{item.song_public_id}
+                  </span>
                 )}
               </div>
-
-              {/* Notes */}
-              {(p.editor_notes || p.review_notes) && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {p.editor_notes && (
-                    <div className="flex items-start gap-1.5 px-3 py-2 bg-surface-overlay rounded-lg text-xs text-text-muted italic border border-[var(--border)] max-w-sm">
-                      <MessageSquare size={11} className="text-text-muted shrink-0 mt-0.5" />
-                      {p.editor_notes}
-                    </div>
-                  )}
-                  {p.review_notes && (
-                    <div className="flex items-start gap-1.5 px-3 py-2 bg-surface-overlay rounded-lg text-xs text-text-muted italic border border-[var(--border)] max-w-sm">
-                      <Check size={11} className="text-text-muted shrink-0 mt-0.5" />
-                      {p.review_notes}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Review notes input for pending */}
-              {p.status === 'pending' && (
-                <div className="mt-3">
-                  <input
-                    type="text"
-                    value={notes[p.id] || ''}
-                    onChange={e => setNotes(n => ({ ...n, [p.id]: e.target.value }))}
-                    placeholder="Add review note (optional)…"
-                    className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg px-3 py-2 text-text-primary text-xs focus:outline-none focus:border-accent/40"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Diff body */}
-            <div className="flex-1 overflow-y-auto">
-              <ProposalDiff proposal={p} />
-            </div>
-          </div>
-        )}
+              <p className="text-sm font-semibold truncate leading-snug mb-0.5 text-text-primary">
+                {item.title || `Proposal #${item.id}`}
+              </p>
+              <p className="text-xs text-text-muted truncate">
+                {item.editor_username} · {relativeTime(item.created_at)}
+              </p>
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -711,11 +692,9 @@ function ApplicationsTab({ applications, onChanged }: { applications: EditorAppl
   const [notes,    setNotes]    = useState<Record<number, string>>({})
   const [selected, setSelected] = useState<EditorApplication | null>(null)
 
-  useEffect(() => { setSelected(applications[0] ?? null) }, [applications])
-
   const doReview = async (id: number, action: 'approve' | 'reject') => {
     setActionId(id)
-    try { await userApi.adminReviewApplication(id, { action, review_notes: notes[id] || '' }); onChanged() }
+    try { await userApi.adminReviewApplication(id, { action, review_notes: notes[id] || '' }); onChanged(); setSelected(null) }
     catch {} finally { setActionId(null) }
   }
 
@@ -723,112 +702,110 @@ function ApplicationsTab({ applications, onChanged }: { applications: EditorAppl
   const reviewed = applications.filter(a => a.status !== 'pending')
   const a = selected
 
-  return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left list */}
-      <div className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col overflow-hidden">
-        {pending.length > 0 && (
-          <div className="shrink-0 px-3 pt-3 pb-1">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted">Pending · {pending.length}</p>
-          </div>
-        )}
-        <div className="flex-1 overflow-y-auto">
-          {applications.length === 0 && <Empty label="No applications" />}
-          {pending.map(item => (
-            <button key={item.id} onClick={() => setSelected(item)}
-              className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 border-l-amber-500/60 transition-colors text-text-primary ${selected?.id === item.id ? 'bg-accent/10' : 'hover:bg-surface-raised'}`}>
-              <div className="flex items-center gap-2.5">
-                <Avatar src={item.discord_avatar} name={item.display_name || item.username} size={8} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-text-primary text-xs font-semibold truncate">{item.display_name || item.username}</p>
-                  <p className="text-text-muted text-[10px] truncate">{item.application_type} · {item.discord_username} · {relativeTime(item.created_at)}</p>
-                </div>
-              </div>
-            </button>
-          ))}
+  useBackToClose(() => setSelected(null), a != null)
 
-          {reviewed.length > 0 && (
-            <div className="px-3 pt-3 pb-1">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted">Reviewed</p>
-            </div>
-          )}
-          {reviewed.map(item => (
-            <button key={item.id} onClick={() => setSelected(item)}
-              className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${STATUS_STYLE[item.status]?.border ?? 'border-l-transparent'} transition-colors text-text-primary opacity-60 ${selected?.id === item.id ? 'bg-accent/10 opacity-100' : 'hover:bg-surface-raised'}`}>
-              <div className="flex items-center gap-2.5">
-                <Avatar src={item.discord_avatar} name={item.display_name || item.username} size={7} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-text-primary text-xs font-medium truncate">{item.display_name || item.username}</p>
-                  <p className="text-text-muted text-[10px]">{item.status} · {shortDate(item.reviewed_at)}</p>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+  if (a) return (
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">
+        <button onClick={() => setSelected(null)}
+          className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-text-primary active:bg-surface-overlay transition-colors">
+          <ChevronLeft size={20} />
+        </button>
+        <h2 className="flex-1 min-w-0 truncate text-text-primary text-[15px] font-bold">{a.display_name || a.username}</h2>
+        <StatusChip status={a.status} />
       </div>
 
-      {/* Right detail */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {!a ? <Empty label="Select an application" /> : (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* User info */}
-            <div className="flex items-start gap-4">
-              <Avatar src={a.discord_avatar} name={a.display_name || a.username} size={14} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 flex-wrap mb-1">
-                  <h2 className="text-text-primary text-lg font-bold">{a.display_name || a.username}</h2>
-                  <StatusChip status={a.status} />
-                </div>
-                <div className="flex items-center gap-4 text-xs text-text-muted flex-wrap">
-                  {a.discord_username && <span>{a.discord_username}</span>}
-                  {a.contact && <span>{a.contact}</span>}
-                  <span className="flex items-center gap-1"><Calendar size={10} />{shortDate(a.created_at)}</span>
-                  {a.reviewer_username && <span>Reviewed by {a.reviewer_username}</span>}
-                </div>
-              </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex items-center gap-3">
+          <Avatar src={a.discord_avatar} name={a.display_name || a.username} size={12} />
+          <div className="flex-1 min-w-0 flex flex-col gap-0.5 text-xs text-text-muted">
+            {a.discord_username && <span>{a.discord_username}</span>}
+            {a.contact && <span>{a.contact}</span>}
+            <span className="flex items-center gap-1"><Calendar size={10} />{shortDate(a.created_at)}</span>
+            {a.reviewer_username && <span>Reviewed by {a.reviewer_username}</span>}
+          </div>
+        </div>
 
-              {a.status === 'pending' && (
-                <div className="flex items-center gap-2 shrink-0">
-                  {actionId === a.id ? <Loader2 size={14} className="animate-spin text-text-muted" /> : (
-                    <>
-                      <button onClick={() => doReview(a.id, 'reject')}
-                        className="px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold transition-colors flex items-center gap-1.5">
-                        <XCircle size={13} /> Reject
-                      </button>
-                      <button onClick={() => doReview(a.id, 'approve')}
-                        className="px-3 py-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs font-semibold transition-colors flex items-center gap-1.5">
-                        <CheckCircle size={13} /> Approve
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+        <div className="space-y-4">
+          {a.areas && <AppSection label="Areas of interest" value={a.areas} />}
+          {a.experience && <AppSection label="Experience" value={a.experience} />}
+          {a.motivation && <AppSection label="Motivation" value={a.motivation} />}
+        </div>
 
-            <hr className="border-[var(--border)]" />
-
-            {/* Application fields */}
-            <div className="space-y-4">
-              {a.areas && <AppSection label="Areas of interest" value={a.areas} />}
-              {a.experience && <AppSection label="Experience" value={a.experience} />}
-              {a.motivation && <AppSection label="Motivation" value={a.motivation} />}
-            </div>
-
-            {/* Review notes */}
-            {a.status === 'pending' && (
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Review note</label>
-                <textarea
-                  value={notes[a.id] || ''}
-                  onChange={e => setNotes(n => ({ ...n, [a.id]: e.target.value }))}
-                  placeholder="Optional note for the applicant…"
-                  rows={3}
-                  className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2.5 text-text-primary text-sm resize-none focus:outline-none focus:border-accent/40"
-                />
-              </div>
-            )}
+        {a.status === 'pending' && (
+          <div className="space-y-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Review note</label>
+            <textarea
+              value={notes[a.id] || ''}
+              onChange={e => setNotes(n => ({ ...n, [a.id]: e.target.value }))}
+              placeholder="Optional note for the applicant…"
+              rows={3}
+              className="w-full bg-surface-overlay border border-[var(--border)] rounded-xl px-3 py-2.5 text-text-primary text-sm resize-none focus:outline-none focus:border-accent/40"
+            />
           </div>
         )}
+      </div>
+
+      {a.status === 'pending' && (
+        <div className="shrink-0 p-3 border-t border-[var(--border)] flex items-center gap-2">
+          {actionId === a.id ? (
+            <div className="flex-1 flex justify-center py-2.5"><Loader2 size={16} className="animate-spin text-text-muted" /></div>
+          ) : (
+            <>
+              <button onClick={() => doReview(a.id, 'reject')}
+                className="flex-1 h-11 rounded-xl bg-red-500/10 active:bg-red-500/20 text-red-400 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5">
+                <XCircle size={15} /> Reject
+              </button>
+              <button onClick={() => doReview(a.id, 'approve')}
+                className="flex-1 h-11 rounded-xl bg-emerald-500/15 active:bg-emerald-500/25 text-emerald-400 text-sm font-semibold transition-colors flex items-center justify-center gap-1.5">
+                <CheckCircle size={15} /> Approve
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
+        {applications.length === 0 && <Empty label="No applications" />}
+        {pending.length > 0 && (
+          <div className="px-3 pt-3 pb-1">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Pending · {pending.length}</p>
+          </div>
+        )}
+        {pending.map(item => (
+          <button key={item.id} onClick={() => setSelected(item)}
+            className="w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 border-l-amber-500/60 transition-colors text-text-primary active:bg-surface-raised">
+            <div className="flex items-center gap-2.5">
+              <Avatar src={item.discord_avatar} name={item.display_name || item.username} size={9} />
+              <div className="min-w-0 flex-1">
+                <p className="text-text-primary text-sm font-semibold truncate">{item.display_name || item.username}</p>
+                <p className="text-text-muted text-xs truncate">{item.application_type} · {item.discord_username} · {relativeTime(item.created_at)}</p>
+              </div>
+            </div>
+          </button>
+        ))}
+
+        {reviewed.length > 0 && (
+          <div className="px-3 pt-3 pb-1">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Reviewed</p>
+          </div>
+        )}
+        {reviewed.map(item => (
+          <button key={item.id} onClick={() => setSelected(item)}
+            className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${STATUS_STYLE[item.status]?.border ?? 'border-l-transparent'} transition-colors text-text-primary opacity-60 active:bg-surface-raised active:opacity-100`}>
+            <div className="flex items-center gap-2.5">
+              <Avatar src={item.discord_avatar} name={item.display_name || item.username} size={8} />
+              <div className="min-w-0 flex-1">
+                <p className="text-text-primary text-sm font-medium truncate">{item.display_name || item.username}</p>
+                <p className="text-text-muted text-xs">{item.status} · {shortDate(item.reviewed_at)}</p>
+              </div>
+            </div>
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -882,104 +859,90 @@ function UsersTab({ users, onChanged, currentUserId }: { users: AdminUser[]; onC
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="shrink-0 flex items-center gap-3 px-6 py-3 border-b border-[var(--border)] bg-surface-raised">
-        <div className="flex gap-1">
+      <div className="shrink-0 flex flex-col gap-2 px-3 py-2.5 border-b border-[var(--border)]">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none">
           {FILTERS.map(f => (
             <button key={f.id} onClick={() => setFilter(f.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === f.id ? 'bg-accent text-[var(--bg)] font-semibold' : 'text-text-muted hover:text-text-muted hover:bg-surface-overlay'
+              className={`shrink-0 flex items-center gap-1.5 h-9 px-3 rounded-full text-xs font-semibold transition-colors ${
+                filter === f.id ? 'bg-accent text-[var(--bg)]' : 'text-text-muted bg-surface-overlay'
               }`}>
               {f.label}
-              <span className={`text-[9px] px-1 rounded ${filter === f.id ? 'bg-white/20' : 'bg-surface-raised'}`}>{f.count}</span>
+              <span className={`text-[10px] px-1 rounded ${filter === f.id ? 'bg-white/20' : 'bg-surface-raised'}`}>{f.count}</span>
             </button>
           ))}
         </div>
         <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
-          className="ml-auto bg-surface-overlay border border-[var(--border)] rounded-lg px-3 py-1.5 text-text-primary text-xs focus:outline-none focus:border-accent/40 w-52" />
-      </div>
-
-      {/* Table header */}
-      <div className="shrink-0 grid grid-cols-[auto_1fr_120px_100px_80px_160px] items-center gap-3 px-6 py-2 border-b border-[var(--border)] bg-surface-raised">
-        {['', 'User', 'Role', 'Approved', 'Props', 'Actions'].map(h => (
-          <p key={h} className="text-[9px] font-bold uppercase tracking-widest text-text-muted">{h}</p>
-        ))}
+          className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:border-accent/40" />
       </div>
 
       {/* Rows */}
       <div className="flex-1 overflow-y-auto">
         {visible.length === 0 && <Empty label="No users" />}
         {visible.map(u => (
-          <div key={u.user_id} className="grid grid-cols-[auto_1fr_120px_100px_80px_160px] items-center gap-3 px-6 py-3 border-b border-[var(--border)] hover:bg-surface-raised transition-colors">
-            <Avatar src={u.discord_avatar} name={u.discord_username || u.username} size={8} />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-text-primary text-sm font-medium truncate">{u.discord_username || u.username}</p>
-                {!u.is_active && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded text-red-400 bg-red-500/15">disabled</span>}
-                {u.user_id === currentUserId && <span className="text-[9px] text-text-muted italic">you</span>}
+          <div key={u.user_id} className="flex flex-col gap-2 px-3 py-3 border-b border-[var(--border)]">
+            <div className="flex items-center gap-2.5">
+              <Avatar src={u.discord_avatar} name={u.discord_username || u.username} size={9} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-text-primary text-sm font-medium truncate">{u.discord_username || u.username}</p>
+                  {!u.is_active && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded text-red-400 bg-red-500/15 shrink-0">disabled</span>}
+                  {u.user_id === currentUserId && <span className="text-[10px] text-text-muted italic shrink-0">you</span>}
+                </div>
+                <p className="text-text-muted text-xs">joined {shortDate(u.date_joined)} · {u.approved_count} approved · {u.proposal_count} props</p>
               </div>
-              <p className="text-text-muted text-[10px]">joined {shortDate(u.date_joined)}</p>
             </div>
+
             <div className="flex flex-wrap items-center gap-1">
-              {u.role !== 'administrator' && (
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE[u.role] ?? 'text-text-muted bg-surface-raised border-[var(--border)]'}`}>
-                  {u.role}
-                </span>
-              )}
-              {u.role === 'administrator' && (
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE.administrator}`}>
-                  administrator
-                </span>
-              )}
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${ROLE[u.role] ?? 'text-text-muted bg-surface-raised border-[var(--border)]'}`}>
+                {u.role}
+              </span>
               {u.contributor_enabled && (
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border ${CONTRIBUTOR_BADGE}`}>
                   contributor
                 </span>
               )}
             </div>
-            <p className="text-text-primary text-sm font-semibold">{u.approved_count}</p>
-            <p className="text-text-muted text-sm">{u.proposal_count}</p>
-            <div className="flex items-center gap-1">
-              {actionId === u.user_id ? (
-                <Loader2 size={13} className="animate-spin text-text-muted" />
-              ) : u.user_id !== currentUserId && u.role !== 'administrator' ? (
-                <>
-                  {u.role === 'editor' && (
-                    <label className="flex items-center gap-1 text-[10px] text-text-muted cursor-pointer mr-2 hover:text-text-muted">
-                      <input type="checkbox" checked={u.auto_approve_proposals}
-                        onChange={e => doUpdate(u.user_id, { auto_approve_proposals: e.target.checked })}
-                        className="w-3 h-3 accent-[var(--accent)]" />
-                      auto
-                    </label>
-                  )}
-                  {u.contributor_enabled && (
-                    <label className="flex items-center gap-1 text-[10px] text-text-muted cursor-pointer mr-2 hover:text-text-muted">
-                      <input type="checkbox" checked={u.auto_approve_comp_proposals}
-                        onChange={e => doUpdate(u.user_id, { auto_approve_comp_proposals: e.target.checked })}
-                        className="w-3 h-3 accent-[var(--accent)]" />
-                      auto
-                    </label>
-                  )}
-                  {u.role === 'editor' ? (
-                    <button onClick={() => doUpdate(u.user_id, { role: 'applicant' })}
-                      className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors font-medium">−Editor</button>
-                  ) : (
-                    <button onClick={() => doUpdate(u.user_id, { role: 'editor' })}
-                      className="px-2 py-1 rounded text-[10px] text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">+Editor</button>
-                  )}
-                  {u.contributor_enabled ? (
-                    <button onClick={() => doUpdate(u.user_id, { contributor_enabled: false })}
-                      className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors font-medium">−Contrib</button>
-                  ) : (
-                    <button onClick={() => doUpdate(u.user_id, { contributor_enabled: true })}
-                      className="px-2 py-1 rounded text-[10px] text-emerald-400 hover:bg-emerald-500/10 transition-colors font-medium">+Contrib</button>
-                  )}
-                  <button onClick={() => doUpdate(u.user_id, { is_active: !u.is_active })}
-                    className="px-2 py-1 rounded text-[10px] text-text-muted hover:text-text-muted hover:bg-surface-raised transition-colors font-medium">
-                    {u.is_active ? 'Disable' : 'Enable'}
-                  </button>
-                </>
-              ) : <span className="text-text-muted text-[10px]">—</span>}
-            </div>
+
+            {actionId === u.user_id ? (
+              <div className="flex justify-center py-1"><Loader2 size={14} className="animate-spin text-text-muted" /></div>
+            ) : u.user_id !== currentUserId && u.role !== 'administrator' ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {u.role === 'editor' && (
+                  <label className="flex items-center gap-1.5 text-[11px] text-text-muted h-8 px-2">
+                    <input type="checkbox" checked={u.auto_approve_proposals}
+                      onChange={e => doUpdate(u.user_id, { auto_approve_proposals: e.target.checked })}
+                      className="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    auto
+                  </label>
+                )}
+                {u.contributor_enabled && (
+                  <label className="flex items-center gap-1.5 text-[11px] text-text-muted h-8 px-2">
+                    <input type="checkbox" checked={u.auto_approve_comp_proposals}
+                      onChange={e => doUpdate(u.user_id, { auto_approve_comp_proposals: e.target.checked })}
+                      className="w-3.5 h-3.5 accent-[var(--accent)]" />
+                    auto
+                  </label>
+                )}
+                {u.role === 'editor' ? (
+                  <button onClick={() => doUpdate(u.user_id, { role: 'applicant' })}
+                    className="h-8 px-2.5 rounded-lg text-[11px] text-text-muted active:text-red-400 active:bg-red-500/10 transition-colors font-semibold bg-surface-overlay">−Editor</button>
+                ) : (
+                  <button onClick={() => doUpdate(u.user_id, { role: 'editor' })}
+                    className="h-8 px-2.5 rounded-lg text-[11px] text-emerald-400 active:bg-emerald-500/10 transition-colors font-semibold bg-surface-overlay">+Editor</button>
+                )}
+                {u.contributor_enabled ? (
+                  <button onClick={() => doUpdate(u.user_id, { contributor_enabled: false })}
+                    className="h-8 px-2.5 rounded-lg text-[11px] text-text-muted active:text-red-400 active:bg-red-500/10 transition-colors font-semibold bg-surface-overlay">−Contrib</button>
+                ) : (
+                  <button onClick={() => doUpdate(u.user_id, { contributor_enabled: true })}
+                    className="h-8 px-2.5 rounded-lg text-[11px] text-emerald-400 active:bg-emerald-500/10 transition-colors font-semibold bg-surface-overlay">+Contrib</button>
+                )}
+                <button onClick={() => doUpdate(u.user_id, { is_active: !u.is_active })}
+                  className="h-8 px-2.5 rounded-lg text-[11px] text-text-muted active:bg-surface-raised transition-colors font-semibold bg-surface-overlay">
+                  {u.is_active ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -1010,12 +973,12 @@ function StatsTab({ applications, proposals, users }: {
   ]
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="grid grid-cols-4 gap-3 mb-6">
+    <div className="h-full overflow-y-auto p-4">
+      <div className="grid grid-cols-2 gap-2.5 mb-6">
         {metrics.map(m => (
-          <div key={m.label} className="bg-surface-overlay border border-[var(--border)] rounded-xl p-4">
+          <div key={m.label} className="bg-surface-overlay border border-[var(--border)] rounded-xl p-3.5">
             <div className={`mb-2 ${m.color}`}>{m.icon}</div>
-            <p className={`text-3xl font-black leading-none ${m.color}`}>{m.value}</p>
+            <p className={`text-2xl font-black leading-none ${m.color}`}>{m.value}</p>
             <p className="text-text-muted text-[11px] mt-2">{m.label}</p>
           </div>
         ))}
@@ -1024,7 +987,7 @@ function StatsTab({ applications, proposals, users }: {
       {topEditors.length > 0 && (
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3">Top editors by approvals</p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {topEditors.map((u, i) => (
               <div key={u.user_id} className="flex items-center gap-3 px-4 py-3 bg-surface-overlay border border-[var(--border)] rounded-xl">
                 <span className={`text-sm font-black w-6 text-center shrink-0 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-slate-400' : i === 2 ? 'text-amber-700' : 'text-text-muted'}`}>
@@ -1052,7 +1015,7 @@ function StatsTab({ applications, proposals, users }: {
 
 function SecurityTab(): JSX.Element {
   return (
-    <div className="p-6 max-w-md">
+    <div className="p-4">
       <div className="flex items-start gap-4 px-5 py-5 rounded-2xl bg-emerald-500/8 border border-emerald-500/20">
         <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0">
           <Check size={18} className="text-emerald-400" />
