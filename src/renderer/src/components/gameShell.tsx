@@ -69,7 +69,7 @@ export function GameBackdrop(): JSX.Element {
       <div
         aria-hidden
         className="absolute inset-x-0 top-0 h-80 pointer-events-none"
-        style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent)' }}
+        style={{ background: 'radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--accent) 32%, transparent), transparent)' }}
       />
     </>
   )

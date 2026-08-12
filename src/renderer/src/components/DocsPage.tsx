@@ -1901,7 +1901,7 @@ export default function DocsPage(): JSX.Element {
   const backView = previousView && previousView !== 'docs' ? previousView : 'wrld'
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 min-w-0">
       {/* App bar — same shape as the other pushed pages' */}
       <div className="shrink-0 flex items-center gap-1 px-2">
         <button
@@ -1926,7 +1926,7 @@ export default function DocsPage(): JSX.Element {
         </a>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pt-1 pb-6">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pt-1 pb-6">
         {/* Search */}
         <div className="relative mb-3">
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />

@@ -570,8 +570,17 @@ function LeaderboardPanel({ initialMode, signedIn, onClose }: {
 // ─── View ─────────────────────────────────────────────────────────────────────
 
 export default function HeardleView(): JSX.Element {
-  const { setActiveView, playTrack, setIsPlaying, isPlaying, volume, setVolume, account } = useStorePick(
-    'setActiveView', 'playTrack', 'setIsPlaying', 'isPlaying', 'volume', 'setVolume', 'account')
+  const { setActiveView, playTrack, setIsPlaying, isPlaying, volume, setVolume, account, sidebarPosition, setHeroBleedTop } = useStorePick(
+    'setActiveView', 'playTrack', 'setIsPlaying', 'isPlaying', 'volume', 'setVolume', 'account', 'sidebarPosition', 'setHeroBleedTop')
+
+  // Lets GameBackdrop's wash paint full-bleed under the status bar instead of
+  // stopping at the shell's usual inset — matches WRLD's ownsTopInset trick.
+  // The corner buttons and the switcher's top clearance compensate below.
+  const ownsTopInset = sidebarPosition !== 'top'
+  useEffect(() => {
+    setHeroBleedTop(true)
+    return () => setHeroBleedTop(false)
+  }, [setHeroBleedTop])
 
   const [mode, setModeState] = useState<Mode>(() => loadGameMode())
   // 1v1 is deliberately not persisted (see loadGameMode) — everything else
@@ -1182,7 +1191,10 @@ export default function HeardleView(): JSX.Element {
           z-20 (over the scroll container's z-10): the scroll container fills
           the whole view and comes later in the DOM, so at equal z it took every
           click in these corners and left the buttons visible but dead. */}
-      <div className="absolute top-2 left-2 z-20">
+      <div
+        className="absolute left-2 z-20"
+        style={{ top: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' : '0.5rem' }}
+      >
         <button
           onClick={() => setActiveView('wrld')}
           aria-label="Back"
@@ -1191,7 +1203,10 @@ export default function HeardleView(): JSX.Element {
           <ChevronLeft size={20} />
         </button>
       </div>
-      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+      <div
+        className="absolute right-2 z-20 flex items-center gap-1"
+        style={{ top: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' : '0.5rem' }}
+      >
         <button
           onClick={() => setShowSettings(true)}
           aria-label="Game settings"
@@ -1219,10 +1234,10 @@ export default function HeardleView(): JSX.Element {
           has to be positioned too or they paint over it. */}
       <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-2 pb-10">
         <div className="mx-auto w-full max-w-xl">
-          {/* mt-14 clears the corner buttons (top-2, h-11 → bottom edge at
-              52px) rather than guessing — this used to start above that line
-              and sit half-hidden under them. */}
-          <div className="mt-14">
+          {/* Clears the corner buttons (0.5rem + h-11 → bottom edge at 3.25rem)
+              plus the safe-area inset they now sit below, since this view
+              bleeds its own backdrop under the status bar. */}
+          <div style={{ marginTop: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 3.5rem)' : '3.5rem' }}>
             <GameSwitcher current="heardle" />
           </div>
 

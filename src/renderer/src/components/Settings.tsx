@@ -28,7 +28,7 @@ import type { ViewType } from '../types'
 import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
 import AndroidUpdateSection from './AndroidUpdateSection'
-import { isAndroidApp } from '../lib/androidUpdate'
+import { isAndroidApp, getInstalledVersion } from '../lib/androidUpdate'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -341,6 +341,14 @@ export default function Settings(): JSX.Element {
   const [tokenPasteError, setTokenPasteError] = useState<string | null>(null)
   const [openAbout, setOpenAbout] = useState<string | null>(null)
   const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null)
+  // package.json's APP_VERSION is frozen at the point Android forked off (see
+  // lib/androidUpdate's header comment) — on the APK, the version worth
+  // showing is the one it was actually built at, i.e. the native versionName.
+  const [displayVersion, setDisplayVersion] = useState(APP_VERSION)
+  useEffect(() => {
+    if (!isAndroidApp()) return
+    getInstalledVersion().then(setDisplayVersion).catch(() => {})
+  }, [])
   const {
     setShowSettings, setActiveView,
     account, setShowUserAuth, logoutAccount, loginWithToken,
@@ -713,7 +721,7 @@ export default function Settings(): JSX.Element {
             {inSection ? (activeTab?.label ?? 'Settings') : 'Settings'}
           </h1>
           <p className="text-text-muted text-xs truncate">
-            {inSection ? (activeTab?.sub ?? '') : `unreleased v${APP_VERSION}`}
+            {inSection ? (activeTab?.sub ?? '') : `unreleased v${displayVersion}`}
           </p>
         </div>
       </div>
@@ -1454,7 +1462,7 @@ export default function Settings(): JSX.Element {
             {tab === 'about' && (
               <div>
                 <p className="text-text-muted text-xs mb-3">
-                  unreleased v{APP_VERSION} &mdash; powered by{' '}
+                  unreleased v{displayVersion} &mdash; powered by{' '}
                   <a href="https://juicewrldapi.com" target="_blank" rel="noopener noreferrer" className="text-accent">
                     juicewrldapi.com
                   </a>

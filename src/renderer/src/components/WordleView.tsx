@@ -325,7 +325,17 @@ function StatsPanel({ onClose }: { onClose: () => void }): JSX.Element {
 // ─── View ─────────────────────────────────────────────────────────────────────
 
 export default function WordleView(): JSX.Element {
-  const { setActiveView, playTrack } = useStorePick('setActiveView', 'playTrack')
+  const { setActiveView, playTrack, sidebarPosition, setHeroBleedTop } = useStorePick(
+    'setActiveView', 'playTrack', 'sidebarPosition', 'setHeroBleedTop')
+
+  // Lets GameBackdrop's wash paint full-bleed under the status bar instead of
+  // stopping at the shell's usual inset — matches WRLD's ownsTopInset trick.
+  // The corner buttons and the switcher's top clearance compensate below.
+  const ownsTopInset = sidebarPosition !== 'top'
+  useEffect(() => {
+    setHeroBleedTop(true)
+    return () => setHeroBleedTop(false)
+  }, [setHeroBleedTop])
 
   const [mode, setMode] = useState<WordleMode>(() => loadMode())
   const [settings, setSettings] = useState<WordleSettings>(() => loadSettings())
@@ -601,7 +611,10 @@ export default function WordleView(): JSX.Element {
           panels sit out of its way. z-20: the scroll container fills the whole
           view and comes later in the DOM, so at equal z it took every click in
           these corners and left the buttons visible but dead. */}
-      <div className="absolute top-2 left-2 z-20">
+      <div
+        className="absolute left-2 z-20"
+        style={{ top: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' : '0.5rem' }}
+      >
         <button
           onClick={() => setActiveView('wrld')}
           aria-label="Back"
@@ -610,7 +623,10 @@ export default function WordleView(): JSX.Element {
           <ChevronLeft size={20} />
         </button>
       </div>
-      <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+      <div
+        className="absolute right-2 z-20 flex items-center gap-1"
+        style={{ top: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' : '0.5rem' }}
+      >
         <button
           onClick={() => setShowSettings(true)}
           aria-label="Game settings"
@@ -631,9 +647,10 @@ export default function WordleView(): JSX.Element {
           has to be positioned too or they paint over it. */}
       <div className="relative z-10 flex-1 overflow-y-auto px-4 pt-2 pb-10">
         <div className="mx-auto w-full max-w-xl">
-          {/* mt-14 clears the corner buttons (top-2, h-11 → bottom edge at
-              52px) rather than guessing. */}
-          <div className="mt-14">
+          {/* Clears the corner buttons (0.5rem + h-11 → bottom edge at 3.25rem)
+              plus the safe-area inset they now sit below, since this view
+              bleeds its own backdrop under the status bar. */}
+          <div style={{ marginTop: ownsTopInset ? 'calc(env(safe-area-inset-top, 0px) + 3.5rem)' : '3.5rem' }}>
             <GameSwitcher current="wordle" />
           </div>
 
