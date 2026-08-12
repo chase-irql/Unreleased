@@ -76,7 +76,7 @@ The **desktop app** (Windows, macOS, Linux) adds a local file library, offline d
 
 ## Changelog
 
-See [CHANGELOG.web.md](./CHANGELOG.web.md) for changes specific to the web player, or [CHANGELOG.md](./CHANGELOG.md) for the full version history including desktop-only features.
+See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 ---
 
