@@ -22,6 +22,7 @@ import * as userApi from '../lib/userApi'
 import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTitle } from '../lib/versionsApi'
 import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
+import { parseSearchQuery, hasFieldSyntax, matchesSearchQuery } from '../lib/trackerSearch'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 import { formatDuration } from '../lib/format'
@@ -1009,6 +1010,15 @@ export default function ApiTrackerView(): JSX.Element {
     return true
   }, [categoryFilter, eraFilter])
 
+  // `field:"value"` search syntax (e.g. `artists:"Juice WRLD"`) has no
+  // server-side equivalent — the API's `searchall` is a single plain-text
+  // param — so a query using it forces fetch-all mode (below) and gets
+  // filtered here instead of trusting the server to have applied it.
+  const advancedSearchActive = useMemo(() => hasFieldSyntax(debouncedSearch), [debouncedSearch])
+  const searchTokens = useMemo(() => parseSearchQuery(debouncedSearch), [debouncedSearch])
+  const matchesSearch = useCallback((song: JWApiSong): boolean =>
+    !advancedSearchActive || matchesSearchQuery(song, searchTokens), [advancedSearchActive, searchTokens])
+
   useEffect(() => {
     if (apiTrackerCategory) { setCategoryFilter(new Set([apiTrackerCategory as Category])); setApiTrackerCategory('') }
     if (apiTrackerEra) { setEraFilter(new Set([apiTrackerEra])); setApiTrackerEra('') }
@@ -1232,7 +1242,7 @@ export default function ApiTrackerView(): JSX.Element {
   // a sort chosen there would otherwise kick off a full-catalog download for a
   // list that isn't on screen. Switching back to a flat view flips this on and
   // the fetch runs then.
-  const fetchAllMode = (sortModeActive && !compactView) || multiFilterActive
+  const fetchAllMode = (sortModeActive && !compactView) || multiFilterActive || advancedSearchActive
   useEffect(() => {
     if (!fetchAllMode) return
     let cancelled = false
@@ -1241,9 +1251,12 @@ export default function ApiTrackerView(): JSX.Element {
     const t0 = performance.now()
     const PAGE_SIZE_SORT = 200 // bigger batches to reduce round-trips
     const CONCURRENCY = 6
-    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive}`)
+    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive} advanced=${advancedSearchActive}`)
+    const matchesAll = (s: JWApiSong): boolean => matchesFilters(s) && matchesSearch(s)
     const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
-      searchall: debouncedSearch || undefined,
+      // field:value syntax has no server-side meaning — fetch every page
+      // unfiltered by text and let matchesSearch narrow it down below.
+      searchall: advancedSearchActive ? undefined : (debouncedSearch || undefined),
       category: categoryParam || undefined,
       era: eraParam || undefined,
       page: p,
@@ -1254,7 +1267,7 @@ export default function ApiTrackerView(): JSX.Element {
         const first = await fetchPage(1)
         if (cancelled) return
         const all: JWApiSong[] = [...first.results]
-        setSongs(all.filter(matchesFilters))
+        setSongs(all.filter(matchesAll))
         setCount(first.count)
         runLog('tracker-sort', `page 1 loaded, accumulated ${all.length}/${first.count}`)
 
@@ -1267,13 +1280,13 @@ export default function ApiTrackerView(): JSX.Element {
             const data = await fetchPage(p)
             if (cancelled) return
             all.push(...data.results)
-            setSongs(all.filter(matchesFilters)) // progressive display while loading
+            setSongs(all.filter(matchesAll)) // progressive display while loading
             runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${first.count}`)
           }
         }
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
         if (!cancelled) {
-          setCount(all.filter(matchesFilters).length)
+          setCount(all.filter(matchesAll).length)
           runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
         }
       } catch (e) {
@@ -1283,7 +1296,7 @@ export default function ApiTrackerView(): JSX.Element {
       }
     })()
     return () => { cancelled = true }
-  }, [fetchAllMode, debouncedSearch, categoryParam, eraParam, matchesFilters])
+  }, [fetchAllMode, debouncedSearch, categoryParam, eraParam, matchesFilters, matchesSearch, advancedSearchActive, multiFilterActive])
 
   // ── SCROLL MODE: infinite scroll, accumulates pages ───────────────────────
   useEffect(() => {
@@ -1369,10 +1382,16 @@ export default function ApiTrackerView(): JSX.Element {
   // compact view is active would do nothing. Mirrors as much of the normal
   // list's server-side `searchall` field coverage as it reasonably can.
   const filteredCompactGroups = useMemo(() => {
-    let filtered = filterCompactGroups(compactGroups, debouncedSearch, s => [
-      s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
-      s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
-    ].filter(Boolean).join(' '))
+    // field:value syntax has no group-title shortcut (unlike the plain-text
+    // path below) — it always filters member-by-member.
+    let filtered = advancedSearchActive
+      ? compactGroups
+          .map(g => ({ ...g, members: g.members.filter(m => matchesSearchQuery(m.item, searchTokens)) }))
+          .filter(g => g.members.length > 0)
+      : filterCompactGroups(compactGroups, debouncedSearch, s => [
+          s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
+          s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
+        ].filter(Boolean).join(' '))
     // Category/era filters aren't sent server-side for compact view, so apply
     // them here. A group matches if any of its versions does.
     if (categoryFilter.size > 0 || eraFilter.size > 0) {
@@ -1390,7 +1409,7 @@ export default function ApiTrackerView(): JSX.Element {
       sorted.sort((a, b) => a.title.localeCompare(b.title) * dir)
     }
     return sorted
-  }, [compactGroups, debouncedSearch, orderField, orderDir, categoryFilter, eraFilter, matchesFilters])
+  }, [compactGroups, debouncedSearch, advancedSearchActive, searchTokens, orderField, orderDir, categoryFilter, eraFilter, matchesFilters])
 
   const handlePlay = useCallback((song: JWApiSong) => {
     const track = songToTrack(song)
@@ -1708,7 +1727,7 @@ export default function ApiTrackerView(): JSX.Element {
                   type="search"
                   value={trackerTab === 'songs' ? search : lyricsQuery}
                   onChange={(e) => trackerTab === 'songs' ? setSearch(e.target.value) : setLyricsQuery(e.target.value)}
-                  placeholder={trackerTab === 'songs' ? 'Songs, artists, producers' : 'Search lyrics'}
+                  placeholder={trackerTab === 'songs' ? 'Songs, artists, producers, or artist:"name"' : 'Search lyrics'}
                   enterKeyHint="search"
                   autoCorrect="off"
                   autoCapitalize="off"
