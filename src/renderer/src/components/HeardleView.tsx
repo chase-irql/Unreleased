@@ -18,7 +18,7 @@ import {
   todayKey, puzzleNumber, msUntilNextPuzzle, unlockedSeconds,
   loadRound, saveRound, loadStats, recordResult, shareText,
   loadSettings, saveSettings, loadGameMode, saveGameMode,
-  loadPracticeRound, savePracticeRound,
+  loadPracticeRound, savePracticeRound, revealCoverUrl,
 } from '../lib/heardle'
 import type {
   HeardleSong, Guess, GameStatus, PoolId, Stats, DailyMode, VersionMap, HeardleSettings,
@@ -1478,8 +1478,8 @@ export default function HeardleView(): JSX.Element {
                     {/* Art stays hidden until the round is over — era covers are
                         shared, so showing one early would narrow the field. */}
                     <div className="w-20 h-20 sm:w-24 sm:h-24 shrink-0 rounded-xl border border-[var(--border)] bg-[var(--surface-overlay)] overflow-hidden flex items-center justify-center">
-                      {answer.imageUrl
-                        ? <img src={smallCoverUrl(answer.imageUrl)} alt="" className="w-full h-full object-cover" />
+                      {revealCoverUrl(answer)
+                        ? <img src={smallCoverUrl(revealCoverUrl(answer))} alt="" className="w-full h-full object-cover" />
                         : <Music2 size={28} className="text-text-muted" />}
                     </div>
                     <div className="min-w-0 flex-1">

@@ -357,9 +357,14 @@ export default function PlaylistsView(): JSX.Element {
     pendingPlaylistId, setPendingPlaylistId,
     playlistsSelectedId: selectedId, setPlaylistsSelectedId: setSelectedId,
     playlistsSelectedLocalId: localSelectedId, setPlaylistsSelectedLocalId: setLocalSelectedId,
+    playlistsSort: sortRaw, setPlaylistsSort: setSortRaw,
     offlinePlaylists, offlineSync, offlineTracks, downloadPlaylistOffline, removePlaylistOffline,
     playlistFolders, createFolder, renameFolder, deleteFolder, movePlaylistsToFolder,
-    appTextScale, currentTrack, sidebarPosition, setHeroBleedTop } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'removeFromLocalPlaylist', 'reorderLocalPlaylist', 'createLocalPlaylist', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'currentTrack', 'sidebarPosition', 'setHeroBleedTop')
+    appTextScale, currentTrack, sidebarPosition, setHeroBleedTop } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'removeFromLocalPlaylist', 'reorderLocalPlaylist', 'createLocalPlaylist', 'guestPlaylists', 'createGuestPlaylist', 'deleteGuestPlaylist', 'renameGuestPlaylist', 'removeFromGuestPlaylist', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'playlistsSort', 'setPlaylistsSort', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'currentTrack', 'sidebarPosition', 'setHeroBleedTop')
+  // Cast back to the component's own SortField union — the store keeps the
+  // field as a plain string so it doesn't have to import this component's type.
+  const sort = sortRaw as SortState
+  const setSort = setSortRaw as (s: SortState) => void
   const canEdit = !!(account?.is_editor || account?.is_administrator)
 
   const [showLiked, setShowLiked] = useState(false)
@@ -412,8 +417,8 @@ export default function PlaylistsView(): JSX.Element {
   // Reorder mode — the touch replacement for drag-and-drop (see ReorderRow).
   const [reorderMode, setReorderMode] = useState(false)
 
-  // Sort + search inside an open playlist
-  const [sort, setSort] = useState<SortState>({ field: 'default', dir: 'asc' })
+  // Sort + search inside an open playlist — sort itself comes from the store
+  // (see playlistsSort)
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -666,9 +671,15 @@ export default function PlaylistsView(): JSX.Element {
     else setDetail(null)
   }, [selectedId, loadDetail, isSharedView])
 
-  // Reset per-playlist view state when switching playlists
+  // Reset per-playlist view state when switching playlists. The sort reset
+  // is skipped on the component's own first mount — this effect's dependency
+  // array fires then too, and since sort lives in the store (so it survives
+  // switching tabs and back — see playlistsSort), resetting it unconditionally
+  // here would wipe that persistence on every tab switch.
+  const sortMountedRef = useRef(false)
   useEffect(() => {
-    setSort({ field: 'default', dir: 'asc' })
+    if (sortMountedRef.current) setSort({ field: 'default', dir: 'asc' })
+    sortMountedRef.current = true
     setSearch('')
     setSearchOpen(false)
     setInfoSong(null)
@@ -1679,6 +1690,7 @@ export default function PlaylistsView(): JSX.Element {
                       count={group.members.length}
                       expanded={expandedGroups.has(group.groupId)}
                       onToggle={() => toggleGroupExpanded(group.groupId)}
+                      onPlay={() => playTrack(group.members[0].item, tracks)}
                     />
                     {expandedGroups.has(group.groupId) && (
                       <div className="ml-4 pl-2 border-l border-[var(--border)]">
@@ -1689,7 +1701,7 @@ export default function PlaylistsView(): JSX.Element {
                               current={currentTrack?.id === track.id}
                               selectMode={false}
                               selected={false}
-                              onTap={() => playTrack(track, group.members.map(m => m.item))}
+                              onTap={() => playTrack(track, tracks)}
                               onLongPress={() => toggleTrackSelect(track)}
                               onMenu={e => setTrackMenu({ track, songId: userApi.trackIdToSongId(track.id) ?? -1, x: e.clientX, y: e.clientY })}
                             />
@@ -2414,7 +2426,7 @@ export default function PlaylistsView(): JSX.Element {
               label={o.label}
               active={sort.field === o.field}
               trailing={sort.field === o.field ? <Check size={17} className="text-accent shrink-0" /> : undefined}
-              onClick={() => setSort(prev => ({ field: o.field, dir: prev.dir }))}
+              onClick={() => setSort({ field: o.field, dir: sort.dir })}
             />
           ))}
           <SheetDivider />
@@ -2424,7 +2436,7 @@ export default function PlaylistsView(): JSX.Element {
             active={sort.dir === 'asc'}
             disabled={sort.field === 'default'}
             trailing={sort.dir === 'asc' ? <Check size={17} className="text-accent shrink-0" /> : undefined}
-            onClick={() => setSort(prev => ({ ...prev, dir: 'asc' }))}
+            onClick={() => setSort({ ...sort, dir: 'asc' })}
           />
           <SheetItem
             icon={ChevronDown}
@@ -2432,7 +2444,7 @@ export default function PlaylistsView(): JSX.Element {
             active={sort.dir === 'desc'}
             disabled={sort.field === 'default'}
             trailing={sort.dir === 'desc' ? <Check size={17} className="text-accent shrink-0" /> : undefined}
-            onClick={() => setSort(prev => ({ ...prev, dir: 'desc' }))}
+            onClick={() => setSort({ ...sort, dir: 'desc' })}
           />
         </Sheet>
       )}

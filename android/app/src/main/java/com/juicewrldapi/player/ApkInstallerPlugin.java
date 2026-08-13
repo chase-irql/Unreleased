@@ -122,6 +122,12 @@ public class ApkInstallerPlugin extends Plugin {
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(30000);
                 conn.setReadTimeout(30000);
+                // The redirect chain crosses hosts (github.com -> objects.githubusercontent.com),
+                // and Android's HttpURLConnection connection pool has a known issue where it hands
+                // back a stale keep-alive socket after a cross-host hop, failing the body read
+                // partway through with "unexpected end of stream". Forcing a fresh connection per
+                // hop avoids the reuse entirely.
+                conn.setRequestProperty("Connection", "close");
                 conn.connect();
                 int code = conn.getResponseCode();
                 if (code == HttpURLConnection.HTTP_MOVED_PERM
