@@ -13,6 +13,8 @@ import ChangeVersionMenuItem from './ChangeVersionMenuItem'
 import { placeFlyout } from '../lib/menuFlyout'
 import { versionsEnabled } from '../lib/versionsApi'
 import { useBackToClose } from '../hooks/useBackToClose'
+import { isAndroidApp } from '../lib/androidUpdate'
+import { saveFile } from '../lib/fileSave'
 
 // The one context menu used everywhere a song can be right-clicked (Tracker,
 // Liked Songs, Playlists, the bottom Player bar, WRLD). Built around `Track`
@@ -93,10 +95,21 @@ function Divider(): JSX.Element {
 }
 
 
-function downloadTrack(track: Track): void {
+/** Downloads `url` as `filename`. Android routes through saveFile (so it
+ *  honors a user-picked download folder — see Settings' "Downloads" section)
+ *  since `<a download>` silently no-ops in that WebView; desktop/web keep the
+ *  plain anchor-click, which is a zero-copy browser-native download and
+ *  shouldn't be swapped for a full in-memory fetch just to share one code
+ *  path. */
+async function downloadUrl(url: string, filename: string): Promise<void> {
+  if (isAndroidApp()) {
+    const blob = await (await fetch(url)).blob()
+    await saveFile(filename, blob)
+    return
+  }
   const a = document.createElement('a')
-  a.href = buildStreamUrl(track.path)
-  a.download = `${track.title}.mp3`
+  a.href = url
+  a.download = filename
   a.target = '_blank'
   a.rel = 'noopener noreferrer'
   document.body.appendChild(a)
@@ -104,15 +117,12 @@ function downloadTrack(track: Track): void {
   document.body.removeChild(a)
 }
 
-function downloadZipEntry(entry: JWApiFileEntry): void {
-  const a = document.createElement('a')
-  a.href = buildStreamUrl(entry.path)
-  a.download = entry.name
-  a.target = '_blank'
-  a.rel = 'noopener noreferrer'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+function downloadTrack(track: Track): Promise<void> {
+  return downloadUrl(buildStreamUrl(track.path), `${track.title}.mp3`)
+}
+
+function downloadZipEntry(entry: JWApiFileEntry): Promise<void> {
+  return downloadUrl(buildStreamUrl(entry.path), entry.name)
 }
 
 export default function SongContextMenu({
@@ -232,7 +242,7 @@ export default function SongContextMenu({
     try {
       const candidates = await findSessionZips(song)
       if (candidates.length === 1) {
-        downloadZipEntry(candidates[0])
+        downloadZipEntry(candidates[0]).catch(err => console.error('[download]', err))
         onClose()
       } else {
         setZipCandidates(candidates)
@@ -497,7 +507,7 @@ export default function SongContextMenu({
               {zipCandidates.map(c => (
                 <button
                   key={c.path}
-                  onClick={(e) => { e.stopPropagation(); downloadZipEntry(c); onClose() }}
+                  onClick={(e) => { e.stopPropagation(); downloadZipEntry(c).catch(err => console.error('[download]', err)); onClose() }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   <PackageOpen size={13} className="shrink-0 text-text-muted" />
@@ -599,7 +609,7 @@ export default function SongContextMenu({
           {track.path && !isLocalOnly && (
             <>
               <Divider />
-              <MenuItem icon={<Download size={14} />} label="Download" onClick={() => { downloadTrack(track); onClose() }} />
+              <MenuItem icon={<Download size={14} />} label="Download" onClick={() => { downloadTrack(track).catch(err => console.error('[download]', err)); onClose() }} />
               {hasValidSong && !offlineTracks[track.id] && (
                 <MenuItem
                   icon={downloadingOffline ? <Loader2 size={14} className="animate-spin" /> : <CircleArrowDown size={14} />}

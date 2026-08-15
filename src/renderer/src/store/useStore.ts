@@ -234,6 +234,11 @@ interface AppState {
   // lib/coverRotation). Songs with a custom cover, and songs the storage has
   // no images for, are unaffected.
   rotateSuggestedCovers: boolean
+  // Android only: where lib/fileSave.ts's saveFile() writes downloads (ZIPs,
+  // lyrics exports, track downloads) — a user-picked SAF folder, or null for
+  // the platform default (MediaStore Downloads). uri is what's actually
+  // passed to the native plugin; name is display-only.
+  downloadFolder: { uri: string; name: string } | null
   // When disabled, the app stops publishing Media Session metadata/action
   // handlers. Kept on for Android — the background / lock-screen session
   // depends on it.
@@ -465,6 +470,7 @@ interface AppActions {
   setGradientsEnabled: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
   setRotateSuggestedCovers: (enabled: boolean) => void
+  setDownloadFolder: (folder: { uri: string; name: string } | null) => void
   /** Rotates a song onto its next suggested cover, if the setting is on and
    *  the user hasn't set a cover of their own. Called when a track starts. */
   _maybeRotateCover: (songId: number) => void
@@ -1068,6 +1074,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   gradientsEnabled: ls.get<boolean>('gradientsEnabled') ?? true,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
   rotateSuggestedCovers: ls.get<boolean>('rotateSuggestedCovers') ?? false,
+  downloadFolder: ls.get<{ uri: string; name: string }>('downloadFolder') ?? null,
   mediaOverlayEnabled: ls.get<boolean>('mediaOverlayEnabled') ?? true,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
@@ -1083,6 +1090,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setSleepTimer: (sleepTimerEnd) => set({ sleepTimerEnd }),
   setAudioOutput: (deviceId) => { set({ audioOutput: deviceId }); ls.set('audioOutput', deviceId) },
   setPreferOgVersion: (enabled) => { set({ preferOgVersion: enabled }); ls.set('preferOgVersion', enabled) },
+  setDownloadFolder: (folder) => { set({ downloadFolder: folder }); ls.set('downloadFolder', folder) },
 
   setRotateSuggestedCovers: (enabled) => {
     set({ rotateSuggestedCovers: enabled })

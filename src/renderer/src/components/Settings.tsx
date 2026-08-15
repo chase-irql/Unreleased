@@ -29,6 +29,7 @@ import ReportForm from './ReportForm'
 import LegalModal, { type LegalDoc } from './LegalModal'
 import AndroidUpdateSection from './AndroidUpdateSection'
 import { isAndroidApp, getInstalledVersion } from '../lib/androidUpdate'
+import { pickDownloadFolder, clearDownloadFolder } from '../lib/fileSave'
 
 const ACCENT_PRESETS = [
   '#1db954', '#7c3aed', '#2563eb', '#dc2626',
@@ -349,6 +350,7 @@ export default function Settings(): JSX.Element {
     if (!isAndroidApp()) return
     getInstalledVersion().then(setDisplayVersion).catch(() => {})
   }, [])
+  const [pickingDownloadFolder, setPickingDownloadFolder] = useState(false)
   const {
     setShowSettings, setActiveView,
     account, setShowUserAuth, logoutAccount, loginWithToken,
@@ -364,6 +366,7 @@ export default function Settings(): JSX.Element {
     pauseFadeEnabled, setPauseFade,
     preferOgVersion, setPreferOgVersion,
     rotateSuggestedCovers, setRotateSuggestedCovers,
+    downloadFolder,
     mediaOverlayEnabled, setMediaOverlayEnabled,
     lyricsOffset, setLyricsOffset,
     sleepTimerEnd, setSleepTimer,
@@ -381,7 +384,7 @@ export default function Settings(): JSX.Element {
     appFont, setAppFont,
     lyricsFont, setLyricsFont,
     gradientsEnabled, setGradientsEnabled,
-  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'rotateSuggestedCovers', 'setRotateSuggestedCovers', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'lyricsBlurAmount', 'setLyricsBlurAmount', 'lyricsColorActive', 'setLyricsColorActive', 'lyricsColorInactive', 'setLyricsColorInactive', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
+  } = useStorePick('setShowSettings', 'setActiveView', 'account', 'setShowUserAuth', 'logoutAccount', 'loginWithToken', 'theme', 'setTheme', 'customSkins', 'saveCustomSkin', 'deleteCustomSkin', 'accentColor', 'setAccentColor', 'settingsTab', 'setSettingsTab', 'sidebarPosition', 'setSidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'audioOutput', 'setAudioOutput', 'crossfadeEnabled', 'crossfadeDuration', 'setCrossfade', 'pauseFadeEnabled', 'setPauseFade', 'preferOgVersion', 'setPreferOgVersion', 'rotateSuggestedCovers', 'setRotateSuggestedCovers', 'downloadFolder', 'mediaOverlayEnabled', 'setMediaOverlayEnabled', 'lyricsOffset', 'setLyricsOffset', 'sleepTimerEnd', 'setSleepTimer', 'libraryFolders', 'addLibraryFolder', 'removeLibraryFolder', 'scanLibrary', 'libraryScanning', 'libraryScanProgress', 'libraryTracks', 'libraryLastScanned', 'libraryAutoRefresh', 'setLibraryAutoRefresh', 'developerMode', 'setDeveloperMode', 'lastfmUser', 'setLastfmUser', 'lastfmEnabled', 'setLastfmEnabled', 'appTextScale', 'setAppTextScale', 'lyricsScale', 'setLyricsScale', 'lyricsAlign', 'setLyricsAlign', 'lyricsBlur', 'setLyricsBlur', 'lyricsBlurAmount', 'setLyricsBlurAmount', 'lyricsColorActive', 'setLyricsColorActive', 'lyricsColorInactive', 'setLyricsColorInactive', 'appFont', 'setAppFont', 'lyricsFont', 'setLyricsFont', 'gradientsEnabled', 'setGradientsEnabled')
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [customAccent, setCustomAccent] = useState(accentColor)
@@ -1425,6 +1428,40 @@ export default function Settings(): JSX.Element {
                     )}
                   </Block>
                 </SettingsCard>
+
+                {/* Where "Download" (ZIPs, lyrics exports, single tracks) actually
+                    writes to — Android only, since it's backed by DownloadsPlugin's
+                    Storage Access Framework folder grant, not something the plain
+                    web build has a mechanism for. */}
+                {isAndroidApp() && (
+                  <SettingsCard title="Downloads">
+                    <Row
+                      icon={FolderOpen}
+                      iconColor="#0ea5e9"
+                      label="Save to"
+                      sub={downloadFolder ? downloadFolder.name : 'Downloads (default)'}
+                    >
+                      <button
+                        onClick={async () => {
+                          setPickingDownloadFolder(true)
+                          try { await pickDownloadFolder() } finally { setPickingDownloadFolder(false) }
+                        }}
+                        disabled={pickingDownloadFolder}
+                        className="h-9 px-3.5 rounded-full text-xs font-semibold text-text-secondary bg-[var(--surface-highest)] active:bg-[var(--surface-raised)] disabled:opacity-40 transition-colors"
+                      >
+                        {pickingDownloadFolder ? <Loader2 size={14} className="animate-spin" /> : 'Choose'}
+                      </button>
+                    </Row>
+                    {downloadFolder && (
+                      <ActionRow
+                        icon={RotateCcw}
+                        iconColor="#6b7280"
+                        label="Reset to default"
+                        onClick={clearDownloadFolder}
+                      />
+                    )}
+                  </SettingsCard>
+                )}
 
                 <SettingsCard title="Status">
                   <Row icon={Music2} iconColor="#0891b2" label="Tracks in library">

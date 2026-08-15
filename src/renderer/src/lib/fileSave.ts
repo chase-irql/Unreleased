@@ -9,14 +9,41 @@
 // DownloadsPlugin.java instead, which writes into the real Downloads folder.
 
 import { isAndroidApp } from './androidUpdate'
+import { useStore } from '../store/useStore'
 
 interface DownloadsPlugin {
-  save(opts: { filename: string; base64: string; mimeType: string }): Promise<{ filename: string }>
+  save(opts: { filename: string; base64: string; mimeType: string; folderUri?: string }): Promise<{ filename: string }>
+  pickFolder(): Promise<{ canceled?: boolean; uri?: string; name?: string }>
+  releaseFolder(opts: { uri: string }): Promise<void>
 }
 
 function androidPlugin(): DownloadsPlugin | null {
   const cap = (window as unknown as { Capacitor?: { Plugins?: { Downloads?: DownloadsPlugin } } }).Capacitor
   return cap?.Plugins?.Downloads ?? null
+}
+
+/** Opens the system folder picker and, on success, saves the choice as the
+ *  download destination (see useStore's downloadFolder). Returns the picked
+ *  folder's display name, or null if the user backed out or the plugin isn't
+ *  available (non-Android). Doesn't touch the store on cancel. */
+export async function pickDownloadFolder(): Promise<string | null> {
+  const plugin = androidPlugin()
+  if (!plugin) return null
+  const result = await plugin.pickFolder()
+  if (result.canceled || !result.uri) return null
+  // Releasing the previous folder's grant (if any) is best-effort and
+  // shouldn't block adopting the new one.
+  const prev = useStore.getState().downloadFolder
+  if (prev) plugin.releaseFolder({ uri: prev.uri }).catch(() => {})
+  useStore.getState().setDownloadFolder({ uri: result.uri, name: result.name ?? result.uri })
+  return result.name ?? null
+}
+
+/** Resets the download destination back to the platform default. */
+export function clearDownloadFolder(): void {
+  const prev = useStore.getState().downloadFolder
+  if (prev) androidPlugin()?.releaseFolder({ uri: prev.uri }).catch(() => {})
+  useStore.getState().setDownloadFolder(null)
 }
 
 /** Blob → base64 payload (no data: URI prefix), off the main-thread-blocking
@@ -41,7 +68,8 @@ export async function saveFile(filename: string, blob: Blob): Promise<void> {
     const plugin = androidPlugin()
     if (!plugin) throw new Error('Downloads plugin unavailable')
     const base64 = await blobToBase64(blob)
-    await plugin.save({ filename, base64, mimeType: blob.type || 'application/octet-stream' })
+    const folderUri = useStore.getState().downloadFolder?.uri
+    await plugin.save({ filename, base64, mimeType: blob.type || 'application/octet-stream', folderUri })
     return
   }
   const url = URL.createObjectURL(blob)
