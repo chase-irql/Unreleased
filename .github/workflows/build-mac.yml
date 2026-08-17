@@ -50,6 +50,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        env:
+          # youtube-dl-exec's postinstall downloads a yt-dlp binary from
+          # GitHub releases — unauthenticated, so it hits the rate limit on
+          # shared runner IPs (broke this build 2026-08-17). It's a
+          # devDependency only for local-dev convenience; the app fetches
+          # its own yt-dlp on demand at runtime, so skip it in CI.
+          YOUTUBE_DL_SKIP_DOWNLOAD: "1"
         run: npm ci
 
       - name: Build renderer
