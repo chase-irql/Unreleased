@@ -8,7 +8,15 @@ dist/
 dist-electron/
 out/
 release/
-build/
+# build/ holds both generated output (bundled/) and real source (the NSIS
+# installer script + the PowerShell helpers it File-includes) — CI checks out
+# a fresh clone with no local build history, so the source files must
+# actually be committed or electron-builder can't find them (build/installer.nsh
+# missing broke build-windows.yml on 2026-08-17).
+build/*
+!build/installer.nsh
+!build/fetch-releases.ps1
+!build/relaunch.ps1
 beta-builds/
 scripts/build-gui/
 
