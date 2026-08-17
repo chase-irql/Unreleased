@@ -1,0 +1,92 @@
+name: Build Windows release
+
+# release.py no longer builds locally for stable releases — it just publishes
+# the GitHub release (no assets) and lets this fire on that publish, same
+# pattern as build-mac.yml / build-linux.yml. Runs on all three repos this
+# gets pushed to (origin + the Juice-WRLD-API mirror), since each publishes
+# its own release and each needs its own installer attached.
+#
+# latest.yml is what electron-updater reads to find updates on Windows —
+# without it, Windows clients log an update error on every launch.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v1.22.0)"
+        required: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        env:
+          VITE_LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          VITE_LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+        run: npm run build
+
+      # package.json's win.extraResources embeds this file (the nsis-web
+      # repair/reinstall stub) into the packaged installer — electron-builder
+      # needs it to exist before packaging starts. It's gitignored (nothing
+      # in the checkout provides it), so grab it from whichever recent
+      # leanwrldd/unreleased release still has one. Always sourced from that
+      # repo specifically, never "this repo's latest" — the release this
+      # workflow is building for was JUST published with no assets yet, so on
+      # a fresh mirror repo "latest" could mean itself.
+      - name: Fetch bundled installer stub
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/bundled
+          tag=$(gh api repos/leanwrldd/unreleased/releases --paginate \
+            -q '.[] | select(.assets[]?.name=="Unreleased-Setup.exe") | .tag_name' | head -n1)
+          if [ -z "$tag" ]; then
+            echo "::error::No leanwrldd/unreleased release has an Unreleased-Setup.exe asset to seed build/bundled/ from"
+            exit 1
+          fi
+          curl -fL -o build/bundled/Unreleased-Setup.exe \
+            "https://github.com/leanwrldd/unreleased/releases/download/$tag/Unreleased-Setup.exe"
+
+      - name: Package installers (offline + web)
+        run: npx electron-builder --win --publish never
+
+      - name: Upload assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            release/nsis-web/latest.yml \
+            release/nsis-web/Unreleased-Setup.exe \
+            release/nsis-web/unreleased-*.nsis.7z \
+            "release/Unreleased-Setup-${{ steps.tag.outputs.version }}.exe" \
+            --clobber --repo "${{ github.repository }}"

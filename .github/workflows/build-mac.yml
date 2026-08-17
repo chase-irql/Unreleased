@@ -1,10 +1,10 @@
 name: Build macOS release
 
-# release.py builds and uploads the Windows installer from the dev machine,
-# then publishes the GitHub release. DMGs can't be built from Windows (mac
-# packaging needs hdiutil), so this workflow fires on that publish, builds
-# the mac side on a macOS runner, and attaches the artifacts to the same
-# release.
+# release.py just publishes the GitHub release (no assets — see
+# build-windows.yml, which covers why). DMGs can't be built from Windows (mac
+# packaging needs hdiutil) anyway, so this workflow fires on that publish,
+# builds the mac side on a macOS runner, and attaches the artifacts to the
+# same release.
 #
 # Unsigned/not notarized: no Apple Developer account yet, so the app isn't
 # code-signed. Users will need to right-click -> Open (or run
@@ -53,6 +53,9 @@ jobs:
         run: npm ci
 
       - name: Build renderer
+        env:
+          VITE_LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          VITE_LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
         run: npm run build
 
       - name: Package DMG

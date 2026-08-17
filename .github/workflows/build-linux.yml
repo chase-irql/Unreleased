@@ -1,9 +1,9 @@
 name: Build Linux release
 
-# release.py builds and uploads the Windows installer from the dev machine,
-# then publishes the GitHub release. AppImages can't be cross-built from
-# Windows, so this workflow fires on that publish, builds the Linux side on
-# a Linux runner, and attaches the artifacts to the same release.
+# release.py just publishes the GitHub release (no assets — see
+# build-windows.yml, which covers why). AppImages can't be cross-built from
+# Windows anyway, so this workflow fires on that publish, builds the Linux
+# side on a Linux runner, and attaches the artifacts to the same release.
 #
 # latest-linux.yml is what electron-updater's AppImageUpdater reads to find
 # updates — without it, Linux clients log an update error on every launch.
@@ -43,6 +43,9 @@ jobs:
         run: npm ci
 
       - name: Build renderer
+        env:
+          VITE_LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          VITE_LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
         run: npm run build
 
       - name: Package AppImage

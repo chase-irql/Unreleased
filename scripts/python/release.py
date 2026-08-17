@@ -8,8 +8,8 @@ Prompts are asked up front, then everything else runs unattended:
   1. Fast-forward app onto origin/app. The previous release's web push
      fires the sync-web-to-app workflow, which advances origin/app behind
      our back — so without this every release after a successful one is
-     rejected at step 7, after the build, and rolled back. Runs before the
-     version bump, while the tree is still clean.
+     rejected at step 7 and rolled back. Runs before the version bump,
+     while the tree is still clean.
   2. Pick a version (bump patch / minor / major, or keep / custom)
   3. Enter a commit message (only if the tree is dirty)
   4. Enter release notes (blank = auto-generate from commits)
@@ -19,17 +19,21 @@ Prompts are asked up front, then everything else runs unattended:
      for the endpoint contract). Stable releases are unaffected.
   ── nothing left to answer past this point ──
   5. Commit all changes to the desktop branch (app)
-  6. Build the renderer + Electron installers (offline + web)
-  7. Push the desktop branch to GitHub
+  6. Beta only: build the renderer + Electron installer locally (needed
+     right here, since step 9's beta publish uploads the .exe this
+     produces). Stable builds are NOT done locally anymore — see step 9.
+  7. Push the desktop branch to GitHub (origin + the Juice-WRLD-API mirror)
   8. Sync the web branch (copies src/ + package.json from app, skips
      electron/) — skipped for beta releases, betas are desktop-only
-  9. Stable: create the GitHub release and upload all assets.
+  9. Stable: create the GitHub release on origin AND the mirror, already
+     published, with no assets attached. That publish event is what
+     triggers .github/workflows/build-{windows,mac,linux}.yml on each
+     repo — every platform builds in CI and attaches its own installer.
      Beta: publish privately to the gated backend instead (needs
-     BETA_ADMIN_TOKEN in .env.local).
+     BETA_ADMIN_TOKEN in .env.local), using the local build from step 6.
 """
 
-import os, sys, re, json, shutil, subprocess, threading, time, urllib.request, urllib.error, urllib.parse
-from concurrent.futures import ThreadPoolExecutor
+import os, sys, re, json, shutil, subprocess, threading, time, urllib.request, urllib.error
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"): sys.stderr.reconfigure(encoding="utf-8")
 
@@ -46,22 +50,23 @@ REPO_NAME    = "unreleased"
 APP_BRANCH   = "app"
 WEB_BRANCH   = "web"
 API_BASE     = "https://api.github.com"
-UPLOAD_BASE  = "https://uploads.github.com"
 BETA_API_BASE = "https://juicewrldapi.com/beta"
+
+# Best-effort mirror: every stable release (branches + GitHub Release/assets)
+# also goes to this second repo, using the same GH_TOKEN. Mirror failures
+# never fail or roll back the real release — they're just warned about, since
+# origin is the source of truth and the mirror is a nice-to-have.
+MIRROR_OWNER = "Juice-WRLD-API"
+MIRROR_NAME  = "Unreleased"
 
 # How much we hand the socket per read(). http.client streams a file-like body
 # with `while block := data.read(self.blocksize)` and blocksize is 8192 — so a
-# 92 MB asset would otherwise be ~11,800 read/callback/sendall round-trips per
-# file. Returning more than the requested `n` is fine: send() just sendall()s
-# whatever comes back. 1 MB drops that to ~92 iterations.
+# multi-MB upload would otherwise be thousands of read/callback/sendall
+# round-trips. Returning more than the requested `n` is fine: send() just
+# sendall()s whatever comes back. 1 MB drops that dramatically. Only the beta
+# installer upload (_MultipartUpload) still streams through this now — GitHub
+# release assets are uploaded by CI, not this script.
 UPLOAD_CHUNK = 1_048_576
-# Assets uploaded at once. A single TLS stream to uploads.github.com rarely
-# saturates a fast uplink (it's bandwidth-delay-product bound, not CPU bound),
-# so the big .7z and offline .exe go up side by side.
-UPLOAD_WORKERS = 3
-# Asset uploads occasionally die mid-stream on GitHub's side (502/503, reset
-# connection). Re-uploading 92 MB beats failing the whole release at step 9.
-UPLOAD_RETRIES = 3
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 RST  = "\033[0m"
@@ -143,6 +148,24 @@ def is_dirty():
 def git_branch():
     return capture("git rev-parse --abbrev-ref HEAD")
 
+def push_mirror_branch(branch, token):
+    """Force-push a branch to the mirror repo, authenticating via the token
+    embedded in the URL (no persistent remote, nothing written to
+    .git/config). Always --force: the mirror isn't collaborative, it just
+    has to match origin's branch exactly, and on a brand-new/empty mirror
+    repo a plain push has nothing to fast-forward from.
+
+    The token never reaches the console or an exception message — it's
+    redacted from both the printed command and any captured stderr.
+    """
+    url = f"https://{token}@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git"
+    detail(f"> git push https://***@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git {branch}:{branch} --force")
+    r = subprocess.run(f'git push "{url}" {branch}:{branch} --force',
+                        shell=True, cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").replace(token, "***")
+        raise RuntimeError(err.strip()[:500])
+
 # ── package.json ──────────────────────────────────────────────────────────────
 
 def load_version():
@@ -189,8 +212,8 @@ def get_beta_admin_token():
         "for juicewrldapi.com's POST /beta/admin/publish endpoint, separate\n"
         "from GH_TOKEN. Only needed for beta releases.")
 
-def api(method, path, token, data=None):
-    url  = f"{API_BASE}{path}"
+def api(method, path, token, data=None, api_base=API_BASE):
+    url  = f"{api_base}{path}"
     hdrs = {
         "Authorization": f"token {token}",
         "Accept":        "application/vnd.github+json",
@@ -251,177 +274,12 @@ class _Bar:
               f"{rate:.1f} MB/s", end="", flush=True)
 
 
-class _ProgressFile:
-    def __init__(self, path, on_progress=None):
-        self._f    = open(path, "rb")
-        self._size = path.stat().st_size
-        self._done = 0
-        self._bar  = None
-        # on_progress(done_bytes, total_bytes) — defaults to printing an
-        # in-place ASCII bar; a GUI can pass its own callback instead.
-        if on_progress is None:
-            self._bar = _Bar(self._size)
-            on_progress = lambda done, total: None
-        self._on_progress = on_progress
-    def read(self, n=-1):
-        # `n` is deliberately ignored in favour of UPLOAD_CHUNK — see the
-        # constant's comment. The only caller is http.client's send loop,
-        # which is happy with a larger block than it asked for.
-        chunk = self._f.read(UPLOAD_CHUNK if n is None or n < 0 else max(n, UPLOAD_CHUNK))
-        self._done += len(chunk)
-        if self._bar is not None:
-            self._bar.advance(len(chunk))
-        self._on_progress(self._done, self._size)
-        return chunk
-    def __len__(self):  return self._size
-    def close(self):
-        # Idempotent: upload_asset closes it early so the bar's trailing
-        # newline lands before the success line, and again in its finally.
-        if self._bar is not None:
-            self._bar.finish()
-        if not self._f.closed:
-            self._f.close()
-
-def upload_asset(release_id, filepath, token, on_progress=None, quiet=False):
-    """Upload one asset, retrying on transient GitHub-side failures.
-
-    Any partially-created asset is deleted before a retry — GitHub rejects a
-    second upload under a name that already exists, even a broken one.
-    """
-    name = filepath.name
-    size = filepath.stat().st_size
-    if not quiet:
-        print(f"\n  Uploading: {_c(name, WHT, BOLD)}  ({size/1_048_576:.1f} MB)")
-    url = (f"{UPLOAD_BASE}/repos/{REPO_OWNER}/{REPO_NAME}"
-           f"/releases/{release_id}/assets?name={urllib.parse.quote(name)}")
-    hdrs = {
-        "Authorization":  f"token {token}",
-        "Accept":         "application/vnd.github+json",
-        "Content-Type":   "application/octet-stream",
-        "Content-Length": str(size),
-        "User-Agent":     "release.py",
-    }
-
-    for attempt in range(1, UPLOAD_RETRIES + 1):
-        wrap = _ProgressFile(filepath, on_progress)
-        req  = urllib.request.Request(url, data=wrap, headers=hdrs, method="POST")
-        try:
-            with urllib.request.urlopen(req) as resp:
-                result = json.loads(resp.read())
-                wrap.close()   # flush the bar's final line first
-                if not quiet:
-                    print(f"  {_c('✓', GRN, BOLD)}  {result['browser_download_url']}")
-                return result
-        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
-            code = getattr(e, "code", None)
-            if isinstance(e, urllib.error.HTTPError):
-                body = e.read().decode(errors="replace")
-            else:
-                body = str(e)
-            # 4xx other than 422 (name taken) are our fault — don't burn
-            # three 92 MB uploads on a bad token or a deleted release.
-            retryable = code is None or code == 422 or code >= 500
-            if attempt == UPLOAD_RETRIES or not retryable:
-                if not quiet:
-                    print(f"\n  {_c('✗', RED, BOLD)}  {name}: "
-                          f"{'HTTP ' + str(code) if code else 'network error'} — {body[:300]}")
-                raise
-            if not quiet:
-                warn(f"{name}: {'HTTP ' + str(code) if code else 'network error'} — "
-                     f"retrying ({attempt}/{UPLOAD_RETRIES - 1})")
-            delete_asset_by_name(release_id, name, token)
-            time.sleep(2 * attempt)
-        finally:
-            wrap.close()
-
-
-def delete_asset_by_name(release_id, name, token):
-    """Remove an asset by filename if it exists. Best-effort — a missing
-    asset (the normal case) is not an error."""
-    try:
-        for a in api("GET", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/assets", token):
-            if a["name"] == name:
-                api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{a['id']}", token)
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def upload_assets(release_id, paths, token, workers=UPLOAD_WORKERS,
-                  on_file_progress=None, on_total_progress=None, verbose=True):
-    """Upload several assets concurrently behind one aggregate progress bar.
-
-    Serially, a release spends most of step 9 waiting on a single TLS stream
-    that never fills a fast uplink. Uploading the big artifacts side by side
-    is the difference between "bandwidth-limited" and "latency-limited".
-
-    on_file_progress(name, done, total) is per-file; on_total_progress(done,
-    total) is the aggregate. Pass verbose=False from a GUI — release_gui.py
-    is a windowed app with no console to print a bar to.
-    """
-    paths = list(paths)
-    if not paths:
-        return []
-
-    total = sum(p.stat().st_size for p in paths)
-    if verbose:
-        print()
-        for p in paths:
-            info(f"{p.name}  ({p.stat().st_size/1_048_576:.1f} MB)")
-        print()
-    bar = _Bar(total) if verbose else None
-    seen = {}          # name -> bytes already counted into the aggregate
-    seen_lock = threading.Lock()
-
-    def make_cb(name):
-        def _cb(done, size):
-            # High-water mark per file, so a retry restarting at byte 0
-            # doesn't drag the aggregate bar backwards — it just pauses
-            # until the re-upload passes where the failed one got to.
-            with seen_lock:
-                delta = done - seen.get(name, 0)
-                if delta > 0:
-                    seen[name] = done
-                agg = sum(seen.values())
-            if delta > 0 and bar is not None:
-                bar.advance(delta)
-            if on_file_progress:
-                on_file_progress(name, done, size)
-            if on_total_progress:
-                on_total_progress(agg, total)
-        return _cb
-
-    results, errors = [], []
-    try:
-        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(paths)))) as pool:
-            futures = [(p, pool.submit(upload_asset, release_id, p, token,
-                                       on_progress=make_cb(p.name), quiet=True))
-                       for p in paths]
-            # Surfaces the first failure only once every worker has stopped,
-            # so a traceback can't interleave with a live progress bar.
-            for p, fut in futures:
-                try:
-                    results.append(fut.result())
-                except Exception as exc:
-                    errors.append((p, exc))
-    finally:
-        if bar is not None:
-            bar.finish()
-
-    if errors:
-        p, exc = errors[0]
-        raise RuntimeError(f"Upload failed for {p.name}: {exc}")
-
-    if verbose:
-        for r in results:
-            print(f"  {_c('✓', GRN, BOLD)}  {r['browser_download_url']}")
-    return results
-
 # ── Beta publish (private — never touches GitHub) ─────────────────────────────
-# Streams a multipart/form-data body (fields + files) without loading the
-# whole installer into memory at once, same idea as _ProgressFile above but
-# composed from multiple segments (boundary text + one or more files).
+# GitHub release assets are no longer uploaded by this script — stable builds
+# happen in CI (see .github/workflows/build-{windows,mac,linux}.yml, triggered
+# by the release this script publishes in step 9). Only the beta path still
+# uploads a file directly, streaming a multipart/form-data body (fields +
+# files) without loading the whole installer into memory at once.
 
 class _MultipartUpload:
     def __init__(self, boundary, fields, files, on_progress=None):
@@ -628,6 +486,44 @@ def step_apply_version(new_ver, state):
         state["version_changed"] = True
 
 
+def download_file(url, dest):
+    req = urllib.request.Request(url, headers={"User-Agent": "release.py"})
+    with urllib.request.urlopen(req) as resp, open(dest, "wb") as f:
+        shutil.copyfileobj(resp, f)
+
+
+def ensure_bundled_stub():
+    """package.json's win.extraResources embeds build/bundled/Unreleased-Setup.exe
+    (the nsis-web repair/reinstall stub) into every packaged installer —
+    electron-builder needs that file to already exist before packaging starts.
+    It's gitignored, so a fresh checkout never has it; it used to only get
+    refreshed as a side effect of the PREVIOUS local build (see step_build's
+    stub-refresh below), which broke the moment builds stopped always
+    happening on the same machine back-to-back (a fresh clone, a new machine,
+    or — now — CI). Fetching a copy from whatever past GitHub release still
+    has one closes that gap everywhere. Always sourced from the origin repo
+    (leanwrldd/unreleased), not whichever repo is currently being built for —
+    it has the longest unbroken history, so it's never mid-bootstrap itself
+    the way the Juice-WRLD-API mirror or a CI run building the release that
+    was JUST published (with no assets yet) could be."""
+    dest = ROOT / "build" / "bundled" / "Unreleased-Setup.exe"
+    if dest.exists():
+        return
+    info("build/bundled/Unreleased-Setup.exe missing — fetching from a past release…")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    token = get_token()
+    releases = api("GET", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases?per_page=30", token)
+    for r in releases:
+        asset = next((a for a in r.get("assets", []) if a["name"] == "Unreleased-Setup.exe"), None)
+        if asset:
+            download_file(asset["browser_download_url"], dest)
+            ok(f"Fetched stub from {r['tag_name']}")
+            return
+    raise RuntimeError(
+        f"No recent {REPO_OWNER}/{REPO_NAME} release has an Unreleased-Setup.exe asset\n"
+        "     to seed build/bundled/ from — package.json's win.extraResources needs one.")
+
+
 def refresh_bundled_binaries():
     """Obsolete since ffmpeg/yt-dlp stopped shipping in the installer: the app
     now downloads both on first use into userData/bin (yt-dlp always from the
@@ -706,7 +602,12 @@ def step_commit(version, msg, state):
 
 
 def step_build():
-    section(6, TOTAL, "Build Electron app")
+    """Beta releases only — stable releases build in CI (see
+    .github/workflows/build-windows.yml, fired by step_release's publish).
+    Beta has no such trigger (it publishes to juicewrldapi.com's gated
+    backend, not GitHub), so it still needs the installer built right here,
+    since step_publish_beta uploads the .exe this produces."""
+    section(6, TOTAL, "Build Electron app  (beta)")
     warn("This takes ~2 minutes — output streams below")
     print()
 
@@ -737,6 +638,8 @@ def step_build():
                 for stale in directory.glob(pattern):
                     stale.unlink()
 
+    ensure_bundled_stub()
+
     info("Packaging installer (electron-builder)…")
     result = subprocess.run(
         r"node_modules\.bin\electron-builder.cmd --win --publish never",
@@ -764,14 +667,21 @@ def step_build():
         warn(f"Not found (skipping bundled-stub refresh): {stub.name}")
 
 
-def step_push_app(state):
+def step_push_app(token, state):
     section(7, TOTAL, f"Push → origin/{APP_BRANCH}")
     run(f"git push origin {APP_BRANCH}")
     state["pushed_app"] = True
     ok(f"Pushed to origin/{APP_BRANCH}")
 
+    try:
+        info(f"Mirroring {APP_BRANCH} → {MIRROR_OWNER}/{MIRROR_NAME}")
+        push_mirror_branch(APP_BRANCH, token)
+        ok(f"Mirrored to {MIRROR_OWNER}/{MIRROR_NAME}")
+    except Exception as e:
+        warn(f"Mirror push failed (origin unaffected): {e}")
 
-def step_sync_web(version, is_beta, state):
+
+def step_sync_web(version, is_beta, token, state):
     if is_beta:
         # The web branch is the live site (Vercel) — beta builds are
         # desktop-only and must never deploy there.
@@ -815,6 +725,13 @@ def step_sync_web(version, is_beta, state):
         run(f"git push origin {WEB_BRANCH} --force")
         state["web_pushed"] = True
         ok(f"Web branch synced and pushed")
+
+        try:
+            info(f"Mirroring {WEB_BRANCH} → {MIRROR_OWNER}/{MIRROR_NAME}")
+            push_mirror_branch(WEB_BRANCH, token)
+            ok(f"Mirrored to {MIRROR_OWNER}/{MIRROR_NAME}")
+        except Exception as e:
+            warn(f"Mirror push failed (origin unaffected): {e}")
 
     finally:
         cur = git_branch()
@@ -871,45 +788,15 @@ def step_publish_beta(version, notes):
 
 
 def step_release(version, token, notes, state):
-    section(9, TOTAL, "GitHub release")
-    tag         = f"v{version}"
-    release_dir = ROOT / "release" / "nsis-web"
+    """Publishes the GitHub release itself, with no assets — CI attaches
+    those. Publishing (not drafting) is what fires each repo's
+    build-{windows,mac,linux}.yml `on: release: types: [published]` trigger;
+    every platform builds from this tag in parallel and uploads its own
+    installer + latest*.yml straight to this same release."""
+    section(9, TOTAL, "GitHub release  (CI builds & attaches installers)")
+    tag = f"v{version}"
     state["tag"] = tag
     state["token"] = token
-
-    # Collect assets to upload. The nsis-web target produces a small
-    # version-free stub installer (stable name so the GitHub
-    # releases/latest/download/Unreleased-Setup.exe link always serves the
-    # newest release) plus a versioned .7z app package the stub downloads
-    # at install time. electron-updater also fetches the .7z, so it MUST
-    # be uploaded alongside latest.yml. (No separate .blockmap files —
-    # the block map is embedded in the .7z.)
-    # The nsis target additionally produces a full offline installer
-    # (Unreleased-Setup-<version>.exe at release/ root) — a standalone
-    # download that the maintenance page's version picker also prefers.
-    # latest.yml comes from nsis-web (its root nsis twin points at the
-    # offline exe and must NOT be uploaded, or updates would fetch the
-    # full exe instead of the differential .7z).
-    to_upload = []
-    candidates = [
-        release_dir / "latest.yml",
-        release_dir / "Unreleased-Setup.exe",
-        *sorted(release_dir.glob(f"unreleased-{version}-*.nsis.7z")),
-        ROOT / "release" / f"Unreleased-Setup-{version}.exe",
-    ]
-    for p in candidates:
-        if p.exists():
-            to_upload.append(p)
-        else:
-            warn(f"Not found (skipping): {p.name}")
-
-    if not any(p.name.endswith(".nsis.7z") for p in to_upload):
-        raise RuntimeError(
-            f"No unreleased-{version}-*.nsis.7z package in {release_dir}/\n"
-            "The web installer is useless without it. Did the build succeed?")
-
-    if not to_upload:
-        raise RuntimeError(f"No release assets found in {release_dir}/\nDid the build succeed?")
 
     if not notes:
         # Auto-generate from commits since last tag
@@ -919,57 +806,56 @@ def step_release(version, token, notes, state):
             f'git log $(git describe --tags --abbrev=0 2>/dev/null)..HEAD --pretty="- %s" --no-merges 2>/dev/null'
         ) or f"Release {tag}"
 
-    # Create or fetch the release
-    info(f"Creating release {_c(tag, WHT, BOLD)} on GitHub…")
+    _publish_github_release(REPO_OWNER, REPO_NAME, tag, notes, token, state,
+                             id_key="release_id", new_key="release_created_new")
+
+    # Best-effort mirror — never rolls back or fails the real release.
+    try:
+        info(f"Mirroring release to {MIRROR_OWNER}/{MIRROR_NAME}…")
+        mstate = {}
+        _publish_github_release(MIRROR_OWNER, MIRROR_NAME, tag, notes, token, mstate,
+                                 id_key="release_id", new_key="release_created_new")
+        state["mirror_release_id"] = mstate.get("release_id")
+        state["mirror_release_created_new"] = mstate.get("release_created_new")
+        state["mirror_tag"] = tag
+        state["token"] = token
+    except Exception as e:
+        warn(f"Mirror release to {MIRROR_OWNER}/{MIRROR_NAME} failed (origin release unaffected): {e}")
+
+    print()
+    info("CI is now building Windows/macOS/Linux installers and will attach them to")
+    info("both releases as each platform finishes — nothing left to do here.")
+
+
+def _publish_github_release(owner, repo, tag, notes, token, state, id_key, new_key):
+    """Create/update a published GitHub release on (owner, repo) — no assets.
+    Shared by the real release (leanwrldd/unreleased) and the mirror
+    (Juice-WRLD-API/Unreleased) so both go through identical create/update
+    logic and both end up published (so both fire their own CI builds)."""
+    info(f"Creating release {_c(tag, WHT, BOLD)} on {owner}/{repo}…")
     try:
         release = api("POST",
-            f"/repos/{REPO_OWNER}/{REPO_NAME}/releases", token,
+            f"/repos/{owner}/{repo}/releases", token,
             {"tag_name": tag, "name": tag, "body": notes,
              "target_commitish": APP_BRANCH,
              "draft": False, "prerelease": False})
-        state["release_id"] = release["id"]
-        state["release_created_new"] = True
+        state[id_key] = release["id"]
+        state[new_key] = True
         ok(f"Release created  (id={release['id']})")
     except urllib.error.HTTPError as e:
         if e.code == 422:
             release = api("GET",
-                f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}", token)
+                f"/repos/{owner}/{repo}/releases/tags/{tag}", token)
             api("PATCH",
-                f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release['id']}", token,
+                f"/repos/{owner}/{repo}/releases/{release['id']}", token,
                 {"prerelease": False, "body": notes})
-            state["release_id"] = release["id"]
-            state["release_created_new"] = False
+            state[id_key] = release["id"]
+            state[new_key] = False
             ok(f"Release already exists — updated  (id={release['id']})")
         else:
             raise
 
-    release_id = release["id"]
-
-    # Delete any pre-existing assets with the same name
-    try:
-        existing = {a["name"]: a["id"] for a in
-                    api("GET", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/assets", token)}
-    except Exception:
-        existing = {}
-
-    for fp in to_upload:
-        if fp.name in existing:
-            info(f"Replacing existing asset: {fp.name}")
-            api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{existing[fp.name]}", token)
-
-    # latest.yml is the update manifest: the moment it's live, every running
-    # app that polls sees the new version and starts fetching the .7z it
-    # names. Upload the payload first (in parallel), then publish the
-    # manifest — otherwise there's a multi-minute window where auto-update
-    # 404s on an asset that doesn't exist yet.
-    payload  = [p for p in to_upload if p.name != "latest.yml"]
-    manifest = [p for p in to_upload if p.name == "latest.yml"]
-
-    upload_assets(release_id, payload, token)
-    for fp in manifest:
-        upload_asset(release_id, fp, token)
-
-    url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/{tag}"
+    url = f"https://github.com/{owner}/{repo}/releases/tag/{tag}"
     print()
     print(_c(f"  🚀  {url}", GRN, BOLD))
 
@@ -999,6 +885,16 @@ def rollback(state):
             ok(f"Deleted tag {state['tag']}")
         except Exception:
             pass  # tag may not exist yet, or was already cleaned up with the release
+
+    # Mirror release cleanup is best-effort too — it was best-effort to create,
+    # so a failure here is just left for manual cleanup rather than warned twice.
+    if state.get("mirror_release_id") and state.get("mirror_release_created_new") and state.get("token"):
+        try:
+            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/releases/{state['mirror_release_id']}", state["token"])
+            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/git/refs/tags/{state['mirror_tag']}", state["token"])
+            ok(f"Deleted mirror release {state.get('mirror_tag')} on {MIRROR_OWNER}/{MIRROR_NAME}")
+        except Exception:
+            pass
 
     if state.get("web_pushed"):
         warn(f"Web branch already pushed to origin/{WEB_BRANCH} — the live site. Not auto-reverting.")
@@ -1053,9 +949,13 @@ def main():
         release_notes, is_beta = prompt_release_notes()
 
         step_commit(version, commit_msg, state)
-        step_build()
-        step_push_app(state)
-        step_sync_web(version, is_beta, state)
+        if is_beta:
+            # Stable builds happen in CI (see step_release) — only beta needs
+            # a local installer, since it's uploaded straight from here to
+            # the gated backend instead of going through a GitHub release.
+            step_build()
+        step_push_app(token, state)
+        step_sync_web(version, is_beta, token, state)
         if is_beta:
             step_publish_beta(version, release_notes)
         else:

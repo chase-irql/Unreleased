@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('electron', {
   browseLocal: (dirPath) => ipcRenderer.invoke('browse-local', dirPath),
   pickFolder:  ()        => ipcRenderer.invoke('pick-folder'),
   openPath:    (p)       => ipcRenderer.invoke('open-path', p),
+  // Reveals a file/folder in Explorer/Finder without ever launching it —
+  // what every "show in folder" button actually wants, as opposed to openPath
+  // above (which hands the path to the OS's default-app launcher).
+  showItemInFolder: (p)  => ipcRenderer.invoke('show-item-in-folder', p),
   // Local file management, used by Files > Local. The name is validated and
   // resolved against its parent in main, so it can't escape the folder.
   // localCreate/localRename resolve { ok, path } | { error }; localDelete

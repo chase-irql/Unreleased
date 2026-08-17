@@ -30,7 +30,10 @@ if (!gotSingleInstanceLock) {
 // (file://) build, and — with `stream: true` below — still supports Range
 // requests so audio/video seeking works.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } },
+  // bypassCSP dropped: the app's CSP (src/renderer/index.html) explicitly
+  // allowlists local-media: in img-src/media-src, so nothing needs to bypass
+  // it — and everything else loaded by the page stays governed by the policy.
+  { scheme: 'local-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
 ])
 
 // ── Settings persistence ──────────────────────────────────────────────────────
@@ -64,11 +67,21 @@ let appSettings = {
   // name. Written by rememberSize(); wiped when rememberWindowSizes is turned
   // off so re-enabling starts from the built-in defaults again.
   windowSizes: {},
+  // 'fork' | 'legacy' — which GitHub repo the stable update feed points at.
+  // See UPDATE_REPOS below. Developer-settings-only; doesn't affect the beta
+  // feed, which is always juicewrldapi.com regardless of this.
+  updateSource: 'fork',
 }
+let settingsLoadError = null
 try {
   const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
   appSettings = { ...appSettings, ...saved }
-} catch {}
+} catch (e) {
+  // ENOENT on first run is normal and not worth logging; anything else means
+  // app-settings.json exists but is unreadable/corrupt, silently reverting to
+  // defaults — worth a trail once runLog exists (defined further down).
+  if (e && e.code !== 'ENOENT') settingsLoadError = e
+}
 // Migrate the removed 'notification' minimize mode (an always-pin-the-tray-icon
 // experiment that Windows wouldn't reliably honor) down to plain 'tray'.
 if (appSettings.minimizeTo === 'notification') appSettings.minimizeTo = 'tray'
@@ -79,9 +92,14 @@ function saveSettings() {
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 const logFile = path.join(app.getPath('userData'), 'updater.log')
+const MAX_LOG_BYTES = 2 * 1024 * 1024
 function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
-  fs.appendFileSync(logFile, line)
+  try {
+    const stat = fs.statSync(logFile, { throwIfNoEntry: false })
+    if (stat && stat.size > MAX_LOG_BYTES) fs.writeFileSync(logFile, '')
+    fs.appendFileSync(logFile, line)
+  } catch {}
   if (isDev) console.log(...args)
 }
 
@@ -107,6 +125,10 @@ function runLog(scope, ...args) {
   if (isDev) console.log(`[${scope}]`, ...args)
 }
 
+if (settingsLoadError) {
+  runLog('settings', 'app-settings.json unreadable, reverted to defaults:', settingsLoadError.message)
+}
+
 function memSnapshot() {
   try {
     const m = process.memoryUsage()
@@ -123,7 +145,7 @@ process.on('uncaughtException', (err) => {
   log('Uncaught exception:', err?.stack || String(err))
 })
 process.on('unhandledRejection', (reason) => {
-  runLog('main', 'UNHANDLED REJECTION:', reason?.stack || String(reason))
+  runLog('main', 'UNHANDLED REJECTION:', (reason instanceof Error && reason.stack) || String(reason))
 })
 
 // ── Shared file download helper (used by force-update + offline library) ──────
@@ -201,9 +223,19 @@ function readBetaCode() {
   try { return fs.readFileSync(betaMarkerPath, 'utf-8').trim() || null } catch { return null }
 }
 
+// Stable feed can point at either GitHub repo release.py publishes to (see
+// scripts/python/release.py — every stable release is mirrored to both).
+// 'fork' is the default; 'legacy' is a Developer-settings escape hatch back
+// to the original repo.
+const UPDATE_REPOS = {
+  fork:   { owner: 'Juice-WRLD-API', repo: 'Unreleased' },
+  legacy: { owner: 'leanwrldd', repo: 'unreleased' },
+}
+
 // Switches the updater between the normal stable (GitHub) feed and the
 // gated beta feed. electron-updater allows re-pointing the feed at runtime,
-// so join/leave take effect immediately, no restart needed.
+// so join/leave (and switching update source) take effect immediately, no
+// restart needed.
 let activeBetaCode = null
 function applyUpdateFeed(code) {
   activeBetaCode = code || null
@@ -212,7 +244,8 @@ function applyUpdateFeed(code) {
     autoUpdater.requestHeaders = { 'X-Beta-Code': code }
     autoUpdater.allowPrerelease = true
   } else {
-    autoUpdater.setFeedURL({ provider: 'github', owner: 'leanwrldd', repo: 'unreleased' })
+    const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
+    autoUpdater.setFeedURL({ provider: 'github', owner, repo })
     autoUpdater.requestHeaders = null
     autoUpdater.allowPrerelease = false
   }
@@ -231,8 +264,12 @@ function applyUpdateFeed(code) {
 // re-point at the stable GitHub feed and finish the check there. The marker is
 // deliberately left on disk, so beta resumes by itself if the backend returns —
 // the cost is one wasted request per launch, which beats bricking the updater.
+// Certificate errors are deliberately excluded: they're the signal of a
+// possible interception attempt, not "the feed is down," so they should
+// surface as a real update error instead of silently falling back to the
+// stable feed.
 function isBetaFeedUnavailable(msg) {
-  return /Cannot parse update info|YAMLException|HTTP 4\d\d|ENOTFOUND|ECONNREFUSED|certificate/i.test(msg)
+  return /Cannot parse update info|YAMLException|HTTP 4\d\d|ENOTFOUND|ECONNREFUSED/i.test(msg)
 }
 let betaFallbackDone = false
 
@@ -488,9 +525,10 @@ function createFloatWindow(view, params) {
     }
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    safeOpenExternal(url)
     return { action: 'deny' }
   })
+  guardNavigation(win)
   if (isDev) {
     win.loadURL(`http://localhost:3018/?${new URLSearchParams(query)}`)
   } else {
@@ -642,6 +680,35 @@ function updateMainWindowTitle() {
     : 'Unreleased')
 }
 
+// Only these schemes make sense to hand off to the OS's default handler —
+// blocks a compromised renderer (or a malicious link in fetched content) from
+// using shell.openExternal to launch e.g. a file:// path or a custom
+// protocol some other installed app registered.
+function isSafeExternalUrl(url) {
+  try {
+    const scheme = new URL(url).protocol
+    return scheme === 'https:' || scheme === 'http:' || scheme === 'mailto:'
+  } catch {
+    return false
+  }
+}
+function safeOpenExternal(url) {
+  if (isSafeExternalUrl(url)) shell.openExternal(url)
+}
+
+// Blocks in-place navigation away from the app's own bundle (index.html /
+// the Vite dev server) on every window — without this, a compromised
+// renderer (or content it loads) could navigate the whole window to an
+// attacker origin, which then inherits this window's preload bridge.
+// Opening a *new* window for an external link is setWindowOpenHandler's job,
+// not this one's.
+function guardNavigation(win) {
+  const allowedOrigin = isDev ? 'http://localhost:3018' : 'file://'
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(allowedOrigin)) event.preventDefault()
+  })
+}
+
 // ── Window creation ───────────────────────────────────────────────────────────
 function createWindow() {
   const mainDefaults = { width: 1280, height: 800, minWidth: 960, minHeight: 600 }
@@ -761,9 +828,10 @@ function createWindow() {
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    safeOpenExternal(url)
     return { action: 'deny' }
   })
+  guardNavigation(mainWindow)
 
   // Frameless windows don't get the browser's native F11-toggles-fullscreen
   // behavior for free — wire it up so it behaves like users expect.
@@ -863,7 +931,8 @@ ipcMain.handle('force-update', async () => {
 
   try {
     broadcastToWindows('update-status', { type: 'checking' })
-    const release = await fetchJson('https://api.github.com/repos/leanwrldd/unreleased/releases/latest')
+    const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
+    const release = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/releases/latest`)
     const assetSuffix = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage'
     const asset = release.assets.find(a => a.name.endsWith(assetSuffix))
     if (!asset) throw new Error('No installer found in latest release')
@@ -963,11 +1032,27 @@ ipcMain.handle('toggle-float-window', (_, view, params) => {
 // them and relays a fire back to the main window's hotkey dispatcher. Each
 // register call replaces the whole set (unregisterAll first), so toggling the
 // feature off is just registerGlobalShortcuts([]).
+// `id` is checked against the app's known hotkey actions (src/renderer/src/lib/hotkeys.ts)
+// so a compromised renderer can't have main grab arbitrary OS-global combos
+// under a made-up id. `accelerator` is still user-customizable, so it's only
+// sanity-checked against Electron's modifier+key grammar, not an exact allowlist.
+const KNOWN_GLOBAL_SHORTCUT_IDS = new Set([
+  'play-pause', 'play', 'pause', 'next', 'previous', 'seek-forward', 'seek-backward',
+  'speed-up', 'speed-down', 'shuffle', 'loop', 'clear-queue', 'like', 'song-info',
+  'edit-song', 'equalizer', 'ab-loop', 'crossfade', 'smooth-playback', 'prefer-og',
+  'sleep-timer', 'seek-0', 'seek-10', 'seek-20', 'seek-30', 'seek-40', 'seek-50',
+  'seek-60', 'seek-70', 'seek-80', 'seek-90', 'volume-up', 'volume-down', 'mute',
+  'view-tracker', 'view-playlists', 'view-library', 'view-wrld', 'view-admin',
+  'open-settings', 'open-diagnostics', 'toggle-queue', 'focus-search', 'mini-player',
+  'close-float-windows', 'restart-app', 'rescan-library', 'discord-status', 'toggle-devtools',
+])
+const ACCELERATOR_RE = /^(?:Cmd|Command|Ctrl|Control|CommandOrControl|CmdOrCtrl|Alt|Option|AltGr|Shift|Super|Meta)(?:\+(?:Cmd|Command|Ctrl|Control|CommandOrControl|CmdOrCtrl|Alt|Option|AltGr|Shift|Super|Meta))*\+[A-Za-z0-9`~!@#$%^&*()\-=_+[\]{}\\|;:'",.<>/?]$|^(?:F(?:[1-9]|1[0-9]|2[0-4])|[A-Za-z0-9]|Plus|Space|Tab|Backspace|Delete|Insert|Return|Enter|Up|Down|Left|Right|Home|End|PageUp|PageDown|Escape|VolumeUp|VolumeDown|VolumeMute|MediaNextTrack|MediaPreviousTrack|MediaStop|MediaPlayPause|PrintScreen)$/
 ipcMain.handle('register-global-shortcuts', (_, entries) => {
   globalShortcut.unregisterAll()
   const failed = []
   for (const { accelerator, id } of entries || []) {
     if (!accelerator || !id) continue
+    if (!KNOWN_GLOBAL_SHORTCUT_IDS.has(id) || !ACCELERATOR_RE.test(accelerator)) { failed.push(accelerator); continue }
     try {
       // register returns false when the OS/another app already owns the combo.
       const ok = globalShortcut.register(accelerator, () => {
@@ -1068,7 +1153,17 @@ ipcMain.handle('hide-other-windows', (event) => {
 // Store-sync relay: a renderer broadcasts a state patch and every OTHER
 // window receives it (each window runs its own store instance — see
 // src/renderer/src/lib/windowSync.ts for what gets mirrored and why).
+// Shape-checked against windowSync.ts's SyncMessage union before relaying —
+// this only rejects structurally-wrong messages (a compromised renderer
+// injecting garbage), it doesn't validate the SYNC_KEYS payload contents,
+// which every receiving window still owns via useStore.setState.
+const WINDOW_SYNC_TYPES = new Set(['patch', 'snapshot', 'request', 'navigate', 'attach', 'command', 'library-patch', 'library-add'])
+function isValidWindowSyncMessage(msg) {
+  return !!msg && typeof msg === 'object' && typeof msg.type === 'string' && WINDOW_SYNC_TYPES.has(msg.type)
+}
 ipcMain.on('window-sync', (event, msg) => {
+  if (!isValidWindowSyncMessage(msg)) return
+  if (!BrowserWindow.fromWebContents(event.sender)) return
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && win.webContents.id !== event.sender.id) {
       win.webContents.send('window-sync', msg)
@@ -1255,7 +1350,27 @@ ipcMain.handle('pick-folder', async (event) => {
   return result.canceled ? null : result.filePaths[0]
 })
 
-ipcMain.handle('open-path', (_, p) => shell.openPath(p))
+// Extensions capable of running code on their own if double-clicked — blocked
+// here so a compromised renderer can't turn "open this file with its default
+// app" (the Local Files browser's legitimate use of this) into launching an
+// arbitrary executable it just wrote via save-image-file/download-to-library.
+// Media/document files (what the browser actually opens) are unaffected.
+const EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.msi', '.msp', '.ps1', '.psm1', '.vbs', '.vbe',
+  '.js', '.jse', '.wsf', '.wsh', '.scr', '.jar', '.lnk', '.reg', '.sh', '.bash',
+  '.command', '.app', '.appimage', '.deb', '.rpm', '.apk', '.dmg', '.pkg', '.gadget',
+])
+ipcMain.handle('open-path', (_, p) => {
+  if (EXECUTABLE_EXTENSIONS.has(path.extname(String(p)).toLowerCase())) {
+    return 'Refused: this file type is not opened directly'
+  }
+  return shell.openPath(p)
+})
+// The safe alternative above's callers actually want: reveals the item in
+// the OS file manager without ever executing it.
+ipcMain.handle('show-item-in-folder', (_, p) => {
+  shell.showItemInFolder(p)
+})
 
 // The small web-installer stub ships inside the app (see package.json
 // win.extraResources) as an emergency repair/reinstall tool — it works even
@@ -1266,6 +1381,7 @@ ipcMain.handle('open-path', (_, p) => shell.openPath(p))
 // macOS/Linux have no bundled repair stub (nothing analogous to the NSIS
 // installer), so they always fall back to the releases page.
 ipcMain.handle('open-online-installer', async () => {
+  const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
   if (process.platform === 'win32') {
     const bundled = app.isPackaged ? path.join(process.resourcesPath, 'Unreleased-Setup.exe') : null
     if (bundled && fs.existsSync(bundled)) {
@@ -1273,13 +1389,13 @@ ipcMain.handle('open-online-installer', async () => {
       if (!err) return { source: 'bundled' }
       log('Bundled installer failed to launch, falling back to web:', err)
     }
-    shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest/download/Unreleased-Setup.exe')
+    shell.openExternal(`https://github.com/${owner}/${repo}/releases/latest/download/Unreleased-Setup.exe`)
     return { source: 'web' }
   }
   // Unlike the Windows .exe, mac/Linux asset filenames are versioned (and mac
   // also varies by arch), so there's no fixed "latest/download/<name>" URL to
   // link straight to — send the user to the releases page instead.
-  shell.openExternal('https://github.com/leanwrldd/unreleased/releases/latest')
+  shell.openExternal(`https://github.com/${owner}/${repo}/releases/latest`)
   return { source: 'web' }
 })
 
@@ -1318,6 +1434,11 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
   if (key === 'windowTitleNowPlaying') updateMainWindowTitle()
+  // Re-point the feed immediately — if a beta code is active this is a no-op
+  // until the user leaves beta (applyUpdateFeed only reads updateSource in
+  // the non-beta branch), but it should still take effect right away rather
+  // than requiring a restart.
+  if (key === 'updateSource') applyUpdateFeed(activeBetaCode)
   return true
 })
 
@@ -1771,7 +1892,20 @@ ipcMain.handle('offline-get-stats', () => {
   return { count, totalSize }
 })
 
+// Songs are always served from the API's own domain (and its CDN subdomains,
+// if it grows one) — a renderer-supplied url pointing anywhere else has no
+// legitimate use in these two handlers and shouldn't be fetched onto disk.
+function isAllowedLibraryDownloadHost(url) {
+  try {
+    const { hostname, protocol } = new URL(url)
+    return protocol === 'https:' && (hostname === 'juicewrldapi.com' || hostname.endsWith('.juicewrldapi.com'))
+  } catch {
+    return false
+  }
+}
+
 ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: songPath, meta }) => {
+  if (!isAllowedLibraryDownloadHost(url)) return { error: 'Download blocked: untrusted host' }
   const lib = loadOfflineLibrary()
   const existing = lib.tracks[id]
   const localPath = path.join(getOfflineAudioDir(), `${id}.${ext || 'mp3'}`)
@@ -2229,6 +2363,7 @@ ipcMain.handle('save-wrlddata', async (_, data) => {
   return { ok: true }
 })
 ipcMain.handle('download-to-library', async (_, { url, songName, artist, songPath }) => {
+  if (!isAllowedLibraryDownloadHost(url)) return { error: 'Download blocked: untrusted host' }
   // Determine save folder: Music/JuiceWRLD Library. On Linux without
   // xdg-user-dirs configured, getPath('music') throws — fall back to ~/Music.
   let musicDir
@@ -2311,6 +2446,19 @@ ipcMain.handle('download-to-library', async (_, { url, songName, artist, songPat
 // absent from packaged builds) serve as a fallback, keeping `electron:dev`
 // working without any download.
 
+// SHA256 of each platform/arch .gz asset from the pinned ffmpeg-static release
+// (b6.1.1) — computed once against the real GitHub release and hardcoded here,
+// so a hijacked redirect or a compromised release asset can't swap in a
+// different binary without the checksum catching it before it's ever chmod'd
+// or executed.
+const FFMPEG_SHA256 = {
+  'win32-x64': '8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d7',
+  'darwin-x64': '929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb424210',
+  'darwin-arm64': '8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bb',
+  'linux-x64': 'bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dff',
+  'linux-arm64': '754a678672298bc68156adff58aa7385a592c2b30b1d0ae8750c45c915c4bac',
+}
+
 const TOOL_SPECS = {
   ffmpeg: {
     // The exact build ffmpeg-static would have bundled, from its own releases.
@@ -2318,19 +2466,63 @@ const TOOL_SPECS = {
     url: () => `https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-${process.platform}-${process.arch}.gz`,
     gunzip: true,
     file: process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+    sha256: () => FFMPEG_SHA256[`${process.platform}-${process.arch}`] || null,
   },
   ytdlp: {
     // Always the latest release: yt-dlp's site extractors rot quickly, so a
     // fresh copy beats anything pinned. Re-downloading (force:true) is also the
-    // fix when a site link fails with an "outdated downloader" error.
+    // fix when a site link fails with an "outdated downloader" error. Since the
+    // binary itself can't be pinned, its checksum is instead fetched fresh from
+    // the same release's own SHA2-256SUMS asset and verified after download.
     url: () => {
       const name = process.platform === 'win32' ? 'yt-dlp.exe'
         : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp'
       return `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${name}`
     },
+    checksumFileName: () => (process.platform === 'win32' ? 'yt-dlp.exe' : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp'),
+    checksumsUrl: () => 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS',
     gunzip: false,
     file: process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp',
   },
+}
+
+function sha256File(filePath) {
+  const crypto = require('crypto')
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256')
+    const stream = fs.createReadStream(filePath)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('end', () => resolve(hash.digest('hex')))
+    stream.on('error', reject)
+  })
+}
+
+// Fetches yt-dlp's own SHA2-256SUMS text asset (small, plain HTTPS GET — not
+// worth downloadAnyUrl's redirect/gunzip machinery) and returns the hex digest
+// for `fileName`, or null if the sums file doesn't mention it.
+function fetchYtDlpChecksum(fileName) {
+  return new Promise((resolve) => {
+    https.get(TOOL_SPECS.ytdlp.checksumsUrl(), { headers: { 'User-Agent': 'Unreleased-App' } }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume()
+        https.get(res.headers.location, { headers: { 'User-Agent': 'Unreleased-App' } }, (res2) => {
+          let body = ''
+          res2.on('data', (c) => { body += c })
+          res2.on('end', () => resolve(body))
+          res2.on('error', () => resolve(''))
+        }).on('error', () => resolve(''))
+        return
+      }
+      let body = ''
+      res.on('data', (c) => { body += c })
+      res.on('end', () => resolve(body))
+      res.on('error', () => resolve(''))
+    }).on('error', () => resolve(''))
+  }).then((body) => {
+    const line = body.split('\n').find((l) => l.trim().endsWith(fileName))
+    const match = line && /^([0-9a-f]{64})\s/.exec(line.trim())
+    return match ? match[1] : null
+  })
 }
 
 function toolsDir() {
@@ -2380,7 +2572,35 @@ function downloadTool(tool, onProgress) {
   const dest = path.join(toolsDir(), spec.file)
   const run = (async () => {
     fs.mkdirSync(toolsDir(), { recursive: true })
-    await downloadAnyUrl(spec.url(), dest, onProgress, 0, spec.gunzip)
+    if (spec.gunzip) {
+      // Checksums are pinned against the .gz release asset, so it has to be
+      // hashed before decompression — download it raw (gunzip:false here),
+      // verify, then decompress to `dest` ourselves.
+      const gzPath = dest + '.gz'
+      await downloadAnyUrl(spec.url(), gzPath, onProgress, 0, false, true)
+      const expected = spec.sha256()
+      if (!expected) { try { fs.unlinkSync(gzPath) } catch {}; throw new Error(`No pinned checksum for this platform/arch (${process.platform}-${process.arch})`) }
+      const actual = await sha256File(gzPath)
+      if (actual !== expected) {
+        try { fs.unlinkSync(gzPath) } catch {}
+        throw new Error(`Checksum mismatch for ${tool} — downloaded file discarded`)
+      }
+      await new Promise((resolve, reject) => {
+        const zlib = require('zlib')
+        fs.createReadStream(gzPath).pipe(zlib.createGunzip()).pipe(fs.createWriteStream(dest))
+          .on('finish', resolve).on('error', reject)
+      })
+      try { fs.unlinkSync(gzPath) } catch {}
+    } else {
+      await downloadAnyUrl(spec.url(), dest, onProgress, 0, false, true)
+      const expected = await fetchYtDlpChecksum(spec.checksumFileName())
+      if (!expected) { try { fs.unlinkSync(dest) } catch {}; throw new Error('Could not fetch yt-dlp release checksum — refusing to trust an unverified binary') }
+      const actual = await sha256File(dest)
+      if (actual !== expected) {
+        try { fs.unlinkSync(dest) } catch {}
+        throw new Error(`Checksum mismatch for ${tool} — downloaded file discarded`)
+      }
+    }
     if (process.platform !== 'win32') { try { fs.chmodSync(dest, 0o755) } catch {} }
   })()
   toolDownloadsInFlight[tool] = run.finally(() => { delete toolDownloadsInFlight[tool] })
@@ -2670,12 +2890,13 @@ function probeAudioUrl(u, depth = 0) {
 // helper they were written against. gunzip:true decompresses on the way to
 // disk (the ffmpeg release assets are served as .gz); progress still tracks
 // the compressed byte count, which is what content-length describes.
-function downloadAnyUrl(url, dest, onProgress, depth = 0, gunzip = false) {
+function downloadAnyUrl(url, dest, onProgress, depth = 0, gunzip = false, httpsOnly = false) {
   const tmp = dest + '.part'
   return new Promise((resolve, reject) => {
     if (depth > 5) return reject(new Error('Too many redirects'))
     let parsed
     try { parsed = new URL(url) } catch { return reject(new Error('Invalid URL')) }
+    if (httpsOnly && parsed.protocol !== 'https:') return reject(new Error('Refused non-HTTPS URL/redirect: ' + url))
     const mod = parsed.protocol === 'http:' ? require('http') : require('https')
     mod.get({
       hostname: parsed.hostname,
@@ -2685,7 +2906,7 @@ function downloadAnyUrl(url, dest, onProgress, depth = 0, gunzip = false) {
     }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume()
-        return resolve(downloadAnyUrl(new URL(res.headers.location, url).href, dest, onProgress, depth + 1, gunzip))
+        return resolve(downloadAnyUrl(new URL(res.headers.location, url).href, dest, onProgress, depth + 1, gunzip, httpsOnly))
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)) }
       const total = parseInt(res.headers['content-length'] || '0', 10)
@@ -2932,6 +3153,14 @@ ipcMain.handle('url-import', async (event, { id, url, format, bitrate }) => {
 
 
 ipcMain.handle('open-discord-login', (_, authorizeUrl) => {
+  // Guard against a compromised renderer handing this an arbitrary URL — this
+  // window has no preload script, but it's still an in-app popup a user would
+  // trust, so it's worth pinning to Discord's real OAuth origin.
+  try {
+    if (new URL(authorizeUrl).origin !== 'https://discord.com') return Promise.resolve(null)
+  } catch {
+    return Promise.resolve(null)
+  }
   return new Promise((resolve) => {
     const loginWin = new BrowserWindow({
       width: 520, height: 720,
@@ -3020,6 +3249,14 @@ ipcMain.handle('fetch-image-as-data-url', async (_, url) => {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  // Deny every permission request by default. Nothing in this app needs
+  // notifications/media/geolocation/etc. granted to loaded web content, and
+  // Electron's built-in default handler grants most of them — this closes
+  // that gap explicitly rather than relying on the default.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
+
   // Sweep partial downloads left by a crash mid-transfer: downloadFile writes
   // to "<file>.part" and renames into place on completion, so any .part still
   // present at startup is abandoned. Runs before the renderer loads, so no
@@ -3032,6 +3269,16 @@ app.whenReady().then(() => {
     }
   } catch {}
 
+  // A page loaded over file:// sends `Origin: null` on a crossOrigin fetch;
+  // the dev server sends its real localhost origin. Reflecting only one of
+  // those two expected values (instead of a blanket '*') means the response
+  // is still readable by the app itself but not by some other page that
+  // happened to end up with local-media: reachable in a stray window.
+  function mediaCorsOrigin(request) {
+    const origin = request.headers.get('origin')
+    if (isDev) return origin === 'http://localhost:3018' ? origin : null
+    return origin === 'null' || origin === null ? 'null' : null
+  }
   protocol.handle('local-media', (request) => {
     try {
       const filePath = new URL(request.url).searchParams.get('p')
@@ -3056,14 +3303,17 @@ app.whenReady().then(() => {
       // CORS header on every response: the renderer's <audio> elements load
       // with crossOrigin="anonymous" so the Web Audio equalizer chain can
       // process them — without this header, CORS-mode loads fail and local
-      // files won't play at all.
+      // files won't play at all. Scoped to the app's own origin (see
+      // mediaCorsOrigin) rather than '*'.
+      const corsOrigin = mediaCorsOrigin(request)
+      const corsHeaders = corsOrigin ? { 'Access-Control-Allow-Origin': corsOrigin } : {}
       const rangeHeader = request.headers.get('range')
       const match = rangeHeader && /bytes=(\d*)-(\d*)/.exec(rangeHeader)
       if (match && (match[1] || match[2])) {
         const start = match[1] ? parseInt(match[1], 10) : size - parseInt(match[2], 10)
         const end = match[1] && match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1
         if (start >= size || start < 0 || start > end) {
-          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}`, 'Access-Control-Allow-Origin': '*' } })
+          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}`, ...corsHeaders } })
         }
         const stream = fs.createReadStream(filePath, { start, end })
         return new Response(webStreamFromNode(stream), {
@@ -3073,7 +3323,7 @@ app.whenReady().then(() => {
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
             'Content-Range': `bytes ${start}-${end}/${size}`,
-            'Access-Control-Allow-Origin': '*',
+            ...corsHeaders,
           },
         })
       }
@@ -3085,7 +3335,7 @@ app.whenReady().then(() => {
           'Content-Type': mime,
           'Accept-Ranges': 'bytes',
           'Content-Length': String(size),
-          'Access-Control-Allow-Origin': '*',
+          ...corsHeaders,
         },
       })
     } catch (e) {
