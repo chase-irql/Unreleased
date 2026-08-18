@@ -376,6 +376,10 @@ const localCoverMatches = new Map<string, LocalSongCover | null>()
 export interface LocalSongCover {
   imageUrl: string
   era: string | null
+  /** The matched song's name as the API spells it — used for the Discord RPC
+   *  link button, so it searches the canonical title rather than whatever the
+   *  local file happened to be called. */
+  name: string
 }
 
 /** Finds the API song a locally-scanned file corresponds to and returns its
@@ -415,7 +419,7 @@ export async function matchLocalSongCover(title: string | null | undefined): Pro
       const curated = buildImageUrl(song.image_url)
       const byPath = song.path ? buildCoverArtUrl(song.path) : undefined
       const url = curated ?? (byPath && byPath.length <= DISCORD_RPC_URL_LIMIT ? byPath : undefined)
-      if (url) result = { imageUrl: url, era: song.era?.name ?? null }
+      if (url) result = { imageUrl: url, era: song.era?.name ?? null, name: song.name }
     }
   } catch {
     // Offline or API down — no cover this time. Not cached, so a later play
@@ -458,6 +462,23 @@ export async function resolveTitleToSong(title: string): Promise<JWApiSong | nul
   } catch {
     return null
   }
+}
+
+// ─── Site deep links ──────────────────────────────────────────────────────────
+
+export const JWAPI_SITE = 'https://juicewrldapi.com'
+
+/** Web link that opens the tracker with a song's title already searched.
+ *
+ *  The site has no per-song page — its only song-ish deep link is the
+ *  tracker's `q` search param (see getViewFromPath/ApiTrackerView) — so this
+ *  is the closest thing to "open this song on the site", and it's what the
+ *  Discord RPC button points at. Titles are searched cleaned of bracketed
+ *  qualifiers, matching how the tracker's own search behaves. */
+export function songSearchPageUrl(title: string | null | undefined): string | undefined {
+  const q = cleanTitleForSearch(stripFileTitleCruft((title ?? '').trim()))
+  if (!q) return undefined
+  return `${JWAPI_SITE}/tracker?q=${encodeURIComponent(q)}`
 }
 
 /** Picks the best cover URL from a playlist summary or detail object.

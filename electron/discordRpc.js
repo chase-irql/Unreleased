@@ -18,6 +18,11 @@ const RECONNECT_MS = 15000
 // Rich Presence -> Art Assets. Fallback when a track has no usable cover URL
 // (e.g. local files whose art is a base64 data URI with no public address).
 const LARGE_IMAGE_KEY = 'logo'
+// Rich Presence link button. Discord caps the label at 32 characters and the
+// URL at 512; an activity that breaks either is rejected wholesale, taking the
+// whole presence down with it, so both are enforced before sending.
+const BUTTON_LABEL = 'Listen on API'
+const BUTTON_URL_LIMIT = 512
 
 let client = null
 let connected = false
@@ -121,7 +126,7 @@ function fmtTime(sec) {
  * facts. Keeps Discord's activity shape (timestamps, image keys, ActivityType)
  * out of the renderer — it only needs to report what's playing.
  *
- * @param {{ title: string, artist?: string, isPlaying: boolean, currentTime: number, duration: number, isRadio?: boolean, era?: string, coverUrl?: string | null }} info
+ * @param {{ title: string, artist?: string, isPlaying: boolean, currentTime: number, duration: number, isRadio?: boolean, era?: string, coverUrl?: string | null, linkUrl?: string | null }} info
  */
 function setNowPlaying(info) {
   if (!enabled) return
@@ -158,6 +163,15 @@ function setNowPlaying(info) {
   // nothing matches, coverUrl is absent and the static logo stands.
   if (info.coverUrl && /^https?:\/\//.test(info.coverUrl)) {
     activity.largeImageKey = info.coverUrl
+  }
+
+  // Link button under the card ("Listen on API"). Discord allows up to two
+  // buttons, each an http(s) URL — it renders them for anyone viewing the
+  // status. The renderer decides where it points and omits it entirely when
+  // there's nothing to point at (e.g. a local file with no API match), since a
+  // button leading to an empty search is worse than no button.
+  if (info.linkUrl && /^https?:\/\//.test(info.linkUrl) && info.linkUrl.length <= BUTTON_URL_LIMIT) {
+    activity.buttons = [{ label: BUTTON_LABEL, url: info.linkUrl }]
   }
 
   if (info.isPlaying && info.duration > 0) {

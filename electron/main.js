@@ -12,6 +12,16 @@ const webStreamFromNode = (stream) => Readable.toWeb(stream)
 
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
 
+// Forcing --ozone-platform=wayland alongside a Vulkan-capable GPU makes
+// Chromium's GPU process crash-loop with exponential backoff before it gives
+// up and falls back — that backoff is what stalls startup for ~45s on some
+// Wayland/Vulkan setups (e.g. Arch + Hyprland). Auto-detecting the platform
+// and skipping Vulkan avoids the incompatible combo entirely.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+  app.commandLine.appendSwitch('disable-features', 'Vulkan')
+}
+
 app.setAppUserModelId('Unreleased')
 Menu.setApplicationMenu(null)
 
