@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "android:sync": "npm run build && cap sync android",
     "android:apk": "npm run android:sync && cd android && gradlew assembleDebug",
-    "android:deploy": "scripts\\run-android.bat --no-pause"
+    "android:deploy": "scripts\\run-android.bat --no-pause",
+    "ios:sync": "npm run build && cap sync ios"
   },
   "keywords": [],
   "author": "leanwrldd",
@@ -20,6 +21,7 @@
     "@capacitor/cli": "^8.5.0",
     "@capacitor/clipboard": "^8.0.1",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
