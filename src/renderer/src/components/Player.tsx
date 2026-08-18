@@ -29,6 +29,8 @@ import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId } from '../lib/userApi'
 import { toFileUrl } from '../lib/fileTypes'
+import { isAndroidApp } from '../lib/androidUpdate'
+import { startMediaSession, updateMediaMetadata, updateMediaPlaybackState, onMediaControlEvent, fetchArtworkBase64 } from '../lib/mediaControl'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
@@ -928,6 +930,100 @@ export default function Player(): JSX.Element {
       })
     } catch {/* ignore */}
   }, [currentTime, playbackSpeed, mediaSessionActive])
+
+  // ── Native Android media session (see lib/mediaControl.ts) ────────────────
+  // The Web MediaSession API above doesn't reliably survive backgrounding in
+  // this WebView, shows no real system notification, and holds no audio
+  // focus at all — this drives an actual foreground Service + MediaSession +
+  // AudioManager focus request on top of it. `wasAutoPausedByFocus` tracks
+  // whether *we* paused for a transient interruption (another app's alarm,
+  // a nav prompt, etc.) so playback resumes only in that case on focus
+  // regain — not after the user paused on their own, and not after a
+  // permanent loss (another app taking over music playback for good).
+  const wasAutoPausedByFocus = useRef(false)
+  const lastNativePositionPush = useRef(0)
+
+  useEffect(() => {
+    if (!isAndroidApp() || !currentTrack) return
+    startMediaSession()
+    const title  = radioFmActive ? (radioFmNowPlaying?.title  ?? '') : (currentTrack.title  ?? '')
+    const artist = radioFmActive ? (radioFmNowPlaying?.artist ?? '') : (currentTrack.artist ?? '')
+    const rawArt = radioFmActive
+      ? radioFmMatchedSong?.imageUrl
+      : (currentTrackFull?.albumArt ?? currentTrack.imageUrl)
+    const duration = currentTrackFull?.duration ?? currentTrack.duration ?? 0
+    let cancelled = false
+    ;(async () => {
+      const artworkBase64 = rawArt ? await fetchArtworkBase64(rawArt) : null
+      if (cancelled) return
+      updateMediaMetadata({ title, artist, album: '', artworkBase64, duration })
+    })()
+    return () => { cancelled = true }
+  }, [
+    currentTrack?.id,
+    currentTrack?.title,
+    currentTrack?.artist,
+    currentTrack?.imageUrl,
+    currentTrackFull?.albumArt,
+    currentTrackFull?.duration,
+    radioFmActive,
+    radioFmNowPlaying?.title,
+    radioFmNowPlaying?.artist,
+    radioFmMatchedSong?.imageUrl,
+  ])
+
+  // Play/pause/track-change always pushes immediately; the position-tick
+  // effect below is throttled since the native side only needs enough
+  // samples to keep its own seek-bar interpolation roughly in sync, not one
+  // on every `timeupdate`.
+  useEffect(() => {
+    if (!isAndroidApp() || !currentTrack) return
+    lastNativePositionPush.current = performance.now()
+    updateMediaPlaybackState({ playing: isPlaying, position: currentTime, speed: playbackSpeed })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, currentTrack?.id])
+
+  useEffect(() => {
+    if (!isAndroidApp() || !currentTrack) return
+    const now = performance.now()
+    if (now - lastNativePositionPush.current < 3000) return
+    lastNativePositionPush.current = now
+    updateMediaPlaybackState({ playing: isPlaying, position: currentTime, speed: playbackSpeed })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTime])
+
+  useEffect(() => {
+    if (!isAndroidApp()) return
+    const offPlay = onMediaControlEvent('play', () => setIsPlaying(true))
+    const offPause = onMediaControlEvent('pause', () => setIsPlaying(false))
+    const offNext = onMediaControlEvent('next', () => nextTrack())
+    const offPrev = onMediaControlEvent('previous', () => prevTrack())
+    const offSeek = onMediaControlEvent<{ position: number }>('seek', (d) => {
+      const audio = getActive()
+      if (audio && typeof d?.position === 'number') audio.currentTime = d.position
+    })
+    const offFocus = onMediaControlEvent<{ type: string }>('focus', (d) => {
+      const audio = getActive()
+      switch (d?.type) {
+        case 'loss':
+          wasAutoPausedByFocus.current = false
+          setIsPlaying(false)
+          break
+        case 'transientLoss':
+          if (audio && !audio.paused) wasAutoPausedByFocus.current = true
+          setIsPlaying(false)
+          break
+        case 'duck':
+          if (audio) audio.volume = volumeRef.current * 0.35
+          break
+        case 'gain':
+          if (audio) audio.volume = volumeRef.current
+          if (wasAutoPausedByFocus.current) { wasAutoPausedByFocus.current = false; setIsPlaying(true) }
+          break
+      }
+    })
+    return () => { offPlay(); offPause(); offNext(); offPrev(); offSeek(); offFocus() }
+  }, [setIsPlaying, nextTrack, prevTrack])
 
   // Audio output device
   useEffect(() => {

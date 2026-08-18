@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LocalLibraryPlugin.class);
         registerPlugin(OfflinePlugin.class);
         registerPlugin(DownloadsPlugin.class);
+        registerPlugin(MediaSessionPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

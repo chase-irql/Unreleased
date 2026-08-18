@@ -4,12 +4,13 @@ import {
   X, Music2, Pencil, Flag, PictureInPicture2, Minimize2,
   Clock, Hash, MicVocal, Music, Wrench, FileText, Piano, MapPin,
   Calendar, CalendarClock, CalendarDays, Droplets, Gauge, Layers,
-  GitBranch, Info, StickyNote, Quote, LucideIcon
+  GitBranch, Info, StickyNote, Quote, Copy, Download, Loader2, LucideIcon
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
 import { formatDuration } from '../lib/format'
+import { copyCoverImage, saveCoverImage } from '../lib/coverImage'
 import SongPrefsSection from './SongPrefsSection'
 import { ProgressiveCover } from './ProgressiveCover'
 import { useBackToClose } from '../hooks/useBackToClose'
@@ -77,6 +78,12 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
   const songPrefs = useStore((s) => s.songPrefs)
   const openReport = useStore((s) => s.openReport)
 
+  // Cover art actions (copy to clipboard / save to disk). `coverMsg` briefly
+  // replaces the action buttons with a confirmation instead of a toast, since
+  // the modal already owns this corner of the screen.
+  const [coverBusy, setCoverBusy] = useState<'copy' | 'save' | null>(null)
+  const [coverMsg, setCoverMsg] = useState<string | null>(null)
+
   // Clicking a linked version swaps the displayed song in place, without the
   // caller needing to manage that — falls back to the `song` prop otherwise.
   const [overrideSong, setOverrideSong] = useState<JWApiSong | null>(null)
@@ -139,6 +146,29 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
   const hasInstrumentals = displaySong.instrumentals || displaySong.instrumental_names
   const hasSession = displaySong.session_titles || displaySong.session_tracking
 
+  const flashCoverMsg = (msg: string): void => {
+    setCoverMsg(msg)
+    setTimeout(() => setCoverMsg(null), 1900)
+  }
+
+  const runCoverAction = async (kind: 'copy' | 'save'): Promise<void> => {
+    if (!coverUrl || coverBusy) return
+    setCoverBusy(kind)
+    try {
+      if (kind === 'copy') {
+        await copyCoverImage(coverUrl)
+        flashCoverMsg('Copied')
+      } else {
+        await saveCoverImage(coverUrl, primaryTitle)
+        flashCoverMsg('Saved')
+      }
+    } catch {
+      flashCoverMsg(kind === 'copy' ? "Couldn't copy" : "Couldn't save")
+    } finally {
+      setCoverBusy(null)
+    }
+  }
+
   let notesDisplay: string | null = null
   if (displaySong.notes) {
     try {
@@ -199,7 +229,7 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
             </button>
           </div>
           <div className="relative flex items-end gap-4 px-5 pt-8 pb-5">
-            <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay">
+            <div className="relative shrink-0 w-24 h-24 rounded-xl overflow-hidden shadow-2xl bg-surface-overlay">
               {coverUrl ? (
                 <ProgressiveCover src={coverUrl} alt={primaryTitle} className="w-full h-full object-cover" />
               ) : (
@@ -207,6 +237,33 @@ export default function SongInfoModal({ song, onClose, onEdit }: Props): JSX.Ele
                   <Music2 size={32} className="text-text-muted opacity-30" />
                 </div>
               )}
+              {/* Copy/save actions — always visible (no hover on touch),
+                  tucked in the bottom-right corner so they don't compete with
+                  the cover itself. */}
+              {coverUrl && (coverMsg ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/75 px-1 text-center">
+                  <span className="text-white text-[10px] font-semibold">{coverMsg}</span>
+                </div>
+              ) : (
+                <div className="absolute bottom-1 right-1 flex items-center gap-1">
+                  <button
+                    onClick={() => runCoverAction('copy')}
+                    disabled={!!coverBusy}
+                    className="w-6 h-6 flex items-center justify-center rounded-lg bg-black/50 text-white active:bg-black/70 disabled:opacity-50 transition-colors"
+                    title="Copy cover image"
+                  >
+                    {coverBusy === 'copy' ? <Loader2 size={11} className="animate-spin" /> : <Copy size={11} />}
+                  </button>
+                  <button
+                    onClick={() => runCoverAction('save')}
+                    disabled={!!coverBusy}
+                    className="w-6 h-6 flex items-center justify-center rounded-lg bg-black/50 text-white active:bg-black/70 disabled:opacity-50 transition-colors"
+                    title="Save cover image"
+                  >
+                    {coverBusy === 'save' ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                  </button>
+                </div>
+              ))}
             </div>
             <div className="flex-1 min-w-0 pb-0.5">
               <h2 className="text-white font-bold text-xl leading-tight">{primaryTitle}</h2>

@@ -27,6 +27,28 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Foreground service holding the MediaSessionCompat — see
+             PlaybackService and MediaSessionPlugin. The MEDIA_BUTTON
+             intent-filter lets androidx's MediaButtonReceiver (below) find
+             this service to forward hardware/Bluetooth media-button events
+             to when the app isn't already running it. -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -43,4 +65,14 @@
          MediaStore with no permission needed at all; only pre-29 needs this,
          capped with maxSdkVersion so it's a no-op grant on everything newer. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Media playback: a foreground Service so Android doesn't kill the app
+         mid-song, plus the lock-screen/notification-shade transport control
+         and audio-focus request it exists to show — see PlaybackService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Runtime-requested (see MediaSessionPlugin) on API 33+ before the
+         playback notification is shown; the service still runs foreground
+         without it, just invisibly. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

@@ -1,6 +1,6 @@
 ﻿import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
-import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, GuestPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
+import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, GuestPlaylist, FollowedPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
 import { APP_VERSION } from '../lib/appVersion'
 import { ls } from '../lib/persist'
 import * as userApi from '../lib/userApi'
@@ -387,6 +387,9 @@ interface AppState {
   // (Electron-only, library-file-based) these work on web/Android too.
   guestPlaylists: GuestPlaylist[]
 
+  // Other people's playlists followed from a share link — see FollowedPlaylist.
+  followedPlaylists: FollowedPlaylist[]
+
   // Offline playlist sync (Electron only) — API-backed playlists downloaded
   // for offline playback, kept in sync with the API's song metadata.
   offlineTracks: Record<string, OfflineTrackMeta>
@@ -668,6 +671,15 @@ interface AppActions {
   addToGuestPlaylist: (playlistId: string, track: Track) => void
   removeFromGuestPlaylist: (playlistId: string, trackId: string) => void
   reorderGuestPlaylist: (playlistId: string, tracks: Track[]) => void
+
+  // Follow/unfollow someone else's playlist (see FollowedPlaylist) — a local
+  // pointer, not a copy. followPlaylist is idempotent (following twice just
+  // refreshes the cached display fields). updateFollowedPlaylistMeta patches
+  // those cached fields in place and is a no-op if the given playlist's own
+  // id isn't followed.
+  followPlaylist: (meta: { id: number; name: string; trackCount: number; coverUrl: string | null }) => void
+  unfollowPlaylist: (id: number) => void
+  updateFollowedPlaylistMeta: (id: number, meta: { name: string; trackCount: number; coverUrl: string | null }) => void
 
   loadOfflineLibrary: () => Promise<void>
   downloadPlaylistOffline: (key: string, name: string, songIds: number[], opts?: { silent?: boolean }) => Promise<void>
@@ -1805,6 +1817,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   localPlaylists: [],
   activeLocalPlaylistId: null,
   guestPlaylists: ls.get<GuestPlaylist[]>('guestPlaylists') ?? [],
+  followedPlaylists: ls.get<FollowedPlaylist[]>('followedPlaylists') ?? [],
 
   // ── Offline playlist sync ────────────────────────────────────────────────
   offlineTracks: {},
@@ -2084,6 +2097,28 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = get().guestPlaylists.map((p) => p.id === playlistId ? { ...p, tracks } : p)
     set({ guestPlaylists: next })
     ls.set('guestPlaylists', next)
+  },
+
+  // ── Followed playlists (local-only — see FollowedPlaylist) ─────────────────
+  followPlaylist: (meta) => {
+    const existing = get().followedPlaylists
+    const next = existing.some((f) => f.id === meta.id)
+      ? existing.map((f) => f.id === meta.id ? { ...f, ...meta } : f)
+      : [...existing, { ...meta, followedAt: Date.now() }]
+    set({ followedPlaylists: next })
+    ls.set('followedPlaylists', next)
+  },
+  unfollowPlaylist: (id) => {
+    const next = get().followedPlaylists.filter((f) => f.id !== id)
+    set({ followedPlaylists: next })
+    ls.set('followedPlaylists', next)
+  },
+  updateFollowedPlaylistMeta: (id, meta) => {
+    const existing = get().followedPlaylists
+    if (!existing.some((f) => f.id === id)) return
+    const next = existing.map((f) => f.id === id ? { ...f, ...meta } : f)
+    set({ followedPlaylists: next })
+    ls.set('followedPlaylists', next)
   },
 
   loadLibrary: async (force = false) => {
