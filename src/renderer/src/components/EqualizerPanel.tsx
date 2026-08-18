@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { RotateCcw, ChevronDown, Check } from 'lucide-react'
+import { RotateCcw, ChevronDown, Check, X } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import { EQ_BANDS, EQ_GAIN_LIMIT, EQ_PRESETS, EFFECTS_SUPPORTED } from '../lib/audioEffects'
+import { formatDuration } from '../lib/format'
 
 // Short axis labels for the band sliders (32 … 16K).
 function bandLabel(freq: number): string {
@@ -165,11 +166,12 @@ export default function EqualizerPanel(): JSX.Element {
     reverbMix, setReverbMix,
     reverbDecay, setReverbDecay,
     communityEdits, playCommunityEdit,
+    abLoopStart, abLoopEnd, setAbLoopPoint, clearAbLoop,
     preferOgVersion, setPreferOgVersion,
     sleepTimerEnd, setSleepTimer,
     audioOutput, setAudioOutput,
     radioFmActive,
-  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'playCommunityEdit', 'preferOgVersion', 'setPreferOgVersion', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'radioFmActive')
+  } = useStorePick('eqEnabled', 'setEqEnabled', 'eqGains', 'setEqBand', 'eqPreset', 'setEqPreset', 'eqBalance', 'setEqBalance', 'eqMono', 'setEqMono', 'skipSilence', 'setSkipSilence', 'playbackSpeed', 'setPlaybackSpeed', 'pitchShift', 'setPitchShift', 'reverbEnabled', 'setReverbEnabled', 'reverbMix', 'setReverbMix', 'reverbDecay', 'setReverbDecay', 'communityEdits', 'playCommunityEdit', 'abLoopStart', 'abLoopEnd', 'setAbLoopPoint', 'clearAbLoop', 'preferOgVersion', 'setPreferOgVersion', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'radioFmActive')
 
   const balancePct = Math.round(eqBalance * 100)
   const balanceLabel = balancePct === 0 ? 'C' : balancePct < 0 ? `L ${-balancePct}` : `R ${balancePct}`
@@ -391,6 +393,51 @@ export default function EqualizerPanel(): JSX.Element {
                 <p className="text-[10px] text-text-muted">Pitch follows speed — slowed below 1x, nightcore above</p>
               </div>
               <Toggle on={pitchShift} onClick={() => setPitchShift(!pitchShift)} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* A-B loop — repeats a marked portion of the current track. Pure
+          audio.currentTime manipulation (no Web Audio graph involved), so it
+          works even where EFFECTS_SUPPORTED is false (iOS) — lives outside
+          that gated block. Hidden during FM: a live stream has no positions
+          to mark. One button cycles Set A → Set B → Looping → clear, mirroring
+          the classic single-button A-B repeat control. */}
+      {!radioFmActive && (
+        <>
+          <div className="border-t border-[var(--border)] mx-5" />
+          <div className="flex items-center justify-between gap-3 px-5 py-2.5">
+            <div className="min-w-0">
+              <p className="text-xs text-text-secondary">A-B loop</p>
+              <p className="text-[10px] text-text-muted truncate">
+                {abLoopStart == null
+                  ? 'Repeat a portion of this song'
+                  : abLoopEnd == null
+                    ? `Point A at ${formatDuration(abLoopStart)} — pick point B`
+                    : `Looping ${formatDuration(abLoopStart)}–${formatDuration(abLoopEnd)}`}
+              </p>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={setAbLoopPoint}
+                className={`h-9 px-3.5 rounded-full text-xs font-medium transition-colors ${
+                  abLoopEnd != null
+                    ? 'bg-accent/15 text-accent active:bg-accent/25'
+                    : 'bg-[var(--surface-overlay)] text-text-secondary active:text-text-primary'
+                }`}
+              >
+                {abLoopStart == null ? 'Set A' : abLoopEnd == null ? 'Set B' : 'Looping'}
+              </button>
+              {abLoopStart != null && (
+                <button
+                  onClick={clearAbLoop}
+                  aria-label="Clear loop"
+                  className="w-9 h-9 flex items-center justify-center rounded-full text-text-muted active:text-text-primary active:bg-[var(--surface-overlay)] transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           </div>
         </>

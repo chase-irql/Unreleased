@@ -116,6 +116,12 @@ interface AppState {
   // Let the pitch follow the rate (preservesPitch off) — slowed feel below
   // 1x, sped-up/nightcore feel above. Combine with reverb for slowed+reverb.
   pitchShift: boolean
+  // A-B loop: repeat a marked portion of the current track. Both null = no
+  // loop. Deliberately NOT persisted to localStorage (a saved position only
+  // makes sense for the track it was set on) — cleared on every track change
+  // (see Player's currentTrack?.id effect).
+  abLoopStart: number | null
+  abLoopEnd: number | null
   // Community-shared effect configs, shown next to the EQ presets. Stays
   // empty until the API endpoints for them exist — a future fetch populates
   // it; nothing is persisted locally.
@@ -410,6 +416,11 @@ interface AppActions {
   setReverbMix: (mix: number) => void
   setReverbDecay: (seconds: number) => void
   setPitchShift: (enabled: boolean) => void
+  /** Cycles the A-B loop through its three states using the current playback
+   *  position: unset → point A set → looping (A and B set) → unset again.
+   *  Mirrors the classic single-button "A-B repeat" control. */
+  setAbLoopPoint: () => void
+  clearAbLoop: () => void
   playCommunityEdit: (edit: CommunityEdit) => void
 
   setActiveView: (view: ViewType) => void
@@ -910,6 +921,34 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setReverbMix: (reverbMix) => { set({ reverbMix }); ls.set('reverbMix', reverbMix) },
   setReverbDecay: (reverbDecay) => { set({ reverbDecay }); ls.set('reverbDecay', reverbDecay) },
   setPitchShift: (pitchShift) => { set({ pitchShift }); ls.set('pitchShift', pitchShift) },
+  abLoopStart: null,
+  abLoopEnd: null,
+  setAbLoopPoint: () => {
+    const { abLoopStart, abLoopEnd, currentTime } = get()
+    if (abLoopStart == null) {
+      set({ abLoopStart: currentTime, abLoopEnd: null })
+      return
+    }
+    if (abLoopEnd == null) {
+      // A loop shorter than this reads as a stutter rather than a musical
+      // phrase — and clicking "B" at (accidentally) almost the same spot as
+      // "A" is the easy mistake this guards against. Treat a too-close click
+      // as re-picking point A there instead of creating a degenerate loop.
+      const MIN_LOOP_S = 0.5
+      if (currentTime > abLoopStart + MIN_LOOP_S) {
+        set({ abLoopEnd: currentTime })
+      } else if (currentTime < abLoopStart - MIN_LOOP_S) {
+        // Clicked "B" earlier in the track than "A" — swap so start < end.
+        set({ abLoopStart: currentTime, abLoopEnd: abLoopStart })
+      } else {
+        set({ abLoopStart: currentTime })
+      }
+      return
+    }
+    // Both already set — third press clears it.
+    set({ abLoopStart: null, abLoopEnd: null })
+  },
+  clearAbLoop: () => set({ abLoopStart: null, abLoopEnd: null }),
   communityEdits: [],
   // A community edit is a real audio file, so playing one goes through the
   // normal queue machinery as a single-track play — the effects chain, prefs,
@@ -994,6 +1033,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'news': '/news',
       'heardle': '/heardle',
       'wordle': '/wordle',
+      'tierlist': '/tierlist',
       'stats': '/stats',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
@@ -1595,11 +1635,22 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   loginWithDiscord: async () => {
     const redirectUri = userApi.discordRedirectUri()
-    const { authorize_url } = await userApi.getDiscordAuthUrl(redirectUri)
+    const { authorize_url, state } = await userApi.getDiscordAuthUrl(redirectUri)
+    // Defense-in-depth CSRF check: the server already validates `state`
+    // server-side, but stash the issued value so completeDiscordLogin can
+    // also reject a mismatched one before ever calling exchange. sessionStorage
+    // (not the in-memory store) survives the full-page redirect the web flow does.
+    try { window.sessionStorage.setItem('discord_oauth_state', state) } catch {}
     window.location.href = authorize_url
   },
 
   completeDiscordLogin: async (code, state) => {
+    let expectedState: string | null = null
+    try { expectedState = window.sessionStorage.getItem('discord_oauth_state') } catch {}
+    try { window.sessionStorage.removeItem('discord_oauth_state') } catch {}
+    if (expectedState && state !== expectedState) {
+      throw new Error('Discord OAuth state mismatch')
+    }
     const redirectUri = userApi.discordRedirectUri()
     const { token, user } = await userApi.exchangeDiscord(code, state, redirectUri)
     userApi.setToken(token)
@@ -2160,7 +2211,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
           const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
           const ext = (song.path.split('.').pop() || 'mp3').toLowerCase()
           const meta = {
-            title: song.track_titles?.[0] || song.name,
+            title: song.name,
             artist: song.credited_artists || 'Juice WRLD',
             album: song.album || song.era?.name || '',
             imageUrl: buildImageUrl(song.image_url) ?? null,

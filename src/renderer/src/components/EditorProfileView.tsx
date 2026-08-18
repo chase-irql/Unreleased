@@ -84,7 +84,7 @@ function CopyFromSong({ onCopy, copiedFrom, onClear }: {
               onClick={() => pick(r)}
               className="w-full flex items-center gap-2 text-left px-2.5 py-2 text-xs text-text-secondary active:bg-[var(--surface-overlay)] active:text-text-primary transition-colors"
             >
-              <span className="flex-1 min-w-0 truncate">{r.track_titles?.[0] || r.name}</span>
+              <span className="flex-1 min-w-0 truncate">{r.name}</span>
               {r.era?.name && <span className="text-[10px] text-text-muted opacity-60 shrink-0">{r.era.name}</span>}
               {loadingId === r.id && <Loader2 size={11} className="animate-spin shrink-0" />}
             </button>
@@ -144,7 +144,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   // specific audio file — a new version has its own file, length and bitrate,
   // and silently inheriting those would submit wrong data for the common case.
   const copyFrom = (s: JWApiSong): void => {
-    setName(s.track_titles?.[0] || s.name || '')
+    setName(s.name || '')
     setArtists(s.credited_artists || '')
     setAlbum(s.album ?? s.era?.name ?? '')
     setCat(s.category || '')
@@ -166,7 +166,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
     setFileNames(s.file_names || '')
     setAddInfo(s.additional_information || '')
     setNotes(s.notes || '')
-    setCopiedFrom(s.track_titles?.[0] || s.name || null)
+    setCopiedFrom(s.name || null)
     setShowMore(true)
   }
 
@@ -244,9 +244,9 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
             />
             <BasicSelect label="Category" value={cat} original="" onChange={setCat} options={CATEGORIES} />
           </div>
-          <BasicRow label="Album" value={album} onChange={setAlbum} placeholder="Album name" />
+          <BasicRow label="Album" value={album} onChange={setAlbum} placeholder="Album name" suggest="album" />
           <BasicRow label="Alternate titles (one per line)" value={altNames} onChange={setAltNames} rows={3} />
-          <BasicRow label="Credited artists" value={artists} onChange={setArtists} placeholder="Juice WRLD ft. …" />
+          <BasicRow label="Credited artists" value={artists} onChange={setArtists} placeholder="Juice WRLD ft. …" suggest="credited_artists" />
 
           <button onClick={() => setShowMore(v => !v)}
             className="flex items-center gap-1.5 self-start px-1 py-1.5 text-[11px] font-semibold text-text-muted opacity-60 active:opacity-100 transition-opacity select-none">
@@ -257,10 +257,10 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
           {showMore && (
             <>
               <div className="grid grid-cols-2 gap-1.5">
-                <BasicRow label="Producers" value={prod} onChange={setProd} placeholder="Producer names" />
-                <BasicRow label="Engineers" value={engineer} onChange={setEngineer} placeholder="Engineer name" />
+                <BasicRow label="Producers" value={prod} onChange={setProd} placeholder="Producer names" suggest="producers" />
+                <BasicRow label="Engineers" value={engineer} onChange={setEngineer} placeholder="Engineer name" suggest="engineers" />
               </div>
-              <BasicRow label="Recording locations" value={location} onChange={setLocation} rows={2} placeholder="Studio / city" />
+              <BasicRow label="Recording locations" value={location} onChange={setLocation} rows={2} placeholder="Studio / city" suggest="recording_locations" />
               <BasicRow label="Record dates" value={recDate} onChange={setRecDate} rows={2} placeholder="YYYY-MM-DD" mono />
               <div className="grid grid-cols-2 gap-1.5">
                 <BasicRow label="Length" value={songLength} onChange={setSongLength} placeholder="3:59" mono />
@@ -303,7 +303,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
 
               <div className="grid grid-cols-2 gap-1.5">
                 <BasicRow label="Date leaked" value={dateLeaked} onChange={setDateLeaked} placeholder="YYYY-MM-DD" mono />
-                <BasicRow label="Leak type" value={leakType} onChange={setLeakType} placeholder="e.g. Stem, Master, Video…" />
+                <BasicRow label="Leak type" value={leakType} onChange={setLeakType} placeholder="e.g. Stem, Master, Video…" suggest="leak_type" />
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <BasicRow label="Image URL" value={imageUrl} onChange={setImageUrl} placeholder="https://…" mono />

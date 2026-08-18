@@ -128,7 +128,7 @@ async function request<T>(url: string, options: RequestInit = {}, auth = true, c
 // reached through a playlist or the favorites list has to show the user's
 // custom name and cover just like one reached through the Tracker.
 export function liteSongToTrack(song: ApiSongLite): Track {
-  const apiTitle = song.track_titles?.[0] || song.name
+  const apiTitle = song.name
   const apiImageUrl = buildImageUrl(song.image_url)
   const pref = peekSongPref(song.id)
   // A user-set cover always wins; a rotated suggestion only fills in where

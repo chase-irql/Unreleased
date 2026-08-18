@@ -22,7 +22,7 @@
 //     desktop release (or 404) and never an Android one. We list /releases
 //     and filter by the `android-v` tag prefix instead.
 
-const REPO = 'leanwrldd/unreleased'
+const REPO = 'Juice-WRLD-API/Unreleased'
 const TAG_PREFIX = 'android-v'
 // Unauthenticated GitHub API allows 60 requests/hour/IP. One page is plenty:
 // Android releases are frequent enough to appear well within 30 entries, and

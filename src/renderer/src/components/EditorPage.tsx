@@ -15,6 +15,7 @@ import {
 } from '../lib/versionsApi'
 import type { VersionTitleSuggestion } from '../lib/versionsApi'
 import { invalidateCompactGroupsCache } from '../lib/compactGroups'
+import { suggestFieldValues, type SuggestField } from '../lib/fieldSuggestions'
 
 type SubmitState = 'idle' | 'submitting' | 'submitted' | 'error'
 type LyricsTab = 'lyrics' | 'synced'
@@ -90,16 +91,62 @@ export function FieldGrid({ children, cols = 2 }: { children: ReactNode; cols?: 
   return <div className={`grid gap-2 ${cols === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>{children}</div>
 }
 
+/* ── Field-value autocomplete ─────────────────────────────────────────────── */
+/* Shared by FieldRow and BasicRow — a value-matching dropdown fed from
+ *  fieldSuggestions.ts (album/credits/location/leak type already used
+ *  elsewhere in the catalog), same idea as the Versions card's title
+ *  autocomplete but backed by song data instead of the /versions/ table. */
+function useValueSuggestions(field: SuggestField | undefined, value: string): {
+  matches: string[]; open: boolean; setOpen: (v: boolean) => void
+} {
+  const [matches, setMatches] = useState<string[]>([])
+  const [open, setOpen] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!field) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      suggestFieldValues(field, value, value).then(setMatches)
+    }, 200)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [field, value])
+
+  return { matches, open, setOpen }
+}
+
+function SuggestDropdown({ matches, onPick }: { matches: string[]; onPick: (v: string) => void }): JSX.Element | null {
+  if (matches.length === 0) return null
+  return (
+    <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-lg border border-[var(--border)] bg-surface-raised shadow-2xl py-1">
+      {matches.map(m => (
+        <button
+          key={m}
+          // mousedown (not click) fires before the input's blur, so the
+          // suggestion is still in `matches` when this runs.
+          onMouseDown={e => { e.preventDefault(); onPick(m) }}
+          className="w-full text-left px-2.5 py-2 text-xs text-text-secondary active:bg-surface-overlay active:text-text-primary transition-colors truncate"
+        >
+          {m}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /* ── Field — bordered box with the label inline at the top, touch-sized ───── */
-export function FieldRow({ label, value, original = '', onChange, placeholder, mono = false, span, onBrowse }: {
+export function FieldRow({ label, value, original = '', onChange, placeholder, mono = false, span, onBrowse, suggest }: {
   label: string; value: string; original?: string
   onChange: (v: string) => void; placeholder?: string; mono?: boolean; span?: 2 | 3
   /** Shows a folder button inside the field that opens a file picker. */
   onBrowse?: () => void
+  /** Autocompletes from other songs' values for this field (e.g. "album"). */
+  suggest?: SuggestField
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
+  const { matches, open, setOpen } = useValueSuggestions(suggest, value)
   return (
-    <label className={`block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
+    <label className={`relative block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
       changed ? 'border-accent/40 bg-accent/[0.06]' : 'border-[var(--border)] bg-surface-raised/50'
     }`}>
       <span className="block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight">{label}</span>
@@ -107,6 +154,8 @@ export function FieldRow({ label, value, original = '', onChange, placeholder, m
         <input
           value={value}
           onChange={e => onChange(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
           placeholder={placeholder ?? (original || '—')}
           className={`flex-1 min-w-0 bg-transparent border-0 p-0 text-[13.5px] leading-snug text-text-primary focus:outline-none placeholder:text-text-muted placeholder:opacity-40 ${mono ? 'font-mono text-xs' : ''}`}
         />
@@ -121,26 +170,33 @@ export function FieldRow({ label, value, original = '', onChange, placeholder, m
           </button>
         )}
       </div>
+      {suggest && open && <SuggestDropdown matches={matches} onPick={v => { onChange(v); setOpen(false) }} />}
     </label>
   )
 }
 
 /* ── Textarea field ────────────────────────────────────────────────────────── */
-export function TextareaRow({ label, value, original = '', onChange, rows = 3, placeholder, mono = false, span }: {
+export function TextareaRow({ label, value, original = '', onChange, rows = 3, placeholder, mono = false, span, suggest }: {
   label: string; value: string; original?: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean; span?: 2 | 3
+  /** Autocompletes from other songs' values for this field (e.g. "recording_locations"). */
+  suggest?: SuggestField
 }): JSX.Element {
   const changed = value !== original && !(value === '' && original === '')
+  const { matches, open, setOpen } = useValueSuggestions(suggest, value)
   return (
-    <label className={`block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
+    <label className={`relative block rounded-xl border px-2.5 py-1.5 transition-colors ${span ? 'col-span-2' : ''} ${
       changed ? 'border-accent/40 bg-accent/[0.06]' : 'border-[var(--border)] bg-surface-raised/50'
     }`}>
       <span className="block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight">{label}</span>
       <textarea
         rows={rows} value={value} onChange={e => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
         placeholder={placeholder}
         className={`w-full bg-transparent border-0 p-0 mt-0.5 text-[13.5px] leading-snug text-text-primary focus:outline-none resize-none placeholder:text-text-muted placeholder:opacity-40 ${mono ? 'font-mono text-xs' : ''}`}
       />
+      {suggest && open && <SuggestDropdown matches={matches} onPick={v => { onChange(v); setOpen(false) }} />}
     </label>
   )
 }
@@ -158,15 +214,21 @@ const basicShellClass = (changed: boolean): string =>
 const basicLabelClass =
   'block text-[10px] font-semibold tracking-wide text-text-muted select-none leading-tight'
 
-export function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false, onBrowse }: {
+export function BasicRow({ label, value, original, onChange, rows = 1, placeholder, mono = false, onBrowse, suggest }: {
   label: string; value: string; original?: string
   onChange: (v: string) => void; rows?: number; placeholder?: string; mono?: boolean
   /** Shows a folder button inside the field that opens a file picker. */
   onBrowse?: () => void
+  /** Autocompletes from other songs' values for this field (e.g. "album"). */
+  suggest?: SuggestField
 }): JSX.Element {
   const changed = original != null && value !== original && !(value === '' && original === '')
+  const { matches, open, setOpen } = useValueSuggestions(suggest, value)
   return (
-    <label className={basicShellClass(changed)}>
+    <label
+      className={`relative ${basicShellClass(changed)} ${open && matches.length > 0 ? 'z-20' : ''}`}
+      onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+    >
       <span className={basicLabelClass}>{label}</span>
       {rows > 1
         ? <textarea
@@ -188,6 +250,7 @@ export function BasicRow({ label, value, original, onChange, rows = 1, placehold
             )}
           </div>
       }
+      {suggest && open && <SuggestDropdown matches={matches} onPick={v => { onChange(v); setOpen(false) }} />}
     </label>
   )
 }
@@ -460,6 +523,14 @@ export default function EditorPage({ initialSongId = null }: {
   const [lyricsError,   setLyricsError]   = useState<string | null>(null)
   const [submitState,  setSubmitState]  = useState<SubmitState>('idle')
   const [submitError,  setSubmitError]  = useState<string | null>(null)
+  // The patch (JSON-stringified) last successfully submitted, so the button
+  // can stay disabled after submitState's 3s "submitted" flash resets back to
+  // idle. Without this, an untouched proposal could be resubmitted verbatim
+  // by clicking again once that flash wore off — nothing else marks the
+  // still-pending proposal as "already sent" for this exact set of edits.
+  // Cleared wherever the field state itself is reset (populate/cancel), since
+  // a stale value there would just as wrongly block a legitimately new patch.
+  const lastSubmittedPatchRef = useRef<string | null>(null)
   const [deleteState,  setDeleteState]  = useState<'idle' | 'confirm' | 'submitting' | 'submitted' | 'error'>('idle')
   const [deleteError,  setDeleteError]  = useState<string | null>(null)
   const [showMore,     setShowMore]     = useState(false)
@@ -497,7 +568,13 @@ export default function EditorPage({ initialSongId = null }: {
   const baseline = (s: JWApiSong | null): Record<string, unknown> => {
     if (!s) return {}
     return {
-      name:                   s.track_titles?.[0] || s.name,
+      // `name` is the API's own canonical title — NOT track_titles[0]. They
+      // usually agree, but track_titles is an unordered alias list, so its
+      // first entry isn't reliably the primary name (see SongInfoModal's
+      // altTitles for the same mismatch). Populating the Title field from
+      // track_titles[0] meant the field could silently start on the wrong
+      // one of a song's several known titles.
+      name:                   s.name,
       credited_artists:       s.credited_artists || '',
       album:                  s.album ?? s.era?.name ?? '',
       category:               s.category || '',
@@ -526,7 +603,7 @@ export default function EditorPage({ initialSongId = null }: {
   }
 
   const populate = useCallback((s: JWApiSong): void => {
-    setName(s.track_titles?.[0] || s.name)
+    setName(s.name)
     setArtists(s.credited_artists || '')
     setAlbum(s.album ?? s.era?.name ?? '')
     setCat(s.category || '')
@@ -556,6 +633,7 @@ export default function EditorPage({ initialSongId = null }: {
     setSubmitError(null)
     setDeleteState('idle')
     setDeleteError(null)
+    lastSubmittedPatchRef.current = null
   }, [])
 
   const loadSong = useCallback(async (id: number): Promise<void> => {
@@ -766,6 +844,11 @@ export default function EditorPage({ initialSongId = null }: {
       // 'create' proposal — new song, no backing song record exists yet
       setSong(null)
       setIsNewSongDraft(true)
+      // Doesn't go through populate() (there's no song to populate from), so
+      // clear this by hand — otherwise a leftover value from whatever was
+      // open before could, in a rare coincidence, match this draft's patch
+      // and wrongly show it as already submitted.
+      lastSubmittedPatchRef.current = null
       applyProposedData()
     } else {
       setIsNewSongDraft(false)
@@ -803,10 +886,14 @@ export default function EditorPage({ initialSongId = null }: {
   const patch        = diff(baseline(song), current)
   const changedCount = Object.keys(patch).length
   const base         = baseline(song)
+  // True once changedCount > 0 has already been sent and nothing has been
+  // edited since — see lastSubmittedPatchRef above.
+  const alreadySubmitted = changedCount > 0 && JSON.stringify(patch) === lastSubmittedPatchRef.current
 
   const cancelEditProposal = (): void => {
     setEditingPropId(null)
     setIsNewSongDraft(false)
+    lastSubmittedPatchRef.current = null
     if (song) populate(song)
   }
 
@@ -815,7 +902,7 @@ export default function EditorPage({ initialSongId = null }: {
   }
 
   const submit = async (): Promise<void> => {
-    if ((!song && !isNewSongDraft) || changedCount === 0) return
+    if ((!song && !isNewSongDraft) || changedCount === 0 || alreadySubmitted) return
     setSubmitState('submitting')
     setSubmitError(null)
     try {
@@ -832,6 +919,7 @@ export default function EditorPage({ initialSongId = null }: {
       // Lyrics may have changed (and auto-approve admins make it live instantly)
       // — drop the cached copy so the next play reflects the edit.
       if (song && ('lyrics' in patch || 'synced_lyrics' in patch)) invalidateLyricsCache(song.id)
+      lastSubmittedPatchRef.current = JSON.stringify(patch)
       setSubmitState('submitted')
       setTimeout(() => setSubmitState('idle'), 3000)
     } catch (e) {
@@ -1031,7 +1119,7 @@ export default function EditorPage({ initialSongId = null }: {
                 }
                 <div className="min-w-0 flex-1">
                   <p className="text-text-primary font-bold text-[15px] leading-snug truncate">
-                    {name || song?.track_titles?.[0] || song?.name || 'Untitled'}
+                    {name || song?.name || 'Untitled'}
                   </p>
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${CAT_BADGE[cat] || 'bg-surface-raised text-text-muted'}`}>
@@ -1047,9 +1135,9 @@ export default function EditorPage({ initialSongId = null }: {
               </div>
             </Card>
 
-            <Card title="Identity">
+            <Card title="Identity" overflowVisible>
               <FieldRow label="Title" value={name} original={String(base.name || '')} onChange={setName} />
-              <FieldRow label="Album" value={album} original={String(base.album || '')} onChange={setAlbum} />
+              <FieldRow label="Album" value={album} original={String(base.album || '')} onChange={setAlbum} suggest="album" />
               <TextareaRow
                 label="Alt titles (one per line)" value={altNames}
                 original={Array.isArray(base.track_titles) ? (base.track_titles as string[]).join('\n') : ''}
@@ -1078,25 +1166,25 @@ export default function EditorPage({ initialSongId = null }: {
               />
             </Card>
 
-            <Card title="Credits">
-              <FieldRow label="Credited artists" value={artists} original={String(base.credited_artists || '')} onChange={setArtists} />
+            <Card title="Credits" overflowVisible>
+              <FieldRow label="Credited artists" value={artists} original={String(base.credited_artists || '')} onChange={setArtists} suggest="credited_artists" />
               <FieldGrid>
-                <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} />
-                <FieldRow label="Engineers" value={eng}  original={String(base.engineers || '')} onChange={setEng} />
+                <FieldRow label="Producers" value={prod} original={String(base.producers || '')} onChange={setProd} suggest="producers" />
+                <FieldRow label="Engineers" value={eng}  original={String(base.engineers || '')} onChange={setEng} suggest="engineers" />
               </FieldGrid>
             </Card>
 
-            <Card title="Recording">
-              <TextareaRow label="Locations"    value={loc}     original={String(base.recording_locations || '')} onChange={setLoc}     rows={2} placeholder="Studio / city" />
+            <Card title="Recording" overflowVisible>
+              <TextareaRow label="Locations"    value={loc}     original={String(base.recording_locations || '')} onChange={setLoc}     rows={2} placeholder="Studio / city" suggest="recording_locations" />
               <TextareaRow label="Record dates" value={recDate} original={String(base.record_dates || '')}        onChange={setRecDate} rows={2} placeholder="YYYY-MM-DD" mono />
             </Card>
 
-            <Card title="Dates">
+            <Card title="Dates" overflowVisible>
               <FieldGrid>
                 <FieldRow label="Preview"    value={previewDate} original={String(base.preview_date || '')} onChange={setPreviewDate} placeholder="YYYY-MM-DD" mono />
                 <FieldRow label="Released"   value={relDate}     original={String(base.release_date || '')} onChange={setRelDate}     placeholder="YYYY-MM-DD" mono />
                 <FieldRow label="Leaked"     value={dateLeaked}  original={String(base.date_leaked || '')}  onChange={setDateLeaked}  placeholder="YYYY-MM-DD" mono />
-                <FieldRow label="Leak type"  value={leak}        original={String(base.leak_type || '')}    onChange={setLeak}        placeholder="HQ, LQ…" />
+                <FieldRow label="Leak type"  value={leak}        original={String(base.leak_type || '')}    onChange={setLeak}        placeholder="HQ, LQ…" suggest="leak_type" />
               </FieldGrid>
             </Card>
 
@@ -1272,17 +1360,18 @@ export default function EditorPage({ initialSongId = null }: {
           </div>
           <button
             onClick={submit}
-            disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0}
+            disabled={submitState === 'submitting' || submitState === 'submitted' || changedCount === 0 || alreadySubmitted}
             className={`w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${
               submitState === 'submitted' ? 'bg-emerald-500/20 text-emerald-400' :
               submitState === 'error'     ? 'bg-red-500/20 text-red-400' :
-              changedCount === 0          ? 'bg-surface-overlay text-text-muted opacity-30' :
+              changedCount === 0 || alreadySubmitted ? 'bg-surface-overlay text-text-muted opacity-30' :
               'bg-accent text-white active:bg-accent/90 shadow-lg shadow-accent/20'
             }`}>
             {submitState === 'submitting' && <Loader2 size={14} className="animate-spin" />}
             {submitState === 'submitted'  && <Check size={14} />}
             {submitState === 'error'      && <AlertCircle size={14} />}
-            {submitState === 'idle'       && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
+            {submitState === 'idle' && alreadySubmitted && 'Submitted'}
+            {submitState === 'idle' && !alreadySubmitted && (editingPropId != null ? 'Update proposal' : 'Submit proposal')}
             {submitState === 'submitting' && 'Submitting…'}
             {submitState === 'submitted'  && 'Submitted!'}
             {submitState === 'error'      && 'Try again'}

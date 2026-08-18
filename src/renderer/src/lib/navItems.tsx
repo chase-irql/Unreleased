@@ -39,7 +39,12 @@ export const DEFAULT_NAV_ORDER: ViewType[] = NAV_ITEMS.map((i) => i.view)
 // reads as having navigated out of the tab.
 const TAB_OF: Partial<Record<ViewType, ViewType>> = {
   wordle: 'heardle',
+  tierlist: 'heardle',
 }
+
+/** Every sub-view the Games tab can land on, `heardle` (the tab's own view)
+ *  included — used to validate a remembered choice before trusting it. */
+const GAME_VIEWS: ViewType[] = ['heardle', 'wordle', 'tierlist']
 
 /** The nav tab `view` belongs to — itself, unless it's a sub-view. */
 export function navTabFor(view: ViewType): ViewType {
@@ -50,11 +55,12 @@ const LS_LAST_GAME = 'unreleased:games:last'
 
 /** The view a tab click actually lands on. Games reopens on the game last
  *  played: with a round in progress in one of them, coming back to the tab and
- *  landing on the other reads as having lost it. */
+ *  landing on another reads as having lost it. */
 export function tabEntryView(view: ViewType): ViewType {
   if (view !== 'heardle') return view
   try {
-    return localStorage.getItem(LS_LAST_GAME) === 'wordle' ? 'wordle' : 'heardle'
+    const last = localStorage.getItem(LS_LAST_GAME) as ViewType | null
+    return last && GAME_VIEWS.includes(last) ? last : 'heardle'
   } catch {
     return 'heardle'
   }

@@ -1,0 +1,92 @@
+name: Build Android release
+
+# release_android.py no longer builds the APK for a release locally — it just
+# publishes the GitHub release (no assets) and lets this fire on that publish,
+# same pattern as the desktop build-windows.yml/build-mac.yml/build-linux.yml.
+# Runs on both repos this branch gets pushed to (origin + the Juice-WRLD-API
+# mirror), since each publishes its own android-v* release and each needs its
+# own APK attached.
+#
+# Only reacts to android-v* tags so a stray desktop v* release published on
+# this same repo (shouldn't happen, but android and app share release
+# machinery conceptually) doesn't try to run a Capacitor build against a tag
+# that has no android/ directory.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. android-v3.0.4)"
+        required: true
+
+jobs:
+  android:
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'android-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#android-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        env:
+          # youtube-dl-exec's postinstall downloads a yt-dlp binary from
+          # GitHub releases — unauthenticated, so it hits the rate limit on
+          # shared runner IPs. It's a devDependency only for local-dev
+          # convenience; the app fetches its own yt-dlp on demand at
+          # runtime, so skip it in CI (mirrors build-windows.yml).
+          YOUTUBE_DL_SKIP_DOWNLOAD: "1"
+        run: npm ci
+
+      - name: Build renderer
+        env:
+          VITE_LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          VITE_LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+        run: npm run build
+
+      - name: Capacitor sync
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          asset="Unreleased-android-v${{ steps.tag.outputs.version }}.apk"
+          cp "$apk" "$asset"
+          gh release upload "${{ steps.tag.outputs.tag }}" "$asset" \
+            --clobber --repo "${{ github.repository }}"

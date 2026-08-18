@@ -1511,7 +1511,7 @@ export default function Settings(): JSX.Element {
                 {isAndroidApp() && <div className="mb-4"><AndroidUpdateSection /></div>}
 
                 <SettingsCard title="Links">
-                  <LinkRow icon={Github} iconColor="#24292f" label="GitHub" href="https://github.com/leanwrldd/unreleased" />
+                  <LinkRow icon={Github} iconColor="#24292f" label="GitHub" href="https://github.com/Juice-WRLD-API/Unreleased" />
                   <LinkRow icon={MessageCircle} iconColor="#5865F2" label="Discord" href="https://discord.gg/jwa" />
                   <LinkRow icon={Globe} iconColor="#0891b2" label="API" href="https://juicewrldapi.com" />
                   <ActionRow icon={BookOpen} iconColor="#6366f1" label="API Docs" onClick={() => openMainView('docs')} />

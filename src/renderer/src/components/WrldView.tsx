@@ -233,6 +233,10 @@ export default function WrldView(): JSX.Element {
   const txtSec   = textIsDark ? 'rgba(0,0,0,0.5)'   : 'rgba(255,255,255,0.5)'
   const txtTer   = textIsDark ? 'rgba(0,0,0,0.35)'  : 'rgba(255,255,255,0.3)'
   const txtFaint = textIsDark ? 'rgba(0,0,0,0.22)'  : 'rgba(255,255,255,0.2)'
+  // Unplayed part of the progress/volume troughs. It used to be a hardcoded
+  // white wash, which is invisible on a light surface — now it follows the
+  // same polarity as the text.
+  const trackBg  = textIsDark ? 'rgba(0,0,0,0.15)'  : 'rgba(255,255,255,0.2)'
 
   const syncedLines = useMemo(() => {
     if (rawLyrics && isSynced) return parseLrc(rawLyrics)
@@ -393,7 +397,7 @@ export default function WrldView(): JSX.Element {
             </p>
           </div>
 
-          {radioFmActive ? <FmProgressBar txtPri={txtPri} txtTer={txtTer} /> : <ProgressBar txtPri={txtPri} txtTer={txtTer} />}
+          {radioFmActive ? <FmProgressBar txtPri={txtPri} txtTer={txtTer} trackBg={trackBg} /> : <ProgressBar txtPri={txtPri} txtTer={txtTer} trackBg={trackBg} />}
 
           {/* Transport. 999 FM is a live stream — there is nothing local to
               play, pause or seek, so that mode gets the vote card (or its
@@ -464,7 +468,7 @@ export default function WrldView(): JSX.Element {
             </div>
           )}
 
-          <VolumeRow txtPri={txtPri} txtTer={txtTer} />
+          <VolumeRow txtPri={txtPri} txtTer={txtTer} trackBg={trackBg} />
 
           {/* Everything that used to occupy a second column now hangs off
               these — each opens a sheet over the player rather than replacing
@@ -1102,7 +1106,7 @@ function QueueRow({ track, active, playing, reorder, dragging, rowStyle, handleP
 
 /** Volume. The knob is always drawn — a hover-only one is invisible on touch,
  *  and there's no other cue that the line is draggable. */
-const VolumeRow = memo(function VolumeRow({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
+const VolumeRow = memo(function VolumeRow({ txtPri, txtTer, trackBg }: { txtPri: string; txtTer: string; trackBg: string }): JSX.Element {
   const { volume, setVolume } = useStorePick('volume', 'setVolume')
   const barRef = useRef<HTMLDivElement>(null)
   // Remember the level before muting so unmuting restores it, instead of
@@ -1133,7 +1137,7 @@ const VolumeRow = memo(function VolumeRow({ txtPri, txtTer }: { txtPri: string; 
         onTouchStart={(e) => setFrom(e.touches[0].clientX)}
         onTouchMove={(e) => setFrom(e.touches[0].clientX)}
       >
-        <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
+        <div className="w-full h-1.5 rounded-full" style={{ background: trackBg }}>
           <div className="h-full rounded-full" style={{ width: `${volume * 100}%`, background: txtTer }} />
         </div>
         <div
@@ -1148,7 +1152,7 @@ const VolumeRow = memo(function VolumeRow({ txtPri, txtTer }: { txtPri: string; 
 // Read-only bar for 999FM — it's a live stream, so no scrubbing, but
 // elapsed/duration are still known (from the radio WS) and ticked locally
 // between updates the same way the bottom Player bar does.
-const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
+const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer, trackBg }: { txtPri: string; txtTer: string; trackBg: string }): JSX.Element {
   const radioFmNowPlaying = useStore(s => s.radioFmNowPlaying)
   const [elapsedMs, setElapsedMs] = useState(0)
   const baseRef = useRef<{ elapsed: number; at: number }>({ elapsed: 0, at: 0 })
@@ -1169,7 +1173,7 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
 
   return (
     <div className="w-full flex flex-col gap-1.5 select-none">
-      <div className="relative h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
+      <div className="relative h-1.5 rounded-full" style={{ background: trackBg }}>
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
       </div>
       <div className="flex justify-between">
@@ -1180,7 +1184,7 @@ const FmProgressBar = memo(function FmProgressBar({ txtPri, txtTer }: { txtPri: 
   )
 })
 
-const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: string; txtTer: string }): JSX.Element {
+const ProgressBar = memo(function ProgressBar({ txtPri, txtTer, trackBg }: { txtPri: string; txtTer: string; trackBg: string }): JSX.Element {
   const { progress, currentTime } = useStore(useShallow(s => ({ progress: s.progress, currentTime: s.currentTime })))
   const barRef = useRef<HTMLDivElement>(null)
   // Buffer the scrub position visually while dragging — only call seekAudio
@@ -1226,7 +1230,7 @@ const ProgressBar = memo(function ProgressBar({ txtPri, txtTer }: { txtPri: stri
           document.addEventListener('touchend', onEnd)
         }}
       >
-        <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }}>
+        <div className="w-full h-1.5 rounded-full" style={{ background: trackBg }}>
           <div className="h-full rounded-full" style={{ width: `${pct}%`, background: txtPri }} />
         </div>
         <div

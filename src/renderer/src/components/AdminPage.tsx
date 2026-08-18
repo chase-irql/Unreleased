@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useDeferredValue, memo } from 'react'
 import {
   ChevronLeft, Users, Clock, CheckCircle, XCircle, ShieldCheck, BarChart2,
   Loader2, RefreshCw, FileEdit, KeyRound, Check, AlertCircle, RotateCcw,
   ChevronDown, ChevronUp, Shield, TrendingUp, MessageSquare, Calendar,
   Hash, Minus, Plus, UserCheck, FileCheck, Activity, Pencil, X as XIcon, ChevronDown as ChevronDownIcon,
-  Flag,
+  Flag, Play, History,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -12,7 +12,12 @@ import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } f
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import { invalidateLyricsCache } from './Player'
-import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection } from './adminShared'
+import { apiFetch, songToTrack } from '../lib/juicewrldApi'
+import type { JWApiSong } from '../lib/juicewrldApi'
+import {
+  relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection,
+  buildHaystack, matchesHaystack, QueueSearch,
+} from './adminShared'
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
@@ -502,6 +507,62 @@ function RevisePanel({ proposal, onClose, onDone }: {
 
 // ── Proposals (master-detail) ─────────────────────────────────────────────────
 
+type ProposalSort = 'date' | 'user'
+
+function sortProposals(rows: SongEditProposal[], sortBy: ProposalSort): SongEditProposal[] {
+  if (sortBy === 'date') return rows
+  return [...rows].sort((a, b) => {
+    const byUser = a.editor_username.localeCompare(b.editor_username, undefined, { sensitivity: 'base' })
+    if (byUser !== 0) return byUser
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  })
+}
+
+/** How many proposal rows to mount at once (see `shown` in ProposalsTab). */
+const PROPOSAL_PAGE = 400
+
+// Memoized because the list isn't windowed: with the status filter on "All"
+// it holds the whole proposal archive, and without this every keystroke in
+// the search box re-rendered every row that survived the filter. `onSelect`
+// is setSelected straight from useState, so its identity is stable and the
+// memo actually holds.
+const ProposalRow = memo(function ProposalRow({ item, showUserHeader, onSelect }: {
+  item: SongEditProposal
+  showUserHeader: boolean
+  onSelect: (p: SongEditProposal) => void
+}): JSX.Element {
+  const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
+  return (
+    <div>
+      {showUserHeader && (
+        <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted bg-surface-overlay border-b border-[var(--border)] sticky top-0 z-[1]">
+          {item.editor_username}
+        </div>
+      )}
+      <button onClick={() => onSelect(item)}
+        className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors active:bg-surface-raised`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <StatusChip status={item.status} />
+          <span className="text-[10px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
+            {item.change_type}
+          </span>
+          {item.song_public_id != null && (
+            <span className="text-[10px] text-text-muted ml-auto flex items-center gap-0.5">
+              <Hash size={9} />{item.song_public_id}
+            </span>
+          )}
+        </div>
+        <p className="text-sm font-semibold truncate leading-snug mb-0.5 text-text-primary">
+          {item.title || `Proposal #${item.id}`}
+        </p>
+        <p className="text-xs text-text-muted truncate">
+          {item.editor_username} · {relativeTime(item.created_at)}
+        </p>
+      </button>
+    </div>
+  )
+})
+
 function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   proposals: SongEditProposal[]
   status: ProposalStatus | ''
@@ -512,6 +573,56 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   const [notes,       setNotes]       = useState<Record<number, string>>({})
   const [selected,    setSelected]    = useState<SongEditProposal | null>(null)
   const [revising,    setRevising]    = useState(false)
+  const [sortBy,      setSortBy]      = useState<ProposalSort>('date')
+  const [query,       setQuery]       = useState('')
+  const { playTrack } = useStorePick('playTrack')
+
+  // Every proposal ever filed, fetched once and only when the history panel is
+  // first opened — /admin/proposals/ has no per-song filter, so "what else has
+  // been proposed for this song" means holding the whole archive and grouping
+  // client-side. Nulled after a review so the next open reflects it.
+  const [archive,        setArchive]        = useState<SongEditProposal[] | null>(null)
+  const [archiveLoading, setArchiveLoading] = useState(false)
+  const [archiveError,   setArchiveError]   = useState(false)
+  const [historyOpen,    setHistoryOpen]    = useState(false)
+  const [expandedPast,   setExpandedPast]   = useState<number | null>(null)
+
+  const [loadingSongId, setLoadingSongId] = useState<number | null>(null)
+  const [playError,     setPlayError]     = useState<string | null>(null)
+
+  // Searchable: the song title, who filed it, the change type, and both ids —
+  // the public song id is what reports and Discord threads cite, so pasting
+  // one should land on its proposal. Built once per fetch: under the "All"
+  // filter this list is the entire archive, and doing it inline in the filter
+  // meant re-flattening every row on every keystroke.
+  const haystacks = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const item of proposals) {
+      m.set(item.id, buildHaystack(item.title, item.editor_username, item.change_type, item.song_public_id, item.id))
+    }
+    return m
+  }, [proposals])
+
+  // The filter runs against a deferred copy of the query, so a keystroke
+  // repaints the input immediately and React re-runs the list at a lower
+  // priority — typing stays smooth even when the match set is huge.
+  const deferredQuery = useDeferredValue(query)
+
+  const sortedProposals = useMemo(() => sortProposals(
+    deferredQuery.trim()
+      ? proposals.filter(item => matchesHaystack(deferredQuery, haystacks.get(item.id)))
+      : proposals,
+    sortBy,
+  ), [proposals, haystacks, sortBy, deferredQuery])
+
+  // The list isn't windowed, and "All" can be the entire archive — mounting
+  // every row costs several DOM nodes each before the user has even typed.
+  // Render a page at a time and let them ask for more; searching normally
+  // narrows the set well below the cap anyway.
+  const [shown, setShown] = useState(PROPOSAL_PAGE)
+  useEffect(() => { setShown(PROPOSAL_PAGE) }, [proposals, deferredQuery, sortBy])
+  const pageOf = sortedProposals.slice(0, shown)
+  const remaining = sortedProposals.length - pageOf.length
 
   // Approving/reversing a proposal changes a song's live data — drop its
   // cached lyrics so the next play reflects it.
@@ -522,15 +633,46 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
 
   const doReview = async (id: number, action: 'approve' | 'reject') => {
     setActionId(id)
-    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); onChanged(); setSelected(null) }
+    try { await userApi.adminReviewProposal(id, { action, review_notes: notes[id] || '' }); dropCache(id); setArchive(null); onChanged(); setSelected(null) }
     catch {} finally { setActionId(null) }
   }
 
   const doReverse = async (id: number) => {
     if (!confirm('Reverse this approval?')) return
     setActionId(id)
-    try { await userApi.adminReverseProposal(id); dropCache(id); onChanged(); setSelected(null) }
+    try { await userApi.adminReverseProposal(id); dropCache(id); setArchive(null); onChanged(); setSelected(null) }
     catch {} finally { setActionId(null) }
+  }
+
+  const openHistory = (): void => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (!next || archive || archiveLoading) return
+    setArchiveLoading(true)
+    setArchiveError(false)
+    userApi.adminListProposals()
+      .then(setArchive)
+      .catch(() => setArchiveError(true))
+      .finally(() => setArchiveLoading(false))
+  }
+
+  // Plays the song a proposal targets, so a reviewer can hear what they're
+  // approving without leaving the queue.
+  const playProposalSong = async (songId: number): Promise<void> => {
+    setPlayError(null)
+    setLoadingSongId(songId)
+    try {
+      const song = await apiFetch<JWApiSong>(`/songs/${songId}/`)
+      // An unsurfaced song is a real catalog entry with no file behind it —
+      // the proposal is still reviewable, there's just nothing to play.
+      if (!song.path) { setPlayError('No file on this song to play'); return }
+      const track = songToTrack(song)
+      playTrack(track, [track])
+    } catch {
+      setPlayError('Could not load this song')
+    } finally {
+      setLoadingSongId(null)
+    }
   }
 
   const FILTERS: { id: ProposalStatus | ''; label: string }[] = [
@@ -541,9 +683,32 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
     { id: '',         label: 'All'      },
   ]
 
+  const SORTS: { id: ProposalSort; label: string }[] = [
+    { id: 'date', label: 'Newest' },
+    { id: 'user', label: 'User' },
+  ]
+
   const p = selected
 
-  useBackToClose(() => (revising ? setRevising(false) : setSelected(null)), p != null)
+  // Newest first, and it deliberately includes the proposal being viewed — the
+  // point is to read this one in the context of the run, so dropping it leaves
+  // a hole in the timeline. It's marked "viewing" instead.
+  const history = useMemo(() => {
+    if (!p?.song || !archive) return []
+    return archive
+      .filter(r => r.song === p.song)
+      .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+  }, [archive, p?.song])
+  const pastCount = Math.max(history.length - 1, 0)
+
+  // Both are about the proposal on screen, so neither should outlive it.
+  useEffect(() => { setExpandedPast(null); setPlayError(null) }, [p?.id])
+  // A refetch replaces the rows wholesale, so a half-written revision no
+  // longer lines up with what's on screen. Typing in the search box must not
+  // trip this — that's why it keys off the raw list, not the filtered one.
+  useEffect(() => { setRevising(false) }, [proposals])
+
+  useBackToClose(() => (revising ? setRevising(false) : historyOpen ? setHistoryOpen(false) : setSelected(null)), p != null)
 
   if (p && revising) return (
     <RevisePanel
@@ -562,6 +727,15 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
           <ChevronLeft size={20} />
         </button>
         <h2 className="flex-1 min-w-0 truncate text-text-primary text-[15px] font-bold">{p.title || `Proposal #${p.id}`}</h2>
+        {/* Hearing the song is just as useful when auditing something already
+            approved or reversed, so this isn't gated to pending. */}
+        {p.song != null && (
+          <button onClick={() => playProposalSong(p.song as number)} disabled={loadingSongId != null}
+            aria-label="Play this song"
+            className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full text-text-secondary active:bg-surface-overlay transition-colors disabled:opacity-40">
+            {loadingSongId === p.song ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+          </button>
+        )}
         <StatusChip status={p.status} />
       </div>
 
@@ -576,7 +750,24 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
             <span className="flex items-center gap-1 text-xs text-text-muted"><Calendar size={10} />{shortDate(p.created_at)}</span>
             {p.reviewer_username && <span className="text-xs text-text-muted">reviewed by {p.reviewer_username}</span>}
             {p.edit_count > 0 && <span className="text-xs text-text-muted">{p.edit_count} edit{p.edit_count !== 1 ? 's' : ''}</span>}
+            {p.song != null && (
+              <button onClick={openHistory}
+                className={`flex items-center gap-1 text-xs transition-colors ${historyOpen ? 'text-accent' : 'text-text-muted active:text-text-primary'}`}>
+                <History size={10} />
+                {/* The count is unknown until the archive loads, so the label
+                    stays generic rather than promising a number it might have
+                    to take back. */}
+                {archive ? (pastCount === 0 ? 'no earlier proposals' : `${pastCount} earlier proposal${pastCount === 1 ? '' : 's'}`) : 'history'}
+                {historyOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+              </button>
+            )}
           </div>
+
+          {playError && (
+            <p className="flex items-center gap-1.5 text-[11px] text-amber-400">
+              <AlertCircle size={11} /> {playError}
+            </p>
+          )}
 
           {(p.editor_notes || p.review_notes) && (
             <div className="flex flex-col gap-2">
@@ -605,6 +796,58 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
             />
           )}
         </div>
+
+        {/* Song history — every proposal ever filed against this song, so a
+            reviewer can see whether a field has been fought over before, or
+            whether this editor is re-submitting something already rejected.
+            Read-only: expanding a row shows its diff in place rather than
+            moving the selection, which would fight the status filter (a
+            rejected proposal isn't in a Pending list). */}
+        {historyOpen && p.song != null && (
+          <div className="border-y border-[var(--border)] bg-[var(--surface)]">
+            {archiveLoading && (
+              <div className="flex justify-center py-4"><Loader2 size={14} className="animate-spin text-text-muted" /></div>
+            )}
+            {archiveError && (
+              <p className="flex items-center gap-1.5 px-4 py-3 text-[11px] text-amber-400">
+                <AlertCircle size={11} /> Could not load this song&apos;s history
+              </p>
+            )}
+            {archive && history.length <= 1 && (
+              <p className="px-4 py-3 text-[11px] text-text-muted italic">
+                No other proposals have been filed for this song.
+              </p>
+            )}
+            {archive && history.length > 1 && history.map(row => {
+              const isViewing = row.id === p.id
+              const open = expandedPast === row.id
+              return (
+                <div key={row.id} className="border-b border-[var(--border)] last:border-b-0">
+                  <button onClick={() => setExpandedPast(open ? null : row.id)}
+                    className={`w-full flex items-center gap-2 px-4 py-2.5 text-left transition-colors ${isViewing ? 'bg-accent/5' : 'active:bg-surface-raised'}`}>
+                    <StatusChip status={row.status} />
+                    <span className="text-[11px] text-text-primary truncate flex-1 min-w-0">
+                      {row.title || `Proposal #${row.id}`}
+                    </span>
+                    {isViewing && <span className="text-[9px] text-accent font-semibold shrink-0">viewing</span>}
+                    <span className="text-[10px] text-text-muted shrink-0">{shortDate(row.created_at)}</span>
+                    {open ? <ChevronUp size={11} className="text-text-muted shrink-0" /> : <ChevronDown size={11} className="text-text-muted shrink-0" />}
+                  </button>
+                  {open && (
+                    <div className="bg-[var(--surface-raised)] border-t border-[var(--border)]">
+                      {row.review_notes && (
+                        <p className="px-4 pt-3 text-[11px] text-text-muted italic">
+                          {row.reviewer_username ? `${row.reviewer_username}: ` : ''}{row.review_notes}
+                        </p>
+                      )}
+                      <ProposalDiff proposal={row} />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {/* Diff body */}
         <ProposalDiff proposal={p} />
@@ -642,44 +885,49 @@ function ProposalsTab({ proposals, status, setStatus, onChanged }: {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Filter bar */}
-      <div className="shrink-0 flex gap-2 overflow-x-auto scrollbar-none px-3 py-2.5 border-b border-[var(--border)]">
-        {FILTERS.map(f => (
-          <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-              status === f.id ? 'bg-accent text-[var(--bg)]' : 'text-text-muted bg-surface-overlay'
-            }`}>{f.label}
-          </button>
-        ))}
+      <div className="shrink-0 flex flex-col gap-2 px-3 py-2.5 border-b border-[var(--border)]">
+        <div className="flex items-center gap-2">
+          <div className="flex gap-2 overflow-x-auto scrollbar-none">
+            {FILTERS.map(f => (
+              <button key={f.id || 'all'} onClick={() => setStatus(f.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  status === f.id ? 'bg-accent text-[var(--bg)]' : 'text-text-muted bg-surface-overlay'
+                }`}>{f.label}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex gap-1 shrink-0">
+            {SORTS.map(s => (
+              <button key={s.id} onClick={() => setSortBy(s.id)}
+                className={`px-2.5 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${
+                  sortBy === s.id ? 'bg-surface-overlay text-text-primary ring-1 ring-[var(--border)]' : 'text-text-muted'
+                }`}>{s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <QueueSearch value={query} onChange={setQuery} placeholder="Search title, editor, #id…"
+          matches={sortedProposals.length} total={proposals.length} />
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {proposals.length === 0 && <Empty label="No proposals" />}
-        {proposals.map(item => {
-          const ss = STATUS_STYLE[item.status] ?? { border: 'border-l-transparent', text: 'text-text-muted', bg: '', dot: '' }
-          return (
-            <button key={item.id} onClick={() => setSelected(item)}
-              className={`w-full text-left px-3 py-3 border-b border-[var(--border)] border-l-2 ${ss.border} transition-colors active:bg-surface-raised`}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <StatusChip status={item.status} />
-                <span className="text-[10px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded font-medium">
-                  {item.change_type}
-                </span>
-                {item.song_public_id != null && (
-                  <span className="text-[10px] text-text-muted ml-auto flex items-center gap-0.5">
-                    <Hash size={9} />{item.song_public_id}
-                  </span>
-                )}
-              </div>
-              <p className="text-sm font-semibold truncate leading-snug mb-0.5 text-text-primary">
-                {item.title || `Proposal #${item.id}`}
-              </p>
-              <p className="text-xs text-text-muted truncate">
-                {item.editor_username} · {relativeTime(item.created_at)}
-              </p>
-            </button>
-          )
-        })}
+        {proposals.length > 0 && sortedProposals.length === 0 && <Empty label="No matches" />}
+        {pageOf.map((item, idx) => (
+          <ProposalRow
+            key={item.id}
+            item={item}
+            showUserHeader={sortBy === 'user' && (idx === 0 || pageOf[idx - 1].editor_username !== item.editor_username)}
+            onSelect={setSelected}
+          />
+        ))}
+        {remaining > 0 && (
+          <button onClick={() => setShown(s => s + PROPOSAL_PAGE)}
+            className="w-full px-3 py-3 text-[11px] font-semibold text-accent active:bg-surface-raised transition-colors">
+            Show {Math.min(remaining, PROPOSAL_PAGE)} more · {remaining} left
+          </button>
+        )}
       </div>
     </div>
   )

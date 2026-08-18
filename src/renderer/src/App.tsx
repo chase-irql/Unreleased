@@ -20,6 +20,7 @@ function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/news') return 'news'
   if (pathname === '/heardle') return 'heardle'
   if (pathname === '/wordle') return 'wordle'
+  if (pathname === '/tierlist') return 'tierlist'
   if (pathname === '/stats') return 'stats'
   if (pathname.startsWith('/shared/')) return 'shared-playlist'
   if (pathname === '/library') return 'library'
@@ -64,6 +65,7 @@ const WrldView = lazy(() => import('./components/WrldView'))
 const NewsView = lazy(() => import('./components/NewsView'))
 const HeardleView = lazy(() => import('./components/HeardleView'))
 const WordleView = lazy(() => import('./components/WordleView'))
+const TierlistView = lazy(() => import('./components/TierlistView'))
 const StatsView = lazy(() => import('./components/StatsView'))
 const LocalEditorPage = lazy(() => import('./components/LocalEditorPage'))
 const ContributorPage = lazy(() => import('./components/ContributorPage'))
@@ -233,6 +235,7 @@ export default function App(): JSX.Element {
               : activeView === 'news' ? <NewsView />
               : activeView === 'heardle' ? <HeardleView />
               : activeView === 'wordle' ? <WordleView />
+              : activeView === 'tierlist' ? <TierlistView />
               : activeView === 'stats' ? <StatsView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />

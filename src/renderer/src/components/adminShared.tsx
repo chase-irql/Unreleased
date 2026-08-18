@@ -1,5 +1,7 @@
 // Small UI pieces shared between AdminPage's tabs and ReportsTab (the latter
 // is also embedded standalone in EditorProfileView for editor-only accounts).
+import { Search, X as XIcon } from 'lucide-react'
+
 export function relativeTime(iso: string | null): string {
   if (!iso) return '—'
   const d = Date.now() - new Date(iso).getTime()
@@ -52,6 +54,69 @@ export function AppSection({ label, value }: { label: string; value: string }): 
     <div>
       <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5">{label}</p>
       <p className="text-text-primary text-sm leading-relaxed whitespace-pre-wrap">{value}</p>
+    </div>
+  )
+}
+
+/** Flattens the fields a queue list is searched by into one lowercased string,
+ *  built once per row when the data changes, instead of re-lowercasing every
+ *  field of every row on every keystroke — on the unfiltered "All" proposals
+ *  list that was thousands of string allocations per character typed. */
+export function buildHaystack(...fields: (string | number | null | undefined)[]): string {
+  let out = ''
+  for (const f of fields) {
+    if (f == null || f === '') continue
+    out += (out ? ' ' : '') + String(f).toLowerCase()
+  }
+  return out
+}
+
+/** Case-insensitive match of every whitespace-separated term in `query`
+ *  against a haystack from buildHaystack. Terms are AND-ed, not OR-ed, so
+ *  "jane move" narrows to jane's move proposals instead of returning both
+ *  sets. An empty query matches everything. */
+export function matchesHaystack(query: string, hay: string | undefined): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  if (!hay) return false
+  // Single-term is the overwhelmingly common case — skip the split/allocation.
+  if (!/\s/.test(q)) return hay.includes(q)
+  return q.split(/\s+/).every(term => hay.includes(term))
+}
+
+/** Search box for a review queue's list. Filtering is client-side over the
+ *  rows already loaded — neither the song-edit nor the comp-file list
+ *  endpoint takes a query param, and the status filter beside it is what
+ *  decides which rows get fetched in the first place. So this searches the
+ *  current status bucket, not the whole archive. */
+export function QueueSearch({ value, onChange, placeholder, matches, total }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  matches: number
+  total: number
+}): JSX.Element {
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <div className="relative flex items-center">
+        <Search size={13} className="absolute left-3 text-text-muted pointer-events-none" />
+        <input
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          spellCheck={false}
+          className="w-full bg-surface-overlay border border-[var(--border)] rounded-lg pl-8 pr-8 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-colors"
+        />
+        {value && (
+          <button onClick={() => onChange('')} title="Clear search"
+            className="absolute right-1.5 w-6 h-6 flex items-center justify-center rounded text-text-muted active:text-text-primary transition-colors">
+            <XIcon size={12} />
+          </button>
+        )}
+      </div>
+      {value.trim() !== '' && (
+        <span className="px-1 text-[10px] text-text-muted">{matches} of {total}</span>
+      )}
     </div>
   )
 }

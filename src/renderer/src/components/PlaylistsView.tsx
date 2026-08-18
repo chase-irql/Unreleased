@@ -583,7 +583,19 @@ export default function PlaylistsView(): JSX.Element {
     let cancelled = false
     setLoadingCompact(true)
     groupItemsByVersion(tracks, t => userApi.trackIdToSongId(t.id) ?? -1).then(groups => {
-      if (!cancelled) { setCompactGroups(groups); setLoadingCompact(false) }
+      if (cancelled) return
+      // groupItemsByVersion builds groups from a Map keyed by version-group id,
+      // so they come back in whatever order the /versions/ lookup happened to
+      // return — not the playlist's actual track order. Re-sort both the
+      // groups and each group's members by their position in `tracks` so
+      // compact view lines up with what normal/grid view shows, instead of
+      // silently reshuffling the playlist.
+      const trackIndex = new Map(tracks.map((t, i) => [t.id, i]))
+      const ordered = groups
+        .map(g => ({ ...g, members: [...g.members].sort((a, b) => (trackIndex.get(a.item.id) ?? 0) - (trackIndex.get(b.item.id) ?? 0)) }))
+        .sort((a, b) => (trackIndex.get(a.members[0]?.item.id) ?? 0) - (trackIndex.get(b.members[0]?.item.id) ?? 0))
+      setCompactGroups(ordered)
+      setLoadingCompact(false)
     })
     return () => { cancelled = true }
   }, [compactView, tracks, compactReloadToken])

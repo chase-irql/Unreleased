@@ -26,18 +26,25 @@ for the desktop app's auto-updater or gets anywhere near the web deploy.
      android-v* tag)
   ── nothing left to answer past this point ──
   5. Commit all changes to android
-  6. Build: the renderer, `cap sync android`, `gradlew assembleDebug`, then —
-     only with --install — install and launch it on whatever device/emulator
-     adb sees. (Same recipe scripts/run-android.bat runs interactively; see
-     step_build for why this script issues the commands itself.)
-     Debug-signed either way; no release keystore exists yet, see
-     step_build's docstring before wiring in a real one.
-  7. Push android to GitHub
+  6. With --install (off by default): build the renderer, `cap sync android`,
+     `gradlew assembleDebug`, then install and launch it on whatever
+     device/emulator adb sees, purely for local testing. (Same recipe
+     scripts/run-android.bat runs interactively; see step_build for why this
+     script issues the commands itself.) Debug-signed; no release keystore
+     exists yet, see step_build's docstring before wiring in a real one.
+     Without --install this step is skipped entirely — the release build now
+     happens in CI (see below), so no local Android SDK is required for an
+     ordinary release.
+  7. Push android to GitHub — origin (leanwrldd/unreleased) and the
+     Juice-WRLD-API/Unreleased mirror.
   8. Create the GitHub release (tag android-v<version>, target_commitish
-     android) and upload the APK
+     android) on both repos, already published with no APK attached.
+     Publishing is what fires each repo's build-android.yml
+     `on: release: types: [published]` trigger — CI builds the debug APK via
+     Gradle and uploads it to that same release.
 """
 
-import os, sys, re, json, subprocess, time, urllib.request, urllib.error, urllib.parse
+import os, sys, re, json, subprocess, time, urllib.request, urllib.error
 if hasattr(sys.stdout, "reconfigure"): sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"): sys.stderr.reconfigure(encoding="utf-8")
 
@@ -52,9 +59,15 @@ REPO_OWNER     = "leanwrldd"
 REPO_NAME      = "unreleased"
 ANDROID_BRANCH = "android"
 API_BASE       = "https://api.github.com"
-UPLOAD_BASE    = "https://uploads.github.com"
 APK_PATH       = ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 ANDROID_PACKAGE = "com.juicewrldapi.player"
+
+# Best-effort mirror: every android release also pushes the branch and
+# publishes a matching release here, same as release.py does for desktop.
+# origin is the source of truth and the mirror is a nice-to-have — failures
+# here are warned, never fatal.
+MIRROR_OWNER = "Juice-WRLD-API"
+MIRROR_NAME  = "Unreleased"
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 RST  = "\033[0m"
@@ -150,6 +163,23 @@ def is_dirty():
 def git_branch():
     return capture("git rev-parse --abbrev-ref HEAD")
 
+def push_mirror_branch(branch, token):
+    """Force-push a branch to the mirror repo, authenticating via the token
+    embedded in the URL (no persistent remote, nothing written to
+    .git/config). Always --force: the mirror isn't collaborative, it just
+    has to match origin's branch exactly.
+
+    The token never reaches the console or an exception message — it's
+    redacted from both the printed command and any captured stderr.
+    """
+    url = f"https://{token}@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git"
+    detail(f"> git push https://***@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git {branch}:{branch} --force")
+    r = subprocess.run(f'git push "{url}" {branch}:{branch} --force',
+                        shell=True, cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").replace(token, "***")
+        raise RuntimeError(err.strip()[:500])
+
 # ── android/app/build.gradle version fields ────────────────────────────────────
 
 GRADLE_PATH = ROOT / "android" / "app" / "build.gradle"
@@ -207,51 +237,6 @@ def api(method, path, token, data=None):
     with urllib.request.urlopen(req) as resp:
         raw = resp.read()
         return json.loads(raw) if raw else {}
-
-class _ProgressFile:
-    def __init__(self, path, on_progress=None):
-        self._f    = open(path, "rb")
-        self._size = path.stat().st_size
-        self._done = 0
-        self._on_progress = on_progress or self._print_bar
-    def _print_bar(self, done, total):
-        pct = done * 100 // total if total else 100
-        bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-        mb_d, mb_t = done / 1_048_576, total / 1_048_576
-        print(f"\r     [{bar}] {pct:3d}%  {mb_d:.1f}/{mb_t:.1f} MB", end="", flush=True)
-    def read(self, n=-1):
-        chunk = self._f.read(n)
-        self._done += len(chunk)
-        self._on_progress(self._done, self._size)
-        return chunk
-    def __len__(self):  return self._size
-    def close(self):    self._f.close()
-
-def upload_asset(release_id, filepath, upload_name, token):
-    size = filepath.stat().st_size
-    print(f"\n  Uploading: {_c(upload_name, WHT, BOLD)}  ({size/1_048_576:.1f} MB)")
-    url = (f"{UPLOAD_BASE}/repos/{REPO_OWNER}/{REPO_NAME}"
-           f"/releases/{release_id}/assets?name={urllib.parse.quote(upload_name)}")
-    hdrs = {
-        "Authorization":  f"token {token}",
-        "Accept":         "application/vnd.github+json",
-        "Content-Type":   "application/vnd.android.package-archive",
-        "Content-Length": str(size),
-        "User-Agent":     "release_android.py",
-    }
-    wrap = _ProgressFile(filepath)
-    req  = urllib.request.Request(url, data=wrap, headers=hdrs, method="POST")
-    try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
-            print(f"\n  {_c('✓', GRN, BOLD)}  {result['browser_download_url']}")
-            return result
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        print(f"\n  HTTP {e.code}: {body[:300]}")
-        raise
-    finally:
-        wrap.close()
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
 
@@ -374,35 +359,32 @@ def step_commit(version, msg, state):
 
 
 def step_build(skip_install):
-    """Runs each build step directly via subprocess rather than shelling out
-    to scripts/run-android.bat, which does the same three commands for
-    interactive use. Two copies of one recipe is a real cost — they can drift
-    — but delegating costs more here: the .bat is built around a *person*
-    watching it (it boots an emulator and waits, prompts, pauses at the end),
-    none of which suits an unattended release, and the previous incarnation of
-    that delegation (a bash script) broke outright because
+    """Only runs at all when --install is passed — an ordinary release no
+    longer needs a local build, since build-android.yml builds the APK in CI
+    once the GitHub release is published (see step_release). --install exists
+    purely for deploying a local test build to a connected device/emulator,
+    same recipe scripts/run-android.bat runs interactively; issuing the
+    commands directly here (not shelling out to the .bat) because the .bat is
+    built around a *person* watching it (boots an emulator, waits, prompts,
+    pauses at the end), none of which suits a script, and the previous
+    incarnation of delegating to a bash script broke outright because
     `subprocess.run(shell=True)` on Windows always goes through cmd.exe, whose
-    PATH has no Git usr/bin — a bare `bash` there resolved to WSL's shim or a
-    dash-like sh, neither of which could run it. Every command below goes
-    through this same function's `shell=True`, which is unambiguous.
+    PATH has no Git usr/bin.
 
-    If you change the build steps, change them in both places.
+    If you change these build steps, keep build-android.yml in sync by hand.
 
-    With --install (this script's own flag), also `adb install -r`s and
-    launches the APK on whatever device/emulator adb sees — off by default,
-    so no device/emulator connection is required for an ordinary release.
-
-    Still produces a debug-signed APK (assembleDebug) — there's no
-    release-signing keystore for this app yet. Fine for sideloading (what
-    this script's GitHub release is for), not for a Play Store submission or
-    an auto-update feed — don't repurpose this step for either without adding
+    Debug-signed (assembleDebug) — there's no release-signing keystore for
+    this app yet. Fine for sideloading, not for a Play Store submission or an
+    auto-update feed — don't repurpose this step for either without adding
     real signing first."""
-    section(6, TOTAL, "Build, sync, compile" + ("" if skip_install else " & deploy") + " APK")
-    warn("This can take a few minutes on a cold Gradle cache — output streams below")
+    section(6, TOTAL, "Build, sync, compile & deploy APK  (--install)")
     if skip_install:
-        info("Stopping after the APK is compiled — pass --install to also deploy to a device")
-    else:
-        warn("--install: requires a device or emulator connected via adb")
+        info("Skipped — CI builds the release APK now (pass --install to also build")
+        info("and deploy a local test build to a connected device/emulator)")
+        return
+
+    warn("This can take a few minutes on a cold Gradle cache — output streams below")
+    warn("--install: requires a device or emulator connected via adb")
     print()
 
     if APK_PATH.exists():
@@ -431,10 +413,6 @@ def step_build(skip_install):
     if not APK_PATH.exists():
         raise RuntimeError(f"Build reported success but no APK at {APK_PATH}")
 
-    if skip_install:
-        ok(f"Build complete → {APK_PATH.relative_to(ROOT)}")
-        return
-
     adb = find_adb()
     detail(f"> {adb} install -r {APK_PATH.relative_to(ROOT)}")
     if subprocess.run([adb, "install", "-r", str(APK_PATH)], cwd=ROOT).returncode != 0:
@@ -447,16 +425,27 @@ def step_build(skip_install):
     ok(f"Build complete, installed & launched → {APK_PATH.relative_to(ROOT)}")
 
 
-def step_push(state):
+def step_push(token, state):
     section(7, TOTAL, f"Push → origin/{ANDROID_BRANCH}")
     guard_only_android_branch()
     run(f"git push origin {ANDROID_BRANCH}")
     state["pushed"] = True
     ok(f"Pushed to origin/{ANDROID_BRANCH}")
 
+    try:
+        info(f"Mirroring {ANDROID_BRANCH} → {MIRROR_OWNER}/{MIRROR_NAME}")
+        push_mirror_branch(ANDROID_BRANCH, token)
+        ok(f"Mirrored to {MIRROR_OWNER}/{MIRROR_NAME}")
+    except Exception as e:
+        warn(f"Mirror push failed (origin unaffected): {e}")
+
 
 def step_release(version, token, notes, state):
     section(8, TOTAL, "GitHub release")
+    """Publishes the GitHub release itself, with no assets — CI attaches the
+    APK. Publishing (not drafting) is what fires build-android.yml's
+    `on: release: types: [published]` trigger on each repo the branch was
+    just pushed to."""
     tag = f"android-v{version}"
     state["tag"] = tag
     state["token"] = token
@@ -468,48 +457,57 @@ def step_release(version, token, notes, state):
             'git log $(git describe --tags --match "android-v*" --abbrev=0 2>/dev/null)..HEAD --pretty="- %s" --no-merges 2>/dev/null'
         ) or f"Android release {tag}"
 
-    info(f"Creating release {_c(tag, WHT, BOLD)} on GitHub (target: {ANDROID_BRANCH})…")
+    _publish_github_release(REPO_OWNER, REPO_NAME, tag, notes, token, state,
+                             id_key="release_id", new_key="release_created_new")
+
+    try:
+        info(f"Mirroring release to {MIRROR_OWNER}/{MIRROR_NAME}…")
+        mstate = {}
+        _publish_github_release(MIRROR_OWNER, MIRROR_NAME, tag, notes, token, mstate,
+                                 id_key="release_id", new_key="release_created_new")
+        state["mirror_release_id"] = mstate.get("release_id")
+        state["mirror_release_created_new"] = mstate.get("release_created_new")
+        state["mirror_tag"] = tag
+    except Exception as e:
+        warn(f"Mirror release to {MIRROR_OWNER}/{MIRROR_NAME} failed (origin release unaffected): {e}")
+
+    print()
+    info("CI is now building the debug APK and will attach it to both releases")
+    info("once the build finishes — nothing left to do here.")
+
+
+def _publish_github_release(owner, repo, tag, notes, token, state, id_key, new_key):
+    """Create/update a published GitHub release on (owner, repo) — no assets.
+    Shared by the real release (leanwrldd/unreleased) and the mirror
+    (Juice-WRLD-API/Unreleased) so both go through identical create/update
+    logic and both end up published (so both fire their own CI build)."""
+    info(f"Creating release {_c(tag, WHT, BOLD)} on {owner}/{repo} (target: {ANDROID_BRANCH})…")
     try:
         release = api("POST",
-            f"/repos/{REPO_OWNER}/{REPO_NAME}/releases", token,
+            f"/repos/{owner}/{repo}/releases", token,
             # target_commitish pins the tag to this branch specifically —
             # without it GitHub defaults to the repo's default branch, which
             # would misattach an android tag to unrelated history.
             {"tag_name": tag, "name": tag, "body": notes,
              "target_commitish": ANDROID_BRANCH,
              "draft": False, "prerelease": True})
-        state["release_id"] = release["id"]
-        state["release_created_new"] = True
+        state[id_key] = release["id"]
+        state[new_key] = True
         ok(f"Release created  (id={release['id']})")
     except urllib.error.HTTPError as e:
         if e.code == 422:
             release = api("GET",
-                f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}", token)
+                f"/repos/{owner}/{repo}/releases/tags/{tag}", token)
             api("PATCH",
-                f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release['id']}", token,
-                {"body": notes})
-            state["release_id"] = release["id"]
-            state["release_created_new"] = False
+                f"/repos/{owner}/{repo}/releases/{release['id']}", token,
+                {"prerelease": True, "body": notes})
+            state[id_key] = release["id"]
+            state[new_key] = False
             ok(f"Release already exists — updated  (id={release['id']})")
         else:
             raise
 
-    release_id = release["id"]
-    asset_name = f"Unreleased-android-v{version}.apk"
-
-    try:
-        existing = {a["name"]: a["id"] for a in
-                    api("GET", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/assets", token)}
-    except Exception:
-        existing = {}
-
-    if asset_name in existing:
-        info(f"Replacing existing asset: {asset_name}")
-        api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{existing[asset_name]}", token)
-
-    upload_asset(release_id, APK_PATH, asset_name, token)
-
-    url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/{tag}"
+    url = f"https://github.com/{owner}/{repo}/releases/tag/{tag}"
     print()
     print(_c(f"  🚀  {url}", GRN, BOLD))
 
@@ -531,6 +529,16 @@ def rollback(state):
         try:
             api("DELETE", f"/repos/{REPO_OWNER}/{REPO_NAME}/git/refs/tags/{state['tag']}", state["token"])
             ok(f"Deleted tag {state['tag']}")
+        except Exception:
+            pass
+
+    # Mirror release cleanup is best-effort too — it was best-effort to
+    # create, so a failure here is just left for manual cleanup.
+    if state.get("mirror_release_id") and state.get("mirror_release_created_new") and state.get("token"):
+        try:
+            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/releases/{state['mirror_release_id']}", state["token"])
+            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/git/refs/tags/{state['mirror_tag']}", state["token"])
+            ok(f"Deleted mirror release {state.get('mirror_tag')} on {MIRROR_OWNER}/{MIRROR_NAME}")
         except Exception:
             pass
 
@@ -581,7 +589,7 @@ def main():
 
         step_commit(version, commit_msg, state)
         step_build(skip_install)
-        step_push(state)
+        step_push(token, state)
         step_release(version, token, release_notes, state)
 
         print()

@@ -2,7 +2,7 @@
 
 A sideloaded Android build of the Juice WRLD music player — the same catalog, streaming, and most of the features from the web player and desktop app, wrapped natively with [Capacitor](https://capacitorjs.com). Powered by the [Juice WRLD API](https://juicewrldapi.com).
 
-> Not on the Play Store — this app ships `unreleased`-catalog content, so it's distributed as a direct APK download instead. It's built from the same shared UI as the [`app`](https://github.com/leanwrldd/unreleased/tree/app) (desktop) and [`web`](https://github.com/leanwrldd/unreleased/tree/web) branches — see `app`'s README for the full web + desktop feature list.
+> Not on the Play Store — this app ships `unreleased`-catalog content, so it's distributed as a direct APK download instead. It's built from the same shared UI as the [`app`](https://github.com/Juice-WRLD-API/Unreleased/tree/app) (desktop) and [`web`](https://github.com/Juice-WRLD-API/Unreleased/tree/web) branches — see `app`'s README for the full web + desktop feature list.
 
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
@@ -10,13 +10,13 @@ A sideloaded Android build of the Juice WRLD music player — the same catalog, 
 ![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/jwa)
 
-**⬇ Get the app:** [Android releases](https://github.com/leanwrldd/unreleased/releases?q=android-v&expanded=true) — grab the newest `Unreleased-android-v*.apk`
+**⬇ Get the app:** [Android releases](https://github.com/Juice-WRLD-API/Unreleased/releases?q=android-v&expanded=true) — grab the newest `Unreleased-android-v*.apk`
 
 ---
 
 ## Install
 
-1. Download the APK from the [releases page](https://github.com/leanwrldd/unreleased/releases?q=android-v&expanded=true) (filter by `android-v*` tags — the app also checks for updates itself once installed, see below).
+1. Download the APK from the [releases page](https://github.com/Juice-WRLD-API/Unreleased/releases?q=android-v&expanded=true) (filter by `android-v*` tags — the app also checks for updates itself once installed, see below).
 2. Open it. Android will ask for permission to install from this source the first time — the app walks you to that setting itself if it isn't already granted.
 3. Requires **Android 7.0 (API 24)** or newer.
 
@@ -74,7 +74,7 @@ npm run android:deploy
 
 ## Changelog
 
-This branch's own `CHANGELOG.md` doesn't track Android-specific changes separately and predates most of the shared UI's recent history — see [CHANGELOG.md](https://github.com/leanwrldd/unreleased/blob/app/CHANGELOG.md) on the `app` branch for the full, current version history.
+This branch's own `CHANGELOG.md` doesn't track Android-specific changes separately and predates most of the shared UI's recent history — see [CHANGELOG.md](https://github.com/Juice-WRLD-API/Unreleased/blob/app/CHANGELOG.md) on the `app` branch for the full, current version history.
 
 ---
 
