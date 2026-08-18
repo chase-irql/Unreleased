@@ -1,6 +1,6 @@
 # unreleased
 
-A music player for Juice WRLD — stream the full catalog of released and unreleased songs in your browser, or install the desktop app for local files, offline playback, and Discord integration. Powered by the [Juice WRLD API](https://juicewrldapi.com).
+A music player for Juice WRLD — stream the full catalog of released and unreleased songs in your browser, install the desktop app for local files, offline playback, and Discord integration, or run it natively on Android and iOS. Powered by the [Juice WRLD API](https://juicewrldapi.com).
 
 > Just here for the web player? See [README.web.md](./README.web.md) for a feature list scoped to what's actually usable in the browser, without the desktop-only stuff below.
 
@@ -13,6 +13,7 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 
 **▶ Web player:** [player.juicewrldapi.com](https://player.juicewrldapi.com) — installable as a PWA for an app-like, offline-capable experience
 **⬇ Desktop app:** [Latest release](https://github.com/leanwrldd/unreleased/releases/latest) — Windows, macOS, Linux
+**📱 Android / iOS:** sideloaded native builds — see [Mobile apps](#mobile-apps) below
 
 ---
 
@@ -50,6 +51,7 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 
 - **Heardle** — name the song from its opening seconds. Daily mode shares one puzzle a day with everyone; Personal replays the same rules on demand; Unlimited is fully configurable (guess count, reveal speed, start point, era/category filters); **1v1** matches you live against another player. Live leaderboards for Today, Streaks, and 1v1. Share your result to the clipboard, Wordle-style
 - **Wordle** — guess the song title letter by letter. Type it out on the keyboard (physical or on-screen) or find it by name in the search box; either way the guess has to be a real track whose title is exactly as long as the answer's, so the board narrows the catalog as you go. The keyboard colors in as you rule letters out. Daily shares one title a day with everyone, Unlimited draws them at random (guess count, era/category filters). Streaks, distribution and a spoiler-free share grid
+- **Tier List** — rank songs into S/A/B/C/D (or tiers you build and recolor yourself) by dragging them into rows, or tap-to-select then tap-a-row on touch. A personal ranking with no daily puzzle or score, saved locally
 - **Wrapped** — a listening summary built from your play counts, filterable by All time / 30 days / 7 days, with a recent-plays timeline
 
 ### Personalization
@@ -76,13 +78,24 @@ A music player for Juice WRLD — stream the full catalog of released and unrele
 - **Convert format** — transcode local files to MP3, M4A, Opus, OGG, FLAC, or WAV using ffmpeg, downloaded on first use
 - **M3U playlists & Import Titles** — import an `.m3u`/`.m3u8`, or a plain-text list of song titles matched against the catalog, into a new local playlist — drag the file onto the app window, or use the Import buttons; export any local playlist back out as M3U
 - **Add to Library** — download any API song, or an entire playlist, for offline playback
-- **Discord Rich Presence** — show what you're playing (or the 999 FM stream) on your Discord profile with a live progress bar and real cover art, even for matching local files
+- **Discord Rich Presence** — show what you're playing (or the 999 FM stream) on your Discord profile with a live progress bar, real cover art (even for matching local files), and a "Listen on API" link button
 - **Application menu** — File/Edit/View/Playback/Help, dockable to the title bar or the side menu
 - **Mini player & pop-out windows** — Settings, Song info, the editor, the equalizer, and a small always-on-top mini player can float as separate windows
 - **System tray** — now-playing info and media controls in the tray menu, with optional minimize-to-tray
 - **Download manager** — live progress and speed for every download
 - **Auto-updates** — updates install themselves via GitHub releases; join the beta channel with an access code for pre-release builds
 - **Maintenance installer** — re-running the installer offers update, version switch, and uninstall, plus a standalone repair tool for when the app won't launch at all
+
+---
+
+## Mobile apps
+
+Native Android and iOS builds wrap the same web UI with [Capacitor](https://capacitorjs.com), on their own `android` and `ios` branches. Neither is on an app store — this app ships `unreleased`-catalog content, so both are sideloaded instead:
+
+- **Android** — download the newest `Unreleased-android-v*.apk` from the [releases page](https://github.com/leanwrldd/unreleased/releases?q=android-v&expanded=true); the app also checks for updates itself once installed. Requires Android 7.0+. Adds local library access (SAF), offline downloads, save-to-Downloads, and lock-screen/notification controls on top of the web feature set
+- **iOS** — download the newest `Unreleased-ios-v*.ipa` from the [releases page](https://github.com/leanwrldd/unreleased/releases?q=ios-v&expanded=true) and install it via [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) (it's unsigned — there's no Apple Developer account behind it, so your free Apple ID re-signs it on install)
+
+Both branches' READMEs cover their own install/dev instructions in full detail.
 
 ---
 
@@ -134,6 +147,7 @@ npm run electron:build
 
 - **`app`** — desktop/Electron source of truth; all development happens here
 - **`web`** — deployed web build, served directly at [player.juicewrldapi.com](https://player.juicewrldapi.com); synced from `app` on release
+- **`android`** / **`ios`** — native mobile wraps of the same UI via Capacitor; see [Mobile apps](#mobile-apps)
 
 ---
 
