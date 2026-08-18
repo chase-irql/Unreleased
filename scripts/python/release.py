@@ -556,29 +556,6 @@ def guard_no_mobile_dirs():
                  f"but consider deleting it (it has no purpose on {APP_BRANCH}).")
 
 
-def purge_mobile_dirs_from_web():
-    """The counterpart to guard_no_mobile_dirs, run while web is checked out.
-
-    guard_no_mobile_dirs only protects app. web's .gitignore ignores just the
-    Capacitor build output (android/build/, android/.gradle/, …), not android/
-    itself, so in v1.20.1 the `git add -A` below swept the whole untracked
-    android/ tree that was still sitting in the shared working directory into
-    a web commit — and the sync CI then merged web → app, which is how 52
-    Capacitor files became *tracked* on app and wedged the next release.
-
-    Deleting on app alone doesn't hold: web keeps its copy, and one divergent
-    merge puts it back. So strip the dirs here too, every release, before
-    anything is staged."""
-    for name in ("android", "ios"):
-        if capture(f'git ls-files -- "{name}"'):
-            run(f'git rm -r -q --ignore-unmatch "{name}"', check=False)
-            info(f"Removed stale {name}/ from {WEB_BRANCH} (Capacitor lives on its own branch)")
-        elif (ROOT / name).exists():
-            # Untracked leftovers on disk — web's .gitignore won't stop
-            # `git add -A` from committing them, so clear them out.
-            shutil.rmtree(ROOT / name, ignore_errors=True)
-
-
 def step_commit(version, msg, state):
     section(5, TOTAL, f"Commit → {APP_BRANCH}")
 
@@ -682,61 +659,15 @@ def step_push_app(token, state):
 
 
 def step_sync_web(version, is_beta, token, state):
-    if is_beta:
-        # The web branch is the live site (Vercel) — beta builds are
-        # desktop-only and must never deploy there.
-        section(8, TOTAL, f"Sync → {WEB_BRANCH}  (skipped)")
-        info("Beta release — desktop-only, web branch left untouched.")
-        return
-
-    section(8, TOTAL, f"Sync → {WEB_BRANCH}  (electron/ excluded)")
-
-    original = git_branch()
-    try:
-        run(f"git checkout {WEB_BRANCH}")
-        state["pre_web_sha"] = capture("git rev-parse HEAD")
-
-        # Pull only the web-safe directories from app branch.
-        #   `git checkout app -- src/` copies files that EXIST in app but does
-        #   NOT remove files that were DELETED in app — they'd linger on web
-        #   forever. So first delete files that app no longer has, then restore.
-        deleted = capture(
-            f"git diff --diff-filter=D --name-only {WEB_BRANCH} {APP_BRANCH} -- src/"
-        ).splitlines()
-        for f in deleted:
-            if f.strip():
-                run(f'git rm -q --ignore-unmatch "{f.strip()}"', check=False)
-        run(f"git checkout {APP_BRANCH} -- src/ package.json package-lock.json")
-        purge_mobile_dirs_from_web()
-
-        if not is_dirty():
-            info("Web branch already up to date.")
-            return
-
-        staged = capture("git diff --cached --name-only").splitlines()
-        info(f"Syncing {len(staged)} file(s) to {WEB_BRANCH}")
-        for f in staged[:8]:
-            detail(f)
-        if len(staged) > 8:
-            detail(f"… and {len(staged)-8} more")
-
-        run("git add -A")
-        run(f'git commit -m "v{version}"')
-        run(f"git push origin {WEB_BRANCH} --force")
-        state["web_pushed"] = True
-        ok(f"Web branch synced and pushed")
-
-        try:
-            info(f"Mirroring {WEB_BRANCH} → {MIRROR_OWNER}/{MIRROR_NAME}")
-            push_mirror_branch(WEB_BRANCH, token)
-            ok(f"Mirrored to {MIRROR_OWNER}/{MIRROR_NAME}")
-        except Exception as e:
-            warn(f"Mirror push failed (origin unaffected): {e}")
-
-    finally:
-        cur = git_branch()
-        if cur != original:
-            run(f"git checkout {original}")
+    # web/dev now carries its own independent mobile-web UI work (a
+    # .desktop/.mobile component split per view, an Electron-only-code purge
+    # that deleted files app's main process still needs, etc.) — overwriting
+    # its src/ from app here would silently wreck all of that on the next
+    # release. The counterpart web->app auto-merge workflow was removed from
+    # web for the same reason. Re-enable only if web goes back to being a
+    # pure mirror of app's src/.
+    section(8, TOTAL, f"Sync → {WEB_BRANCH}  (skipped — decoupled, see step_sync_web)")
+    info(f"{WEB_BRANCH} carries independent mobile-web UI work now; left untouched.")
 
 
 def step_publish_beta(version, notes):
