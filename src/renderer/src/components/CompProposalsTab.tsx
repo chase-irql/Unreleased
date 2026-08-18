@@ -204,7 +204,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] text-text-muted bg-surface-overlay px-2 py-0.5 rounded font-semibold">{p.change_type}</span>
+          <span className="text-[10px] text-text-muted bg-surface-overlay px-2 py-0.5 rounded font-semibold">{userApi.compChangeTypeLabel(p.change_type)}</span>
           <span className="text-xs text-text-muted">by {p.contributor_username}</span>
           <span className="flex items-center gap-1 text-xs text-text-muted"><Calendar size={10} />{shortDate(p.created_at)}</span>
           {p.applied_commit_id && <span className="flex items-center gap-1 text-xs text-text-muted"><Hash size={10} />{p.applied_commit_id}</span>}
@@ -313,7 +313,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
             className="w-full text-left px-3 py-3 border-b border-[var(--border)] transition-colors active:bg-surface-raised">
             <div className="flex items-center gap-1.5 mb-1">
               <StatusChip status={item.status} />
-              <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded">{item.change_type}</span>
+              <span className="text-[9px] text-text-muted bg-surface-raised px-1.5 py-0.5 rounded">{userApi.compChangeTypeLabel(item.change_type)}</span>
             </div>
             <p className="text-[12px] font-mono text-text-primary truncate">{item.file_path}</p>
             {item.change_type === 'move' && item.destination_path && (

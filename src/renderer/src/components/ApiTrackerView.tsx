@@ -22,7 +22,7 @@ import * as userApi from '../lib/userApi'
 import { versionsEnabled, linkSongVersion, getOwnVersionMeta, setGroupVersionTitle } from '../lib/versionsApi'
 import { fetchAllCompactGroups, filterCompactGroups, invalidateCompactGroupsCache, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
 import type { CompactGroup } from '../lib/compactGroups'
-import { parseSearchQuery, hasFieldSyntax, matchesSearchQuery } from '../lib/trackerSearch'
+import { parseSearchQuery, matchesFieldFilters } from '../lib/trackerSearch'
 import { useVirtualWindow } from '../hooks/useVirtualWindow'
 import { runLog } from '../lib/runLog'
 import { formatDuration } from '../lib/format'
@@ -926,7 +926,7 @@ export default function ApiTrackerView(): JSX.Element {
     seededRef.current = true
     const initialSearch = getInitialSearch()
     seedRef.current = apiPeek<JWApiPaginatedResponse>('/songs/', {
-      searchall: initialSearch || undefined, category: undefined, era: undefined,
+      searchall: parseSearchQuery(initialSearch).freeText || undefined, category: undefined, era: undefined,
       page: 1, page_size: PAGE_SIZE,
     })
   }
@@ -1011,13 +1011,15 @@ export default function ApiTrackerView(): JSX.Element {
   }, [categoryFilter, eraFilter])
 
   // `field:"value"` search syntax (e.g. `artists:"Juice WRLD"`) has no
-  // server-side equivalent — the API's `searchall` is a single plain-text
-  // param — so a query using it forces fetch-all mode (below) and gets
-  // filtered here instead of trusting the server to have applied it.
-  const advancedSearchActive = useMemo(() => hasFieldSyntax(debouncedSearch), [debouncedSearch])
-  const searchTokens = useMemo(() => parseSearchQuery(debouncedSearch), [debouncedSearch])
+  // server-side equivalent — the API's `searchall` only takes plain text —
+  // so a query using it strips the field tokens out before they're sent
+  // (searchall below uses parsedSearch.freeText, not the raw query) and
+  // forces fetch-all mode so the field filters can be applied here across
+  // every page instead of just the one the server would have returned.
+  const parsedSearch = useMemo(() => parseSearchQuery(debouncedSearch), [debouncedSearch])
+  const hasFieldFilters = parsedSearch.filters.length > 0
   const matchesSearch = useCallback((song: JWApiSong): boolean =>
-    !advancedSearchActive || matchesSearchQuery(song, searchTokens), [advancedSearchActive, searchTokens])
+    !hasFieldFilters || matchesFieldFilters(song, parsedSearch.filters), [hasFieldFilters, parsedSearch])
 
   useEffect(() => {
     if (apiTrackerCategory) { setCategoryFilter(new Set([apiTrackerCategory as Category])); setApiTrackerCategory('') }
@@ -1242,7 +1244,7 @@ export default function ApiTrackerView(): JSX.Element {
   // a sort chosen there would otherwise kick off a full-catalog download for a
   // list that isn't on screen. Switching back to a flat view flips this on and
   // the fetch runs then.
-  const fetchAllMode = (sortModeActive && !compactView) || multiFilterActive || advancedSearchActive
+  const fetchAllMode = (sortModeActive && !compactView) || multiFilterActive || hasFieldFilters
   useEffect(() => {
     if (!fetchAllMode) return
     let cancelled = false
@@ -1251,12 +1253,13 @@ export default function ApiTrackerView(): JSX.Element {
     const t0 = performance.now()
     const PAGE_SIZE_SORT = 200 // bigger batches to reduce round-trips
     const CONCURRENCY = 6
-    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive} advanced=${advancedSearchActive}`)
+    runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive} fields=${hasFieldFilters}`)
     const matchesAll = (s: JWApiSong): boolean => matchesFilters(s) && matchesSearch(s)
     const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
-      // field:value syntax has no server-side meaning — fetch every page
-      // unfiltered by text and let matchesSearch narrow it down below.
-      searchall: advancedSearchActive ? undefined : (debouncedSearch || undefined),
+      // field:value tokens are stripped out — only the remaining free text
+      // (if any) still narrows the request server-side; matchesSearch above
+      // applies the field filters across every page fetched here.
+      searchall: parsedSearch.freeText || undefined,
       category: categoryParam || undefined,
       era: eraParam || undefined,
       page: p,
@@ -1296,7 +1299,7 @@ export default function ApiTrackerView(): JSX.Element {
       }
     })()
     return () => { cancelled = true }
-  }, [fetchAllMode, debouncedSearch, categoryParam, eraParam, matchesFilters, matchesSearch, advancedSearchActive, multiFilterActive])
+  }, [fetchAllMode, debouncedSearch, categoryParam, eraParam, matchesFilters, matchesSearch, parsedSearch, hasFieldFilters, multiFilterActive])
 
   // ── SCROLL MODE: infinite scroll, accumulates pages ───────────────────────
   useEffect(() => {
@@ -1305,7 +1308,7 @@ export default function ApiTrackerView(): JSX.Element {
     loadingRef.current = true
     setLoading(true); setError(null)
     apiFetch<JWApiPaginatedResponse>('/songs/', {
-      searchall: debouncedSearch || undefined,
+      searchall: parsedSearch.freeText || undefined,
       category: categoryParam || undefined,
       era: eraParam || undefined,
       page,
@@ -1331,7 +1334,7 @@ export default function ApiTrackerView(): JSX.Element {
         }
       })
     return () => { cancelled = true }
-  }, [debouncedSearch, categoryParam, eraParam, page, fetchAllMode])
+  }, [debouncedSearch, parsedSearch, categoryParam, eraParam, page, fetchAllMode])
 
   useEffect(() => {
     const el = sentinelRef.current
@@ -1381,17 +1384,28 @@ export default function ApiTrackerView(): JSX.Element {
   // group app-wide), so the query has to be applied client-side or typing while
   // compact view is active would do nothing. Mirrors as much of the normal
   // list's server-side `searchall` field coverage as it reasonably can.
+  const compactGroupText = (s: JWApiSong): string => [
+    s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
+    s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
+  ].filter(Boolean).join(' ')
+
   const filteredCompactGroups = useMemo(() => {
     // field:value syntax has no group-title shortcut (unlike the plain-text
-    // path below) — it always filters member-by-member.
-    let filtered = advancedSearchActive
+    // path below) — it always filters member-by-member, checking both the
+    // field filters and whatever free text is left over (fetchAllCompactGroups
+    // never hits the server's searchall, so both halves of parsedSearch have
+    // to be applied here rather than the server having done the free-text half).
+    let filtered = hasFieldFilters
       ? compactGroups
-          .map(g => ({ ...g, members: g.members.filter(m => matchesSearchQuery(m.item, searchTokens)) }))
+          .map(g => ({
+            ...g,
+            members: g.members.filter(m =>
+              matchesFieldFilters(m.item, parsedSearch.filters)
+              && (!parsedSearch.freeText || compactGroupText(m.item).toLowerCase().includes(parsedSearch.freeText.toLowerCase()))
+            ),
+          }))
           .filter(g => g.members.length > 0)
-      : filterCompactGroups(compactGroups, debouncedSearch, s => [
-          s.track_titles?.join(' '), s.name, s.credited_artists, s.producers, s.engineers,
-          s.era?.name, s.notes, s.additional_information, s.session_titles, s.original_key,
-        ].filter(Boolean).join(' '))
+      : filterCompactGroups(compactGroups, debouncedSearch, compactGroupText)
     // Category/era filters aren't sent server-side for compact view, so apply
     // them here. A group matches if any of its versions does.
     if (categoryFilter.size > 0 || eraFilter.size > 0) {
@@ -1409,7 +1423,7 @@ export default function ApiTrackerView(): JSX.Element {
       sorted.sort((a, b) => a.title.localeCompare(b.title) * dir)
     }
     return sorted
-  }, [compactGroups, debouncedSearch, advancedSearchActive, searchTokens, orderField, orderDir, categoryFilter, eraFilter, matchesFilters])
+  }, [compactGroups, debouncedSearch, hasFieldFilters, parsedSearch, orderField, orderDir, categoryFilter, eraFilter, matchesFilters])
 
   const handlePlay = useCallback((song: JWApiSong) => {
     const track = songToTrack(song)

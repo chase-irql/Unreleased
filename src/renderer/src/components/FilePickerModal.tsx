@@ -65,6 +65,10 @@ interface Props {
    *  Requires onSelectMany; onSelect is then unused for files. */
   multiple?: boolean
   onSelectMany?: (paths: string[]) => void
+  /** The new-folder name being typed is itself the whole proposal (a
+   *  create_folder comp proposal), rather than just a destination an upload
+   *  will later create — changes the caption under the name field. */
+  emptyFolderProposable?: boolean
 }
 
 // A scoped-down version of ApiFilesView's browser for picking one file out of
@@ -80,7 +84,7 @@ interface Props {
 // Audio mode is the opposite: a song's `path` field in the API is the raw
 // storage path ("Compilation/1. Released Discography/…mp3") and the app builds
 // stream URLs from it, so handing back an absolute URL there would double-wrap.
-export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title, multiple = false, onSelectMany }: Props): JSX.Element {
+export default function FilePickerModal({ kind = 'image', songTitle, altTitles = [], onSelect, onClose, allowFolderSelect = false, title, multiple = false, onSelectMany, emptyFolderProposable = false }: Props): JSX.Element {
   useBackToClose(onClose)
   const isAudio = kind === 'audio'
   // Image mode is the only one that earns a thumbnail grid; audio and 'any'
@@ -492,8 +496,9 @@ export default function FilePickerModal({ kind = 'image', songTitle, altTitles =
                 </div>
                 <p className="text-[11px] text-text-muted leading-relaxed">
                   <span className="font-mono text-text-secondary">{joinFolder(currentPath, newFolder) || '…'}</span>
-                  {' '}— the folder is created when an upload into it is approved. An empty folder
-                  can't be proposed on its own.
+                  {emptyFolderProposable
+                    ? " — created on disk once this folder proposal is approved, ready for you to upload files into."
+                    : " — the folder is created when an upload into it is approved. An empty folder can't be proposed on its own."}
                 </p>
               </>
             )}

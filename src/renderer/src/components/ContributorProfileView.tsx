@@ -16,6 +16,7 @@ export default function ContributorProfileView(): JSX.Element {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<CompFilterTab>('all')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
 
   const isContributor = CONTRIBUTOR_ENABLED && !!(account?.is_contributor || account?.is_administrator)
 
@@ -27,6 +28,18 @@ export default function ContributorProfileView(): JSX.Element {
     setLoading(true)
     userApi.getMyCompProposals().then(setProposals).catch(() => {}).finally(() => setLoading(false))
   }, [isContributor, refreshKey])
+
+  const withdraw = async (id: number): Promise<void> => {
+    setWithdrawingId(id)
+    try {
+      await userApi.withdrawCompProposal(id)
+      setProposals(prev => prev.filter(p => p.id !== id))
+    } catch {
+      setRefreshKey(k => k + 1)
+    } finally {
+      setWithdrawingId(null)
+    }
+  }
 
   const filtered = filterCompProposals(proposals, filter)
   const approvedCount = proposals.filter(p => p.status === 'approved').length
@@ -83,6 +96,8 @@ export default function ContributorProfileView(): JSX.Element {
           proposals={filtered}
           loading={loading}
           onSelect={() => setActiveView('contributor')}
+          onWithdraw={withdraw}
+          withdrawingId={withdrawingId}
         />
       </div>
     </div>

@@ -1,96 +1,74 @@
-// Advanced search syntax for the Tracker — field:"value" or field:value
-// tokens (quotes only needed for multi-word values), mixed freely with plain
-// free-text words. All tokens are AND'd together, e.g.
-// `artists:"Juice WRLD" producer:nick unreleased` finds songs credited to
-// Juice WRLD, produced by someone named Nick, with "unreleased" appearing
-// anywhere. Matching is a case-insensitive, apostrophe-insensitive substring
-// check — same leniency as the plain-text search elsewhere in the app.
-//
-// The API's own `searchall` param has no concept of per-field search, so
-// this is entirely client-side: the Tracker falls back to fetching the whole
-// (category/era-filtered) catalog whenever a query uses this syntax, then
-// filters it here instead of trusting the server to have applied it.
-import { CATEGORY_LABELS, JWApiSong } from './juicewrldApi'
+// Field-qualified search syntax for the Tracker's search box, e.g.
+// `artists:"Juice WRLD" love` — matches songs whose credited_artists field
+// contains "Juice WRLD" AND whose free text (title/artist/producer/etc.)
+// contains "love". Field tokens are stripped out of the query before it's
+// sent to the API's `searchall` param (which has no concept of per-field
+// search); the remaining free text still goes through the normal
+// server-side search, while field filters are applied client-side — see
+// ApiTrackerView's fetchAllMode, which this pushes field-filtered queries
+// into (same as sort/multi-category search already does).
+import { JWApiSong } from './juicewrldApi'
 
-export interface SearchToken {
-  field: string | null // null = free text, matched against every field
-  value: string
+export interface FieldFilter { field: string; label: string; value: string }
+
+interface FieldDef {
+  /** Every alias that resolves to this field, e.g. "artist" and "artists". */
+  keys: string[]
+  /** Canonical key shown in the info popover and used as the token's field name. */
+  label: string
+  get: (s: JWApiSong) => string
 }
 
-// Every alias resolves to one of these — kept as a flat switch rather than a
-// map of arrays so each case can combine/derive text (e.g. era.name,
-// category + its display label) instead of just reading a single property.
-const KNOWN_FIELDS = new Set([
-  'title', 'name', 'song',
-  'artist', 'artists',
-  'era',
-  'category', 'cat',
-  'producer', 'producers',
-  'engineer', 'engineers',
-  'notes', 'note',
-  'album',
-  'leak', 'leaktype',
-  'bitrate',
-  'location', 'locations', 'studio',
-  'date', 'dates', 'recorded',
-  'session',
-  'original',
-  'lyrics',
-])
+const FIELD_DEFS: FieldDef[] = [
+  { keys: ['title', 'name', 'song'],                       label: 'title',      get: (s) => [s.name, ...(s.track_titles ?? [])].join(' ') },
+  { keys: ['artist', 'artists'],                            label: 'artists',    get: (s) => s.credited_artists },
+  { keys: ['producer', 'producers'],                        label: 'producers',  get: (s) => s.producers },
+  { keys: ['engineer', 'engineers'],                        label: 'engineers',  get: (s) => s.engineers ?? '' },
+  { keys: ['era'],                                          label: 'era',        get: (s) => s.era?.name ?? '' },
+  { keys: ['category', 'cat'],                              label: 'category',   get: (s) => s.category },
+  { keys: ['location', 'locations', 'studio'],              label: 'location',   get: (s) => s.recording_locations ?? '' },
+  { keys: ['date', 'dates', 'recorddate', 'recorddates'],   label: 'date',       get: (s) => s.record_dates ?? '' },
+  { keys: ['leak', 'leaktype'],                             label: 'leak',       get: (s) => s.leak_type ?? '' },
+  { keys: ['dateleaked'],                                   label: 'dateleaked', get: (s) => s.date_leaked ?? '' },
+  { keys: ['bitrate'],                                      label: 'bitrate',    get: (s) => s.bitrate ?? '' },
+  { keys: ['release', 'releasedate'],                       label: 'release',    get: (s) => s.release_date ?? '' },
+  { keys: ['files', 'filenames', 'file'],                   label: 'files',      get: (s) => s.file_names ?? '' },
+  { keys: ['session', 'sessiontitle', 'sessiontitles'],     label: 'session',    get: (s) => s.session_titles ?? '' },
+  { keys: ['notes'],                                        label: 'notes',      get: (s) => s.notes ?? '' },
+  { keys: ['info', 'additional', 'additionalinfo'],         label: 'info',       get: (s) => s.additional_information ?? '' },
+  { keys: ['instrumental', 'instrumentals'],                label: 'instrumental', get: (s) => [s.instrumentals, s.instrumental_names].filter(Boolean).join(' ') },
+  { keys: ['album'],                                        label: 'album',      get: (s) => s.album ?? '' },
+  { keys: ['key', 'originalkey'],                           label: 'key',        get: (s) => s.original_key ?? '' },
+]
 
-function stripApostrophes(s: string): string {
-  return s.replace(/['’‘]/g, '')
-}
+const FIELD_LOOKUP = new Map<string, FieldDef>()
+for (const def of FIELD_DEFS) for (const k of def.keys) FIELD_LOOKUP.set(k, def)
 
-function fieldText(song: JWApiSong, field: string): string {
-  switch (field) {
-    case 'title': case 'name': case 'song':
-      return [song.name, ...(song.track_titles ?? [])].join(' ')
-    case 'artist': case 'artists':
-      return song.credited_artists || ''
-    case 'era':
-      return song.era?.name || ''
-    case 'category': case 'cat':
-      return [song.category, CATEGORY_LABELS[song.category]].filter(Boolean).join(' ')
-    case 'producer': case 'producers':
-      return song.producers || ''
-    case 'engineer': case 'engineers':
-      return song.engineers || ''
-    case 'notes': case 'note':
-      return song.notes || ''
-    case 'album':
-      return song.album || ''
-    case 'leak': case 'leaktype':
-      return song.leak_type || ''
-    case 'bitrate':
-      return song.bitrate || ''
-    case 'location': case 'locations': case 'studio':
-      return song.recording_locations || ''
-    case 'date': case 'dates': case 'recorded':
-      return song.record_dates || ''
-    case 'session':
-      return song.session_titles || ''
-    case 'original':
-      return song.original_key || ''
-    case 'lyrics':
-      return song.lyrics || ''
-    default:
-      return ''
-  }
-}
+/** One row per distinct field (not per alias) for the info popover, in the
+ *  same order they're defined above. */
+export const SEARCH_FIELD_HELP: { field: string; example: string }[] = FIELD_DEFS.map((d) => ({
+  field: d.label,
+  example: `${d.label}:"${{
+    title: 'Lucid Dreams', artists: 'Juice WRLD', producers: 'Nick Mira', engineers: 'Max Lord',
+    era: 'goodbye & good riddance', category: 'unreleased', location: 'Record One', date: '2018',
+    leak: 'cdq', dateleaked: '2020', bitrate: '320', release: '2018', files: '.wav', session: 'juice1',
+    notes: 'snippet', info: 'reference', instrumental: 'yes', album: 'Legends Never Die', key: 'lucid',
+  }[d.label] ?? 'value'}"`,
+}))
 
-function allFieldsText(song: JWApiSong): string {
-  return [
-    song.name, ...(song.track_titles ?? []), song.credited_artists, song.producers,
-    song.engineers, song.era?.name, song.notes, song.additional_information,
-    song.session_titles, song.original_key, song.category, song.album, song.leak_type,
-    song.recording_locations, song.record_dates,
-  ].filter(Boolean).join(' ')
-}
+// Matches `field:"quoted value"`, `field:'quoted value'`, or `field:bareword`.
+// Unrecognized field names are left untouched in the free text (so a plain
+// "5:30" or similar doesn't get silently eaten).
+const TOKEN_RE = /([a-zA-Z_]+):(?:"([^"]*)"|'([^']*)'|(\S+))/g
 
-// Matches `field:"quoted value"`, `field:unquoted`, `"quoted free text"`, or
-// a plain word — in that priority order, scanned left to right.
-const TOKEN_RE = /([a-zA-Z]+):"([^"]*)"|([a-zA-Z]+):(\S+)|"([^"]*)"|(\S+)/g
+// `&`/`&&` between field tokens is purely cosmetic — filters are already
+// ANDed together with no operator needed (`artists:"X" producers:"Y"` and
+// `artists:"X" & producers:"Y"` behave identically) — so once field tokens
+// are stripped out, any standalone `&`/`&&` left over is dropped too rather
+// than leaking into the free-text search sent to the server. Only matches
+// when it's its own token (surrounded by whitespace/string edges) so a
+// legitimate search like "R&B" is untouched.
+const AND_OPERATOR_RE = /(?:^|\s)&{1,2}(?=\s|$)/g
 
 // Mobile keyboards (Gboard's "smart punctuation" in particular — this is an
 // Android app) rewrite a typed straight quote into a curly one regardless of
@@ -99,44 +77,38 @@ const TOKEN_RE = /([a-zA-Z]+):"([^"]*)"|([a-zA-Z]+):(\S+)|"([^"]*)"|(\S+)/g
 // unquoted (the closing curly quote isn't `"`), leaving a stray quote
 // character stuck to the field value and matching nothing.
 function normalizeQuotes(s: string): string {
-  return s.replace(/[“”]/g, '"')
+  return s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
 }
 
-/** Parses a search box query into AND'd tokens. An unrecognized `field:`
- *  prefix (typo, or just a colon that wasn't meant as syntax) is treated as
- *  literal free text rather than silently dropped. */
-export function parseSearchQuery(query: string): SearchToken[] {
-  const q = normalizeQuotes(query.trim())
-  if (!q) return []
-  const tokens: SearchToken[] = []
-  TOKEN_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = TOKEN_RE.exec(q))) {
-    if (m[1] !== undefined) {
-      const field = m[1].toLowerCase()
-      tokens.push(KNOWN_FIELDS.has(field) ? { field, value: m[2] } : { field: null, value: `${m[1]}:${m[2]}` })
-    } else if (m[3] !== undefined) {
-      const field = m[3].toLowerCase()
-      tokens.push(KNOWN_FIELDS.has(field) ? { field, value: m[4] } : { field: null, value: `${m[3]}:${m[4]}` })
-    } else if (m[5] !== undefined) {
-      tokens.push({ field: null, value: m[5] })
-    } else if (m[6] !== undefined) {
-      tokens.push({ field: null, value: m[6] })
-    }
-  }
-  return tokens.filter(t => t.value.trim() !== '')
+export interface ParsedSearch { freeText: string; filters: FieldFilter[] }
+
+export function parseSearchQuery(raw: string): ParsedSearch {
+  const filters: FieldFilter[] = []
+  const freeText = normalizeQuotes(raw)
+    .replace(TOKEN_RE, (match, rawField: string, dq?: string, sq?: string, plain?: string) => {
+      const def = FIELD_LOOKUP.get(rawField.toLowerCase())
+      if (!def) return match
+      const value = (dq ?? sq ?? plain ?? '').trim()
+      if (!value) return ''
+      filters.push({ field: rawField.toLowerCase(), label: def.label, value })
+      return ''
+    })
+    .replace(AND_OPERATOR_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { freeText, filters }
 }
 
-/** Whether a query uses `field:value` syntax at all — callers use this to
- *  decide whether the server's plain-text `searchall` can be trusted or the
- *  catalog needs fetching in full for client-side filtering instead. */
-export function hasFieldSyntax(query: string): boolean {
-  return parseSearchQuery(query).some(t => t.field !== null)
+// Apostrophe-insensitive substring match, mirroring compactGroups.ts's
+// filterCompactGroups so `artists:"wouldnt"` still matches "Wouldn't".
+function normalize(s: string): string {
+  return s.replace(/['’‘]/g, '').toLowerCase()
 }
 
-export function matchesSearchQuery(song: JWApiSong, tokens: SearchToken[]): boolean {
-  return tokens.every(({ field, value }) => {
-    const haystack = stripApostrophes((field ? fieldText(song, field) : allFieldsText(song)).toLowerCase())
-    return haystack.includes(stripApostrophes(value.toLowerCase()))
+export function matchesFieldFilters(song: JWApiSong, filters: FieldFilter[]): boolean {
+  return filters.every(({ field, value }) => {
+    const def = FIELD_LOOKUP.get(field)
+    if (!def) return true
+    return normalize(def.get(song)).includes(normalize(value))
   })
 }

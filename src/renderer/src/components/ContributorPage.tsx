@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import {
   Loader2, Check, AlertCircle, LogIn, Clock, XCircle, Upload, Replace, Trash2,
-  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch, ArrowUpFromLine, X,
+  FolderOpen, ChevronLeft, RefreshCw, FileUp, ArrowRight, FolderSearch, ArrowUpFromLine, X, FolderPlus,
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
@@ -34,6 +34,7 @@ const CHANGE_OPTIONS: { value: CompProposalChangeType; label: string; icon: type
   { value: 'replace', label: 'Replace', icon: Replace },
   { value: 'move', label: 'Move', icon: ArrowRight },
   { value: 'delete', label: 'Delete', icon: Trash2 },
+  { value: 'create_folder', label: 'New folder', icon: FolderPlus },
 ]
 
 function ApplyPanel({ onSubmitted, rejection }: { onSubmitted: () => void; rejection?: EditorApplication | null }): JSX.Element {
@@ -129,6 +130,11 @@ export default function ContributorPage(): JSX.Element {
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
   const [picker, setPicker] = useState<PickerTarget | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // React state lags a render behind, so `submitState` alone can't stop a
+  // second call fired in the same tick or during the post-submit cooldown.
+  // A ref flips synchronously the moment a submit is accepted and only clears
+  // once the form is ready for another, guaranteeing one queue per click.
+  const submitLatch = useRef(false)
 
   const isContributor = !!(account?.is_contributor || account?.is_administrator)
 
@@ -190,8 +196,9 @@ export default function ContributorPage(): JSX.Element {
 
   const filtered = filterCompProposals(proposals, filter)
   const cleanFolder = folderPath.trim().replace(/\/+$/, '')
-  const filePath = joinPath(cleanFolder, fileName.trim())
-  const carriesFile = changeType !== 'delete' && changeType !== 'move'
+  const isCreateFolder = changeType === 'create_folder'
+  const filePath = isCreateFolder ? cleanFolder : joinPath(cleanFolder, fileName.trim())
+  const carriesFile = changeType !== 'delete' && changeType !== 'move' && !isCreateFolder
   // Upload is the only type that batches local files: a replace targets one
   // existing file with one new body, and a move renames one path to another.
   const isUpload = changeType === 'upload'
@@ -205,6 +212,16 @@ export default function ContributorPage(): JSX.Element {
   const usesPathFields = !isDelete
   const destinationPath = joinPath(destFolder.trim().replace(/\/+$/, ''), destFileName.trim())
 
+  // Switching type drops any files picked under the previous one. The file
+  // section is hidden for move/delete/create_folder, so a leftover selection
+  // would be invisible here and still ride along on the request below.
+  const selectChangeType = (type: CompProposalChangeType): void => {
+    setChangeType(type)
+    setSelectedFiles([])
+    setSubmitError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const buildForm = (path: string, file: File | null): FormData => {
     const form = new FormData()
     form.append('file_path', path)
@@ -216,12 +233,16 @@ export default function ContributorPage(): JSX.Element {
   }
 
   const submitProposal = async (): Promise<void> => {
-    if (submitState === 'submitting') return
+    if (submitLatch.current || submitState === 'submitting') return
     if (isDelete && deletePaths.length === 0) {
       setSubmitError('Pick at least one file to delete.')
       return
     }
-    if (usesPathFields && !isBatch && !fileName.trim()) {
+    if (isCreateFolder && !cleanFolder) {
+      setSubmitError('Enter a folder path.')
+      return
+    }
+    if (usesPathFields && !isCreateFolder && !isBatch && !fileName.trim()) {
       setSubmitError('Enter a filename.')
       return
     }
@@ -233,6 +254,7 @@ export default function ContributorPage(): JSX.Element {
       setSubmitError('Select a file for upload or replace proposals.')
       return
     }
+    submitLatch.current = true
     setSubmitState('submitting')
     setSubmitError(null)
 
@@ -243,7 +265,10 @@ export default function ContributorPage(): JSX.Element {
       ? deletePaths.map((path) => ({ path, file: null as File | null }))
       : isUpload && selectedFiles.length > 1
         ? selectedFiles.map((file, i) => ({ path: batchPaths[i], file: file as File | null }))
-        : [{ path: filePath, file: selectedFiles[0] ?? null }]
+        // `carriesFile` guard as well as the reset above: only upload/replace
+        // may send a body, and a move or new-folder proposal that quietly
+        // carried one would be accepted looking like something it isn't.
+        : [{ path: filePath, file: carriesFile ? selectedFiles[0] ?? null : null }]
     // Anything carrying a file body goes to the background queue: a comp zip is
     // routinely hundreds of megabytes, and awaiting it here meant the user had
     // to sit on this page (and keep the window open) until it finished. The
@@ -251,18 +276,27 @@ export default function ContributorPage(): JSX.Element {
     // lib/compUploads. Delete and move proposals carry no body, so they stay
     // inline below where their result can be reported immediately.
     if (carriesFile) {
-      queueCompUploads(jobs.map((job) => ({
-        label: basename(job.path),
-        form: buildForm(job.path, job.file),
-        bytes: job.file?.size,
-      })))
+      try {
+        queueCompUploads(jobs.map((job) => ({
+          label: basename(job.path),
+          form: buildForm(job.path, job.file),
+          bytes: job.file?.size,
+        })))
+      } catch (e) {
+        // Without this the latch never clears and the submit button stays dead
+        // for the life of the page.
+        setSubmitState('error')
+        setSubmitError(e instanceof Error ? e.message : 'Could not queue the upload')
+        setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
+        return
+      }
       setSubmitState('submitted')
       setSelectedFiles([])
       setNotes('')
       setFileName('')
       setDestFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
-      setTimeout(() => setSubmitState('idle'), 2000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 2000)
       return
     }
 
@@ -284,14 +318,14 @@ export default function ContributorPage(): JSX.Element {
     if (failed.length === jobs.length) {
       setSubmitState('error')
       setSubmitError(jobs.length > 1 ? 'None of the files could be submitted.' : 'Submission failed')
-      setTimeout(() => setSubmitState('idle'), 4000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
       reload()
       return
     }
     if (failed.length > 0) {
       setSubmitState('error')
       setSubmitError(`${jobs.length - failed.length} of ${jobs.length} submitted. Failed: ${failed.join(', ')}`)
-      setTimeout(() => setSubmitState('idle'), 6000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 6000)
       reload()
       return
     }
@@ -305,11 +339,11 @@ export default function ContributorPage(): JSX.Element {
       setDestFileName('')
       if (fileInputRef.current) fileInputRef.current.value = ''
       reload()
-      setTimeout(() => setSubmitState('idle'), 2000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 2000)
     } catch (e) {
       setSubmitState('error')
       setSubmitError(e instanceof Error ? e.message : 'Submission failed')
-      setTimeout(() => setSubmitState('idle'), 4000)
+      setTimeout(() => { setSubmitState('idle'); submitLatch.current = false }, 4000)
     }
   }
 
@@ -390,21 +424,21 @@ export default function ContributorPage(): JSX.Element {
             {usesPathFields && (
             <div className="space-y-2">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
-                {changeType === 'move' ? 'Source (relative to comp/)' : 'Target (relative to comp/)'}
+                {changeType === 'move' ? 'Source (relative to comp/)' : isCreateFolder ? 'New folder (relative to comp/)' : 'Target (relative to comp/)'}
               </label>
               <div className="flex gap-2">
                 <input value={folderPath} onChange={e => setFolderPath(e.target.value)} placeholder="Folder — e.g. Compilation/Unreleased"
                   className="flex-1 min-w-0 rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
                 <button
                   type="button"
-                  onClick={() => setPicker(changeType === 'upload' ? 'upload-folder' : 'file')}
-                  title={changeType === 'upload' ? 'Pick the folder to upload into' : 'Pick the file this applies to'}
+                  onClick={() => setPicker(changeType === 'upload' || isCreateFolder ? 'upload-folder' : 'file')}
+                  title={changeType === 'upload' ? 'Pick the folder to upload into' : isCreateFolder ? 'Pick where to create the folder' : 'Pick the file this applies to'}
                   className="shrink-0 px-3 rounded-xl border border-[var(--border)] bg-surface-overlay text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors flex items-center gap-1.5 text-xs font-semibold"
                 >
                   <FolderSearch size={14} /> Browse
                 </button>
               </div>
-              {!isBatch && (
+              {!isBatch && !isCreateFolder && (
                 <input value={fileName} onChange={e => setFileName(e.target.value)} placeholder="Filename — e.g. My Song.mp3"
                   className="w-full rounded-xl border border-[var(--border)] bg-surface-overlay px-4 py-2.5 text-sm font-mono text-text-primary focus:outline-none focus:border-accent" />
               )}
@@ -477,7 +511,7 @@ export default function ContributorPage(): JSX.Element {
             )}
             <div className="flex flex-wrap gap-2">
               {CHANGE_OPTIONS.map(opt => (
-                <button key={opt.value} onClick={() => setChangeType(opt.value)}
+                <button key={opt.value} onClick={() => selectChangeType(opt.value)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${changeType === opt.value ? 'bg-accent text-white' : 'bg-surface-overlay text-text-muted hover:text-text-primary'}`}>
                   <opt.icon size={13} /> {opt.label}
                 </button>
@@ -565,7 +599,7 @@ export default function ContributorPage(): JSX.Element {
             )}
             <button onClick={submitProposal}
               disabled={submitState === 'submitting'
-                || (isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
+                || (isCreateFolder ? !cleanFolder : isDelete ? deletePaths.length === 0 : !isBatch && !fileName.trim())
                 || (carriesFile && selectedFiles.length === 0)
                 || (changeType === 'move' && !destFileName.trim())}
               className="px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold disabled:opacity-40 flex items-center gap-2">
@@ -598,6 +632,7 @@ export default function ContributorPage(): JSX.Element {
           // tracklist just as easily as a song.
           kind="any"
           allowFolderSelect={picker === 'upload-folder' || picker === 'dest-folder'}
+          emptyFolderProposable={isCreateFolder}
           multiple={picker === 'delete-files'}
           onSelectMany={(paths) => {
             setDeletePaths(prev => [...prev, ...paths.filter(x => !prev.includes(x))])
@@ -607,7 +642,7 @@ export default function ContributorPage(): JSX.Element {
           title={
             picker === 'file' ? 'Pick the file this proposal applies to'
               : picker === 'delete-files' ? 'Pick the files to delete'
-              : picker === 'upload-folder' ? 'Pick the folder to upload into'
+              : picker === 'upload-folder' ? (isCreateFolder ? 'Pick where to create the folder' : 'Pick the folder to upload into')
               : 'Pick the folder to move it into'
           }
           onClose={() => setPicker(null)}

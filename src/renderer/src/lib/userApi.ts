@@ -419,7 +419,18 @@ export async function removeFromPlaylist(id: number, songId: number): Promise<vo
 }
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'reversed'
-export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete'
+export type CompProposalChangeType = 'upload' | 'replace' | 'move' | 'delete' | 'create_folder'
+
+// Only the underscored ones need spelling out; everything else reads fine as
+// the raw enum. Lives here rather than in one of the review components because
+// several separate places render this badge.
+const COMP_CHANGE_LABELS: Record<string, string> = {
+  create_folder: 'new folder',
+}
+
+export function compChangeTypeLabel(type: string): string {
+  return COMP_CHANGE_LABELS[type] ?? type
+}
 
 export interface CompFileProposal {
   id: number
