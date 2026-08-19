@@ -14,6 +14,7 @@ import {
 import type { SongPreference, SongPrefMap, SongPrefPatch } from '../lib/songPrefs'
 import { peekRotatedCover } from '../lib/coverRotation'
 import { advanceRotatedCover, resetCoverRotation } from '../lib/coverSuggestions'
+import { peekEraCover, setEraCoverRaw } from '../lib/eraCovers'
 import {
   appendListeningPlay,
   mergeListeningPlays,
@@ -125,6 +126,8 @@ interface AppState {
   // -1 = full left … 1 = full right
   eqBalance: number
   eqMono: boolean
+  // 1 = 100% (unity, off) .. EQ_BOOST_MAX = 200%.
+  eqBoost: number
   skipSilence: boolean
   // Reverb (convolution tail; see lib/audioEffects.ts) — independently
   // toggleable; mix/decay keep their values while off.
@@ -274,6 +277,11 @@ interface AppState {
   // lib/coverRotation). Songs with a custom cover, and songs the storage has
   // no images for, are unaffected.
   rotateSuggestedCovers: boolean
+  // Per-era cover overrides (see lib/eraCovers): a cover the user picks for
+  // an era replaces the API's shared placeholder on every unreleased song in
+  // that era. Released songs, and songs with their own personal cover or a
+  // rotated suggestion, are unaffected — see applyPrefToTrack's precedence.
+  eraCovers: Record<string, string>
   // Desktop (Electron/Windows) only. When disabled, the app stops publishing
   // Media Session metadata/action handlers, which stops Windows from popping
   // up its System Media Transport Controls overlay on media-key presses.
@@ -452,6 +460,7 @@ interface AppActions {
   setEqPreset: (id: string) => void
   setEqBalance: (balance: number) => void
   setEqMono: (mono: boolean) => void
+  setEqBoost: (boost: number) => void
   setSkipSilence: (enabled: boolean) => void
   setReverbEnabled: (enabled: boolean) => void
   setReverbMix: (mix: number) => void
@@ -531,6 +540,9 @@ interface AppActions {
   setWrldThemeBackground: (enabled: boolean) => void
   setPreferOgVersion: (enabled: boolean) => void
   setRotateSuggestedCovers: (enabled: boolean) => void
+  /** Sets (or, with raw = null, clears) the cover override for one era and
+   *  redraws any visible tracks it affects. */
+  setEraCoverOverride: (era: string, raw: string | null) => void
   /** Rotates a song onto its next suggested cover, if the setting is on and
    *  the user hasn't set a cover of their own. Called when a track starts. */
   _maybeRotateCover: (songId: number) => void
@@ -788,10 +800,13 @@ function patchPrefMap(prefs: SongPrefMap, songId: number, patch: SongPrefPatch):
  *  override can be applied, changed, or removed in place. */
 function applyPrefToTrack(track: Track, pref: SongPreference | undefined): Track {
   // Mirrors songToTrack: user cover first, then a rotated suggestion (only
-  // ever set while the rotate-covers setting is on), then the song's own art.
+  // ever set while the rotate-covers setting is on), then an era cover
+  // override (unreleased songs only — track.genre holds the API category for
+  // jw- tracks), then the song's own art.
   const songId = userApi.trackIdToSongId(track.id)
   const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
     ?? (songId != null ? peekRotatedCover(songId) : undefined)
+    ?? (songId != null && track.genre !== 'released' ? resolvePrefCoverUrl(peekEraCover(track.era)) : undefined)
   return {
     ...track,
     title: pref?.name || track.apiTitle || track.title,
@@ -961,6 +976,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
   eqPreset: ls.get<string>('eqPreset') ?? 'flat',
   eqBalance: ls.get<number>('eqBalance') ?? 0,
   eqMono: ls.get<boolean>('eqMono') ?? false,
+  // 1 = 100% (unity, off) .. EQ_BOOST_MAX = 200%.
+  eqBoost: ls.get<number>('eqBoost') ?? 1,
   skipSilence: ls.get<boolean>('skipSilence') ?? false,
   setEqEnabled: (eqEnabled) => { set({ eqEnabled }); ls.set('eqEnabled', eqEnabled) },
   setEqBand: (index, gain) => {
@@ -978,6 +995,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   setEqBalance: (eqBalance) => { set({ eqBalance }); ls.set('eqBalance', eqBalance) },
   setEqMono: (eqMono) => { set({ eqMono }); ls.set('eqMono', eqMono) },
+  setEqBoost: (eqBoost) => { set({ eqBoost }); ls.set('eqBoost', eqBoost) },
   setSkipSilence: (skipSilence) => { set({ skipSilence }); ls.set('skipSilence', skipSilence) },
   // 'slowedReverb' is the feature's short-lived bundled-toggle predecessor —
   // carry an existing on-state over so it doesn't silently switch off.
@@ -1099,7 +1117,6 @@ export const useStore = create<AppStore>((set, get, store) => ({
       'wordle': '/wordle',
       'tierlist': '/tierlist',
       'stats': '/stats',
-      'download': '/download',
     }
     window.history.pushState({ view }, '', paths[view] ?? '/tracker')
     set((s) => ({ activeView: view, previousView: view === s.activeView ? s.previousView : s.activeView }))
@@ -1254,6 +1271,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   wrldThemeBackground: ls.get<boolean>('wrldThemeBackground') ?? false,
   preferOgVersion: ls.get<boolean>('preferOgVersion') ?? false,
   rotateSuggestedCovers: ls.get<boolean>('rotateSuggestedCovers') ?? false,
+  eraCovers: ls.get<Record<string, string>>('eraCovers') ?? {},
   mediaOverlayEnabled: ls.get<boolean>('mediaOverlayEnabled') ?? true,
   lastfmUser: getLastfmSession()?.name ?? null,
   lastfmEnabled: ls.get<boolean>('lastfmEnabled') ?? true,
@@ -1299,6 +1317,31 @@ export const useStore = create<AppStore>((set, get, store) => ({
       // Only when the current track was actually re-derived: for a local file
       // currentTrackFull.albumArt is the embedded full-size art, which must not
       // be overwritten with the track's thumbnail URL.
+      ...(currentTrackFull && nextCurrent !== currentTrack
+        ? { currentTrackFull: { ...currentTrackFull, albumArt: nextCurrent?.imageUrl ?? null } }
+        : {}),
+    })
+  },
+
+  setEraCoverOverride: (era, raw) => {
+    setEraCoverRaw(era, raw)
+    const nextCovers = { ...get().eraCovers }
+    if (raw) nextCovers[era] = raw
+    else delete nextCovers[era]
+    set({ eraCovers: nextCovers })
+    // Redraw every visible API track this era touches so the change shows up
+    // immediately instead of at the next track change.
+    const { queue, currentTrack, currentTrackFull, songPrefs } = get()
+    const redraw = (t: Track): Track => {
+      if (t.era !== era) return t
+      const id = userApi.trackIdToSongId(t.id)
+      return id == null ? t : applyPrefToTrack(t, songPrefs[id])
+    }
+    const nextQueue = queue.map(redraw)
+    const nextCurrent = currentTrack ? redraw(currentTrack) : currentTrack
+    set({
+      queue: nextQueue,
+      currentTrack: nextCurrent,
       ...(currentTrackFull && nextCurrent !== currentTrack
         ? { currentTrackFull: { ...currentTrackFull, albumArt: nextCurrent?.imageUrl ?? null } }
         : {}),

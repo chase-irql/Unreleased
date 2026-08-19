@@ -22,7 +22,6 @@ function getViewFromPath(pathname: string): ViewType {
   if (pathname === '/wordle') return 'wordle'
   if (pathname === '/tierlist') return 'tierlist'
   if (pathname === '/stats') return 'stats'
-  if (pathname === '/download') return 'download'
   if (pathname.startsWith('/shared/')) return 'shared-playlist'
   if (pathname === '/library') return 'library'
   if (pathname === '/auth/discord/callback') return 'api-tracker'
@@ -73,7 +72,6 @@ const HeardleView = lazyView(() => import('./components/HeardleView'))
 const WordleView = lazyView(() => import('./components/WordleView'))
 const TierlistView = lazyView(() => import('./components/TierlistView'))
 const StatsView = lazyView(() => import('./components/StatsView'))
-const DownloadAppView = lazyView(() => import('./components/DownloadAppView'))
 const AlbumsAdminView = lazyView(() => import('./components/AlbumsAdminView'))
 const LocalEditorPage = lazyView(() => import('./components/LocalEditorPage'))
 const ContributorPage = lazyView(() => import('./components/ContributorPage'))
@@ -285,7 +283,6 @@ export default function App(): JSX.Element {
               : activeView === 'wordle' ? <WordleView />
               : activeView === 'tierlist' ? <TierlistView />
               : activeView === 'stats' ? <StatsView />
-              : activeView === 'download' ? <DownloadAppView />
               : activeView === 'library' ? <LibraryTab />
               : activeView === 'local-editor' ? <LocalEditorPage />
               : activeView === 'albums-admin' ? <AlbumsAdminView />
