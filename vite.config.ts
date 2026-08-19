@@ -3,7 +3,16 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
 
-const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
+// package.json's own "version" isn't kept current on this branch —
+// scripts/python/release_ios.py only bumps ios/App/App.xcodeproj/
+// project.pbxproj's MARKETING_VERSION, so reading pkg.version here would show
+// a stale desktop-era number in things like feedback reports.
+// MARKETING_VERSION is the one source of truth the release script actually
+// updates.
+const pbxproj = readFileSync(resolve(__dirname, 'ios/App/App.xcodeproj/project.pbxproj'), 'utf-8')
+const marketingVersionMatch = pbxproj.match(/MARKETING_VERSION\s*=\s*([^;]+);/)
+if (!marketingVersionMatch) throw new Error('Could not find MARKETING_VERSION in ios/App/App.xcodeproj/project.pbxproj')
+const appVersion = marketingVersionMatch[1].trim()
 
 export default defineConfig({
   plugins: [react()],
@@ -11,7 +20,7 @@ export default defineConfig({
   envDir: resolve(__dirname, '.'),
   base: './',
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   build: {
     outDir: resolve(__dirname, 'dist'),
