@@ -10,12 +10,13 @@ import { apiFetch, songToTrack } from '../lib/juicewrldApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
+import { isPrimaryChannelSlug } from '../hooks/useChannelRoles'
 import type { EditorApplication, SongEditProposal, AdminUser, ProposalStatus } from '../lib/userApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
 import { invalidateLyricsCache } from './Player'
 import { navigateFromWindow } from '../lib/windowSync'
-import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection, QueueSearch, buildHaystack, matchesHaystack } from './adminShared'
+import { relativeTime, shortDate, STATUS_STYLE, StatusChip, Avatar, Empty, AppSection, QueueSearch, buildHaystack, matchesHaystack, CopyButton } from './adminShared'
 import ReportsTab from './ReportsTab'
 import CompProposalsTab from './CompProposalsTab'
 import ChannelsTab from './ChannelsTab'
@@ -64,7 +65,12 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-raised border-b border-[var(--border)]">
         <span className="font-mono text-[10px] text-text-muted tracking-tight">{fieldKey.replace(/_/g, ' ')}</span>
         <div className="flex items-center gap-2">
-          {unchanged && <span className="text-[9px] italic text-text-muted">unchanged</span>}
+          {unchanged && (
+            <>
+              <span className="text-[9px] italic text-text-muted">unchanged</span>
+              <CopyButton text={afterStr} label={fieldKey} />
+            </>
+          )}
           {isLong && (
             <button onClick={() => setExp(e => !e)} className="text-[10px] text-accent/70 hover:text-accent">
               {exp ? 'collapse' : 'expand'}
@@ -80,7 +86,8 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
           <div className="bg-red-500/8 min-w-0">
             <div className="flex items-center gap-1.5 px-3 py-1 border-b border-red-500/15">
               <Minus size={9} className="text-red-500 shrink-0" />
-              <span className="text-[9px] font-bold uppercase tracking-wide text-red-500">Before</span>
+              <span className="text-[9px] font-bold uppercase tracking-wide text-red-500 flex-1">Before</span>
+              <CopyButton text={beforeStr} label={`${fieldKey} (before)`} />
             </div>
             <div className="px-3 py-2">
               {b.lines.map((line, i) => (
@@ -96,7 +103,8 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
           <div className="bg-emerald-500/8 min-w-0">
             <div className="flex items-center gap-1.5 px-3 py-1 border-b border-emerald-500/15">
               <Plus size={9} className="text-emerald-600 shrink-0" />
-              <span className="text-[9px] font-bold uppercase tracking-wide text-emerald-600">After</span>
+              <span className="text-[9px] font-bold uppercase tracking-wide text-emerald-600 flex-1">After</span>
+              <CopyButton text={afterStr} label={`${fieldKey} (after)`} />
             </div>
             <div className="px-3 py-2">
               {a.lines.map((line, i) => (
@@ -115,7 +123,8 @@ function FieldDiff({ fieldKey, before, after }: { fieldKey: string; before: unkn
         <div className="bg-emerald-500/8">
           <div className="flex items-center gap-1.5 px-3 py-1 border-b border-emerald-500/15">
             <Plus size={9} className="text-emerald-600 shrink-0" />
-            <span className="text-[9px] font-bold uppercase tracking-wide text-emerald-600">Value</span>
+            <span className="text-[9px] font-bold uppercase tracking-wide text-emerald-600 flex-1">Value</span>
+            <CopyButton text={afterStr} label={fieldKey} />
           </div>
           <div className="px-3 py-2">
             {a.lines.map((line, i) => (
@@ -160,7 +169,7 @@ const ProposalDiff = memo(function ProposalDiff({ proposal }: { proposal: SongEd
 // profile's Admin tab) — no back button, page title, or window-control
 // clearance, since the host view owns that chrome.
 export default function AdminPage({ embedded = false }: { embedded?: boolean }): JSX.Element {
-  const { account, loadAccount, showNowPlaying, showQueue, activeChannel } = useStorePick('account', 'loadAccount', 'showNowPlaying', 'showQueue', 'activeChannel')
+  const { account, loadAccount, showNowPlaying, showQueue, activeChannel, channels } = useStorePick('account', 'loadAccount', 'showNowPlaying', 'showQueue', 'activeChannel', 'channels')
   // Renders inside the profile page, which can itself be a pop-out window —
   // setActiveView would go nowhere there. See navigateFromWindow.
   const go = navigateFromWindow
@@ -172,7 +181,11 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
   const isElectron = navigator.userAgent.includes('Electron')
   const needsWindowControlClearance = !embedded && isElectron && !showNowPlaying && !showQueue
   const isFullAdmin = !!account?.is_administrator
-  const isManager = userApi.isManagerAnywhere(account)
+  // Scoped to the active channel, not "any channel" — a manager grant on one
+  // channel shouldn't leave this nav/content visible (and then erroring) on
+  // a channel they don't actually manage. See useChannelRoles for the same
+  // pattern used elsewhere.
+  const isManager = userApi.isChannelManager(account, activeChannel, isPrimaryChannelSlug(channels, activeChannel))
   const canAccessStaff = isFullAdmin || isManager
   const otpEnabled = !!account?.otp_enabled
 
@@ -204,7 +217,16 @@ export default function AdminPage({ embedded = false }: { embedded?: boolean }):
           setProposals(await userApi.adminListProposals(undefined, activeChannel))
         }
       }
-    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load') }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load')
+      // Don't leave the previous channel's/tab's data on screen underneath the
+      // error — it's stale and its action buttons (approve/reject etc.) would
+      // still be live against the wrong channel context.
+      if (tab === 'proposals') setProposals([])
+      else if (tab === 'applications') setApplications([])
+      else if (tab === 'reports') setReports([])
+      else if (tab === 'users' || tab === 'stats') setUsers([])
+    }
     finally { setLoading(false) }
   }, [tab, canAccessStaff, isFullAdmin, propStatus, reportStatus, activeChannel])
 

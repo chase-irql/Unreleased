@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
+import { isPrimaryChannelSlug } from '../hooks/useChannelRoles'
 import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
 import type { CompFileProposal, CompProposalChangeType, EditorApplication } from '../lib/userApi'
 import type { ViewType } from '../types'
@@ -99,7 +100,7 @@ function ApplyPanel({ onSubmitted, rejection, channel }: { onSubmitted: () => vo
 }
 
 export default function ContributorPage(): JSX.Element {
-  const { account, setActiveView, previousView, pendingCompProposal, setPendingCompProposal, downloads, activeChannel } = useStorePick('account', 'setActiveView', 'previousView', 'pendingCompProposal', 'setPendingCompProposal', 'downloads', 'activeChannel')
+  const { account, setActiveView, previousView, pendingCompProposal, setPendingCompProposal, downloads, activeChannel, channels } = useStorePick('account', 'setActiveView', 'previousView', 'pendingCompProposal', 'setPendingCompProposal', 'downloads', 'activeChannel', 'channels')
   const activeUploads = downloads.filter((d) => d.type === 'upload' && d.state === 'downloading')
   const [application, setApplication] = useState<EditorApplication | null | undefined>(undefined)
   const [proposals, setProposals] = useState<CompFileProposal[]>([])
@@ -132,9 +133,7 @@ export default function ContributorPage(): JSX.Element {
   // once the form is ready for another, guaranteeing one queue per click.
   const submitLatch = useRef(false)
 
-  const isContributor = account?.memberships
-    ? userApi.isChannelContributor(account, activeChannel)
-    : !!(account?.is_contributor || account?.is_administrator)
+  const isContributor = userApi.isChannelContributor(account, activeChannel, isPrimaryChannelSlug(channels, activeChannel))
 
   // Where "back" goes. Prefer the profile the user actually arrived from —
   // an editor-contributor reaches this page from the editor profile, and

@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0\.."
-powershell -ExecutionPolicy Bypass -Command "npm run dev"
+powershell -ExecutionPolicy Bypass -Command "npm run electron:dev"

@@ -9,6 +9,7 @@ import { useStore, useStorePick, IS_FLOAT_WINDOW } from '../store/useStore'
 import { attachToMainWindow } from '../lib/windowSync'
 import { apiFetch, JWApiSong, JWApiEra, buildImageUrl, CATEGORY_LABELS } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
+import { isPrimaryChannelSlug } from '../hooks/useChannelRoles'
 import { invalidateLyricsCache } from './Player'
 import type { EditorApplication } from '../lib/userApi'
 import {
@@ -464,8 +465,8 @@ export default function EditorPage({ initialSongId = null }: {
     account, currentTrack,
     pendingEditorSongId, setPendingEditorSongId, setActiveView, previousView,
     pendingEditProposal, setPendingEditProposal,
-    setShowUserAuth, logoutAccount, activeChannel,
-  } = useStorePick('account', 'currentTrack', 'pendingEditorSongId', 'setPendingEditorSongId', 'setActiveView', 'previousView', 'pendingEditProposal', 'setPendingEditProposal', 'setShowUserAuth', 'logoutAccount', 'activeChannel')
+    setShowUserAuth, logoutAccount, activeChannel, channels,
+  } = useStorePick('account', 'currentTrack', 'pendingEditorSongId', 'setPendingEditorSongId', 'setActiveView', 'previousView', 'pendingEditProposal', 'setPendingEditProposal', 'setShowUserAuth', 'logoutAccount', 'activeChannel', 'channels')
   // Where "back"/"nothing to edit" should return to — wherever the user was
   // before landing here, falling back to the editor dashboard when that's
   // unknown (e.g. a deep link straight into the editor).
@@ -476,9 +477,7 @@ export default function EditorPage({ initialSongId = null }: {
   const backViewRef = useRef(backView)
   backViewRef.current = backView
   const isAdmin  = !!account?.is_administrator
-  const canEdit  = account?.memberships
-    ? userApi.isChannelEditor(account, activeChannel)
-    : !!(account?.is_editor || isAdmin)
+  const canEdit  = userApi.isChannelEditor(account, activeChannel, isPrimaryChannelSlug(channels, activeChannel))
 
   const [application, setApplication] = useState<EditorApplication | null>(null)
   const [appLoading, setAppLoading]   = useState(false)

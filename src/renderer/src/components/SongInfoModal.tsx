@@ -7,6 +7,7 @@ import {
   GitBranch, Info, StickyNote, Quote, Copy, Download, Loader2, LucideIcon
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
+import { useCanEdit } from '../hooks/useChannelRoles'
 import { attachToMainWindow } from '../lib/windowSync'
 import { JWApiSong, CATEGORY_LABELS, buildImageUrl, parseDuration, apiFetch, resolvePrefCoverUrl } from '../lib/juicewrldApi'
 import { versionsEnabled, getVersionGroup, SongVersionMeta } from '../lib/versionsApi'
@@ -485,7 +486,7 @@ export default function SongInfoModal({ song, onClose, onEdit, floating = false,
 // the modal in-app. `docked` keeps it from bouncing straight back out to a
 // float window when the song-info pop-out is enabled.
 export function GlobalSongInfoHost(): JSX.Element | null {
-  const { infoSongId, setInfoSongId, account } = useStorePick('infoSongId', 'setInfoSongId', 'account')
+  const { infoSongId, setInfoSongId } = useStorePick('infoSongId', 'setInfoSongId')
   const [song, setSong] = useState<JWApiSong | null>(null)
 
   useEffect(() => {
@@ -496,7 +497,7 @@ export function GlobalSongInfoHost(): JSX.Element | null {
   }, [infoSongId])
 
   if (infoSongId == null || !song) return null
-  const canEdit = !!account && (account.is_editor || account.is_administrator)
+  const canEdit = useCanEdit()
   return (
     <SongInfoModal
       docked

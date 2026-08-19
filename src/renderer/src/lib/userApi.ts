@@ -71,18 +71,30 @@ export function channelMembership(
   return null
 }
 
-export function isChannelEditor(account: AccountUser | null, slug: string | null | undefined): boolean {
+// The global is_editor/is_contributor/is_manager booleans are an unscoped
+// grant that predates per-channel memberships — but the backend only ever
+// honours it on the *primary* channel (legacy accounts never got a membership
+// row, so their global flag has to keep covering the one channel that existed
+// before channels did). On any other channel, the global flag alone isn't
+// enough — the account needs an explicit membership row for that channel, or
+// admin. `isPrimary` defaults true so call sites that can't yet determine it
+// (e.g. before the channel list has loaded) keep the old, safe behavior.
+export function isChannelEditor(account: AccountUser | null, slug: string | null | undefined, isPrimary = true): boolean {
   if (account?.is_administrator) return true
+  if (account?.is_editor && isPrimary) return true
   return !!channelMembership(account, slug)?.is_editor
 }
 
-export function isChannelContributor(account: AccountUser | null, slug: string | null | undefined): boolean {
+export function isChannelContributor(account: AccountUser | null, slug: string | null | undefined, isPrimary = true): boolean {
+  if (!CONTRIBUTOR_ENABLED) return false
   if (account?.is_administrator) return true
-  return CONTRIBUTOR_ENABLED && !!channelMembership(account, slug)?.is_contributor
+  if (account?.is_contributor && isPrimary) return true
+  return !!channelMembership(account, slug)?.is_contributor
 }
 
-export function isChannelManager(account: AccountUser | null, slug: string | null | undefined): boolean {
+export function isChannelManager(account: AccountUser | null, slug: string | null | undefined, isPrimary = true): boolean {
   if (account?.is_administrator) return true
+  if (account?.is_manager && isPrimary) return true
   return !!channelMembership(account, slug)?.is_manager
 }
 

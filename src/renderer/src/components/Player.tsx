@@ -29,6 +29,7 @@ import { eventToCombo, resolveAction, getAction, effectiveGlobalBinding, comboTo
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { trackIdToSongId, showStaffProfile, staffProfileView } from '../lib/userApi'
+import { useCanEdit } from '../hooks/useChannelRoles'
 import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
 import SongInfoModal from './SongInfoModal'
@@ -131,7 +132,7 @@ export default function Player(): JSX.Element {
     setActiveView,
     activeView,
     playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows')
-  const canEditSong = !!(account?.is_editor || account?.is_administrator)
+  const canEditSong = useCanEdit()
 
   const [showContextMenu, setShowContextMenu] = useState(false)
   // Cursor position for a right-click-spawned menu. null → menu was opened via

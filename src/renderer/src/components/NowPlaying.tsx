@@ -6,17 +6,17 @@ import LyricsDisplay from './LyricsDisplay'
 import SongInfoModal from './SongInfoModal'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { ProgressiveCover } from './ProgressiveCover'
+import { useCanEdit } from '../hooks/useChannelRoles'
 
 export default function NowPlaying(): JSX.Element {
   const {
     currentTrack,
     currentTrackFull,
     setShowNowPlaying,
-    account,
     setPendingEditorSongId,
     setActiveView,
     showQueue,
-  } = useStorePick('currentTrack', 'currentTrackFull', 'setShowNowPlaying', 'account', 'setPendingEditorSongId', 'setActiveView', 'showQueue')
+  } = useStorePick('currentTrack', 'currentTrackFull', 'setShowNowPlaying', 'setPendingEditorSongId', 'setActiveView', 'showQueue')
 
   const [artCollapsed, setArtCollapsed] = useState(false)
   const [panelWidth, dragHandle] = useResizablePanel(360, 280, 520)
@@ -49,7 +49,7 @@ export default function NowPlaying(): JSX.Element {
   }
 
   const jwMatch = currentTrack?.id.match(/^jw-(\d+)$/)
-  const canEdit = !!account?.is_editor
+  const canEdit = useCanEdit()
 
   return (
     <div

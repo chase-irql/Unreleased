@@ -14,6 +14,7 @@ import { resumeEffectsContext } from '../lib/audioEffects'
 import { getVersionGroup } from '../lib/versionsApi'
 import type { JWApiSong } from '../lib/juicewrldApi'
 import * as userApi from '../lib/userApi'
+import { useCanEdit } from '../hooks/useChannelRoles'
 import SongInfoModal from './SongInfoModal'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
 import { ProgressiveCover } from './ProgressiveCover'
@@ -1552,18 +1553,17 @@ const FmLikeButton = memo(function FmLikeButton({ light }: { light: boolean }): 
 // (like LyricsPanel/FmProgressBar) so it reads the store directly instead of
 // drilling props from WrldView.
 const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Element {
-  const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike, account, setActiveView, setPendingEditorSongId } = useStore(useShallow(s => ({
+  const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike, setActiveView, setPendingEditorSongId } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     radioFmActive: s.radioFmActive,
     radioFmNowPlaying: s.radioFmNowPlaying,
     radioFmMatchedSong: s.radioFmMatchedSong,
     likedTrackIds: s.likedTrackIds,
     toggleLike: s.toggleLike,
-    account: s.account,
     setActiveView: s.setActiveView,
     setPendingEditorSongId: s.setPendingEditorSongId,
   })))
-  const canEdit = !!(account?.is_editor || account?.is_administrator)
+  const canEdit = useCanEdit()
 
   const [open, setOpen] = useState(false)
   const [showSongInfo, setShowSongInfo] = useState(false)

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import * as userApi from '../lib/userApi'
+import { isPrimaryChannelSlug } from '../hooks/useChannelRoles'
 import { placeFlyout } from '../lib/menuFlyout'
 import {
   apiFetch,
@@ -175,8 +176,9 @@ function urlToPath(pathname: string): string {
 
 export default function ApiFilesView(): JSX.Element {
   const { playTrack, addToQueue, apiFilesPath, setApiFilesPath, apiFilesLastPath, setApiFilesLastPath, account, setActiveView, setPendingEditorSongId, setPendingCompProposal, likedTrackIds, toggleLike, playlists, refreshPlaylists, setShowUserAuth, channels, activeChannel, setActiveChannel, loadChannels } = useStorePick('playTrack', 'addToQueue', 'apiFilesPath', 'setApiFilesPath', 'apiFilesLastPath', 'setApiFilesLastPath', 'account', 'setActiveView', 'setPendingEditorSongId', 'setPendingCompProposal', 'likedTrackIds', 'toggleLike', 'playlists', 'refreshPlaylists', 'setShowUserAuth', 'channels', 'activeChannel', 'setActiveChannel', 'loadChannels')
-  const canEdit = userApi.isChannelEditor(account, activeChannel)
-  const canPropose = userApi.isChannelContributor(account, activeChannel)
+  const isPrimary = isPrimaryChannelSlug(channels, activeChannel)
+  const canEdit = userApi.isChannelEditor(account, activeChannel, isPrimary)
+  const canPropose = userApi.isChannelContributor(account, activeChannel, isPrimary)
   // Set lookup for the per-row liked check — .includes on the array made the
   // listing O(rows × likes).
   const likedSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds])

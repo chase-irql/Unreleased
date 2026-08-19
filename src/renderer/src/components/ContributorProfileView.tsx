@@ -4,7 +4,7 @@ import { useStorePick } from '../store/useStore'
 import { navigateFromWindow } from '../lib/windowSync'
 import * as userApi from '../lib/userApi'
 import type { CompFileProposal } from '../lib/userApi'
-import { CONTRIBUTOR_ENABLED } from '../lib/userApi'
+import { isPrimaryChannelSlug } from '../hooks/useChannelRoles'
 import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTab } from './CompProposalList'
 
 // A contributor-only account's home. Reviewing other people's proposals is
@@ -12,7 +12,7 @@ import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTa
 // page's "Comp files" tab, reachable from the editor profile.
 
 export default function ContributorProfileView(): JSX.Element {
-  const { account, activeChannel } = useStorePick('account', 'activeChannel')
+  const { account, activeChannel, channels } = useStorePick('account', 'activeChannel', 'channels')
   // Also renders as its own window (FloatApp's `profile` view), where
   // setActiveView goes nowhere — see navigateFromWindow.
   const go = navigateFromWindow
@@ -22,9 +22,7 @@ export default function ContributorProfileView(): JSX.Element {
   const [refreshKey, setRefreshKey] = useState(0)
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
 
-  const isContributor = account?.memberships
-    ? userApi.isChannelContributor(account, activeChannel)
-    : CONTRIBUTOR_ENABLED && !!(account?.is_contributor || account?.is_administrator)
+  const isContributor = userApi.isChannelContributor(account, activeChannel, isPrimaryChannelSlug(channels, activeChannel))
 
   useEffect(() => {
     if (!isContributor) {
