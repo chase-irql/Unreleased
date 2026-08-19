@@ -462,6 +462,8 @@ export default function ApiFilesView(): JSX.Element {
     }
   }
 
+  const navigateRequestId = useRef(0)
+
   const browseParams = useCallback((path: string): Record<string, string> => {
     const p: Record<string, string> = {}
     if (path) p.path = path
@@ -473,6 +475,10 @@ export default function ApiFilesView(): JSX.Element {
     // Navigating to a folder (including clicking a directory result while
     // searching) always exits search mode and lands in normal browsing.
     setSearch(''); setDebouncedSearch('')
+    // Guard against a slower in-flight request (e.g. for a channel or folder
+    // the user has since navigated away from) landing after a newer one and
+    // clobbering the view with stale/wrong-channel data.
+    const requestId = ++navigateRequestId.current
     // Stale-while-revalidate: if this folder is already in the offline cache,
     // paint it instantly (no spinner) and refresh silently in the background.
     // Only show the loading state when there's nothing cached to fall back on.
@@ -488,6 +494,7 @@ export default function ApiFilesView(): JSX.Element {
     }
     try {
       const data = await apiFetch<JWApiBrowseResponse>('/files/browse/', browseParams(path))
+      if (requestId !== navigateRequestId.current) return
       const items = parseEntries(data)
       if (pushHistory) {
         setHistory((h) => [...h, currentPath])
@@ -496,11 +503,12 @@ export default function ApiFilesView(): JSX.Element {
       setCurrentPath(path)
       setEntries(items)
     } catch (err) {
+      if (requestId !== navigateRequestId.current) return
       // Keep the cached listing visible on a network failure — only surface the
       // error when we had nothing to show in the first place.
       if (!cached) setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
-      setLoading(false)
+      if (requestId === navigateRequestId.current) setLoading(false)
     }
   }, [currentPath, browseParams])
 

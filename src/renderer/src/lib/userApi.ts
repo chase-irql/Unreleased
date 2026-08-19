@@ -25,6 +25,9 @@ export interface AccountUser {
   // Optional: the API only started returning this with the manager role, so
   // older responses and anything replayed from cache simply omit it.
   is_manager?: boolean
+  // Grants News write access (create/edit-own/delete-own posts) — separate
+  // from is_editor. Admins can write News regardless of this flag.
+  is_news?: boolean
   is_administrator: boolean
   otp_enabled: boolean
   // JSON blobs stored on the profile and PATCHable through this same route —

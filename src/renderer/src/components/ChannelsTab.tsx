@@ -267,8 +267,6 @@ export default function ChannelsTab(): JSX.Element {
       if (channel.is_active) await channelApi.adminDeactivateChannel(channel.id)
       else await channelApi.adminUpdateChannel(channel.id, { is_active: true })
       reload()
-    } catch {
-      setBusyId(null)
     } finally {
       setBusyId(null)
     }

@@ -96,7 +96,7 @@ function CopyFromSong({ onCopy, copiedFrom, onClear }: {
   )
 }
 
-function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitted: () => void }): JSX.Element {
+function AddSongModal({ onClose, onSubmitted, channel }: { onClose: () => void; onSubmitted: () => void; channel?: string }): JSX.Element {
   const [name,    setName]    = useState('')
   const [artists, setArtists] = useState('')
   const [cat,     setCat]     = useState('')
@@ -204,7 +204,7 @@ function AddSongModal({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
     if (!name.trim() || submitState === 'submitting') return
     setSubmitState('submitting'); setSubmitError(null)
     try {
-      await createProposal({ song: null, change_type: 'create', title: name.trim(), proposed_data: proposed, editor_notes: edNotes })
+      await createProposal({ song: null, change_type: 'create', title: name.trim(), proposed_data: proposed, editor_notes: edNotes, channel })
       setSubmitState('submitted')
       setTimeout(() => { onSubmitted(); onClose() }, 1200)
     } catch (e) {
@@ -926,6 +926,7 @@ export default function EditorProfileView(): JSX.Element {
         <AddSongModal
           onClose={() => setShowAddSong(false)}
           onSubmitted={() => setRefreshKey(k => k + 1)}
+          channel={activeChannel}
         />
       )}
     </div>

@@ -5,7 +5,8 @@ import {
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import {
-  fetchNews, fetchChannels, fetchNewsItem, deleteNewsItem, isImageAttachment,
+  fetchNews, fetchChannels, fetchNewsItem, deleteNewsItem, isImageAttachment, isAudioAttachment,
+  buildNewsAttachmentStreamUrl, ensureHttpsMediaUrl,
   ALL_CHANNEL, DEFAULT_NEWS_CHANNEL, NEWS_CHANNELS,
   type NewsItem, type NewsChannel, type NewsAttachment, type NewsSort,
 } from '../lib/newsApi'
@@ -67,7 +68,7 @@ function FeaturedCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) 
       >
         {item.image_url && (
           <div className="aspect-[16/7] w-full overflow-hidden bg-[var(--surface-overlay)]">
-            <img src={item.image_url} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+            <img src={ensureHttpsMediaUrl(item.image_url) ?? undefined} alt="" className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300" />
           </div>
         )}
         <div className="p-5">
@@ -94,7 +95,7 @@ function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
       >
         {item.image_url && (
           <div className="w-24 h-24 shrink-0 rounded-lg overflow-hidden bg-[var(--surface-overlay)]">
-            <img src={item.image_url} alt="" className="w-full h-full object-cover" />
+            <img src={ensureHttpsMediaUrl(item.image_url) ?? undefined} alt="" className="w-full h-full object-cover" />
           </div>
         )}
         <div className="min-w-0 flex-1 pr-12">
@@ -154,17 +155,61 @@ function EmptyState({ canManage, onCompose }: { canManage: boolean; onCompose: (
 
 // ─── Attachments ──────────────────────────────────────────────────────────────
 
+function AudioAttachment({ attachment }: { attachment: NewsAttachment }) {
+  const [broken, setBroken] = useState(false)
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] overflow-hidden">
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <Paperclip size={15} className="text-text-muted shrink-0" />
+        <span className="text-sm text-text-primary truncate flex-1">{attachment.name}</span>
+        <span className="text-xs text-text-muted shrink-0">{humanSize(attachment.size)}</span>
+        <a
+          href={buildNewsAttachmentStreamUrl(attachment, true)}
+          download={attachment.name}
+          className="text-text-muted hover:text-accent transition-colors shrink-0"
+          aria-label={`Download ${attachment.name}`}
+        >
+          <Download size={15} />
+        </a>
+      </div>
+      <div className="px-3 pb-3">
+        {broken ? (
+          <div className="h-9 rounded-md bg-surface-overlay flex items-center justify-center text-[11px] text-text-muted">
+            Preview unavailable
+          </div>
+        ) : (
+          <audio
+            controls
+            src={buildNewsAttachmentStreamUrl(attachment)}
+            preload="metadata"
+            onError={() => setBroken(true)}
+            className="w-full h-9"
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
 function AttachmentList({ attachments }: { attachments: NewsAttachment[] }) {
   const images = attachments.filter(isImageAttachment)
-  const files = attachments.filter((a) => !isImageAttachment(a))
+  const audio = attachments.filter((a) => !isImageAttachment(a) && isAudioAttachment(a))
+  const files = attachments.filter((a) => !isImageAttachment(a) && !isAudioAttachment(a))
   return (
     <div className="mt-6 space-y-4">
       {images.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {images.map((a, i) => (
-            <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block rounded-xl overflow-hidden border border-[var(--border)] bg-[var(--surface-overlay)] hover:border-accent/40 transition-colors">
-              <img src={a.url} alt={a.name} className="w-full aspect-square object-cover" />
+            <a key={i} href={ensureHttpsMediaUrl(a.url) ?? a.url} target="_blank" rel="noopener noreferrer" className="block rounded-xl overflow-hidden border border-[var(--border)] bg-[var(--surface-overlay)] hover:border-accent/40 transition-colors">
+              <img src={ensureHttpsMediaUrl(a.url) ?? undefined} alt={a.name} className="w-full aspect-square object-cover" />
             </a>
+          ))}
+        </div>
+      )}
+      {audio.length > 0 && (
+        <div className="space-y-2">
+          {audio.map((a, i) => (
+            <AudioAttachment key={i} attachment={a} />
           ))}
         </div>
       )}
@@ -173,7 +218,7 @@ function AttachmentList({ attachments }: { attachments: NewsAttachment[] }) {
           {files.map((a, i) => (
             <a
               key={i}
-              href={a.url}
+              href={buildNewsAttachmentStreamUrl(a, true)}
               download={a.name}
               target="_blank"
               rel="noopener noreferrer"
@@ -219,7 +264,7 @@ function ArticleDetail({ item, channelLabel, onBack, canManage, onEdit, onDelete
       </div>
       {item.image_url && (
         <div className="aspect-[16/7] w-full overflow-hidden rounded-2xl bg-[var(--surface-overlay)] mb-5">
-          <img src={item.image_url} alt="" className="w-full h-full object-cover" />
+          <img src={ensureHttpsMediaUrl(item.image_url) ?? undefined} alt="" className="w-full h-full object-cover" />
         </div>
       )}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -240,14 +285,15 @@ function ArticleDetail({ item, channelLabel, onBack, canManage, onEdit, onDelete
 
 export default function NewsView(): JSX.Element {
   const { setActiveView, account } = useStorePick('setActiveView', 'account')
-  // Editors and admins can post; only admins manage channels.
-  const canPost = !!(account?.is_editor || account?.is_administrator)
+  // News write access is its own role (is_news), separate from is_editor —
+  // admins can post regardless. Only admins manage channels.
+  const canPost = !!(account?.is_news || account?.is_administrator)
   const canManageChannels = !!account?.is_administrator
-  // Who can edit/delete a given post: admins can touch anything; editors only
-  // their own. Matches the backend's authorization, so the buttons don't offer
-  // an action the API would reject.
+  // Who can edit/delete a given post: admins can touch anything; is_news
+  // holders only their own. Matches the backend's authorization, so the
+  // buttons don't offer an action the API would reject.
   const canManageItem = (item: NewsItem): boolean =>
-    !!account && (account.is_administrator || (account.is_editor && item.author_id != null && item.author_id === account.id))
+    !!account && (account.is_administrator || (!!account.is_news && item.author_id != null && item.author_id === account.id))
 
   const [mode, setMode] = useState<NewsMode>('news')
   const [channel, setChannel] = useState<string>(DEFAULT_NEWS_CHANNEL)
