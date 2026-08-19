@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Loader2, Trophy, FileEdit, ChevronLeft, Pencil, Trash2, RefreshCw, Plus, X, Check, AlertCircle, ChevronDown, ChevronUp, Search, Flag, ShieldCheck, FolderOpen, Copy, PictureInPicture2 } from 'lucide-react'
 import { useStore, IS_FLOAT_WINDOW } from '../store/useStore'
 import { navigateFromWindow, attachToMainWindow } from '../lib/windowSync'
-import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, withdrawCompProposal, CompFileProposal } from '../lib/userApi'
+import { getMyProposals, getLeaderboard, withdrawProposal, createProposal, resubmitProposal, SongEditProposal, ProposalStatus, getMyCompProposals, withdrawCompProposal, CompFileProposal, isChannelContributor } from '../lib/userApi'
 import { apiFetch, JWApiEra, JWApiSong } from '../lib/juicewrldApi'
 import * as reportsApi from '../lib/reportsApi'
 import type { SongReportRow, SongReportStatus } from '../lib/reportsApi'
@@ -389,10 +389,11 @@ function changeTypeLabel(type: string): string {
 
 export default function EditorProfileView(): JSX.Element {
   const isElectron = navigator.userAgent.includes('Electron')
-  const { account, setPendingEditorSongId, setPendingEditProposal } = useStore(useShallow(s => ({
+  const { account, setPendingEditorSongId, setPendingEditProposal, activeChannel } = useStore(useShallow(s => ({
     account: s.account,
     setPendingEditorSongId: s.setPendingEditorSongId,
     setPendingEditProposal: s.setPendingEditProposal,
+    activeChannel: s.activeChannel,
   })))
   // This page also renders as its own window (FloatApp's `profile` view), where
   // setActiveView is a no-op — nothing routes there. Every link that leaves the
@@ -421,7 +422,9 @@ export default function EditorProfileView(): JSX.Element {
   // Not `|| is_administrator`: this tab lists proposals *you* submitted, and
   // an admin who never contributed has none. Their review queue is the Admin
   // tab's "Comp files" — the one place proposals are reviewed.
-  const isContributor = CONTRIBUTOR_ENABLED && !!account?.is_contributor
+  const isContributor = account?.memberships
+    ? isChannelContributor(account, activeChannel)
+    : CONTRIBUTOR_ENABLED && !!account?.is_contributor
   const isAdmin = !!account?.is_administrator
   // Managers review the same two queues admins do, so they get the same
   // embedded panel here. AdminPage decides for itself which tabs each of them
@@ -440,8 +443,8 @@ export default function EditorProfileView(): JSX.Element {
   useEffect(() => {
     if (profileTab !== 'comp' || !isContributor) return
     setLoadingComp(true)
-    getMyCompProposals().then(setCompProposals).catch(() => {}).finally(() => setLoadingComp(false))
-  }, [profileTab, isContributor, refreshKey])
+    getMyCompProposals(activeChannel).then(setCompProposals).catch(() => {}).finally(() => setLoadingComp(false))
+  }, [profileTab, isContributor, refreshKey, activeChannel])
 
   const handleWithdrawComp = async (id: number): Promise<void> => {
     setWithdrawingCompId(id)
@@ -493,14 +496,14 @@ export default function EditorProfileView(): JSX.Element {
   useEffect(() => {
     setRefreshing(true)
     Promise.all([
-      getMyProposals().then(setProposals).catch(() => {}),
+      getMyProposals(activeChannel).then(setProposals).catch(() => {}),
       getLeaderboard().then((data) => setLeaderboard(data as LeaderboardEntry[])).catch(() => {}),
     ]).finally(() => {
       setLoadingProposals(false)
       setLoadingLeaderboard(false)
       setRefreshing(false)
     })
-  }, [refreshKey])
+  }, [refreshKey, activeChannel])
 
   const myEntry = leaderboard.find((e) => e.discord_username === account?.discord_username)
 

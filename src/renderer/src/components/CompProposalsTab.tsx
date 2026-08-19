@@ -7,6 +7,7 @@ import type { CompFileProposal, ProposalStatus } from '../lib/userApi'
 import { getToken } from '../lib/userApi'
 import { relativeTime, shortDate, StatusChip, Empty, QueueSearch, buildHaystack, matchesHaystack } from './adminShared'
 import { buildStreamUrl } from '../lib/juicewrldApi'
+import { useStore } from '../store/useStore'
 import { getMediaType } from '../lib/fileTypes'
 import { formatBytes, formatDuration } from '../lib/format'
 
@@ -102,6 +103,7 @@ function MediaPreview({ label, name, src, loading, error, bytes }: {
 }
 
 export default function CompProposalsTab({ embedded = false, onChanged }: { embedded?: boolean; onChanged?: () => void }): JSX.Element {
+  const activeChannel = useStore((s) => s.activeChannel)
   const [status, setStatus] = useState<ProposalStatus | ''>('pending')
   const [proposals, setProposals] = useState<CompFileProposal[]>([])
   const [selected, setSelected] = useState<CompFileProposal | null>(null)
@@ -138,7 +140,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
 
   useEffect(() => {
     setLoading(true)
-    userApi.adminListCompProposals(status || undefined)
+    userApi.adminListCompProposals(status || undefined, activeChannel)
       .then(rows => {
         setProposals(rows)
         // Reviewing a proposal reloads the list and moves the selection, so
@@ -149,7 +151,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [status, refreshKey])
+  }, [status, refreshKey, activeChannel])
 
   // Searching can filter the selected proposal out from under the detail pane,
   // which would otherwise leave Approve/Reject pointed at a row no longer in
@@ -171,7 +173,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
     setActionId(id)
     setError(null)
     try {
-      await userApi.adminReviewCompProposal(id, { action, review_notes: reviewNotes })
+      await userApi.adminReviewCompProposal(id, { action, review_notes: reviewNotes, channel: activeChannel })
       reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : `Could not ${action} this proposal`)
@@ -184,7 +186,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
     setActionId(id)
     setError(null)
     try {
-      await userApi.adminReverseCompProposal(id)
+      await userApi.adminReverseCompProposal(id, activeChannel)
       reload()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reverse this proposal')
@@ -195,7 +197,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
 
   const downloadStaging = (p: CompFileProposal): void => {
     const token = getToken()
-    const url = userApi.adminCompProposalStagingUrl(p.id)
+    const url = userApi.adminCompProposalStagingUrl(p.id, activeChannel)
     fetch(url, { headers: token ? { Authorization: `Token ${token}` } : {} })
       .then(r => r.blob())
       .then(blob => {
@@ -218,7 +220,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
   // (approval moves it into comp/, rejection discards it) — matches the same
   // condition the existing "Staged file" download button already gates on.
   const stagingUrl = selected && selected.staging_filename && selected.status === 'pending'
-    ? userApi.adminCompProposalStagingUrl(selected.id)
+    ? userApi.adminCompProposalStagingUrl(selected.id, activeChannel)
     : null
   const staged = useAuthedBlobUrl(stagingUrl)
 
@@ -323,7 +325,7 @@ export default function CompProposalsTab({ embedded = false, onChanged }: { embe
                   fetch 404s and the slot quietly shows "unavailable". */}
               {p.change_type !== 'create_folder' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <MediaPreview label="Current file" name={p.file_path} src={buildStreamUrl(p.file_path)} />
+                  <MediaPreview label="Current file" name={p.file_path} src={buildStreamUrl(p.file_path, activeChannel)} />
                   {p.staging_filename && (
                     <MediaPreview
                       label="Proposed file"

@@ -92,7 +92,7 @@ export default function QueuePanel(): JSX.Element {
         {/* Header */}
         <div
           className="flex items-center justify-between px-5 pb-3 shrink-0 border-b border-[var(--border)]"
-          style={{ paddingTop: isElectron && !isMobile ? 36 : 20, paddingRight: isElectron && !isMobile ? 148 : undefined }}
+          style={{ paddingTop: isElectron && !isMobile ? 36 : 20, paddingRight: isElectron && !isMobile ? 188 : undefined }}
         >
           <div className="flex items-center gap-2">
             <ListMusic size={15} className="text-text-muted" />

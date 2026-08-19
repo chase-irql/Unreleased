@@ -12,7 +12,7 @@ import CompProposalList, { CompFilterBar, filterCompProposals, type CompFilterTa
 // page's "Comp files" tab, reachable from the editor profile.
 
 export default function ContributorProfileView(): JSX.Element {
-  const { account } = useStorePick('account')
+  const { account, activeChannel } = useStorePick('account', 'activeChannel')
   // Also renders as its own window (FloatApp's `profile` view), where
   // setActiveView goes nowhere — see navigateFromWindow.
   const go = navigateFromWindow
@@ -22,7 +22,9 @@ export default function ContributorProfileView(): JSX.Element {
   const [refreshKey, setRefreshKey] = useState(0)
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null)
 
-  const isContributor = CONTRIBUTOR_ENABLED && !!(account?.is_contributor || account?.is_administrator)
+  const isContributor = account?.memberships
+    ? userApi.isChannelContributor(account, activeChannel)
+    : CONTRIBUTOR_ENABLED && !!(account?.is_contributor || account?.is_administrator)
 
   useEffect(() => {
     if (!isContributor) {
@@ -30,8 +32,8 @@ export default function ContributorProfileView(): JSX.Element {
       return
     }
     setLoading(true)
-    userApi.getMyCompProposals().then(setProposals).catch(() => {}).finally(() => setLoading(false))
-  }, [isContributor, refreshKey])
+    userApi.getMyCompProposals(activeChannel).then(setProposals).catch(() => {}).finally(() => setLoading(false))
+  }, [isContributor, refreshKey, activeChannel])
 
   const withdraw = async (id: number): Promise<void> => {
     setWithdrawingId(id)
