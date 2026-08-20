@@ -39,6 +39,7 @@ import { HOTKEY_ACTIONS, effectiveBinding, effectiveGlobalBinding, defaultGlobal
 import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, DEFAULT_NAV_CONTROL_VISIBILITY } from '../lib/navItems'
 import { getLastfmSession } from '../lib/lastfm'
 import { runWhenIdle } from '../lib/platform'
+import { useSandboxStore } from '../components/Modal'
 
 // Key used to track songs downloaded individually (song context menu ?
 // "Download offline"), rather than through a synced playlist. It's just
@@ -1157,6 +1158,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
       el.openFloatWindow('settings')
       return
     }
+    // Settings docks into the sandbox notch (see Modal.tsx) and stays
+    // mounted once opened — collapsing the notch just hides it. Re-opening
+    // while it's already mounted (showSettings already true) wouldn't
+    // re-trigger the dock/expand in ModalOverlay's mount effect, so expand
+    // the notch here too or the button would look like it's doing nothing.
+    if (showSettings) useSandboxStore.getState().expand()
     set({ showSettings })
   },
   setSettingsTab: (settingsTab) => set({ settingsTab }),
@@ -1228,7 +1235,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
     set({ showEqPanel: !showEqPanel })
   },
-  setInfoSongId: (infoSongId) => set({ infoSongId }),
+  setInfoSongId: (infoSongId) => {
+    // Mirrors setShowSettings/openConvert: re-opening while already docked
+    // wouldn't otherwise re-expand a collapsed sandbox notch.
+    if (infoSongId != null) useSandboxStore.getState().expand()
+    set({ infoSongId })
+  },
   setPlayerCollapsed: (playerCollapsed) => { set({ playerCollapsed }); ls.set('playerCollapsed', playerCollapsed) },
   setWrldFullscreen: (wrldFullscreen) => set({ wrldFullscreen }),
   setTheme: (theme) => { set({ theme }); ls.set('theme', theme) },
@@ -1615,6 +1627,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
       el.openFloatWindow('convert', { trackId: target.id, filePath: target.path, title: target.title })
       return
     }
+    // Re-opening while already docked (sandbox notch collapsed) wouldn't
+    // otherwise re-expand it — see the matching comment on setShowSettings.
+    useSandboxStore.getState().expand()
     set({ convertModal: { id: target.id, path: target.path, title: target.title } })
   },
   closeConvert: () => set({ convertModal: null }),

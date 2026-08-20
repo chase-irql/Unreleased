@@ -54,6 +54,7 @@ import DownloadManager from './components/DownloadManager'
 import LibraryTab from './components/LibraryTab'
 import AppMenu from './components/AppMenu'
 import ErrorBoundary from './components/ErrorBoundary'
+import SandboxNotch from './components/SandboxNotch'
 
 // Rarely-visited views load on first navigation instead of inflating the
 // startup bundle. Suspense fallback is null: these chunks are local (Electron)
@@ -345,6 +346,7 @@ export default function App(): JSX.Element {
           draggable region in DOM order, so its no-drag carve-out must come
           after every drag strip that can extend under the buttons. */}
       {isElectron && !wrldFullscreen && <WindowControls />}
+      <ErrorBoundary fallback={null}><SandboxNotch /></ErrorBoundary>
     </div>
   )
 }

@@ -3,7 +3,7 @@ import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser, Download } 
 import { useStore } from '../store/useStore'
 import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
-import { ModalOverlay } from './Modal'
+import { ModalOverlay, LockToggle } from './Modal'
 
 // "Convert format" dialog for a local file, driven by the store's `convertModal`
 // target. Transcodes via the on-demand ffmpeg (main process `convert-audio`;
@@ -169,25 +169,33 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
   }
 
   return (
-    <ModalOverlay onClose={close} floating={floating} zIndexClassName="z-[60]" sheet>
-      <div className={`bg-surface flex flex-col ${floating
-        ? 'w-full h-full overflow-y-auto'
-        : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto'}`}>
+    <ModalOverlay
+      onClose={close}
+      floating={floating}
+      zIndexClassName="z-[60]"
+      panelClassName="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh]"
+      minWidth={380} minHeight={440}
+    >
+      {({ onHandleMouseDown, locked, toggleLock }) => (
+      <div className="bg-surface w-full h-full flex flex-col overflow-y-auto">
         <div
-          className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0"
+          className={`flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0 ${floating ? '' : 'cursor-grab active:cursor-grabbing'}`}
           style={floating ? ({ WebkitAppRegion: 'drag' } as CSSProperties) : undefined}
+          onMouseDown={onHandleMouseDown}
         >
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
             <FileAudio2 size={15} className="text-accent" /> Convert format
           </h2>
-          <button
-            onClick={close}
-            disabled={busy}
-            style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}
-            className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1" style={floating ? ({ WebkitAppRegion: 'no-drag' } as CSSProperties) : undefined}>
+            {!floating && <LockToggle locked={locked} onClick={toggleLock} />}
+            <button
+              onClick={close}
+              disabled={busy}
+              className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-4 space-y-4">
@@ -382,6 +390,7 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
           )}
         </div>
       </div>
+      )}
     </ModalOverlay>
   )
 }

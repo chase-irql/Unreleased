@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ModalOverlay, LockToggle } from './Modal'
 import { X, Link2, Loader2, Check, AlertCircle, Folder, Wrench, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { broadcastLibraryTrackAdd } from '../lib/windowSync'
@@ -200,23 +200,32 @@ export default function UrlImportModal(): JSX.Element | null {
     close()
   }
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4"
-      onClick={(e) => { if (e.currentTarget === e.target) dismiss() }}
+  return (
+    <ModalOverlay
+      onClose={dismiss}
+      zIndexClassName="z-[60]"
+      panelClassName="bg-surface border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh]"
+      minWidth={380} minHeight={420}
     >
-      <div className="bg-surface flex flex-col border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0">
+      {({ onHandleMouseDown, locked, toggleLock }) => (
+      <div className="bg-surface w-full h-full flex flex-col overflow-y-auto">
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-surface z-10 shrink-0 cursor-grab active:cursor-grabbing"
+          onMouseDown={onHandleMouseDown}
+        >
           <h2 className="flex items-center gap-2 text-text-primary text-sm font-semibold">
             <Link2 size={15} className="text-accent" /> Import from URL
           </h2>
-          <button
-            onClick={dismiss}
-            disabled={busy}
-            className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            <LockToggle locked={locked} onClick={toggleLock} />
+            <button
+              onClick={dismiss}
+              disabled={busy}
+              className="text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-4 space-y-4">
@@ -407,7 +416,7 @@ export default function UrlImportModal(): JSX.Element | null {
           )}
         </div>
       </div>
-    </div>,
-    document.body
+      )}
+    </ModalOverlay>
   )
 }

@@ -32,7 +32,6 @@ import { trackIdToSongId, showStaffProfile, staffProfileView } from '../lib/user
 import { useCanEdit } from '../hooks/useChannelRoles'
 import { toFileUrl } from '../lib/fileTypes'
 import { FullTrack } from '../types'
-import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
 import EqualizerPanel from './EqualizerPanel'
 import {
@@ -131,15 +130,13 @@ export default function Player(): JSX.Element {
     toggleLike,
     setActiveView,
     activeView,
-    playNext, account, updateLibraryTrack, setPendingEditorSongId, popoutWindows } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'setPendingEditorSongId', 'popoutWindows')
+    playNext, account, updateLibraryTrack, popoutWindows } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'volume', 'progress', 'currentTime', 'shuffle', 'repeat', 'setIsPlaying', 'setVolume', 'setProgress', 'setCurrentTime', 'setCurrentTrackFull', 'toggleShuffle', 'toggleRepeat', 'nextTrack', 'prevTrack', 'setShowNowPlaying', 'showNowPlaying', 'showQueue', 'setShowQueue', 'playerCollapsed', 'setPlayerCollapsed', 'queue', 'queueIndex', 'crossfadeEnabled', 'crossfadeDuration', 'sleepTimerEnd', 'setSleepTimer', 'audioOutput', 'setAudioOutput', 'playbackSpeed', 'setPlaybackSpeed', 'likedTrackIds', 'toggleLike', 'setActiveView', 'activeView', 'playNext', 'account', 'updateLibraryTrack', 'popoutWindows')
   const canEditSong = useCanEdit()
 
   const [showContextMenu, setShowContextMenu] = useState(false)
   // Cursor position for a right-click-spawned menu. null → menu was opened via
   // the 3-dot button, so it anchors to the button rect instead.
   const [ctxMenuPos, setCtxMenuPos] = useState<{ x: number; y: number } | null>(null)
-  const [showSongInfo, setShowSongInfo] = useState(false)
-  const [songInfoData, setSongInfoData] = useState<JWApiSong | null>(null)
   const contextMenuBtnRef = useRef<HTMLButtonElement>(null)
   const currentSongId = currentTrack ? trackIdToSongId(currentTrack.id) : null
   const { radioMode, radioNext } = useStorePick('radioMode', 'radioNext')
@@ -193,26 +190,20 @@ export default function Player(): JSX.Element {
   useEffect(() => () => { if (fmTickRef.current) clearInterval(fmTickRef.current) }, [])
   const fmDurationMs = radioFmNowPlaying?.duration_ms ?? 0
   const fmProgress = fmDurationMs > 0 ? Math.min(fmElapsedMs / fmDurationMs, 1) : 0
+  // Global infoSongId (not local state) so the info panel survives switching
+  // to another tab, which unmounts this view.
   const openSongInfo = (): void => {
     setShowContextMenu(false)
     if (radioFmActive) {
       const songId = radioFmNowPlaying?.song_id ?? radioFmMatchedSong?.songId
       if (songId == null) return
-      setSongInfoData(null)
-      setShowSongInfo(true)
-      apiFetch<JWApiSong>(`/songs/${songId}/`)
-        .then((song) => setSongInfoData(song))
-        .catch(() => setShowSongInfo(false))
+      useStore.getState().setInfoSongId(songId)
       return
     }
     if (!currentTrack) return
     const match = currentTrack.id.match(/^jw-(\d+)$/)
     if (!match) return
-    setSongInfoData(null)
-    setShowSongInfo(true)
-    apiFetch<JWApiSong>(`/songs/${match[1]}/`)
-      .then((song) => setSongInfoData(song))
-      .catch(() => setShowSongInfo(false))
+    useStore.getState().setInfoSongId(Number(match[1]))
   }
 
   // Two audio slots — ping-pong between them for crossfade
@@ -1661,23 +1652,6 @@ export default function Player(): JSX.Element {
         document.body
       )}
 
-      {/* Song info — mounted outside the bottom-bar block below, which is
-          unmounted on the WRLD page. It's what redirects to the song-info
-          pop-out window, so gating it on the bottom bar meant the `I` hotkey
-          set the state on the WRLD tab but nothing opened until navigating
-          away remounted this and finally fired the redirect. */}
-      {showSongInfo && (
-        <SongInfoModal
-          song={songInfoData}
-          onClose={() => { setShowSongInfo(false); setSongInfoData(null) }}
-          onEdit={canEditSong ? (songId) => {
-            setShowSongInfo(false); setSongInfoData(null)
-            setPendingEditorSongId(songId)
-            setActiveView('editor')
-          } : undefined}
-        />
-      )}
-
       {/* Bottom bar hidden on the WRLD page — it has its own full playback controls.
           Audio elements above stay mounted regardless so playback is unaffected. */}
       {activeView !== 'wrld' && (
@@ -1920,14 +1894,7 @@ export default function Player(): JSX.Element {
                         {radioFmNowPlaying.song_id != null && (
                           <button
                             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
-                            onClick={() => {
-                              setShowContextMenu(false)
-                              setSongInfoData(null)
-                              setShowSongInfo(true)
-                              apiFetch<JWApiSong>(`/songs/${radioFmNowPlaying.song_id}/`)
-                                .then((song) => setSongInfoData(song))
-                                .catch(() => setShowSongInfo(false))
-                            }}
+                            onClick={openSongInfo}
                           >
                             <Info size={14} /> Song info
                           </button>

@@ -9,7 +9,6 @@ import {
 import { useStore } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { AlbumArtThumbnail } from './AlbumArtThumbnail'
-import SongInfoModal from './SongInfoModal'
 import SongContextMenu from './SongContextMenu'
 import { CompactGroupRow, useExpandedGroups } from './CompactGroupRow'
 import {
@@ -1838,7 +1837,6 @@ export default function ApiTrackerView(): JSX.Element {
 
   const [trackerTab, setTrackerTab] = useState<TrackerTab>('songs')
 
-  const [selectedSong, setSelectedSong] = useState<JWApiSong | null>(null)
   const [contextMenu, setContextMenu] = useState<{ song: JWApiSong; x: number; y: number } | null>(null)
   const [bulkContextMenu, setBulkContextMenu] = useState<BulkContextMenuState | null>(null)
 
@@ -2541,7 +2539,9 @@ export default function ApiTrackerView(): JSX.Element {
     } : null, 'tracker')
   }, [playTrack, startRadio, shuffle, sortedSongs, categoryParam, eraParam, debouncedSearch, count, hasMore, fetchAllMode, page])
 
-  const handleInfo = useCallback((song: JWApiSong) => { setSelectedSong(song) }, [])
+  // Global infoSongId (not local state) so the info panel — and its place in
+  // the sandbox — survives switching to another tab, which unmounts this view.
+  const handleInfo = useCallback((song: JWApiSong) => { useStore.getState().setInfoSongId(song.id) }, [])
   const handleQueue = useCallback((track: Track) => { addToQueue(track) }, [addToQueue])
 
   const handleContextMenu = useCallback((song: JWApiSong, e: React.MouseEvent): void => {
@@ -3571,17 +3571,6 @@ export default function ApiTrackerView(): JSX.Element {
         </div>
       )}
 
-      {selectedSong && (
-        <SongInfoModal
-          song={selectedSong}
-          onClose={() => setSelectedSong(null)}
-          onEdit={canEdit ? (songId) => {
-            setSelectedSong(null)
-            setPendingEditorSongId(songId)
-            setActiveView('editor')
-          } : undefined}
-        />
-      )}
 
       {contextMenu && (
         <SongContextMenu

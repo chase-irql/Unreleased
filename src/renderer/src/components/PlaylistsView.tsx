@@ -20,7 +20,6 @@ import { formatDuration, formatTotalDuration } from '../lib/format'
 import { fisherYates } from '../store/queueSlice'
 import LikedSongsView from './LikedSongsView'
 import { AlbumArtThumb } from './LibraryTab'
-import SongInfoModal from './SongInfoModal'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
 import { CompactGroupRow, CompactEmptyIcon, useExpandedGroups } from './CompactGroupRow'
 import { groupItemsByVersion, filterCompactGroups, subscribeCompactGroupsInvalidation } from '../lib/compactGroups'
@@ -713,9 +712,6 @@ export default function PlaylistsView(): JSX.Element {
     }
   }, [isElectron, setSelectedId, setLocalSelectedId, runTitlesImport])
 
-  // Song info modal
-  const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
-
   // Cover upload
   const coverInputRef = useRef<HTMLInputElement>(null)
   const [coverUploading, setCoverUploading] = useState(false)
@@ -1034,7 +1030,7 @@ export default function PlaylistsView(): JSX.Element {
     })
   }, [isSharedView, selectedId, detail, coverData, followedPlaylists, updateFollowedPlaylistMeta])
 
-  // Reset sort/search/infoSong/editing when switching playlists. The sort
+  // Reset sort/search/editing when switching playlists. The sort
   // reset is skipped on the component's own first mount — this effect's
   // dependency array fires then too, and since sort lives in the store (so
   // it survives switching tabs and back, see playlistsSort), resetting it
@@ -1044,7 +1040,6 @@ export default function PlaylistsView(): JSX.Element {
     if (mountedRef.current) setSort({ field: 'default', dir: 'asc' })
     mountedRef.current = true
     setSearch('')
-    setInfoSong(null)
     setEditingDesc(false)
     setDescValue('')
     setCoverImgError(false)
@@ -1264,8 +1259,11 @@ export default function PlaylistsView(): JSX.Element {
     } catch { await loadDetail(selectedId) }
   }, [dragIdx, detail, selectedId, loadDetail])
 
-  const openSongInfo = useCallback(async (songId: number) => {
-    try { setInfoSong(await apiFetch<JWApiSong>(`/songs/${songId}/`)) } catch {}
+  // Global infoSongId (not local state) so the info panel survives switching
+  // to another tab, which unmounts this view. GlobalSongInfoHost does its own
+  // fetch by id, so no need to resolve the song here first.
+  const openSongInfo = useCallback((songId: number) => {
+    useStore.getState().setInfoSongId(songId)
   }, [])
 
   const handleCoverUpload = useCallback(async (file: File) => {
@@ -3078,11 +3076,6 @@ export default function PlaylistsView(): JSX.Element {
           </div>
         )}
 
-        <SongInfoModal
-          song={infoSong}
-          onClose={() => setInfoSong(null)}
-          onEdit={canEdit ? (songId) => { setInfoSong(null); setPendingEditorSongId(songId); setActiveView('editor') } : undefined}
-        />
       </div>
     )
   }

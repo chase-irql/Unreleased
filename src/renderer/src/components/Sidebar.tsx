@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react'
-import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, ArrowLeft, Info, Check } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Settings, LogIn, LogOut, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, ArrowLeft, Info, Check, EyeOff } from 'lucide-react'
 import logo from '../assets/logo.png'
 import { useStore, useStorePick } from '../store/useStore'
 import { ViewType } from '../types'
@@ -12,7 +13,7 @@ const LS_COLLAPSED = 'sidebar:collapsed'
 const LS_PLAYLISTS_EXPANDED = 'sidebar:playlistsExpanded'
 
 export default function Sidebar(): JSX.Element {
-  const { activeView, setActiveView, openProfile, toggleSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, navVisibility, navControlOrder, navControlVisibility, appMenuPosition, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'openProfile', 'toggleSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'navVisibility', 'navControlOrder', 'navControlVisibility', 'appMenuPosition', 'offlinePlaylists')
+  const { activeView, setActiveView, openProfile, openSettings, setShowDiagnostics, developerMode, account, logoutAccount, setShowUserAuth, playlists, setPendingPlaylistId, sidebarPosition, navOrder, setNavOrder, navVisibility, setNavItemVisible, navControlOrder, navControlVisibility, appMenuPosition, offlinePlaylists } = useStorePick('activeView', 'setActiveView', 'openProfile', 'openSettings', 'setShowDiagnostics', 'developerMode', 'account', 'logoutAccount', 'setShowUserAuth', 'playlists', 'setPendingPlaylistId', 'sidebarPosition', 'navOrder', 'setNavOrder', 'navVisibility', 'setNavItemVisible', 'navControlOrder', 'navControlVisibility', 'appMenuPosition', 'offlinePlaylists')
   const isElectron = navigator.userAgent.includes('Electron')
 
   const [collapsed, setCollapsed] = useState<boolean>(
@@ -52,6 +53,57 @@ export default function Sidebar(): JSX.Element {
   }
 
   const [playlistMenu, setPlaylistMenu] = useState<PlaylistContextMenuState | null>(null)
+
+  // Drag-to-reorder state for the nav tabs themselves (as opposed to the
+  // Settings → Appearance list, which reorders the same navOrder from a
+  // dedicated menu). Index is into the currently visible `items` array.
+  const [navDragIdx, setNavDragIdx] = useState<number | null>(null)
+  const [navOverIdx, setNavOverIdx] = useState<number | null>(null)
+  // Move a visible row to sit adjacent to a target row. Reordering happens on
+  // the FULL saved order (including any hidden items) so their relative spots
+  // are preserved — same approach as Settings' moveNavItem.
+  const moveNavItem = (fromRow: number, toRow: number): void => {
+    if (fromRow === toRow) return
+    const full = orderedNavItems(navOrder).map((i) => i.view)
+    const dragView = items[fromRow].view
+    const targetView = items[toRow].view
+    const from = full.indexOf(dragView)
+    const next = [...full]
+    next.splice(from, 1)
+    const targetIdx = next.indexOf(targetView)
+    next.splice(toRow > fromRow ? targetIdx + 1 : targetIdx, 0, dragView)
+    setNavOrder(next)
+  }
+
+  // Right-click on a nav tab pops a single "Hide" action — a faster path to
+  // the same navVisibility toggle Settings → Appearance → Menu items exposes.
+  const [navMenu, setNavMenu] = useState<{ view: ViewType; label: string; x: number; y: number } | null>(null)
+  const openNavMenu = (view: ViewType, label: string) => (e: React.MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setNavMenu({ view, label, x: e.clientX, y: e.clientY })
+  }
+  const navContextMenu = navMenu && createPortal(
+    <>
+      <div className="fixed inset-0 z-[60]" onClick={() => setNavMenu(null)} onContextMenu={(e) => { e.preventDefault(); setNavMenu(null) }} />
+      <div
+        className="fixed z-[61] bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 min-w-[170px]"
+        style={{
+          left: Math.max(8, Math.min(navMenu.x, window.innerWidth - 178)),
+          top: Math.max(8, Math.min(navMenu.y, window.innerHeight - 48)),
+        }}
+      >
+        <button
+          onClick={() => { setNavItemVisible(navMenu.view, false); setNavMenu(null) }}
+          className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors"
+        >
+          <EyeOff size={14} className="text-text-muted" />
+          <span className="flex-1 text-left">Hide "{navMenu.label}"</span>
+        </button>
+      </div>
+    </>,
+    document.body
+  )
 
   const [tokenCopied, setTokenCopied] = useState(false)
   const copyAuthToken = (e: React.MouseEvent): void => {
@@ -154,7 +206,7 @@ export default function Sidebar(): JSX.Element {
         )
       case 'settings':
         return (
-          <button key="settings" onClick={() => toggleSettings()} title={collapsed ? 'Settings' : undefined} className={rowCls}>
+          <button key="settings" onClick={() => openSettings()} title={collapsed ? 'Settings' : undefined} className={rowCls}>
             <span className={iconWrap}><Settings size={18} /></span>
             <span aria-hidden={collapsed} className={labelCls}>Settings</span>
           </button>
@@ -182,7 +234,7 @@ export default function Sidebar(): JSX.Element {
       case 'diagnostics':
         return <button key="diagnostics" onClick={() => setShowDiagnostics(true)} title="Diagnostics" className={barIconBtn}><Info size={18} /></button>
       case 'settings':
-        return <button key="settings" onClick={() => toggleSettings()} title="Settings" className={barIconBtn}><Settings size={18} /></button>
+        return <button key="settings" onClick={() => openSettings()} title="Settings" className={barIconBtn}><Settings size={18} /></button>
     }
   }
 
@@ -209,11 +261,21 @@ export default function Sidebar(): JSX.Element {
           )}
           <nav className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
             {returnToApiHorizontal}
-            {items.map(({ icon, label, view }) => (
+            {items.map(({ icon, label, view }, idx) => (
               <button
                 key={view}
+                draggable
+                onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
+                onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
+                onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
                 onClick={() => navClick(view)}
-                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors ${
+                onContextMenu={openNavMenu(view, label)}
+                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded text-sm font-medium whitespace-nowrap transition-colors cursor-grab active:cursor-grabbing ${
+                  navDragIdx === idx ? 'opacity-40' : ''
+                } ${
+                  navOverIdx === idx && navDragIdx !== null && navDragIdx !== idx ? 'ring-1 ring-accent' : ''
+                } ${
                   activeTab === view
                     ? 'bg-surface-raised text-text-primary'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
@@ -235,6 +297,7 @@ export default function Sidebar(): JSX.Element {
             {controls.map((c) => renderControlIcon(c.id))}
           </div>
         </div>
+        {navContextMenu}
       </aside>
     )
   }
@@ -284,10 +347,21 @@ export default function Sidebar(): JSX.Element {
       {/* Nav items */}
       <nav className="space-y-1 flex-1 min-h-0 overflow-y-auto px-3">
         {returnToApiVertical}
-        {items.map(({ icon, label, view }) => (
-          <div key={view}>
+        {items.map(({ icon, label, view }, idx) => (
+          <div
+            key={view}
+            draggable
+            onDragStart={(e) => { setNavDragIdx(idx); e.dataTransfer.effectAllowed = 'move' }}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setNavOverIdx(idx) }}
+            onDrop={(e) => { e.preventDefault(); if (navDragIdx !== null) moveNavItem(navDragIdx, idx); setNavDragIdx(null); setNavOverIdx(null) }}
+            onDragEnd={() => { setNavDragIdx(null); setNavOverIdx(null) }}
+            onContextMenu={openNavMenu(view, label)}
+            className={`cursor-grab active:cursor-grabbing ${navDragIdx === idx ? 'opacity-40' : ''}`}
+          >
             <div
               className={`flex items-center w-full rounded text-sm font-medium transition-colors ${
+                navOverIdx === idx && navDragIdx !== null && navDragIdx !== idx ? 'ring-1 ring-accent' : ''
+              } ${
                 activeTab === view
                   ? 'bg-surface-raised text-text-primary'
                   : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
@@ -372,6 +446,7 @@ export default function Sidebar(): JSX.Element {
       {playlistMenu && (
         <PlaylistContextMenu state={playlistMenu} onClose={() => setPlaylistMenu(null)} />
       )}
+      {navContextMenu}
     </aside>
   )
 }

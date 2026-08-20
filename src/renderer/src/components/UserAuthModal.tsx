@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { ModalOverlay, LockToggle } from './Modal'
 import { X, Loader2, AlertCircle, Heart, ListMusic } from 'lucide-react'
-import { useStore, useStorePick } from '../store/useStore'
+import { useStorePick } from '../store/useStore'
 
 interface Props {
   onClose: () => void
@@ -25,16 +26,25 @@ export default function UserAuthModal({ onClose }: Props): JSX.Element {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.currentTarget === e.target) onClose() }}
+    <ModalOverlay
+      onClose={onClose}
+      zIndexClassName="z-50"
+      panelClassName="bg-surface border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-sm"
+      minWidth={340} minHeight={300}
     >
-      <div className="bg-surface border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+      {({ onHandleMouseDown, locked, toggleLock }) => (
+      <div className="bg-surface w-full h-full overflow-hidden">
+        <div
+          className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] cursor-grab active:cursor-grabbing"
+          onMouseDown={onHandleMouseDown}
+        >
           <h2 className="text-text-primary text-sm font-semibold">Log in</h2>
-          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+            <LockToggle locked={locked} onClick={toggleLock} />
+            <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-5 space-y-4">
@@ -74,6 +84,7 @@ export default function UserAuthModal({ onClose }: Props): JSX.Element {
           </button>
         </div>
       </div>
-    </div>
+      )}
+    </ModalOverlay>
   )
 }
