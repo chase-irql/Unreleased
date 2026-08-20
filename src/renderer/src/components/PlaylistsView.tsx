@@ -30,6 +30,8 @@ import { shareOrigin } from '../lib/platform'
 import { useVirtualWindowEl } from '../hooks/useVirtualWindow'
 import PlaylistCard from './PlaylistCard'
 import { allFolderedKeys, folderOfPlaylist, parsePlaylistKey } from '../lib/playlistFolders'
+import { useMultiSelect } from '../hooks/useMultiSelect'
+import { ClampedMenu } from './ClampedMenu'
 import type { PlaylistFolder } from '../lib/playlistFolders'
 import { Folder, FolderPlus, FolderOpen, FolderMinus } from 'lucide-react'
 
@@ -57,6 +59,23 @@ function PlaylistMosaic({ tracks, className = '' }: { tracks: Track[]; className
       {artUrls.map((url, i) => (
         <img key={i} src={smallCoverUrl(url)} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
       ))}
+    </div>
+  )
+}
+
+// One quadrant of a folder cover mosaic. Member cover URLs can go stale
+// (deleted/expired image), and unlike apiCoverNode's onError this had no
+// fallback — a broken URL just rendered the browser's native broken-image
+// icon in the folder tile forever. Track load failure locally and drop to
+// the placeholder note icon instead.
+function FolderSlotImg({ src }: { src: string | null }): JSX.Element {
+  const [failed, setFailed] = useState(false)
+  const showImg = src && !failed
+  return (
+    <div className="w-full h-full overflow-hidden bg-surface-raised">
+      {showImg
+        ? <img src={src} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} onError={() => setFailed(true)} />
+        : <div className="w-full h-full flex items-center justify-center"><Music2 size={16} className="text-accent/40" /></div>}
     </div>
   )
 }
@@ -142,52 +161,6 @@ function MenuItem({ icon: Icon, label, onClick, destructive = false, disabled = 
   )
 }
 
-// Fixed-position popup menu that keeps itself fully on-screen by measuring its
-// real rendered box after every render — the estimate-free counterpart to
-// hardcoded `window.innerHeight - N` clamps, which undershoot whenever a
-// submenu ("Move to folder", "Add to playlist") grows the menu past the guess
-// and its bottom gets clipped, worst on short mobile viewports. Height is
-// capped to the viewport so an over-tall menu scrolls instead of clipping.
-function ClampedMenu({ x, y, className = '', children }: {
-  x: number
-  y: number
-  className?: string
-  children: React.ReactNode
-}): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ left: x, top: y })
-  // Re-clamp whenever the menu's actual box size changes (a submenu opening,
-  // content growing) via ResizeObserver, rather than after every render —
-  // running unconditionally on every render previously caused an infinite
-  // setState loop ("Maximum update depth exceeded") when a subpixel rounding
-  // difference in getBoundingClientRect kept the equality guard from ever
-  // converging. ResizeObserver only fires on genuine size changes, so it
-  // can't feed back into itself the same way.
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const clamp = (): void => {
-      const rect = el.getBoundingClientRect()
-      const left = Math.round(Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)))
-      const top = Math.round(Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)))
-      setPos(prev => (prev.left === left && prev.top === top ? prev : { left, top }))
-    }
-    clamp()
-    const ro = new ResizeObserver(clamp)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [x, y])
-  return (
-    <div
-      ref={ref}
-      className={`fixed z-50 bg-surface border border-[var(--border)] rounded-xl shadow-2xl py-1 overflow-y-auto overflow-x-hidden ${className}`}
-      style={{ left: pos.left, top: pos.top, maxHeight: window.innerHeight - 16 }}
-      onClick={e => e.stopPropagation()}
-    >
-      {children}
-    </div>
-  )
-}
 
 type SortField = 'default' | 'index' | 'title' | 'artist' | 'era' | 'category' | 'duration'
 interface SortState { field: SortField; dir: 'asc' | 'desc' }
@@ -462,8 +435,14 @@ export default function PlaylistsView(): JSX.Element {
   const [expandedLoading, setExpandedLoading] = useState(false)
   // Toggles a card's quick-view panel, closing any open folder first — see
   // the note on openFolder for why the two can't both be open at once.
-  const toggleExpanded = useCallback((key: string) => {
-    setPlaylistsOpenFolderId(null)
+  // closeFolder defaults to true (a top-level card's expand should close any
+  // open folder so the two panels don't collide in the same grid row — see
+  // openFolder's note). A folder's own member cards pass false: they render
+  // inside that folder's already-open panel, so closing it out from under
+  // them would unmount the very panel their own expand view needs to appear
+  // in, making the click look like it did nothing.
+  const toggleExpanded = useCallback((key: string, closeFolder = true) => {
+    if (closeFolder) setPlaylistsOpenFolderId(null)
     setExpandedKey(k => k === key ? null : key)
   }, [setPlaylistsOpenFolderId])
   // One column-count measurement per distinct grid container that can host a
@@ -502,9 +481,8 @@ export default function PlaylistsView(): JSX.Element {
   // Multi-select of playlists in the library grid — ctrl/cmd-click a card to
   // toggle it, mirroring the file browser's selection model (ApiFilesView).
   // Keyed as "api:<id>" / "local:<id>" since both id spaces are numeric and
-  // could otherwise collide.
-  const [plSelectMode, setPlSelectMode] = useState(false)
-  const [selectedPlaylistKeys, setSelectedPlaylistKeys] = useState<Set<string>>(new Set())
+  // could otherwise collide. See the useMultiSelect() call further down for
+  // plSelectMode/selectedPlaylistKeys/togglePlaylistSelect/exitPlaylistSelectMode.
   const [plBulkMenu, setPlBulkMenu] = useState<{ x: number; y: number; showPlaylists?: boolean; showFolders?: boolean } | null>(null)
   const [showPlBulkAddMenu, setShowPlBulkAddMenu] = useState(false)
 
@@ -522,9 +500,10 @@ export default function PlaylistsView(): JSX.Element {
 
   // Multi-select of tracks within an open playlist — mirrors the Tracker's
   // bulk-select (ApiTrackerView). Keyed by track.id (Track has a string id;
-  // the numeric songId is derived when needed for playlist/remove ops).
-  const [selectMode, setSelectMode] = useState(false)
-  const [selectedTracks, setSelectedTracks] = useState<Map<string, Track>>(new Map())
+  // the numeric songId is derived when needed for playlist/remove ops). See
+  // the useMultiSelect() call further down (needs displayTracks, which isn't
+  // defined yet here) for selectMode/selectedTracks/toggleTrackSelect/
+  // exitSelectMode.
   const [showBulkPlaylists, setShowBulkPlaylists] = useState(false)
   const [bulkRemoving, setBulkRemoving] = useState(false)
   const [localRenaming, setLocalRenaming] = useState(false)
@@ -1069,25 +1048,11 @@ export default function PlaylistsView(): JSX.Element {
     setEditingDesc(false)
     setDescValue('')
     setCoverImgError(false)
-    setSelectMode(false)
-    setSelectedTracks(new Map())
-    setShowBulkPlaylists(false)
+    exitSelectMode()
     setShowHeroMenu(false)
     setShowAddAllMenu(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId])
-
-  // Deselecting the last track drops out of select mode on its own (same as
-  // the Tracker), so there's no separate "Cancel" needed — Escape works too.
-  useEffect(() => {
-    if (selectMode && selectedTracks.size === 0) setSelectMode(false)
-  }, [selectMode, selectedTracks])
-
-  useEffect(() => {
-    if (!selectMode) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { setSelectMode(false); setSelectedTracks(new Map()) } }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectMode])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -1122,21 +1087,14 @@ export default function PlaylistsView(): JSX.Element {
   }, [selectedId, loadDetail, refreshPlaylists])
 
   // ── Multi-select bulk actions ─────────────────────────────────────────────
-  const toggleTrackSelect = useCallback((track: Track) => {
-    setSelectMode(true)
-    setSelectedTracks(prev => {
-      const next = new Map(prev)
-      if (next.has(track.id)) next.delete(track.id)
-      else next.set(track.id, track)
-      return next
-    })
-  }, [])
-
-  const exitSelectMode = useCallback(() => {
-    setSelectMode(false)
-    setSelectedTracks(new Map())
-    setShowBulkPlaylists(false)
-  }, [])
+  const {
+    selectMode, selected: selectedTracks, toggle: toggleTrackSelectRaw,
+    exitSelectMode, selectAll: selectAllTracks, clear: clearTrackSelection,
+  } = useMultiSelect<string, Track>({
+    onExit: () => setShowBulkPlaylists(false),
+    ctrlA: { getAll: () => new Map(displayTracks.map(t => [t.id, t])) },
+  })
+  const toggleTrackSelect = useCallback((track: Track) => toggleTrackSelectRaw(track.id, track), [toggleTrackSelectRaw])
 
   const selectedTrackList = useMemo(() => [...selectedTracks.values()], [selectedTracks])
 
@@ -1212,38 +1170,21 @@ export default function PlaylistsView(): JSX.Element {
   }, [selectedId, selectedTrackList, refreshPlaylists, loadDetail, exitSelectMode])
 
   // ── Multi-select of playlists (library grid) ──────────────────────────────
-  const togglePlaylistSelect = useCallback((key: string) => {
-    setPlSelectMode(true)
-    setSelectedPlaylistKeys(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
-
-  const exitPlaylistSelectMode = useCallback(() => {
-    setPlSelectMode(false)
-    setSelectedPlaylistKeys(new Set())
-    setShowPlBulkAddMenu(false)
-  }, [])
-
-  // Deselecting the last playlist drops out of select mode on its own.
-  useEffect(() => {
-    if (plSelectMode && selectedPlaylistKeys.size === 0) setPlSelectMode(false)
-  }, [plSelectMode, selectedPlaylistKeys])
-
-  useEffect(() => {
-    if (!plSelectMode) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') exitPlaylistSelectMode() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [plSelectMode, exitPlaylistSelectMode])
+  // "Select all" here varies per tab (local-only vs. local+api combined), so
+  // it isn't a single generic "everything visible" — those buttons keep their
+  // own setSelectedPlaylistKeys calls below rather than going through the
+  // hook's ctrlA/selectAll (which assumes one canonical "all").
+  const {
+    selectMode: plSelectMode, selected: selectedPlaylistKeys, setSelected: setSelectedPlaylistKeys,
+    toggle: togglePlKeyRaw, exitSelectMode: exitPlaylistSelectMode,
+  } = useMultiSelect<string>({ onExit: () => setShowPlBulkAddMenu(false) })
+  const togglePlaylistSelect = useCallback((key: string) => togglePlKeyRaw(key, key), [togglePlKeyRaw])
+  const keyMap = (keys: string[]): Map<string, string> => new Map(keys.map(k => [k, k]))
 
   const [bulkDeletingPlaylists, setBulkDeletingPlaylists] = useState(false)
 
   const bulkDeletePlaylists = useCallback(async () => {
-    const keys = [...selectedPlaylistKeys]
+    const keys = [...selectedPlaylistKeys.keys()]
     if (!keys.length) return
     setBulkDeletingPlaylists(true)
     const apiIds = keys.filter(k => k.startsWith('api:')).map(k => Number(k.slice(4)))
@@ -1264,14 +1205,14 @@ export default function PlaylistsView(): JSX.Element {
   // same kind, since a synced (api) target can't hold local-only tracks and
   // vice versa. Mixed selections simply don't offer the action.
   const selectedPlaylistKind = useMemo(() => {
-    const kinds = new Set([...selectedPlaylistKeys].map(k => k.split(':')[0]))
+    const kinds = new Set([...selectedPlaylistKeys.keys()].map(k => k.split(':')[0]))
     return kinds.size === 1 ? ([...kinds][0] as 'api' | 'local') : null
   }, [selectedPlaylistKeys])
 
   const [bulkAddingPlaylists, setBulkAddingPlaylists] = useState(false)
 
   const bulkAddPlaylistsTo = useCallback(async (target: { kind: 'api'; id: number } | { kind: 'local'; id: string }) => {
-    const keys = [...selectedPlaylistKeys]
+    const keys = [...selectedPlaylistKeys.keys()]
     setBulkAddingPlaylists(true)
     try {
       if (target.kind === 'api') {
@@ -1827,7 +1768,7 @@ export default function PlaylistsView(): JSX.Element {
     isDragging: draggedPlaylistKey === plKey,
   })
 
-  const apiEntry = (p: PlaylistSummary): GridEntry => {
+  const apiEntry = (p: PlaylistSummary, inFolder = false): GridEntry => {
     const plKey = `api:${p.id}`
     const plSelected = selectedPlaylistKeys.has(plKey)
     // Offline state gets a corner badge so you can tell at a glance which
@@ -1855,12 +1796,12 @@ export default function PlaylistsView(): JSX.Element {
           onClick={e => {
             if (e.ctrlKey || e.metaKey) { togglePlaylistSelect(plKey); return }
             if (plSelectMode) { togglePlaylistSelect(plKey); return }
-            toggleExpanded(plKey)
+            toggleExpanded(plKey, !inFolder)
           }}
           onContextMenu={e => {
             e.preventDefault(); e.stopPropagation()
             if (plSelectMode) {
-              if (!plSelected) setSelectedPlaylistKeys(prev => new Set(prev).add(plKey))
+              if (!plSelected) setSelectedPlaylistKeys(prev => prev.has(plKey) ? prev : new Map(prev).set(plKey, plKey))
               setPlBulkMenu({ x: e.clientX, y: e.clientY })
             } else {
               setCardMenu({ kind: 'api', playlist: p, x: e.clientX, y: e.clientY, showPlaylists: false })
@@ -1892,7 +1833,7 @@ export default function PlaylistsView(): JSX.Element {
     return { key: plKey, tile, panel }
   }
 
-  const localEntry = (lp: LocalPlaylist): GridEntry => {
+  const localEntry = (lp: LocalPlaylist, inFolder = false): GridEntry => {
     const plKey = `local:${lp.id}`
     const plSelected = selectedPlaylistKeys.has(plKey)
     const localCover = lp.coverImage
@@ -1910,12 +1851,12 @@ export default function PlaylistsView(): JSX.Element {
           onClick={e => {
             if (e.ctrlKey || e.metaKey) { togglePlaylistSelect(plKey); return }
             if (plSelectMode) { togglePlaylistSelect(plKey); return }
-            toggleExpanded(plKey)
+            toggleExpanded(plKey, !inFolder)
           }}
           onContextMenu={e => {
             e.preventDefault(); e.stopPropagation()
             if (plSelectMode) {
-              if (!plSelected) setSelectedPlaylistKeys(prev => new Set(prev).add(plKey))
+              if (!plSelected) setSelectedPlaylistKeys(prev => prev.has(plKey) ? prev : new Map(prev).set(plKey, plKey))
               setPlBulkMenu({ x: e.clientX, y: e.clientY })
             } else {
               setCardMenu({ kind: 'local', playlist: lp, x: e.clientX, y: e.clientY, showPlaylists: false })
@@ -1983,8 +1924,8 @@ export default function PlaylistsView(): JSX.Element {
     for (const key of f.playlistKeys) {
       const parsed = parsePlaylistKey(key)
       if (!parsed) continue
-      if (parsed.kind === 'api') { const p = apiById.get(Number(parsed.id)); if (p) out.push(apiEntry(p)) }
-      else { const lp = localById.get(parsed.id); if (lp) out.push(localEntry(lp)) }
+      if (parsed.kind === 'api') { const p = apiById.get(Number(parsed.id)); if (p) out.push(apiEntry(p, true)) }
+      else { const lp = localById.get(parsed.id); if (lp) out.push(localEntry(lp, true)) }
     }
     return out
   }
@@ -2038,13 +1979,7 @@ export default function PlaylistsView(): JSX.Element {
       if (slots.length >= 4) break
       const img = folderSlotImage(key)
       if (img === undefined) continue
-      slots.push(
-        <div key={key} className="w-full h-full overflow-hidden bg-surface-raised">
-          {img
-            ? <img src={img} alt="" className="w-full h-full object-cover" style={{ aspectRatio: '1' }} />
-            : <div className="w-full h-full flex items-center justify-center"><Music2 size={16} className="text-accent/40" /></div>}
-        </div>
-      )
+      slots.push(<FolderSlotImg key={key} src={img} />)
     }
     if (slots.length === 0) {
       return (
@@ -2269,7 +2204,7 @@ export default function PlaylistsView(): JSX.Element {
                   playlists are hidden here since their members can't render
                   without an account. */}
               <div ref={setAuthGridEl} className="grid gap-4 mb-8" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-                {layoutGridEntries([...folderTileEntries(true), ...ungroupedLocal.map(localEntry)], authGridCols)}
+                {layoutGridEntries([...folderTileEntries(true), ...ungroupedLocal.map(lp => localEntry(lp))], authGridCols)}
               </div>
             </>
           )}
@@ -2286,13 +2221,13 @@ export default function PlaylistsView(): JSX.Element {
               {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
             </span>
             <button
-              onClick={() => setSelectedPlaylistKeys(new Set(localPlaylists.map(lp => `local:${lp.id}`)))}
+              onClick={() => setSelectedPlaylistKeys(keyMap(localPlaylists.map(lp => `local:${lp.id}`)))}
               className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
             >
               Select all
             </button>
             <button
-              onClick={() => setSelectedPlaylistKeys(new Set())}
+              onClick={() => setSelectedPlaylistKeys(new Map())}
               className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
             >
               Clear
@@ -2358,7 +2293,7 @@ export default function PlaylistsView(): JSX.Element {
             <MenuItem
               icon={CheckSquare2}
               label="Select all"
-              onClick={() => { setSelectedPlaylistKeys(new Set(localPlaylists.map(lp => `local:${lp.id}`))); setPlBulkMenu(null) }}
+              onClick={() => { setSelectedPlaylistKeys(keyMap(localPlaylists.map(lp => `local:${lp.id}`))); setPlBulkMenu(null) }}
             />
             {selectedPlaylistKind === 'local' && (
               <>
@@ -2822,10 +2757,7 @@ export default function PlaylistsView(): JSX.Element {
               <div className={`grid items-center gap-3 text-text-muted text-xs uppercase tracking-widest ${gridView ? 'invisible' : ''}`} style={{ gridTemplateColumns: gridCols }}>
                   {selectMode && (
                     <button
-                      onClick={() => {
-                        const allShown = displayTracks.length > 0 && displayTracks.every(t => selectedTracks.has(t.id))
-                        setSelectedTracks(allShown ? new Map() : new Map(displayTracks.map(t => [t.id, t])))
-                      }}
+                      onClick={selectAllTracks}
                       className={`flex items-center justify-center text-text-muted hover:text-text-primary ${compactView ? 'invisible' : ''}`}
                       title="Select all / none"
                     >
@@ -3065,13 +2997,13 @@ export default function PlaylistsView(): JSX.Element {
               {selectedTracks.size} {selectedTracks.size === 1 ? 'track' : 'tracks'} selected
             </span>
             <button
-              onClick={() => setSelectedTracks(new Map(displayTracks.map(t => [t.id, t])))}
+              onClick={selectAllTracks}
               className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
             >
               Select all
             </button>
             <button
-              onClick={() => setSelectedTracks(new Map())}
+              onClick={clearTrackSelection}
               className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
             >
               Clear
@@ -3482,7 +3414,7 @@ export default function PlaylistsView(): JSX.Element {
               ) : null,
             },
             ...folderTileEntries(false),
-            ...ungroupedApi.map(apiEntry),
+            ...ungroupedApi.map(p => apiEntry(p)),
           ], mainGridCols)}
 
           {playlists.length === 0 && (
@@ -3509,7 +3441,7 @@ export default function PlaylistsView(): JSX.Element {
           <>
             <h2 className="text-text-muted text-xs font-semibold uppercase tracking-widest mb-3 mt-9">On This Device</h2>
             <div ref={setDeviceGridEl} className="grid gap-x-4 gap-y-6" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-              {layoutGridEntries(ungroupedLocal.map(localEntry), deviceGridCols)}
+              {layoutGridEntries(ungroupedLocal.map(lp => localEntry(lp)), deviceGridCols)}
             </div>
           </>
         )}
@@ -3522,7 +3454,7 @@ export default function PlaylistsView(): JSX.Element {
             {selectedPlaylistKeys.size} {selectedPlaylistKeys.size === 1 ? 'playlist' : 'playlists'} selected
           </span>
           <button
-            onClick={() => setSelectedPlaylistKeys(new Set([
+            onClick={() => setSelectedPlaylistKeys(keyMap([
               ...playlists.map(p => `api:${p.id}`),
               ...localPlaylists.map(lp => `local:${lp.id}`),
             ]))}
@@ -3531,7 +3463,7 @@ export default function PlaylistsView(): JSX.Element {
             Select all
           </button>
           <button
-            onClick={() => setSelectedPlaylistKeys(new Set())}
+            onClick={() => setSelectedPlaylistKeys(new Map())}
             className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
           >
             Clear
@@ -3606,7 +3538,7 @@ export default function PlaylistsView(): JSX.Element {
             icon={CheckSquare2}
             label="Select all"
             onClick={() => {
-              setSelectedPlaylistKeys(new Set([
+              setSelectedPlaylistKeys(keyMap([
                 ...playlists.map(p => `api:${p.id}`),
                 ...localPlaylists.map(lp => `local:${lp.id}`),
               ]))
@@ -3655,7 +3587,7 @@ export default function PlaylistsView(): JSX.Element {
                 <span className="flex items-center gap-2.5"><Folder size={14} className="text-text-muted" />Move to folder</span>
                 <span className="text-text-muted text-xs">›</span>
               </button>
-              {plBulkMenu.showFolders && folderSubmenuItems([...selectedPlaylistKeys], () => { setPlBulkMenu(null); exitPlaylistSelectMode() })}
+              {plBulkMenu.showFolders && folderSubmenuItems([...selectedPlaylistKeys.keys()], () => { setPlBulkMenu(null); exitPlaylistSelectMode() })}
             </>
           )}
           <MenuItem

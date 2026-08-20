@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld('electron', {
   localCreate: (dirPath, name, kind) => ipcRenderer.invoke('local-create', dirPath, name, kind),
   localRename: (filePath, name)      => ipcRenderer.invoke('local-rename', filePath, name),
   localDelete: (filePath)            => ipcRenderer.invoke('local-delete', filePath),
+  // Opens an OS file picker and copies the chosen file(s) into dirPath.
+  // Resolves { ok, paths } | { canceled }.
+  localUpload: (dirPath)             => ipcRenderer.invoke('local-upload', dirPath),
   selectImageFile: ()    => ipcRenderer.invoke('select-image-file'),
   fetchImageAsDataUrl: (url) => ipcRenderer.invoke('fetch-image-as-data-url', url),
   openDiscordLogin: (url) => ipcRenderer.invoke('open-discord-login', url),

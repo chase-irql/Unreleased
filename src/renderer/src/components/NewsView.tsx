@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useStorePick } from '../store/useStore'
 import {
-  fetchNews, fetchChannels, fetchNewsItem, deleteNewsItem, isImageAttachment, isAudioAttachment,
+  fetchNews, peekNews, fetchChannels, fetchNewsItem, deleteNewsItem, isImageAttachment, isAudioAttachment,
   buildNewsAttachmentStreamUrl, ensureHttpsMediaUrl,
   ALL_CHANNEL, DEFAULT_NEWS_CHANNEL, NEWS_CHANNELS,
   type NewsItem, type NewsChannel, type NewsAttachment, type NewsSort,
@@ -36,6 +36,12 @@ function stripMarkdown(md: string): string {
     .replace(/[#>*_~`-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+// Falls back to a snippet of the body when no summary was written.
+function displaySummary(item: NewsItem): string {
+  const trimmed = item.summary?.trim()
+  return trimmed || stripMarkdown(item.body || '')
 }
 
 function humanSize(bytes: number): string {
@@ -96,7 +102,7 @@ function FeaturedCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) 
                 <span className="text-xs text-white/80 drop-shadow">{formatDate(item.published_at)}</span>
               </div>
               <h2 className="text-white text-xl font-bold leading-snug mb-1.5 drop-shadow-sm">{item.title}</h2>
-              <p className="text-sm text-white/85 leading-relaxed line-clamp-2 drop-shadow-sm">{item.summary}</p>
+              <p className="text-sm text-white/85 leading-relaxed line-clamp-2 drop-shadow-sm">{displaySummary(item)}</p>
             </div>
           </div>
         ) : (
@@ -107,7 +113,7 @@ function FeaturedCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) 
               <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
             </div>
             <h2 className="text-text-primary text-lg font-bold leading-snug mb-1.5">{item.title}</h2>
-            <p className="text-sm text-text-secondary leading-relaxed line-clamp-3">{item.summary}</p>
+            <p className="text-sm text-text-secondary leading-relaxed line-clamp-3">{displaySummary(item)}</p>
           </div>
         )}
       </button>
@@ -123,8 +129,9 @@ function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
   // preview of the full body reads as more content rather than empty air;
   // overflow-hidden on the text column lets it get cut off naturally at
   // whatever height the row actually ends up, without measuring anything.
+  const summary = displaySummary(item)
   const bodyPreview = stripMarkdown(item.body || '')
-  const showBodyPreview = bodyPreview && !bodyPreview.startsWith(item.summary.trim())
+  const showBodyPreview = bodyPreview && !bodyPreview.startsWith(summary)
 
   return (
     <div className="relative group h-full">
@@ -151,7 +158,7 @@ function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
             )}
           </div>
           <h3 className="text-text-primary text-sm font-semibold leading-snug mb-1 line-clamp-2">{item.title}</h3>
-          <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{item.summary}</p>
+          <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{summary}</p>
           {showBodyPreview && (
             <p className="text-xs text-text-muted leading-relaxed mt-1">{bodyPreview}</p>
           )}
@@ -371,13 +378,22 @@ export default function NewsView(): JSX.Element {
   }, [])
 
   const load = useCallback(async () => {
-    setLoading(true)
+    // Stale-while-revalidate: show the last cached page for this exact
+    // channel+sort instantly (no spinner flash on every channel switch),
+    // then let the network response below replace it once it lands.
+    const cached = peekNews({ channel, sort })
+    if (cached) {
+      setItems(cached.results)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setError(null)
     try {
       const res = await fetchNews({ channel, sort })
       setItems(res.results)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load news')
+      if (!cached) setError(err instanceof Error ? err.message : 'Failed to load news')
     } finally {
       setLoading(false)
     }

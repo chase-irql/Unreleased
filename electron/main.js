@@ -1346,6 +1346,31 @@ ipcMain.handle('local-delete', async (event, filePath) => {
   }
 })
 
+// Copies one or more OS-picked files into a Local Files folder. Reuses the
+// same collision-safe naming as copy/move-library-file rather than failing
+// like local-create does — picking several files at once shouldn't abort on
+// the first name clash.
+ipcMain.handle('local-upload', async (event, dirPath) => {
+  if (typeof dirPath !== 'string' || !dirPath) return { error: 'No folder' }
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Upload files',
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true }
+  const paths = []
+  for (const src of result.filePaths) {
+    const target = uniqueDestPath(dirPath, path.basename(src))
+    try {
+      fs.copyFileSync(src, target)
+      paths.push(target)
+    } catch (e) {
+      fileOpError(event, 'Upload', path.basename(src), e.message)
+    }
+  }
+  return { ok: true, paths }
+})
+
 // Parent the dialog to whichever window asked (Settings can live in a
 // pop-out) — falling back to the main window for safety.
 ipcMain.handle('pick-folder', async (event) => {

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, CSSProperties } from 'react'
-import { createPortal } from 'react-dom'
 import { X, FileAudio2, Loader2, Check, AlertCircle, Folder, Eraser, Download } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { broadcastLibraryTrackAdd } from '../lib/windowSync'
 import { LibraryTrack } from '../types'
+import { ModalOverlay } from './Modal'
 
 // "Convert format" dialog for a local file, driven by the store's `convertModal`
 // target. Transcodes via the on-demand ffmpeg (main process `convert-audio`;
@@ -168,13 +168,8 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
     else closeConvert()
   }
 
-  return createPortal(
-    <div
-      className={`fixed inset-0 z-[60] flex ${
-        floating ? '' : 'items-end md:items-center justify-center bg-black/70 backdrop-blur-sm p-0 md:p-4'
-      }`}
-      onClick={(e) => { if (!floating && e.currentTarget === e.target) close() }}
-    >
+  return (
+    <ModalOverlay onClose={close} floating={floating} zIndexClassName="z-[60]" sheet>
       <div className={`bg-surface flex flex-col ${floating
         ? 'w-full h-full overflow-y-auto'
         : 'border border-[var(--border)] rounded-t-2xl md:rounded-2xl shadow-2xl w-full md:max-w-md max-h-[92svh] overflow-y-auto'}`}>
@@ -387,7 +382,6 @@ export default function ConvertFormatModal({ floating = false }: { floating?: bo
           )}
         </div>
       </div>
-    </div>,
-    document.body
+    </ModalOverlay>
   )
 }

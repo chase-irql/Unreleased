@@ -79,7 +79,7 @@ export default function NewsComposeModal({ channels, initialChannel, editing, on
 
   const removeAttachment = (i: number): void => setAttachments((prev) => prev.filter((_, idx) => idx !== i))
 
-  const canSave = title.trim() && summary.trim() && channel && !saving
+  const canSave = title.trim() && channel && !saving
 
   const save = async (): Promise<void> => {
     if (!canSave) return
@@ -174,7 +174,7 @@ export default function NewsComposeModal({ channels, initialChannel, editing, on
           </div>
 
           <div>
-            <label className={label}>Summary</label>
+            <label className={label}>Summary <span className="text-text-muted/60 font-normal">(optional)</span></label>
             <textarea className={`${field} resize-none`} rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="One or two lines shown in the feed" maxLength={280} />
           </div>
 

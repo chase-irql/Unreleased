@@ -1,4 +1,4 @@
-﻿import { create } from 'zustand'
+import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { ViewType, Track, FullTrack, LibraryTrack, LocalPlaylist, FollowedPlaylist, OfflineTrackMeta, OfflinePlaylistEntry, ConvertTarget } from '../types'
 import { APP_VERSION } from '../lib/appVersion'
@@ -6,6 +6,7 @@ import { ls } from '../lib/persist'
 import * as userApi from '../lib/userApi'
 import type { AccountUser, PlaylistSummary } from '../lib/userApi'
 import * as preferencesApi from '../lib/preferencesApi'
+import * as profilePushApi from '../lib/profilePushApi'
 import { apiFetch, apiPeek, buildStreamUrl, buildImageUrl, parseDuration, resolvePrefCoverUrl, fetchChannels } from '../lib/juicewrldApi'
 import type { JWApiSong, JWApiChannel } from '../lib/juicewrldApi'
 import {
@@ -39,30 +40,30 @@ import { DEFAULT_NAV_ORDER, DEFAULT_NAV_VISIBILITY, DEFAULT_NAV_CONTROL_ORDER, D
 import { getLastfmSession } from '../lib/lastfm'
 import { runWhenIdle } from '../lib/platform'
 
-// Key used to track songs downloaded individually (song context menu →
+// Key used to track songs downloaded individually (song context menu ?
 // "Download offline"), rather than through a synced playlist. It's just
 // another entry in `offlinePlaylists`/main's `lib.playlists`, so a song
 // downloaded this way survives the same-name pruning that offline-set-playlist
-// runs after every real playlist sync — without this, an individually-
+// runs after every real playlist sync � without this, an individually-
 // downloaded track would look "unreferenced" the next time any playlist
 // resyncs and get deleted out from under the user.
 const INDIVIDUAL_DOWNLOADS_KEY = 'individual-downloads'
 
 // True when this renderer is a pop-out window (FloatApp, ?float=<view>).
 // Pop-outs share localStorage with the main window, so only the main window
-// may flush the report outbox — the live endpoints have no idempotency key,
+// may flush the report outbox � the live endpoints have no idempotency key,
 // so two windows flushing the same queue would double-send every report.
 export const IS_FLOAT_WINDOW = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('float')
 
-// Lightweight localStorage persistence helper — see lib/persist.ts (it lives
+// Lightweight localStorage persistence helper � see lib/persist.ts (it lives
 // there so queueSlice can share it without importing this module back).
 
-// ─── Download item (in-session, Electron only) ────────────────────────────────
+// --- Download item (in-session, Electron only) --------------------------------
 
 export interface DownloadItem {
   id: string
   filename: string
-  // 'upload' is the one that goes the other way — a comp file proposal's body
+  // 'upload' is the one that goes the other way � a comp file proposal's body
   // on its way to the API (see lib/compUploads).
   type: 'file' | 'zip' | 'update' | 'playlist' | 'upload'
   state: 'downloading' | 'done' | 'error' | 'cancelled'
@@ -72,22 +73,22 @@ export interface DownloadItem {
   savePath?: string
   error?: string
   // Byte-level size/throughput info, shown alongside the track-count or
-  // percent progress above — `bytesReceived` is cumulative bytes actually
+  // percent progress above � `bytesReceived` is cumulative bytes actually
   // written to disk so far (across every file, for multi-file downloads),
   // `speedBps` is a live bytes/sec sample (undefined between samples/when idle).
   bytesReceived?: number
   speedBps?: number
 }
 
-// Where the desktop nav menu sits — classic left sidebar, mirrored right, or a
+// Where the desktop nav menu sits � classic left sidebar, mirrored right, or a
 // horizontal bar above/below the content. Mobile always uses the bottom tab bar.
 export type SidebarPosition = 'left' | 'right' | 'top' | 'bottom'
 
-// Where the File/Edit/View… app-menu button lives (desktop only): the floating
+// Where the File/Edit/View� app-menu button lives (desktop only): the floating
 // title-strip pill, tucked inside the side menu, or off entirely.
 export type AppMenuPosition = 'title-bar' | 'sidebar' | 'hidden'
 
-// The Settings dialog's tabs — the union Settings.tsx keys its content off, and
+// The Settings dialog's tabs � the union Settings.tsx keys its content off, and
 // the target for a deep-link open (see settingsTab). Keep in sync with the
 // `tab` state there.
 export type SettingsTab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 'app' | 'developer' | 'feedback' | 'about'
@@ -97,20 +98,20 @@ export type SettingsTab = 'appearance' | 'playback' | 'shortcuts' | 'library' | 
 // for settings/songInfo/editor that falls back to the in-app overlay, and for
 // miniPlayer (which has no in-app equivalent) it hides the pop-out entry point.
 export type PopoutWindowKind = 'settings' | 'songInfo' | 'editor' | 'localEditor' | 'miniPlayer' | 'convert' | 'equalizer' | 'profile'
-// `equalizer` defaults OFF — unlike the others (which start life as pop-outs
+// `equalizer` defaults OFF � unlike the others (which start life as pop-outs
 // and fall back to inline when disabled), the equalizer's normal home is the
 // in-app popover; turning it on makes the panel open as its own window.
 const POPOUT_WINDOW_DEFAULTS: Record<PopoutWindowKind, boolean> = {
   settings: true, songInfo: true, editor: true, localEditor: true, miniPlayer: true, convert: true, equalizer: false,
   // Review work (proposals, comp files, reports) is the one place people keep
-  // a page open *while* using the rest of the app — checking a song against
+  // a page open *while* using the rest of the app � checking a song against
   // the proposal editing it, playing what they're about to approve. Its own
-  // window is the point, so this starts on; the toggle in Settings → Windows
+  // window is the point, so this starts on; the toggle in Settings ? Windows
   // sends it back to the in-app tab.
   profile: true,
 }
 
-// ─── Non-queue state ──────────────────────────────────────────────────────────
+// --- Non-queue state ----------------------------------------------------------
 
 interface AppState {
   // Playback extras (not queue-managed)
@@ -123,52 +124,52 @@ interface AppState {
   eqEnabled: boolean
   eqGains: number[]
   eqPreset: string
-  // -1 = full left … 1 = full right
+  // -1 = full left � 1 = full right
   eqBalance: number
   eqMono: boolean
   // 1 = 100% (unity, off) .. EQ_BOOST_MAX = 200%.
   eqBoost: number
   skipSilence: boolean
-  // Reverb (convolution tail; see lib/audioEffects.ts) — independently
+  // Reverb (convolution tail; see lib/audioEffects.ts) � independently
   // toggleable; mix/decay keep their values while off.
   reverbEnabled: boolean
   reverbMix: number
   reverbDecay: number
-  // Let the pitch follow the rate (preservesPitch off) — slowed feel below
+  // Let the pitch follow the rate (preservesPitch off) � slowed feel below
   // 1x, sped-up/nightcore feel above. Combine with reverb for slowed+reverb.
   pitchShift: boolean
   // A-B loop: repeat a marked portion of the current track. Both null = no
   // loop. Deliberately NOT persisted to localStorage (a saved position only
-  // makes sense for the track it was set on) — cleared on every track change
+  // makes sense for the track it was set on) � cleared on every track change
   // (see Player's currentTrack?.id effect) but still mirrored over
   // window-sync so the pop-out equalizer's controls reach the playing audio.
   abLoopStart: number | null
   abLoopEnd: number | null
   // Community-shared effect configs, shown next to the EQ presets. Stays
-  // empty until the API endpoints for them exist — a future fetch populates
+  // empty until the API endpoints for them exist � a future fetch populates
   // it; nothing is persisted locally.
   communityEdits: CommunityEdit[]
-  // Seconds added to the lookup time when matching synced (LRC) lyric lines —
+  // Seconds added to the lookup time when matching synced (LRC) lyric lines �
   // positive shifts lyrics later (delays them), negative shifts them earlier,
   // compensating for lyric files that aren't quite in step with the audio.
   lyricsOffset: number
 
   // UI
   activeView: ViewType
-  // The view that was active immediately before the current one — lets a page
+  // The view that was active immediately before the current one � lets a page
   // like the editor send its back button/redirects to wherever the user
   // actually came from instead of a hardcoded destination.
   previousView: ViewType | null
   showNowPlaying: boolean
   showSettings: boolean
   // Which Settings tab to show on next open (deep-link from the app menu, e.g.
-  // "Keyboard shortcuts" → the Shortcuts tab). Settings applies it then clears
+  // "Keyboard shortcuts" ? the Shortcuts tab). Settings applies it then clears
   // it back to null. Synced so it also reaches the pop-out Settings window.
   settingsTab: SettingsTab | null
   showDiagnostics: boolean
   showQueue: boolean
   // Equalizer popover visibility. Store-level (not Player-local) so the WRLD
-  // tab's button and the 'equalizer' hotkey can open it from anywhere — the
+  // tab's button and the 'equalizer' hotkey can open it from anywhere � the
   // always-mounted Player owns the actual portal.
   showEqPanel: boolean
   // Pop-out views currently open (from main's 'float-windows' broadcast).
@@ -177,13 +178,13 @@ interface AppState {
   openFloatViews: string[]
   // Song whose info modal is shown by the main window's global host (App's
   // <GlobalSongInfoHost>). Only used to "attach" a floating song-info window
-  // back into the main window — the per-view list modals keep their own local
+  // back into the main window � the per-view list modals keep their own local
   // state. null = nothing shown.
   infoSongId: number | null
   // Desktop bottom player collapsed to a slim strip to reclaim vertical space.
   playerCollapsed: boolean
   // True while the WRLD tab's own in-page fullscreen (album-art focus mode)
-  // is active — lets App.tsx hide the frameless-window title bar controls,
+  // is active � lets App.tsx hide the frameless-window title bar controls,
   // which would otherwise float over the immersive view.
   wrldFullscreen: boolean
   radioFmActive: boolean
@@ -205,16 +206,16 @@ interface AppState {
   sidebarPosition: SidebarPosition
   appMenuPosition: AppMenuPosition
   // User-defined order of the primary side-menu nav items, by view id. Only
-  // ever a permutation of the known ids — orderedNavItems() sanitizes it on
+  // ever a permutation of the known ids � orderedNavItems() sanitizes it on
   // read, so a stale/partial saved order can't drop or duplicate a tab.
   navOrder: ViewType[]
-  // Per-item side-menu visibility (view id → shown). Sparse overrides merged
+  // Per-item side-menu visibility (view id ? shown). Sparse overrides merged
   // onto DEFAULT_NAV_VISIBILITY; isNavItemVisible() falls back to each item's
   // own default for anything absent, so lets the user hide built-ins and add
   // the off-by-default extras.
   navVisibility: Record<string, boolean>
   // Order + visibility for the foot-of-menu controls (Profile, Log out,
-  // Diagnostics, Download, Settings) — same model as navOrder/navVisibility.
+  // Diagnostics, Download, Settings) � same model as navOrder/navVisibility.
   navControlOrder: string[]
   navControlVisibility: Record<string, boolean>
 
@@ -232,21 +233,21 @@ interface AppState {
   // the lyrics* keys style synced/plain lyrics in LyricsDisplay and the WRLD
   // tab's lyrics panel.
   appTextScale: number
-  // Font-stack ids from lib/fonts.ts — appFont styles the whole UI,
+  // Font-stack ids from lib/fonts.ts � appFont styles the whole UI,
   // lyricsFont only the lyric panels (so lyrics can differ from the chrome).
   appFont: string
   lyricsFont: string
   lyricsScale: number
   lyricsAlign: 'left' | 'center'
   // Soften every synced line except the one currently playing with a slight
-  // blur (on by default) — played and upcoming lines alike.
+  // blur (on by default) � played and upcoming lines alike.
   lyricsBlur: boolean
   // Strength of that blur, as a multiplier on each surface's own base radius
   // (the WRLD tab blurs less than the now-playing/mini panels, and a
   // multiplier keeps that relationship intact at every setting). 1 = the
   // amount every version before this shipped.
   lyricsBlurAmount: number
-  // Custom colors for synced lyric lines — the line currently being sung, and
+  // Custom colors for synced lyric lines � the line currently being sung, and
   // the rest (already-played + upcoming). null = auto, i.e. keep the surface's
   // own colors (theme text vars in LyricsDisplay, art-derived ones in the WRLD
   // tab), which is what every install had before these existed.
@@ -258,12 +259,12 @@ interface AppState {
   // song accent recolors them too.
   gradientsEnabled: boolean
   // Same idea as gradientsEnabled but scoped to flat bg-surface-overlay boxes
-  // (toggle groups, search bars, badges, menus) — split out as its own toggle
+  // (toggle groups, search bars, badges, menus) � split out as its own toggle
   // since those boxes are everywhere, and someone who likes the shell/sidebar/
   // player gradients may not want every small pill tinted too.
   surfaceGradientsEnabled: boolean
   // WRLD tab only. Off (the default) it paints itself from the playing song's
-  // cover — blurred art behind, text color picked from the art's brightness.
+  // cover � blurred art behind, text color picked from the art's brightness.
   // On, it drops both and uses the app's own skin instead: theme surface
   // behind, theme text colors on top, so the tab stops recoloring itself every
   // track.
@@ -280,7 +281,7 @@ interface AppState {
   // Per-era cover overrides (see lib/eraCovers): a cover the user picks for
   // an era replaces the API's shared placeholder on every unreleased song in
   // that era. Released songs, and songs with their own personal cover or a
-  // rotated suggestion, are unaffected — see applyPrefToTrack's precedence.
+  // rotated suggestion, are unaffected � see applyPrefToTrack's precedence.
   eraCovers: Record<string, string>
   // Desktop (Electron/Windows) only. When disabled, the app stops publishing
   // Media Session metadata/action handlers, which stops Windows from popping
@@ -293,12 +294,12 @@ interface AppState {
   lastfmUser: string | null
   lastfmEnabled: boolean
   // Per-kind toggles for the detached pop-out windows (desktop only). Disabling
-  // one keeps the feature working — it just renders inline in the main window
+  // one keeps the feature working � it just renders inline in the main window
   // instead (or, for the mini player, hides the pop-out button).
   popoutWindows: Record<PopoutWindowKind, boolean>
 
   // Keyboard shortcuts. `hotkeyBindings` holds only user *overrides* of the
-  // defaults in lib/hotkeys.ts (actionId → combo; an explicit '' means the
+  // defaults in lib/hotkeys.ts (actionId ? combo; an explicit '' means the
   // user cleared that shortcut). `hotkeySeekSeconds` is the jump size for the
   // skip-forward / skip-backward shortcuts.
   hotkeyBindings: Record<string, string>
@@ -307,7 +308,7 @@ interface AppState {
   // OS-wide so they work while the app is in the background.
   globalHotkeysEnabled: boolean
   // The OS-global binding per action, independent of `hotkeyBindings` (the
-  // in-app one) — actionId → combo override, same shape and semantics as
+  // in-app one) � actionId ? combo override, same shape and semantics as
   // hotkeyBindings (an explicit '' means the user cleared it). See
   // lib/hotkeys effectiveGlobalBinding / defaultGlobalBinding.
   globalHotkeyBindings: Record<string, string>
@@ -318,11 +319,11 @@ interface AppState {
   // Per-song user overrides (custom name, custom cover, preferred version,
   // playcount), keyed by numeric API song id. Local-first like likedTrackIds:
   // usable logged out, merged up to the server on login. Every write goes
-  // through _setSongPrefs so the lib/songPrefs cache — which songToTrack reads
-  // and which can't import this store without a cycle — stays in step.
+  // through _setSongPrefs so the lib/songPrefs cache � which songToTrack reads
+  // and which can't import this store without a cycle � stays in step.
   songPrefs: SongPrefMap
 
-  // Timestamped play history — one row per credited play (see
+  // Timestamped play history � one row per credited play (see
   // lib/listeningPlays). songPrefs' aggregate playcounts remain the all-time
   // source of truth; this exists so StatsView can answer "last 7/30 days" and
   // show a recent-plays timeline, which absolute counters can't.
@@ -344,7 +345,7 @@ interface AppState {
   // components/UrlImportModal.
   urlImportModal: boolean
 
-  // Playlist folders — a local-first grouping over both synced and local
+  // Playlist folders � a local-first grouping over both synced and local
   // playlists (keyed by "api:<id>"/"local:<id>"). Persisted to localStorage and
   // usable logged out; synced-playlist membership syncs to the account once the
   // endpoints exist (see lib/foldersApi). See lib/playlistFolders.
@@ -366,11 +367,11 @@ interface AppState {
   playlists: PlaylistSummary[]
   showUserAuth: boolean
 
-  // Sidebar → PlaylistsView: open a specific playlist without needing a URL
+  // Sidebar ? PlaylistsView: open a specific playlist without needing a URL
   // round-trip (works whether PlaylistsView is already mounted or not).
   pendingPlaylistId: number | null
 
-  // Which playlist (API-backed or local) PlaylistsView currently has open —
+  // Which playlist (API-backed or local) PlaylistsView currently has open �
   // lives here rather than as local component state because App.tsx unmounts
   // PlaylistsView whenever you switch to another tab, which would otherwise
   // silently drop back to the playlist list every time you navigate away and
@@ -378,29 +379,29 @@ interface AppState {
   playlistsSelectedId: number | null
   playlistsSelectedLocalId: string | null
 
-  // The open playlist's track sort — same "lives in the store, not local
+  // The open playlist's track sort � same "lives in the store, not local
   // state" reasoning as playlistsSelectedId above: without this, tabbing
   // away from Playlists and back would silently drop the sort back to
   // playlist order every time, since the component remounts from scratch.
   playlistsSort: { field: string; dir: 'asc' | 'desc' }
 
   // Which folder (if any) is "open" in the library grid, showing just its
-  // member playlists — same reasoning as playlistsSelectedId: without this,
+  // member playlists � same reasoning as playlistsSelectedId: without this,
   // tabbing away and back would silently kick you back out to the top-level
   // grid instead of leaving you inside the folder you were looking at.
   playlistsOpenFolderId: string | null
 
-  // A comp proposal started from the Files page's context menu — the
+  // A comp proposal started from the Files page's context menu � the
    // contributor page reads it once on mount and clears it, the same
    // hand-off pendingEditorSongId does for the song editor.
-  pendingCompProposal: { paths: string[]; changeType: 'delete' | 'replace' } | null
+  pendingCompProposal: { paths: string[]; changeType: 'delete' | 'replace' | 'upload' } | null
 
   // Editor
   pendingEditorSongId: number | null
   pendingEditProposal: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null
-  // Local-file metadata editor — the track being edited on the 'local-editor' view
+  // Local-file metadata editor � the track being edited on the 'local-editor' view
   pendingLocalEditTrack: LibraryTrack | null
-  // What the bulk editor dialog has open (null = closed) — either a Tracker
+  // What the bulk editor dialog has open (null = closed) � either a Tracker
   // multi-selection of API songs (submits edit proposals) or a Library
   // multi-selection of local files (writes ID3 tags). Holds the full objects
   // the caller already had rather than ids, so the dialog can show "same
@@ -422,7 +423,7 @@ interface AppState {
   // loadLibrary short-circuits when it's set (the store is already the source
   // of truth), so revisiting the Library/Playlists tab doesn't re-read, re-ship
   // over IPC, and rebuild the whole list every time. Reset only by a forced
-  // reload (another window changed the data) — see loadLibrary.
+  // reload (another window changed the data) � see loadLibrary.
   libraryLoaded: boolean
   libraryFolders: string[]
   libraryScanning: boolean
@@ -437,11 +438,11 @@ interface AppState {
   localPlaylists: LocalPlaylist[]
   activeLocalPlaylistId: string | null
 
-  // Other people's playlists followed from a share link — see FollowedPlaylist.
+  // Other people's playlists followed from a share link � see FollowedPlaylist.
   // Local-only (localStorage), so this list is per-device.
   followedPlaylists: FollowedPlaylist[]
 
-  // Offline playlist sync (Electron only) — API-backed playlists downloaded
+  // Offline playlist sync (Electron only) � API-backed playlists downloaded
   // for offline playback, kept in sync with the API's song metadata.
   offlineTracks: Record<string, OfflineTrackMeta>
   offlinePlaylists: Record<string, OfflinePlaylistEntry>
@@ -459,7 +460,7 @@ interface AppActions {
   setPlaybackSpeed: (speed: number) => void
   setLyricsOffset: (offset: number) => void
   setEqEnabled: (enabled: boolean) => void
-  // Single-band slider move — flips eqPreset to 'custom'.
+  // Single-band slider move � flips eqPreset to 'custom'.
   setEqBand: (index: number, gain: number) => void
   // Applies a preset by id (gains looked up from EQ_PRESETS).
   setEqPreset: (id: string) => void
@@ -472,7 +473,7 @@ interface AppActions {
   setReverbDecay: (seconds: number) => void
   setPitchShift: (enabled: boolean) => void
   /** Cycles the A-B loop through its three states using the current playback
-   *  position: unset → point A set → looping (A and B set) → unset again.
+   *  position: unset ? point A set ? looping (A and B set) ? unset again.
    *  Mirrors the classic single-button "A-B repeat" control. */
   setAbLoopPoint: () => void
   clearAbLoop: () => void
@@ -515,7 +516,7 @@ interface AppActions {
   setTheme: (theme: SkinId) => void
   /** Creates or updates a custom skin (upsert by id). Since editing the active
    *  skin's palette re-runs the theme effect, the editor uses this for live
-   *  preview — every color change saves through here. */
+   *  preview � every color change saves through here. */
   saveCustomSkin: (skin: Skin) => void
   /** Removes a custom skin; if it was the active theme, falls back to dark. */
   deleteCustomSkin: (id: string) => void
@@ -556,7 +557,7 @@ interface AppActions {
   setLastfmEnabled: (enabled: boolean) => void
   setPopoutWindow: (kind: PopoutWindowKind, enabled: boolean) => void
   // Bind (or, with combo === '', clear) a shortcut. Passing a combo already in
-  // use elsewhere transfers it — the previous owner is cleared — so bindings
+  // use elsewhere transfers it � the previous owner is cleared � so bindings
   // stay unique. Resets restore every action to its default.
   setHotkeyBinding: (actionId: string, combo: string) => void
   resetHotkeyBindings: () => void
@@ -572,35 +573,29 @@ interface AppActions {
   /** Custom cover, as a pointer into the API's storage (see
    *  resolvePrefCoverUrl), or null to fall back to the song's own image. */
   setSongCover: (songId: number, coverUrl: string | null) => void
-  /** Preferred version *label* within this song's version group (e.g. "v1") —
+  /** Preferred version *label* within this song's version group (e.g. "v1") �
    *  playing any member of the group then plays this one. Null clears it. */
   setSongDefaultVersion: (songId: number, version: string | null) => void
   /** Drops every override for a song, playcount included. */
   clearSongPref: (songId: number) => void
   /** Credits one play. Called by the Player once a track passes the listened
-   *  threshold — not on every start. */
+   *  threshold � not on every start. */
   bumpSongPlaycount: (songId: number) => void
   /** Merges the profile's `user_preferences` blob (from getMe) with local
-   *  state — profile wins per song except playcount, which takes the max —
+   *  state � profile wins per song except playcount, which takes the max �
    *  then pushes the merged array back up. Runs on login. */
   syncSongPrefs: (serverPrefs?: SongPreference[]) => Promise<void>
-  /** Same shape as syncSongPrefs, but a union rather than a per-key merge —
+  /** Same shape as syncSongPrefs, but a union rather than a per-key merge �
    *  play events are immutable, so the two sides just get deduped. */
   syncListeningPlays: (serverPlays?: ListeningPlayEvent[]) => Promise<void>
-  /** Internal — the single write path for songPrefs (state + localStorage +
+  /** Internal � the single write path for songPrefs (state + localStorage +
    *  lib/songPrefs' cache). */
   _setSongPrefs: (next: SongPrefMap) => void
-  /** Internal — the single write path for listeningPlays (state + localStorage). */
+  /** Internal � the single write path for listeningPlays (state + localStorage). */
   _setListeningPlays: (next: ListeningPlayEvent[]) => void
-  /** Internal — debounced whole-array push of songPrefs to the profile. */
-  _schedulePrefsPush: () => void
-  /** Internal — debounced whole-array push of listeningPlays to the profile.
-   *  Whole-array because there's no append endpoint; see the cap in
-   *  lib/listeningPlays for why the array can't be allowed to grow freely. */
-  _scheduleListeningPlaysPush: () => void
-  /** Internal — patches one song's row and syncs it to the server. */
+  /** Internal � patches one song's row and syncs it to the server. */
   _writeSongPref: (songId: number, patch: SongPrefPatch) => void
-  /** Internal — pushes a row's name/cover onto Tracks already in the queue. */
+  /** Internal � pushes a row's name/cover onto Tracks already in the queue. */
   _reapplySongPref: (songId: number) => void
 
   /** Opens the report dialog for general feedback or a specific song. */
@@ -616,7 +611,7 @@ interface AppActions {
    *  the optional reach-me field the endpoint accepts. Resolves once that
    *  delivery attempt settles: `true` if it actually reached the server this
    *  round, `false` if it's still sitting in the outbox (offline, rejected,
-   *  or the API is disabled) — the caller can surface which happened. */
+   *  or the API is disabled) � the caller can surface which happened. */
   submitFeedback: (category: FeedbackCategory, message: string, contact?: string) => Promise<boolean>
   /** Queues a song issue report (wrong/missing info or lyrics) and tries to
    *  deliver it. `issues` is the set of checked problem types. Same delivered
@@ -624,10 +619,10 @@ interface AppActions {
   reportSong: (songId: number, songName: string, issues: SongIssueType[], message: string, contact?: string) => Promise<boolean>
   /** Drops a queued report from the outbox (e.g. one stuck failing). */
   dismissReport: (id: string) => void
-  /** Internal — appends a report to the outbox, kicks off delivery, and
+  /** Internal � appends a report to the outbox, kicks off delivery, and
    *  resolves to whether this particular report was delivered this round. */
   _enqueueReport: (report: PendingReport) => Promise<boolean>
-  /** Internal — attempts to deliver every deliverable queued report. */
+  /** Internal � attempts to deliver every deliverable queued report. */
   _flushReports: () => Promise<void>
 
   /** Creates a folder (optionally seeded with playlist keys) and returns its id. */
@@ -641,14 +636,16 @@ interface AppActions {
   /** Drops folder members that no longer exist (playlists deleted since). */
   pruneFolders: (validKeys: string[]) => void
   /** Merges the profile's `playlist_folders` blob (from getMe) with local
-   *  state — the profile is the source of truth for synced membership, and
-   *  device-local members re-attach by folder id — then pushes the merge back
+   *  state � the profile is the source of truth for synced membership, and
+   *  device-local members re-attach by folder id � then pushes the merge back
    *  up. Runs on login. */
   syncFolders: (serverFolders?: ServerPlaylistFolder[]) => Promise<void>
-  /** Internal — the single write path for playlistFolders. */
+  /** Internal � the single write path for playlistFolders. */
   _setFolders: (next: PlaylistFolder[]) => void
-  /** Internal — debounced whole-array push of folders to the profile. */
-  _scheduleFoldersPush: () => void
+  /** Internal � marks the given profile-blob field(s) dirty and (re)schedules
+   *  the single shared debounced PATCH that pushes all dirty fields together
+   *  in one request, whole-array, rather than one PATCH per field. */
+  _scheduleProfilePush: (fields: ('songPrefs' | 'listeningPlays' | 'folders')[]) => void
 
   setApiTrackerCategory: (cat: string) => void
   setApiTrackerEra: (era: string) => void
@@ -669,20 +666,20 @@ interface AppActions {
   setPlaylistsSort: (sort: { field: string; dir: 'asc' | 'desc' }) => void
   setPlaylistsOpenFolderId: (id: string | null) => void
 
-  setPendingCompProposal: (v: { paths: string[]; changeType: 'delete' | 'replace' } | null) => void
+  setPendingCompProposal: (v: { paths: string[]; changeType: 'delete' | 'replace' | 'upload' } | null) => void
   setPendingEditorSongId: (id: number | null) => void
-  // "Edit this song" from anywhere — desktop opens the pop-out editor
+  // "Edit this song" from anywhere � desktop opens the pop-out editor
   // window, web navigates to the in-app editor view.
   openSongEditor: (songId: number) => void
   setPendingEditProposal: (p: { id: number; songId: number | null; proposedData: Record<string, unknown>; editorNotes: string } | null) => void
   setPendingLocalEditTrack: (track: LibraryTrack | null) => void
-  // "Edit metadata" on a local track from anywhere — desktop opens the
+  // "Edit metadata" on a local track from anywhere � desktop opens the
   // pop-out local editor window, web navigates to the in-app view.
   openLocalEditor: (track: LibraryTrack) => void
-  // "Edit" on a multi-song selection — opens the bulk editor dialog, which
+  // "Edit" on a multi-song selection � opens the bulk editor dialog, which
   // submits one update proposal per song.
   openBulkEditor: (songs: JWApiSong[]) => void
-  // "Edit tags" on a multi-file selection in the Library — same dialog, but
+  // "Edit tags" on a multi-file selection in the Library � same dialog, but
   // writing ID3 tags to each file instead.
   openBulkTrackEditor: (tracks: LibraryTrack[]) => void
   closeBulkEditor: () => void
@@ -724,7 +721,7 @@ interface AppActions {
   exportLocalPlaylistM3u: (id: string) => Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }>
   loadLibrary: (force?: boolean) => Promise<void>
 
-  // Follow/unfollow someone else's playlist (see FollowedPlaylist) — a local
+  // Follow/unfollow someone else's playlist (see FollowedPlaylist) � a local
   // pointer, not a copy. followPlaylist is idempotent (following twice just
   // refreshes the cached display fields). updateFollowedPlaylistMeta patches
   // the cached name/trackCount/coverUrl after a live re-fetch; no-op if the
@@ -751,7 +748,7 @@ interface AppActions {
 
 export type AppStore = QueueSlice & AppState & AppActions
 
-// ─── Store ────────────────────────────────────────────────────────────────────
+// --- Store --------------------------------------------------------------------
 
 // Dedup flag: prevents concurrent /playlists/ fetches
 let _playlistsInFlight = false
@@ -760,36 +757,43 @@ let _playlistsInFlight = false
 let _detailsPrefetchInFlight = false
 // Dedup flag: same idea for the Tracker/Files offline-cache warm-up
 let _apiPrefetchInFlight = false
+// Shares one loadAccount() run across overlapping callers instead of each
+// re-running the whole sync (and its handful of PATCH /me/ pushes) from
+// scratch — App.tsx alone calls loadAccount() from two separate mount
+// effects, and React 18 StrictMode double-invokes both in dev, so without
+// this a cold load could fire the sync 3-4x and turn 3 PATCH /me/ requests
+// into 9-12.
+let _loadAccountInFlight: Promise<void> | null = null
 
-// ── Offline-sync concurrency guards ──────────────────────────────────────────
+// -- Offline-sync concurrency guards ------------------------------------------
 // syncOfflinePlaylists fires from three places (startup, every window focus,
 // a 15-min interval) with nothing stopping them from overlapping. Overlapping
 // runs each snapshot `offlineTracks` at their start, so both would download
-// the same missing songs — two streams writing the same file — and re-announce
+// the same missing songs � two streams writing the same file � and re-announce
 // downloads the user already saw ("my playlists redownload on their own").
 let _offlineSyncInFlight = false
 // Serializes offline writers per playlist key. Without this, a manual download,
 // a background resync, and autoDownloadIfOffline can interleave for the same
 // playlist; whichever finishes last saves its (possibly stale) song list, and
 // offline-set-playlist's prune then deletes freshly-downloaded files that the
-// stale list doesn't mention — which the next resync dutifully re-downloads.
+// stale list doesn't mention � which the next resync dutifully re-downloads.
 const _offlineKeyQueues = new Map<string, Promise<void>>()
 // Bumped by removePlaylistOffline. A download that started before the bump
-// aborts instead of running offlineSetPlaylist at its end — otherwise removing
+// aborts instead of running offlineSetPlaylist at its end � otherwise removing
 // a playlist while a sync was in flight re-registered ("resurrected") it, and
 // since removal had already pruned its files, the next background sync
 // re-downloaded the entire playlist unprompted.
 const _offlineKeyEpochs = new Map<string, number>()
 
 // Pending cover-art results awaiting a batched flush (see applyLibraryArt).
-// Covers arrive in bursts — one per visible row — and applying each through
+// Covers arrive in bursts � one per visible row � and applying each through
 // its own set() meant a full libraryTracks copy and list re-render per cover.
 let _pendingArt: Map<string, string | null> | null = null
 
-// ─── Song preferences helpers ─────────────────────────────────────────────────
+// --- Song preferences helpers -------------------------------------------------
 
 /** Merges `patch` into one song's row, dropping the row once nothing is left
- *  on it. Pure — callers persist the result through _setSongPrefs. */
+ *  on it. Pure � callers persist the result through _setSongPrefs. */
 function patchPrefMap(prefs: SongPrefMap, songId: number, patch: SongPrefPatch): SongPrefMap {
   const merged = { ...(prefs[songId] ?? emptySongPref(songId)), ...patch }
   const next = { ...prefs }
@@ -806,7 +810,7 @@ function patchPrefMap(prefs: SongPrefMap, songId: number, patch: SongPrefPatch):
 function applyPrefToTrack(track: Track, pref: SongPreference | undefined): Track {
   // Mirrors songToTrack: user cover first, then a rotated suggestion (only
   // ever set while the rotate-covers setting is on), then an era cover
-  // override (unreleased songs only — track.genre holds the API category for
+  // override (unreleased songs only � track.genre holds the API category for
   // jw- tracks), then the song's own art.
   const songId = userApi.trackIdToSongId(track.id)
   const coverUrl = resolvePrefCoverUrl(pref?.cover_url)
@@ -821,7 +825,7 @@ function applyPrefToTrack(track: Track, pref: SongPreference | undefined): Track
 }
 
 /** Hydrates the persisted preferences and seeds lib/songPrefs' cache with them
- *  before any song → Track conversion can happen, so overrides survive a
+ *  before any song ? Track conversion can happen, so overrides survive a
  *  restart and apply to the very first render. */
 function hydrateSongPrefs(): SongPrefMap {
   const stored = ls.get<SongPrefMap>('songPrefs') ?? {}
@@ -840,7 +844,7 @@ function hydrateListeningPlays(): ListeningPlayEvent[] {
 }
 
 /** Loads the persisted custom skins and seeds lib/skins' module cache with them
- *  before the store's `theme` initializer resolves the active id via getSkin —
+ *  before the store's `theme` initializer resolves the active id via getSkin �
  *  so a saved custom skin is the active look on the very first paint. */
 function hydrateCustomSkins(): Skin[] {
   const stored = ls.get<Skin[]>('customSkins') ?? []
@@ -852,15 +856,15 @@ function hydrateCustomSkins(): Skin[] {
   return valid
 }
 
-// ─── Report outbox helpers ────────────────────────────────────────────────────
+// --- Report outbox helpers ----------------------------------------------------
 
 // Guards _flushReports against overlapping runs (boot + login + a fresh submit
-// can all fire it close together) — without this, the same queued report could
+// can all fire it close together) � without this, the same queued report could
 // be POSTed twice before the first response removed it.
 let _reportsFlushing = false
 
 // A pop-out's own _flushReports call is always a no-op (see IS_FLOAT_WINDOW
-// above) — delivery actually happens in the main window after `pendingReports`
+// above) � delivery actually happens in the main window after `pendingReports`
 // syncs over (see windowSync.ts), and the outcome syncs back the same way. So
 // instead of claiming "queued" the instant a pop-out enqueues (true then, but
 // misleading seconds later once it's actually gone through), wait briefly for
@@ -880,17 +884,18 @@ function waitForReportSettled(id: string, timeoutMs = 8000): Promise<boolean> {
   })
 }
 
-// ─── Profile-blob push debounce ───────────────────────────────────────────────
+// --- Profile-blob push debounce -----------------------------------------------
 
-// Preferences and folders each live as one JSON field on /account/me/, PATCHed
-// whole. Debouncing collapses a burst of edits (typing a rename, a run of
-// playcount bumps) into a single PATCH instead of one request per keystroke.
-// Failures are swallowed: state is local-first, and the next push — or the
-// next login's merge — re-sends everything anyway.
+// Preferences, listening plays, and folders each live as one JSON field on
+// /account/me/, PATCHed whole. A single shared timer/dirty-set collapses a
+// burst of edits across ANY of the three fields (typing a rename, a run of
+// playcount bumps, a song skip that touches both prefs and listening plays)
+// into one combined PATCH instead of one request per field. Failures are
+// swallowed: state is local-first, and the next push � or the next login's
+// merge � re-sends everything anyway.
 const PROFILE_PUSH_DEBOUNCE_MS = 1500
-let _prefsPushTimer: ReturnType<typeof setTimeout> | null = null
-let _listeningPlaysPushTimer: ReturnType<typeof setTimeout> | null = null
-let _foldersPushTimer: ReturnType<typeof setTimeout> | null = null
+let _profilePushTimer: ReturnType<typeof setTimeout> | null = null
+let _profilePushDirty = { songPrefs: false, listeningPlays: false, folders: false }
 
 // Chains `fn` behind any in-flight offline work for `key` so writers for the
 // same playlist never interleave.
@@ -902,7 +907,7 @@ function enqueueOfflineWork(key: string, fn: () => Promise<void>): Promise<void>
   return run
 }
 
-// ── M3U import helpers (shared by the file-picker and drag-drop paths) ──────
+// -- M3U import helpers (shared by the file-picker and drag-drop paths) ------
 // Match parsed .m3u entries against scanned library tracks by file path.
 // Library paths are the source of truth; the .m3u may use either slash style
 // or differ in case (Windows is case-insensitive), so normalise both sides.
@@ -949,11 +954,11 @@ function commitM3uImport(
 }
 
 export const useStore = create<AppStore>((set, get, store) => ({
-  // ── Queue slice (all queue + playback logic) ───────────────────────────────
+  // -- Queue slice (all queue + playback logic) -------------------------------
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ...createQueueSlice(set, get, store as any),
 
-  // ── Playback extras ───────────────────────────────────────────────────────
+  // -- Playback extras -------------------------------------------------------
   currentTrackFull: null,
   volume: ls.get<number>('volume') ?? 0.8,
   playbackSpeed: ls.get<number>('playbackSpeed') ?? 1,
@@ -970,7 +975,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setPlaybackSpeed: (speed) => { set({ playbackSpeed: speed }); ls.set('playbackSpeed', speed) },
   setLyricsOffset: (offset) => { set({ lyricsOffset: offset }); ls.set('lyricsOffset', offset) },
 
-  // ── Equalizer / audio effects ─────────────────────────────────────────────
+  // -- Equalizer / audio effects ---------------------------------------------
   eqEnabled: ls.get<boolean>('eqEnabled') ?? false,
   // Sanitize the stored array against the band list so a build that changes
   // EQ_BANDS can't leave a mismatched gains length behind.
@@ -1002,7 +1007,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setEqMono: (eqMono) => { set({ eqMono }); ls.set('eqMono', eqMono) },
   setEqBoost: (eqBoost) => { set({ eqBoost }); ls.set('eqBoost', eqBoost) },
   setSkipSilence: (skipSilence) => { set({ skipSilence }); ls.set('skipSilence', skipSilence) },
-  // 'slowedReverb' is the feature's short-lived bundled-toggle predecessor —
+  // 'slowedReverb' is the feature's short-lived bundled-toggle predecessor �
   // carry an existing on-state over so it doesn't silently switch off.
   reverbEnabled: ls.get<boolean>('reverbEnabled') ?? ls.get<boolean>('slowedReverb') ?? false,
   reverbMix: ls.get<number>('reverbMix') ?? 0.4,
@@ -1022,34 +1027,34 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
     if (abLoopEnd == null) {
       // A loop shorter than this reads as a stutter rather than a musical
-      // phrase — and clicking "B" at (accidentally) almost the same spot as
+      // phrase � and clicking "B" at (accidentally) almost the same spot as
       // "A" is the easy mistake this guards against. Treat a too-close click
       // as re-picking point A there instead of creating a degenerate loop.
       const MIN_LOOP_S = 0.5
       if (currentTime > abLoopStart + MIN_LOOP_S) {
         set({ abLoopEnd: currentTime })
       } else if (currentTime < abLoopStart - MIN_LOOP_S) {
-        // Clicked "B" earlier in the track than "A" — swap so start < end.
+        // Clicked "B" earlier in the track than "A" � swap so start < end.
         set({ abLoopStart: currentTime, abLoopEnd: abLoopStart })
       } else {
         set({ abLoopStart: currentTime })
       }
       return
     }
-    // Both already set — third press clears it.
+    // Both already set � third press clears it.
     set({ abLoopStart: null, abLoopEnd: null })
   },
   clearAbLoop: () => set({ abLoopStart: null, abLoopEnd: null }),
   communityEdits: [],
   // A community edit is a real audio file, so playing one goes through the
-  // normal queue machinery as a single-track play — the effects chain, prefs,
+  // normal queue machinery as a single-track play � the effects chain, prefs,
   // scrobbling etc. all apply to it like any other track.
   playCommunityEdit: (edit) => {
     const track: Track = {
       id: `community-edit-${edit.id}`,
       path: edit.path,
       title: edit.name,
-      artist: edit.author ? `Community edit · ${edit.author}` : 'Community edit',
+      artist: edit.author ? `Community edit � ${edit.author}` : 'Community edit',
       album: '',
       albumArtist: '',
       year: null,
@@ -1063,7 +1068,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     get().playTrack(track, [track])
   },
 
-  // ── UI ────────────────────────────────────────────────────────────────────
+  // -- UI --------------------------------------------------------------------
   activeView: 'api-tracker',
   previousView: null,
   showNowPlaying: false,
@@ -1084,7 +1089,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   radioFmUpNext: null,
   radioFmQueuePreview: [],
   radioFmMatchedSong: null,
-  // Seeds lib/skins' cache as a side effect — MUST stay above `theme` so a
+  // Seeds lib/skins' cache as a side effect � MUST stay above `theme` so a
   // persisted custom skin id resolves (getSkin) instead of falling back to dark.
   customSkins: hydrateCustomSkins(),
   // getSkin() maps unknown persisted ids (renamed/removed skins) back to dark.
@@ -1136,7 +1141,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setRadioFmQueuePreview: (radioFmQueuePreview) => set({ radioFmQueuePreview }),
   setRadioFmMatchedSong: (radioFmMatchedSong) => set({ radioFmMatchedSong }),
   setShowSettings: (showSettings) => {
-    // Desktop: Settings lives in its own pop-out window (see FloatApp) — every
+    // Desktop: Settings lives in its own pop-out window (see FloatApp) � every
     // "open settings" path routes there, unless the user turned that pop-out
     // off. The in-app overlay is the fallback (and the only path on the web
     // build, where there are no extra OS windows).
@@ -1161,8 +1166,8 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const el = (window as any).electron
     if (el?.toggleFloatWindow && get().popoutWindows.settings) {
       // The pop-out's open/closed state lives in the main process (it's a
-      // separate window), not in this renderer's `showSettings` — which
-      // never flips true in pop-out mode — so main decides open vs. close.
+      // separate window), not in this renderer's `showSettings` � which
+      // never flips true in pop-out mode � so main decides open vs. close.
       el.toggleFloatWindow('settings')
       return
     }
@@ -1175,7 +1180,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       el.openFloatWindow('profile')
       return
     }
-    // Which profile view depends on the account's roles, not on the caller —
+    // Which profile view depends on the account's roles, not on the caller �
     // staffProfileView is the same helper the sidebar/bottom-nav tabs label
     // themselves from, so the two can't drift apart.
     const view = userApi.staffProfileView(get().account)
@@ -1192,7 +1197,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowQueue: (showQueue) => set({ showQueue }),
   setShowEqPanel: (showEqPanel) => set({ showEqPanel }),
   setOpenFloatViews: (openFloatViews) => {
-    // The equalizer just popped out — retire the in-app copy so the two can
+    // The equalizer just popped out � retire the in-app copy so the two can
     // never be on screen at once (they drive the same synced state).
     const dismissInApp = openFloatViews.includes('equalizer') && get().showEqPanel
     set(dismissInApp ? { openFloatViews, showEqPanel: false } : { openFloatViews })
@@ -1201,7 +1206,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const { openFloatViews, showEqPanel, popoutWindows } = get()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const el = (window as any).electron
-    // "Open equalizer as a pop-out by default" is on — the button opens/closes
+    // "Open equalizer as a pop-out by default" is on � the button opens/closes
     // its own window instead of the in-app popover.
     if (popoutWindows.equalizer && el?.toggleFloatWindow) {
       el.toggleFloatWindow('equalizer')
@@ -1209,7 +1214,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       return
     }
     // Popover mode, but a pop-out window is already open (opened manually via
-    // the panel's detach button) — focus it rather than duplicating the panel.
+    // the panel's detach button) � focus it rather than duplicating the panel.
     if (openFloatViews.includes('equalizer')) {
       el?.openFloatWindow?.('equalizer')
       if (showEqPanel) set({ showEqPanel: false })
@@ -1227,7 +1232,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const next = idx >= 0 ? list.map((s) => (s.id === skin.id ? skin : s)) : [...list, skin]
     set({ customSkins: next })
     ls.set('customSkins', next)
-    // Keep the module cache getSkin() reads in step — the theme effect reruns
+    // Keep the module cache getSkin() reads in step � the theme effect reruns
     // on this state change and repaints from the cache (live preview when the
     // edited skin is the active one).
     setCustomSkinsCache(next)
@@ -1254,7 +1259,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('navControlVisibility', navControlVisibility)
   },
 
-  // ── Settings ──────────────────────────────────────────────────────────────
+  // -- Settings --------------------------------------------------------------
   crossfadeEnabled: ls.get<boolean>('crossfadeEnabled') ?? false,
   crossfadeDuration: ls.get<number>('crossfadeDuration') ?? 5,
   pauseFadeEnabled: ls.get<boolean>('pauseFadeEnabled') ?? false,
@@ -1308,7 +1313,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // rather than at the next track change.
     resetCoverRotation()
     const { queue, currentTrack, currentTrackFull, songPrefs } = get()
-    // Only API songs — a local file has no apiImageUrl to fall back on, so
+    // Only API songs � a local file has no apiImageUrl to fall back on, so
     // running it through applyPrefToTrack would blank its album art.
     const redraw = (t: Track): Track => {
       const id = userApi.trackIdToSongId(t.id)
@@ -1355,7 +1360,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   _maybeRotateCover: (songId) => {
     if (!get().rotateSuggestedCovers) return
-    // A cover the user picked always wins — rotation fills gaps, it doesn't
+    // A cover the user picked always wins � rotation fills gaps, it doesn't
     // override choices.
     if (get().songPrefs[songId]?.cover_url) return
     advanceRotatedCover(songId)
@@ -1397,7 +1402,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
     }
     const action = HOTKEY_ACTIONS.find((a) => a.id === actionId)
-    // Store an override only when it differs from the default — if the user
+    // Store an override only when it differs from the default � if the user
     // sets it back to the default (or clears one that had no default), drop the
     // entry entirely so the persisted map stays minimal.
     if (combo === (action?.defaultBinding ?? '')) delete next[actionId]
@@ -1413,7 +1418,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const current = get().globalHotkeyBindings
     const next = { ...current }
     // Same one-combo-one-action rule as setHotkeyBinding, but scoped to the
-    // global namespace — an in-app and a global binding are free to share a
+    // global namespace � an in-app and a global binding are free to share a
     // combo since they're delivered through entirely different paths.
     if (combo) {
       for (const a of HOTKEY_ACTIONS) {
@@ -1426,7 +1431,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('globalHotkeyBindings', next)
   },
 
-  // ── Liked songs ───────────────────────────────────────────────────────────
+  // -- Liked songs -----------------------------------------------------------
   likedTrackIds: ls.get<string[]>('likedTrackIds') ?? [],
 
   toggleLike: (trackId) => {
@@ -1454,14 +1459,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
 
-  // ── Song preferences ──────────────────────────────────────────────────────
+  // -- Song preferences ------------------------------------------------------
   songPrefs: hydrateSongPrefs(),
   listeningPlays: hydrateListeningPlays(),
 
   // Every write lands in three places: Zustand state (so React re-renders),
   // localStorage (so overrides survive a restart and work logged out), and
-  // lib/songPrefs' module cache (so songToTrack — which can't import this
-  // store without a cycle — resolves overrides for Tracks built later).
+  // lib/songPrefs' module cache (so songToTrack � which can't import this
+  // store without a cycle � resolves overrides for Tracks built later).
   _setSongPrefs: (next) => {
     set({ songPrefs: next })
     ls.set('songPrefs', next)
@@ -1478,20 +1483,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
       queue: queue.map((t: Track) => (t.id === trackId ? applyPrefToTrack(t, pref) : t)),
       currentTrack: newCurrentTrack,
       // currentTrackFull is a separate snapshot (lyrics/metadata) that Player
-      // only rebuilds when the track id changes — without this fan-out a cover
+      // only rebuilds when the track id changes � without this fan-out a cover
       // change wouldn't show until the song replayed, same reasoning as
       // updateLibraryTrack's currentTrackFull sync above.
       ...(isCurrentTrack && currentTrackFull ? { currentTrackFull: { ...currentTrackFull, albumArt: newCurrentTrack?.imageUrl ?? null } } : {}),
     })
-  },
-
-  _schedulePrefsPush: () => {
-    if (!get().account || !preferencesApi.preferencesApiEnabled) return
-    if (_prefsPushTimer) clearTimeout(_prefsPushTimer)
-    _prefsPushTimer = setTimeout(() => {
-      _prefsPushTimer = null
-      preferencesApi.pushPreferences(Object.values(get().songPrefs)).catch(() => {})
-    }, PROFILE_PUSH_DEBOUNCE_MS)
   },
 
   _setListeningPlays: (next) => {
@@ -1499,12 +1495,20 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('listeningPlays', next)
   },
 
-  _scheduleListeningPlaysPush: () => {
+  _scheduleProfilePush: (fields) => {
     if (!get().account || !preferencesApi.preferencesApiEnabled) return
-    if (_listeningPlaysPushTimer) clearTimeout(_listeningPlaysPushTimer)
-    _listeningPlaysPushTimer = setTimeout(() => {
-      _listeningPlaysPushTimer = null
-      preferencesApi.pushListeningPlays(get().listeningPlays).catch(() => {})
+    for (const f of fields) _profilePushDirty[f] = true
+    if (_profilePushTimer) clearTimeout(_profilePushTimer)
+    _profilePushTimer = setTimeout(() => {
+      _profilePushTimer = null
+      const dirty = _profilePushDirty
+      _profilePushDirty = { songPrefs: false, listeningPlays: false, folders: false }
+      const state = get()
+      profilePushApi.pushProfile({
+        songPrefs: dirty.songPrefs ? Object.values(state.songPrefs) : undefined,
+        listeningPlays: dirty.listeningPlays ? state.listeningPlays : undefined,
+        folders: dirty.folders ? state.playlistFolders : undefined,
+      }).catch(() => {})
     }, PROFILE_PUSH_DEBOUNCE_MS)
   },
 
@@ -1512,9 +1516,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
     get()._setSongPrefs(patchPrefMap(get().songPrefs, songId, patch))
     if (patch.name !== undefined || patch.cover_url !== undefined) get()._reapplySongPref(songId)
     // No rollback on push failure: the local write is already durable, and the
-    // profile blob is replaced wholesale on the next push or login merge — a
+    // profile blob is replaced wholesale on the next push or login merge � a
     // transient PATCH failure shouldn't undo an edit the user just made.
-    get()._schedulePrefsPush()
+    get()._scheduleProfilePush(['songPrefs'])
   },
 
   setSongName: (songId, name) => get()._writeSongPref(songId, { name: normalizePrefText(name) }),
@@ -1528,7 +1532,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     delete next[songId]
     get()._setSongPrefs(next)
     get()._reapplySongPref(songId)
-    get()._schedulePrefsPush()
+    get()._scheduleProfilePush(['songPrefs'])
   },
 
   bumpSongPlaycount: (songId) => {
@@ -1537,11 +1541,10 @@ export const useStore = create<AppStore>((set, get, store) => ({
     // increment), so this device just bumps locally and the debounced push
     // sends its totals; login merges take max() per song across devices so
     // one device's push can't erase plays made on another. The play *event*
-    // appended alongside it is additive instead — merges union the two sides.
+    // appended alongside it is additive instead � merges union the two sides.
     get()._setSongPrefs(patchPrefMap(prefs, songId, { playcount: (prefs[songId]?.playcount ?? 0) + 1 }))
     get()._setListeningPlays(appendListeningPlay(get().listeningPlays, songId))
-    get()._schedulePrefsPush()
-    get()._scheduleListeningPlaysPush()
+    get()._scheduleProfilePush(['songPrefs', 'listeningPlays'])
   },
 
   syncSongPrefs: async (serverPrefs) => {
@@ -1551,7 +1554,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const local = get().songPrefs
       const merged: SongPrefMap = {}
       // The profile's copy wins for override fields (another device may have
-      // edited them since this one last pushed) — except playcount, where
+      // edited them since this one last pushed) � except playcount, where
       // max() is the only merge that never loses plays made here offline.
       for (const row of rows) {
         const mine = local[row.song]
@@ -1565,7 +1568,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
         if (!merged[pref.song]) merged[pref.song] = pref
       }
       get()._setSongPrefs(merged)
-      await preferencesApi.pushPreferences(Object.values(merged)).catch(() => {})
+      // Goes through the shared debounced scheduler rather than pushing
+      // immediately — loadAccount calls this alongside syncListeningPlays and
+      // syncFolders right after, and routing all three through the same
+      // timer collapses what used to be three separate login-time PATCHes
+      // into one.
+      get()._scheduleProfilePush(['songPrefs'])
     } catch {}
   },
 
@@ -1577,11 +1585,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
         .filter((row): row is ListeningPlayEvent => row != null)
       const merged = mergeListeningPlays(get().listeningPlays, serverRows)
       get()._setListeningPlays(merged)
-      await preferencesApi.pushListeningPlays(merged).catch(() => {})
+      get()._scheduleProfilePush(['listeningPlays'])
     } catch {}
   },
 
-  // ── Reports (feedback + song issue reports) ────────────────────────────────
+  // -- Reports (feedback + song issue reports) --------------------------------
   pendingReports: ls.get<PendingReport[]>('pendingReports') ?? [],
   reportModal: null,
   convertModal: null,
@@ -1610,7 +1618,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ pendingReports: next })
     ls.set('pendingReports', next)
     // This window's own flush is a no-op in a pop-out (only the main window
-    // sends) — the enqueue above syncs to it over windowSync, which flushes on
+    // sends) � the enqueue above syncs to it over windowSync, which flushes on
     // receipt and syncs the outcome back. Wait for that instead of the local
     // (always-empty) flush, so the pop-out doesn't report "queued" instantly
     // even for one about to be delivered a moment later.
@@ -1633,7 +1641,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   reportSong: async (songId, songName, issues, message, contact) => {
     // A report needs at least a flagged issue or a written note to be worth
-    // sending — the form enforces this too, but guard here so no empty report
+    // sending � the form enforces this too, but guard here so no empty report
     // can reach the outbox.
     if (issues.length === 0 && !message.trim()) return false
     return get()._enqueueReport({
@@ -1667,13 +1675,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
           const contact = report.contact || get().account?.discord_username || undefined
           if (report.kind === 'feedback') await reportsApi.submitFeedback(report, contact)
           else await reportsApi.submitSongReport(report, contact)
-          // Delivered — drop it, re-reading current state so a report queued
+          // Delivered � drop it, re-reading current state so a report queued
           // mid-flush isn't lost.
           const remaining = get().pendingReports.filter((r) => r.id !== report.id)
           set({ pendingReports: remaining })
           ls.set('pendingReports', remaining)
         } catch {
-          // Delivery failed — count the attempt so a permanently-rejected
+          // Delivery failed � count the attempt so a permanently-rejected
           // report eventually stops auto-retrying (see MAX_REPORT_ATTEMPTS).
           const bumped = get().pendingReports.map((r) =>
             r.id === report.id ? { ...r, attempts: r.attempts + 1 } : r,
@@ -1687,21 +1695,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
 
-  // ── Playlist folders ───────────────────────────────────────────────────────
+  // -- Playlist folders -------------------------------------------------------
   playlistFolders: ls.get<PlaylistFolder[]>('playlistFolders') ?? [],
 
   _setFolders: (next) => {
     set({ playlistFolders: next })
     ls.set('playlistFolders', next)
-  },
-
-  _scheduleFoldersPush: () => {
-    if (!get().account || !foldersApi.foldersApiEnabled) return
-    if (_foldersPushTimer) clearTimeout(_foldersPushTimer)
-    _foldersPushTimer = setTimeout(() => {
-      _foldersPushTimer = null
-      foldersApi.pushFolders(get().playlistFolders).catch(() => {})
-    }, PROFILE_PUSH_DEBOUNCE_MS)
   },
 
   createFolder: (name, playlistKeys = []) => {
@@ -1717,7 +1716,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }))
     const folder: PlaylistFolder = { id, name: clean, playlistKeys: [...seed], createdAt: now, updatedAt: now }
     get()._setFolders([...existing, folder])
-    get()._scheduleFoldersPush()
+    get()._scheduleProfilePush(['folders'])
     return id
   },
 
@@ -1728,26 +1727,26 @@ export const useStore = create<AppStore>((set, get, store) => ({
       f.id === id ? { ...f, name: clean, updatedAt: Date.now() } : f,
     )
     get()._setFolders(next)
-    get()._scheduleFoldersPush()
+    get()._scheduleProfilePush(['folders'])
   },
 
   deleteFolder: (id) => {
     get()._setFolders(get().playlistFolders.filter((f) => f.id !== id))
-    get()._scheduleFoldersPush()
+    get()._scheduleProfilePush(['folders'])
   },
 
   movePlaylistsToFolder: (playlistKeys, folderId) => {
     const moving = new Set(playlistKeys)
     const now = Date.now()
     const next = get().playlistFolders.map((f) => {
-      // Remove the moving keys from every folder first…
+      // Remove the moving keys from every folder first�
       const without = f.playlistKeys.filter((k) => !moving.has(k))
-      // …then append them to the target (dedup preserved by the removal above).
+      // �then append them to the target (dedup preserved by the removal above).
       if (f.id === folderId) return { ...f, playlistKeys: [...without, ...playlistKeys], updatedAt: now }
       return without.length === f.playlistKeys.length ? f : { ...f, playlistKeys: without, updatedAt: now }
     })
     get()._setFolders(next)
-    get()._scheduleFoldersPush()
+    get()._scheduleProfilePush(['folders'])
   },
 
   pruneFolders: (validKeys) => {
@@ -1763,12 +1762,12 @@ export const useStore = create<AppStore>((set, get, store) => ({
       if (server.length === 0) {
         // Nothing on the account yet — push what's here so this device's
         // folders become the starting point.
-        if (local.length > 0) await foldersApi.pushFolders(local).catch(() => {})
+        if (local.length > 0) get()._scheduleProfilePush(['folders'])
         return
       }
       // The profile's list is the source of truth for synced-playlist
       // membership. Folder ids are client-generated and round-trip through
-      // the blob unchanged, so a same-id local folder IS the same folder —
+      // the blob unchanged, so a same-id local folder IS the same folder �
       // re-attach its device-local ("local:") members, which the server
       // never stores.
       const localById = new Map(local.map((f) => [f.id, f]))
@@ -1784,9 +1783,9 @@ export const useStore = create<AppStore>((set, get, store) => ({
         }
       })
       // A local folder the server doesn't know: if it holds ONLY device-local
-      // members it's a device-only folder — keep it. If it holds synced
+      // members it's a device-only folder � keep it. If it holds synced
       // members, its absence from the profile means another device deleted it
-      // after this device last pushed — honour the delete by dropping it.
+      // after this device last pushed � honour the delete by dropping it.
       const serverIds = new Set(server.map((s) => s.id))
       for (const f of local) {
         const hasLocal = f.playlistKeys.some((k) => k.startsWith('local:'))
@@ -1794,11 +1793,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
         if (!serverIds.has(f.id) && hasLocal && !hasApi) merged.push(f)
       }
       get()._setFolders(merged)
-      await foldersApi.pushFolders(merged).catch(() => {})
+      get()._scheduleProfilePush(['folders'])
     } catch {}
   },
 
-  // ── API tracker extras ────────────────────────────────────────────────────
+  // -- API tracker extras ----------------------------------------------------
   apiTrackerCategory: '',
   apiTrackerEra: '',
   apiFilesPath: '',
@@ -1823,7 +1822,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('activeChannel', next)
   },
 
-  // ── Account ───────────────────────────────────────────────────────────────
+  // -- Account ---------------------------------------------------------------
   account: null,
   playlists: [],
   showUserAuth: false,
@@ -1841,48 +1840,57 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setShowUserAuth: (showUserAuth) => set({ showUserAuth }),
 
   loadAccount: async () => {
-    if (!userApi.getToken()) return
-    try {
-      const account = await userApi.getMe()
-      set({ account })
-    } catch (err) {
-      // Only clear token on auth errors — network/server errors should not log the user out
-      const msg = String(err)
-      if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized') || msg.includes('Forbidden')) {
-        userApi.clearToken()
-        set({ account: null, playlists: [] })
+    // Overlapping callers (see the flag's comment above) await the same run
+    // instead of each kicking off their own -- the GET /me itself dedupes via
+    // apiClient's in-flight map, but the PATCH /me pushes further down don't
+    // (only GETs with a cacheKey do), so without this each duplicate caller
+    // was pushing prefs/plays/folders all over again.
+    if (_loadAccountInFlight) return _loadAccountInFlight
+    _loadAccountInFlight = (async () => {
+      if (!userApi.getToken()) return
+      try {
+        const account = await userApi.getMe()
+        set({ account })
+      } catch (err) {
+        // Only clear token on auth errors � network/server errors should not log the user out
+        const msg = String(err)
+        if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized') || msg.includes('Forbidden')) {
+          userApi.clearToken()
+          set({ account: null, playlists: [] })
+        }
+        return
       }
-      return
-    }
-    try {
-      const favorites = await userApi.getFavorites()
-      const serverIds = favorites.map((f) => `jw-${f.song.id}`)
-      const localOnly = get().likedTrackIds.filter((id) => !serverIds.includes(id))
-      await Promise.all(
-        localOnly
-          .map((id) => userApi.trackIdToSongId(id))
-          .filter((sid): sid is number => sid != null)
-          .map((sid) => userApi.addFavorite(sid).catch(() => undefined)),
-      )
-      const merged = Array.from(new Set([...serverIds, ...localOnly]))
-      set({ likedTrackIds: merged })
-      ls.set('likedTrackIds', merged)
-    } catch {}
-    // The preference/folder blobs ride on the getMe() response — merge them
-    // with local state and push the result back, no extra requests needed.
-    const profile = get().account
-    await get().syncSongPrefs(profile?.user_preferences)
-    get().syncListeningPlays(profile?.listening_plays)
-    get().syncFolders(profile?.playlist_folders)
-    // Deliver any reports queued while signed out — a logged-in flush can
-    // attach the account's Discord username as the contact field.
-    get()._flushReports()
-    await get().refreshPlaylists()
-    // Fire-and-forget: warm playlist tracks + covers in the background so the
-    // Playlists page is ready before the user ever navigates to it. Two
-    // requests per playlist, so it waits for idle rather than piling onto the
-    // startup burst.
-    runWhenIdle(() => { get().prefetchPlaylistDetails() })
+      try {
+        const favorites = await userApi.getFavorites()
+        const serverIds = favorites.map((f) => `jw-${f.song.id}`)
+        const localOnly = get().likedTrackIds.filter((id) => !serverIds.includes(id))
+        await Promise.all(
+          localOnly
+            .map((id) => userApi.trackIdToSongId(id))
+            .filter((sid): sid is number => sid != null)
+            .map((sid) => userApi.addFavorite(sid).catch(() => undefined)),
+        )
+        const merged = Array.from(new Set([...serverIds, ...localOnly]))
+        set({ likedTrackIds: merged })
+        ls.set('likedTrackIds', merged)
+      } catch {}
+      // The preference/folder blobs ride on the getMe() response � merge them
+      // with local state and push the result back, no extra requests needed.
+      const profile = get().account
+      await get().syncSongPrefs(profile?.user_preferences)
+      get().syncListeningPlays(profile?.listening_plays)
+      get().syncFolders(profile?.playlist_folders)
+      // Deliver any reports queued while signed out � a logged-in flush can
+      // attach the account's Discord username as the contact field.
+      get()._flushReports()
+      await get().refreshPlaylists()
+      // Fire-and-forget: warm playlist tracks + covers in the background so the
+      // Playlists page is ready before the user ever navigates to it. Two
+      // requests per playlist, so it waits for idle rather than piling onto the
+      // startup burst.
+      runWhenIdle(() => { get().prefetchPlaylistDetails() })
+    })().finally(() => { _loadAccountInFlight = null })
+    return _loadAccountInFlight
   },
 
   loginWithDiscord: async () => {
@@ -1895,7 +1903,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     try { window.sessionStorage.setItem('discord_oauth_state', state) } catch {}
     const el = (window as any).electron
     if (el?.openDiscordLogin) {
-      // Electron: open a popup BrowserWindow — intercepts the OAuth callback
+      // Electron: open a popup BrowserWindow � intercepts the OAuth callback
       const result = await el.openDiscordLogin(authorize_url) as { code: string; state: string } | null
       if (result?.code && result?.state) {
         await get().completeDiscordLogin(result.code, result.state)
@@ -1924,7 +1932,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     await userApi.logout()
     const localLikes = ls.get<string[]>('likedTrackIds') ?? []
     set({ account: null, playlists: [], likedTrackIds: localLikes })
-    // Overrides stay on this device after signing out, the same way likes do —
+    // Overrides stay on this device after signing out, the same way likes do �
     // they're re-merged upward on the next login.
     get()._setSongPrefs(ls.get<SongPrefMap>('songPrefs') ?? {})
     // Play history does NOT stay: unlike a rename or a cover override, it's a
@@ -1946,7 +1954,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   // Warm the in-memory (and, via the API layer, localStorage) caches for every
-  // playlist's tracks + cover right after the summaries load — so opening the
+  // playlist's tracks + cover right after the summaries load � so opening the
   // Playlists page and any individual playlist renders instantly instead of
   // showing a spinner while it fetches. Runs in the background off startup;
   // skips playlists already cached, so repeat calls are cheap and it never
@@ -1965,7 +1973,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
           const p = targets[idx++]
           // getPlaylist warms the track/detail cache; getPlaylistCover warms
           // the cover cache (and no-ops if already cached). Failures are
-          // swallowed — a prefetch miss just means the normal on-open fetch
+          // swallowed � a prefetch miss just means the normal on-open fetch
           // happens later, so it must never surface as an error.
           await userApi.getPlaylist(p.id).catch(() => undefined)
           await userApi.getPlaylistCover(p.id).catch(() => undefined)
@@ -1978,17 +1986,17 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
   // Warm the offline cache for the Tracker and Files views on startup, so those
-  // pages are ready — and render instantly when offline — before the user ever
+  // pages are ready � and render instantly when offline � before the user ever
   // navigates to them. These calls go through apiFetch's cacheKey, which is the
   // same offline fallback the views themselves read from on a network failure,
   // and the URLs/params match the views' own first fetches exactly so the cache
   // keys line up (tracker: stats + eras + first unfiltered song page; files:
-  // the root folder listing). Fire-and-forget and failure-tolerant — a miss
+  // the root folder listing). Fire-and-forget and failure-tolerant � a miss
   // just means the view does its normal fetch later.
   //
   // Anything already in the cache is skipped. This runs at idle, by which point
   // the view that's actually on screen has usually fetched (and cached) three
-  // of these four itself — re-requesting them would make the prefetch a source
+  // of these four itself � re-requesting them would make the prefetch a source
   // of duplicate traffic rather than a way to avoid it. Refreshing a warm entry
   // isn't the job here: every view refetches on open anyway, so a stale cache
   // entry only ever shows for the instant before that lands.
@@ -2013,7 +2021,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
 
-  // ── Editor ────────────────────────────────────────────────────────────────
+  // -- Editor ----------------------------------------------------------------
   pendingCompProposal: null,
   pendingEditorSongId: null,
   pendingEditProposal: null,
@@ -2031,7 +2039,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       el.openFloatWindow('editor', { songId })
       return
     }
-    // Pop-outs render whichever view their URL names — they have no in-app
+    // Pop-outs render whichever view their URL names � they have no in-app
     // router, so setting activeView here would silently do nothing (this is
     // how "Edit" in a pop-out song-info window used to be a dead button).
     // Hand it to the main window instead, same as the attach button does.
@@ -2052,7 +2060,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       el.openFloatWindow('local-editor', { trackId: track.id })
       return
     }
-    // Same dead-button problem as openSongEditor above — a pop-out can't
+    // Same dead-button problem as openSongEditor above � a pop-out can't
     // navigate itself, so the main window opens the editor instead. It looks
     // the track up by id from its own library rather than taking this object.
     if (IS_FLOAT_WINDOW) {
@@ -2065,14 +2073,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
 
 
-  // ── Library ───────────────────────────────────────────────────────────────
+  // -- Library ---------------------------------------------------------------
   libraryTracks: [],
   libraryArt: {},
   libraryLoaded: false,
   libraryFolders: ls.get<string[]>('libraryFolders') ?? [],
   libraryScanning: false,
   libraryLastScanned: ls.get<number>('libraryLastScanned') ?? null,
-  // Off by default — periodic disk scans of a large library aren't free, so
+  // Off by default � periodic disk scans of a large library aren't free, so
   // this is opt-in rather than always re-checking every file's mtime/size.
   libraryAutoRefresh: ls.get<boolean>('libraryAutoRefresh') ?? false,
   developerMode: ls.get<boolean>('developerMode') ?? false,
@@ -2080,7 +2088,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   activeLocalPlaylistId: null,
   followedPlaylists: ls.get<FollowedPlaylist[]>('followedPlaylists') ?? [],
 
-  // ── Offline playlist sync ────────────────────────────────────────────────
+  // -- Offline playlist sync ------------------------------------------------
   offlineTracks: {},
   offlinePlaylists: {},
   offlineSync: {},
@@ -2103,13 +2111,13 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (!el?.deleteLibraryFile || !track) return false
 
     // Stop first when we're deleting what's currently playing: it keeps the app
-    // from "playing" a trashed file, and releases our own read handle — Windows
+    // from "playing" a trashed file, and releases our own read handle � Windows
     // refuses to move a file that's still open. The confirm prompt itself lives
     // in the main process (see the delete-library-file handler).
     if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
 
     const res = await el.deleteLibraryFile(track.filePath)
-    // Cancelled, or the delete failed — main already surfaced the error dialog.
+    // Cancelled, or the delete failed � main already surfaced the error dialog.
     if (!res?.ok) return false
 
     const { libraryTracks, libraryArt, localPlaylists, queue, queueIndex, libraryFolders, libraryLastScanned } = get()
@@ -2146,11 +2154,11 @@ export const useStore = create<AppStore>((set, get, store) => ({
     if (!el?.moveLibraryFile || !track) return false
 
     // Playing the file holds a read handle open, which blocks the rename on
-    // Windows — same reasoning as deleteLibraryTrack.
+    // Windows � same reasoning as deleteLibraryTrack.
     if (get().currentTrack?.id === id && get().isPlaying) get().setIsPlaying(false)
 
     const res = await el.moveLibraryFile(track.filePath)
-    // Cancelled, or the move failed — main already surfaced the error dialog.
+    // Cancelled, or the move failed � main already surfaced the error dialog.
     if (!res?.ok || !res.path) return false
 
     const newPath: string = res.path
@@ -2168,7 +2176,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         ? { ...p, trackIds: p.trackIds.map((t) => t === id ? newId : t) } : p)
       : localPlaylists
     // Clearing streamUrl (rather than rebuilding it) lets the Player re-derive
-    // it from the new path — see its `track.streamUrl ?? toFileUrl(track.path)`.
+    // it from the new path � see its `track.streamUrl ?? toFileUrl(track.path)`.
     const rekey = <T extends { id: string }>(t: T): T =>
       t.id === id ? { ...t, id: newId, path: newPath, streamUrl: undefined } : t
     set({
@@ -2185,7 +2193,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   },
   updateLibraryTrack: (id, updates) => set((s) => {
     const artChanged = updates.albumArt !== undefined
-    // Cover art lives in libraryArt, never on the track objects — keep the
+    // Cover art lives in libraryArt, never on the track objects � keep the
     // track list metadata-only so it stays cheap to copy and persist. Route an
     // art edit into the map (the channel thumbnails subscribe to) instead.
     const { albumArt, ...meta } = updates
@@ -2205,7 +2213,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       : s.currentTrackFull
     return { libraryTracks: newLib, libraryArt, queue: newQueue, currentTrack: newCurrentTrack, currentTrackFull: newCurrentTrackFull }
   }),
-  // Batched form of updateLibraryTrack(id, { albumArt }) — collects results
+  // Batched form of updateLibraryTrack(id, { albumArt }) � collects results
   // for a frame's worth of time and applies them in ONE set(), with the same
   // queue/currentTrack art fan-out.
   applyLibraryArt: (id, art) => {
@@ -2216,7 +2224,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         _pendingArt = null
         if (!batch || batch.size === 0) return
         set((s) => {
-          // Covers land in their own map — NOT in libraryTracks — so a burst of
+          // Covers land in their own map � NOT in libraryTracks � so a burst of
           // streaming covers never rebuilds the (potentially multi-thousand
           // entry) track array or invalidates the album/artist/song memos that
           // key on it. Only the per-id thumbnail subscribers re-render.
@@ -2274,7 +2282,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     set({ libraryScanning: true })
     try {
       // Passing the previous scan's tracks lets the main process skip
-      // re-parsing tags for files whose size/mtime haven't changed — makes
+      // re-parsing tags for files whose size/mtime haven't changed � makes
       // this cheap enough to run automatically (see libraryAutoRefresh)
       // instead of only on an explicit "Scan Now" click.
       const result = await el.scanLibrary(libraryFolders, libraryTracks)
@@ -2367,7 +2375,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   loadLibrary: async (force = false) => {
     const el = (window as any).electron
     if (!el) return
-    // Already have the list in memory — skip the disk read + IPC + full re-set.
+    // Already have the list in memory � skip the disk read + IPC + full re-set.
     // The store is authoritative in-session (scans and local-playlist edits
     // write it directly); only a forced reload after another window changed the
     // data needs to re-read. This is what makes tab revisits instant.
@@ -2376,14 +2384,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const [libData, playlists] = await Promise.all([el.loadLibraryData(), el.loadLocalPlaylists()])
       // Cover art lives in libraryArt (keyed by track id) and is left untouched
       // here, so the loaded covers survive a Library-tab remount without any
-      // per-track merge — just swap in the fresh metadata list.
+      // per-track merge � just swap in the fresh metadata list.
       if (libData?.tracks) set({ libraryTracks: libData.tracks })
       if (playlists) set({ localPlaylists: playlists })
       set({ libraryLoaded: true })
     } catch(e) { console.error('loadLibrary error:', e) }
   },
 
-  // ── Followed playlists (local-only — see FollowedPlaylist) ─────────────────
+  // -- Followed playlists (local-only � see FollowedPlaylist) -----------------
   followPlaylist: (meta) => {
     const existing = get().followedPlaylists
     const next = existing.some((f) => f.id === meta.id)
@@ -2405,7 +2413,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     ls.set('followedPlaylists', next)
   },
 
-  // ── Offline playlist sync ────────────────────────────────────────────────
+  // -- Offline playlist sync ------------------------------------------------
   loadOfflineLibrary: async () => {
     const el = (window as any).electron
     if (!el) return
@@ -2421,7 +2429,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     await enqueueOfflineWork(key, async () => {
       const silent = !!opts?.silent
       // Background resync queued behind other work for a playlist that was
-      // removed while it waited — nothing to sync anymore.
+      // removed while it waited � nothing to sync anymore.
       if (silent && !get().offlinePlaylists[key]) return
       // Removal mid-download bumps the epoch; checked between tracks and before
       // the final offlineSetPlaylist so an aborted run can't re-register the
@@ -2430,18 +2438,18 @@ export const useStore = create<AppStore>((set, get, store) => ({
       const cancelled = (): boolean => (_offlineKeyEpochs.get(key) ?? 0) !== epoch
       const downloadId = `playlist-${key}`
       // Songs already saved locally only need a quiet metadata refresh, not a
-      // real download — so the visible progress total is the count of songs
+      // real download � so the visible progress total is the count of songs
       // actually missing, not the whole playlist. Otherwise re-downloading a
-      // playlist that's mostly already offline showed "Downloading 1/40, 2/40…"
+      // playlist that's mostly already offline showed "Downloading 1/40, 2/40�"
       // and looked like the whole thing was being fetched again.
       const offlineTracksNow = get().offlineTracks
       const missingCount = songIds.filter((id) => !offlineTracksNow[`jw-${id}`]).length
       const total = missingCount
-      // Background resyncs (startup/focus/15-min interval — see syncOfflinePlaylists)
+      // Background resyncs (startup/focus/15-min interval � see syncOfflinePlaylists)
       // re-run this for every already-synced playlist just to pick up metadata
       // changes; nearly everything is a fast no-op `skipped` hit. Surfacing that
-      // as "syncing" — in the Download Manager, or in the playlist/context-menu's
-      // "Downloading… x/y" label (both read `offlineSync`) — made it look like
+      // as "syncing" � in the Download Manager, or in the playlist/context-menu's
+      // "Downloading� x/y" label (both read `offlineSync`) � made it look like
       // the same playlist was re-downloading every time the app loaded or
       // regained focus. Only flip on the visible "syncing" state when something
       // is actually fetched (tracked below) or when the caller isn't silent and
@@ -2465,7 +2473,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
       if (!silent && total > 0) announce()
 
-      // Byte-level size/speed tracking across the whole playlist — cumulativeBytes
+      // Byte-level size/speed tracking across the whole playlist � cumulativeBytes
       // is bytes already settled (finished or skipped tracks); the per-track
       // listener below adds the in-flight file's partial bytes on top so the
       // Download Manager can show a live running total + throughput, even
@@ -2482,7 +2490,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
         const songId = songIds[i]
         const id = `jw-${songId}`
         trackIds.push(id)
-        // Already downloaded — skip the network round-trip entirely instead of
+        // Already downloaded � skip the network round-trip entirely instead of
         // still fetching /songs/{id}/ + hitting the IPC layer just to no-op.
         // Looping through every already-cached song's metadata refresh made
         // downloading a mostly-synced playlist with a few new songs feel like
@@ -2539,7 +2547,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       }
       if (announced) get().updateDownload(downloadId, { speedBps: undefined })
 
-      // The playlist was removed while this run was downloading — registering
+      // The playlist was removed while this run was downloading � registering
       // it now would resurrect it and queue every pruned file for re-download
       // on the next background sync. Drop the run's UI traces and stop.
       if (cancelled()) {
@@ -2560,7 +2568,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
       if (announced) set((s) => ({ offlineSync: { ...s.offlineSync, [key]: { state: hadError ? 'error' : 'done', current: total, total } } }))
       if (announced) get().updateDownload(downloadId, { state: hadError ? 'error' : 'done', percent: 100, error: hadError ? 'Some tracks failed to download' : undefined })
-      // Refresh from disk truth — pruning may have dropped tracks shared with
+      // Refresh from disk truth � pruning may have dropped tracks shared with
       // another playlist that's no longer synced.
       get().loadOfflineLibrary()
     })
@@ -2570,7 +2578,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const el = (window as any).electron
     if (!el) return
     // Cancel any in-flight download for this key (epoch bump) and wait for it
-    // to notice — it checks between tracks, so this waits at most one file —
+    // to notice � it checks between tracks, so this waits at most one file �
     // before pruning. Otherwise the in-flight run would re-register the
     // playlist after removal and the next sync would re-download all of it.
     _offlineKeyEpochs.set(key, (_offlineKeyEpochs.get(key) ?? 0) + 1)
@@ -2588,7 +2596,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
 
   // Serialized on the individual-downloads key: two quick downloads used to
   // both read the membership list before either wrote it, so the second
-  // offlineSetPlaylist omitted the first song — and the prune deleted its
+  // offlineSetPlaylist omitted the first song � and the prune deleted its
   // freshly-downloaded file.
   downloadTrackOffline: async (songId) => {
     const el = (window as any).electron
@@ -2629,7 +2637,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   // Deletes a single track's downloaded audio (e.g. from a song's context
   // menu), independent of any playlist it belongs to. If the song is still
   // part of a synced offline playlist, the next background resync will just
-  // re-download it — this only clears the local copy, not playlist membership.
+  // re-download it � this only clears the local copy, not playlist membership.
   removeOfflineTrack: async (trackId) => {
     const el = (window as any).electron
     if (!el) return
@@ -2662,7 +2670,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
       for (const key of keys) {
         const match = key.match(/^api-(\d+)$/)
         if (!match) continue
-        // Removed from offline while this sync was walking earlier keys —
+        // Removed from offline while this sync was walking earlier keys �
         // syncing it anyway would re-download and re-register it.
         if (!get().offlinePlaylists[key]) continue
         try {
@@ -2670,7 +2678,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
           if (!get().offlinePlaylists[key]) continue
           await get().downloadPlaylistOffline(key, detail.name, detail.items.map((i) => i.song.id), { silent: true })
         } catch {
-          // Offline, deleted, or no longer accessible — keep the existing cache as-is.
+          // Offline, deleted, or no longer accessible � keep the existing cache as-is.
         }
       }
     } finally {
@@ -2678,7 +2686,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     }
   },
 
-  // Called after songs are added to an API playlist — if that playlist is
+  // Called after songs are added to an API playlist � if that playlist is
   // synced offline, immediately downloads the newly-added songs instead of
   // waiting for the next background resync (startup/focus/15-min interval).
   autoDownloadIfOffline: async (playlistId, addedSongIds) => {
@@ -2686,7 +2694,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     const key = `api-${playlistId}`
     if (!get().offlinePlaylists[key]) return
     // Wait out any in-flight download for this key before building the merged
-    // list — merging from a snapshot taken mid-sync saved a stale membership
+    // list � merging from a snapshot taken mid-sync saved a stale membership
     // list, and the prune then deleted files for songs the sync had just added.
     await (_offlineKeyQueues.get(key) ?? Promise.resolve()).catch(() => {})
     const entry = get().offlinePlaylists[key]
@@ -2696,7 +2704,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
     await get().downloadPlaylistOffline(key, entry.name, nextSongIds)
   },
 
-  // ── Downloads ─────────────────────────────────────────────────────────────
+  // -- Downloads -------------------------------------------------------------
   downloads: [],
   showDownloadManager: false,
   updateStatus: null,
@@ -2722,8 +2730,8 @@ if (import.meta.env.DEV) {
 }
 
 // Subscribe to a shallow-compared subset of the store. A bare `useStore()`
-// re-renders the component on EVERY store write — including the ~4x/sec
-// timeupdate ticks and per-chunk download progress — so components must pick
+// re-renders the component on EVERY store write � including the ~4x/sec
+// timeupdate ticks and per-chunk download progress � so components must pick
 // only the keys they actually read. Actions are stable references, so
 // including them here never causes a re-render on its own.
 export function useStorePick<K extends keyof AppStore>(...keys: K[]): Pick<AppStore, K> {
