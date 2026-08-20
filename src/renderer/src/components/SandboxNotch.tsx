@@ -51,6 +51,11 @@ export default function SandboxNotch(): JSX.Element {
         // pill un-clickable exactly when you need it to collapse the panel.
         <button
           onClick={toggle}
+          // no-drag: the frameless window's drag strip runs across the top of
+          // the app (see App.tsx/Sidebar.tsx) and an app-region rect swallows
+          // mouse events regardless of pointer-events or z-index — without
+          // this the pill was only clickable below the strip's bottom edge.
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           className="relative z-10 pointer-events-auto mt-1.5 flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-overlay border border-[var(--border)] shadow-lg text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-accent" />
