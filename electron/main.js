@@ -58,6 +58,11 @@ let appSettings = {
   minimizeTo: 'taskbar',
   startupView: 'api-tracker',
   discordRpcEnabled: true,
+  // What the "Listening to X" header in Discord's Rich Presence shows —
+  // 'app' leaves it unset (falls back to the app's own registered name,
+  // "Unreleased"), 'artist' shows the track's artist (or "Juice WRLD" when
+  // none is known — radio/unmatched local files), 'song' shows the title.
+  discordRpcLabel: 'artist',
   offlineLibraryPath: path.join(app.getPath('userData'), 'offline-audio'),
   // When on, opening the mini player hides every other window (main + other
   // pop-outs); they're restored when the mini player closes.
@@ -77,10 +82,6 @@ let appSettings = {
   // name. Written by rememberSize(); wiped when rememberWindowSizes is turned
   // off so re-enabling starts from the built-in defaults again.
   windowSizes: {},
-  // 'fork' | 'legacy' — which GitHub repo the stable update feed points at.
-  // See UPDATE_REPOS below. Developer-settings-only; doesn't affect the beta
-  // feed, which is always juicewrldapi.com regardless of this.
-  updateSource: 'fork',
 }
 let settingsLoadError = null
 try {
@@ -233,14 +234,9 @@ function readBetaCode() {
   try { return fs.readFileSync(betaMarkerPath, 'utf-8').trim() || null } catch { return null }
 }
 
-// Stable feed can point at either GitHub repo release.py publishes to (see
-// scripts/python/release.py — every stable release is mirrored to both).
-// 'fork' is the default; 'legacy' is a Developer-settings escape hatch back
-// to the original repo.
-const UPDATE_REPOS = {
-  fork:   { owner: 'Juice-WRLD-API', repo: 'Unreleased' },
-  legacy: { owner: 'leanwrldd', repo: 'unreleased' },
-}
+// Stable feed's GitHub repo — see scripts/python/release.py, which publishes
+// every stable release here.
+const UPDATE_REPO = { owner: 'Juice-WRLD-API', repo: 'Unreleased' }
 
 // Switches the updater between the normal stable (GitHub) feed and the
 // gated beta feed. electron-updater allows re-pointing the feed at runtime,
@@ -254,7 +250,7 @@ function applyUpdateFeed(code) {
     autoUpdater.requestHeaders = { 'X-Beta-Code': code }
     autoUpdater.allowPrerelease = true
   } else {
-    const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
+    const { owner, repo } = UPDATE_REPO
     autoUpdater.setFeedURL({ provider: 'github', owner, repo })
     autoUpdater.requestHeaders = null
     autoUpdater.allowPrerelease = false
@@ -941,7 +937,7 @@ ipcMain.handle('force-update', async () => {
 
   try {
     broadcastToWindows('update-status', { type: 'checking' })
-    const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
+    const { owner, repo } = UPDATE_REPO
     const release = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/releases/latest`)
     const assetSuffix = process.platform === 'win32' ? '.exe' : process.platform === 'darwin' ? '.dmg' : '.AppImage'
     const asset = release.assets.find(a => a.name.endsWith(assetSuffix))
@@ -1391,7 +1387,7 @@ ipcMain.handle('show-item-in-folder', (_, p) => {
 // macOS/Linux have no bundled repair stub (nothing analogous to the NSIS
 // installer), so they always fall back to the releases page.
 ipcMain.handle('open-online-installer', async () => {
-  const { owner, repo } = UPDATE_REPOS[appSettings.updateSource] || UPDATE_REPOS.fork
+  const { owner, repo } = UPDATE_REPO
   if (process.platform === 'win32') {
     const bundled = app.isPackaged ? path.join(process.resourcesPath, 'Unreleased-Setup.exe') : null
     if (bundled && fs.existsSync(bundled)) {
@@ -1443,12 +1439,8 @@ ipcMain.handle('set-app-setting', (_, key, value) => {
   saveSettings()
   if (key === 'autoDownload') autoUpdater.autoDownload = value
   if (key === 'discordRpcEnabled') discordRpc.setEnabled(value)
+  if (key === 'discordRpcLabel') discordRpc.refreshLabel(value)
   if (key === 'windowTitleNowPlaying') updateMainWindowTitle()
-  // Re-point the feed immediately — if a beta code is active this is a no-op
-  // until the user leaves beta (applyUpdateFeed only reads updateSource in
-  // the non-beta branch), but it should still take effect right away rather
-  // than requiring a restart.
-  if (key === 'updateSource') applyUpdateFeed(activeBetaCode)
   return true
 })
 
@@ -1510,7 +1502,7 @@ ipcMain.handle('beta-leave', () => {
 
 // ── IPC: Discord Rich Presence ────────────────────────────────────────────────
 ipcMain.handle('discord-rpc-set-activity', (_, nowPlaying) => {
-  discordRpc.setNowPlaying(nowPlaying)
+  discordRpc.setNowPlaying({ ...nowPlaying, labelMode: appSettings.discordRpcLabel })
   return true
 })
 

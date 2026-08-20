@@ -2533,10 +2533,59 @@ export default function ApiTrackerView(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectMode])
 
-  // Ctrl/Cmd+A selects every currently-visible song (entering select mode if
-  // it isn't already active) instead of the browser's page-text select-all.
-  // Skipped while focus is in a text field (search box, notes, etc.) so
-  // normal text selection still works there.
+  // Ctrl+A in plain scroll mode (no sort/filters active) only has whatever's
+  // been paged in so far via infinite scroll — fetches every remaining page
+  // up front so "select all" actually means all, not "all loaded so far".
+  // Mirrors the fetch-all effect above but fires on demand instead of on
+  // every query change, and merges into `songs` so the list itself no longer
+  // needs further lazy-loading afterward.
+  const selectAllInFlightRef = useRef(false)
+  const fetchAndSelectAllSongs = useCallback(async (): Promise<void> => {
+    if (selectAllInFlightRef.current) return
+    selectAllInFlightRef.current = true
+    loadingRef.current = true
+    setLoading(true)
+    try {
+      const PAGE_SIZE_ALL = 200
+      const CONCURRENCY = 6
+      const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
+        searchall: debouncedSearch || undefined,
+        category: categoryParam || undefined,
+        era: eraParam || undefined,
+        page: p,
+        page_size: PAGE_SIZE_ALL,
+      })
+      const first = await fetchPage(1)
+      const all: JWApiSong[] = [...first.results]
+      const totalPages = Math.ceil(first.count / PAGE_SIZE_ALL)
+      let nextPage = 2
+      const worker = async (): Promise<void> => {
+        while (true) {
+          const p = nextPage++
+          if (p > totalPages) return
+          const data = await fetchPage(p)
+          all.push(...data.results)
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
+      setSongs(all)
+      setCount(first.count)
+      setHasMore(false)
+      hasMoreRef.current = false
+      setSelected(new Map(all.map((s) => [s.id, s])))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      loadingRef.current = false
+      setLoading(false)
+      selectAllInFlightRef.current = false
+    }
+  }, [debouncedSearch, categoryParam, eraParam])
+
+  // Ctrl/Cmd+A selects every song matching the current view (entering select
+  // mode if it isn't already active) instead of the browser's page-text
+  // select-all. Skipped while focus is in a text field (search box, notes,
+  // etc.) so normal text selection still works there.
   useEffect(() => {
     if (trackerTab !== 'songs') return
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -2544,18 +2593,20 @@ export default function ApiTrackerView(): JSX.Element {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
       e.preventDefault()
+      setSelectMode(true)
       if (compactView) {
         const all = new Map<number, JWApiSong>()
         for (const g of filteredCompactGroups) for (const m of g.members) all.set(m.item.id, m.item)
         setSelected(all)
+      } else if (!fetchAllMode && hasMoreRef.current) {
+        fetchAndSelectAllSongs()
       } else {
         setSelected(new Map(sortedSongs.map((s) => [s.id, s])))
       }
-      setSelectMode(true)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [trackerTab, compactView, filteredCompactGroups, sortedSongs])
+  }, [trackerTab, compactView, filteredCompactGroups, sortedSongs, fetchAllMode, fetchAndSelectAllSongs])
 
   const selectedSongs = useMemo(() => [...selected.values()], [selected])
   // Sessions/unsurfaced songs can't go in playlists or the queue — same rule
@@ -3418,7 +3469,10 @@ export default function ApiTrackerView(): JSX.Element {
             {selected.size} {selected.size === 1 ? 'song' : 'songs'} selected
           </span>
           <button
-            onClick={() => setSelected(new Map(sortedSongs.map(s => [s.id, s])))}
+            onClick={() => {
+              if (!compactView && !fetchAllMode && hasMoreRef.current) fetchAndSelectAllSongs()
+              else setSelected(new Map(sortedSongs.map(s => [s.id, s])))
+            }}
             className="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded transition-colors"
           >
             Select all

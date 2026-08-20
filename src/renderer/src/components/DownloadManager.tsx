@@ -158,8 +158,13 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
 
   const speedLabel = isActive && item.speedBps ? `${formatBytes(item.speedBps)}/s` : null
 
+  const canOpen = isDone && !!item.savePath && !!el?.openPath
+
   return (
-    <div className="px-3 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors">
+    <div
+      className={`px-3 py-2.5 hover:bg-[var(--surface-overlay)] transition-colors${canOpen ? ' cursor-pointer' : ''}`}
+      onClick={canOpen ? () => el.openPath(item.savePath!) : undefined}
+    >
       <div className="flex items-start gap-2">
         <div className="mt-0.5 shrink-0">
           {isDone ? <CheckCircle2 size={13} className="text-emerald-400" />
@@ -192,7 +197,11 @@ function DownloadRow({ item }: { item: DownloadItem }): JSX.Element {
             </button>
           )}
           {isDone && item.savePath && el?.showItemInFolder && (
-            <button onClick={() => el.showItemInFolder(item.savePath!)} title="Show in folder" className="p-1 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+            <button
+              onClick={(e) => { e.stopPropagation(); el.showItemInFolder(item.savePath!) }}
+              title="Show in folder"
+              className="p-1 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+            >
               <FolderOpen size={12} />
             </button>
           )}

@@ -22,13 +22,13 @@ Prompts are asked up front, then everything else runs unattended:
   6. Beta only: build the renderer + Electron installer locally (needed
      right here, since step 9's beta publish uploads the .exe this
      produces). Stable builds are NOT done locally anymore — see step 9.
-  7. Push the desktop branch to GitHub (origin + the Juice-WRLD-API mirror)
+  7. Push the desktop branch to GitHub (origin)
   8. Sync the web branch (copies src/ + package.json from app, skips
      electron/) — skipped for beta releases, betas are desktop-only
-  9. Stable: create the GitHub release on origin AND the mirror, already
-     published, with no assets attached. That publish event is what
-     triggers .github/workflows/build-{windows,mac,linux}.yml on each
-     repo — every platform builds in CI and attaches its own installer.
+  9. Stable: create the GitHub release on origin, already published, with
+     no assets attached. That publish event is what triggers
+     .github/workflows/build-{windows,mac,linux}.yml — every platform
+     builds in CI and attaches its own installer.
      Beta: publish privately to the gated backend instead (needs
      BETA_ADMIN_TOKEN in .env.local), using the local build from step 6.
 """
@@ -45,19 +45,12 @@ from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ROOT         = Path(__file__).parent.parent.parent
-REPO_OWNER   = "leanwrldd"
-REPO_NAME    = "unreleased"
+REPO_OWNER   = "Juice-WRLD-API"
+REPO_NAME    = "Unreleased"
 APP_BRANCH   = "app"
 WEB_BRANCH   = "web"
 API_BASE     = "https://api.github.com"
 BETA_API_BASE = "https://juicewrldapi.com/beta"
-
-# Best-effort mirror: every stable release (branches + GitHub Release/assets)
-# also goes to this second repo, using the same GH_TOKEN. Mirror failures
-# never fail or roll back the real release — they're just warned about, since
-# origin is the source of truth and the mirror is a nice-to-have.
-MIRROR_OWNER = "Juice-WRLD-API"
-MIRROR_NAME  = "Unreleased"
 
 # How much we hand the socket per read(). http.client streams a file-like body
 # with `while block := data.read(self.blocksize)` and blocksize is 8192 — so a
@@ -147,24 +140,6 @@ def is_dirty():
 
 def git_branch():
     return capture("git rev-parse --abbrev-ref HEAD")
-
-def push_mirror_branch(branch, token):
-    """Force-push a branch to the mirror repo, authenticating via the token
-    embedded in the URL (no persistent remote, nothing written to
-    .git/config). Always --force: the mirror isn't collaborative, it just
-    has to match origin's branch exactly, and on a brand-new/empty mirror
-    repo a plain push has nothing to fast-forward from.
-
-    The token never reaches the console or an exception message — it's
-    redacted from both the printed command and any captured stderr.
-    """
-    url = f"https://{token}@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git"
-    detail(f"> git push https://***@github.com/{MIRROR_OWNER}/{MIRROR_NAME}.git {branch}:{branch} --force")
-    r = subprocess.run(f'git push "{url}" {branch}:{branch} --force',
-                        shell=True, cwd=ROOT, capture_output=True, text=True)
-    if r.returncode != 0:
-        err = (r.stderr or r.stdout or "").replace(token, "***")
-        raise RuntimeError(err.strip()[:500])
 
 # ── package.json ──────────────────────────────────────────────────────────────
 
@@ -501,11 +476,9 @@ def ensure_bundled_stub():
     stub-refresh below), which broke the moment builds stopped always
     happening on the same machine back-to-back (a fresh clone, a new machine,
     or — now — CI). Fetching a copy from whatever past GitHub release still
-    has one closes that gap everywhere. Always sourced from the origin repo
-    (leanwrldd/unreleased), not whichever repo is currently being built for —
-    it has the longest unbroken history, so it's never mid-bootstrap itself
-    the way the Juice-WRLD-API mirror or a CI run building the release that
-    was JUST published (with no assets yet) could be."""
+    has one closes that gap everywhere — it has the longest unbroken
+    history, so it's never mid-bootstrap itself the way a CI run building
+    the release that was JUST published (with no assets yet) could be."""
     dest = ROOT / "build" / "bundled" / "Unreleased-Setup.exe"
     if dest.exists():
         return
@@ -644,18 +617,11 @@ def step_build():
         warn(f"Not found (skipping bundled-stub refresh): {stub.name}")
 
 
-def step_push_app(token, state):
+def step_push_app(state):
     section(7, TOTAL, f"Push → origin/{APP_BRANCH}")
     run(f"git push origin {APP_BRANCH}")
     state["pushed_app"] = True
     ok(f"Pushed to origin/{APP_BRANCH}")
-
-    try:
-        info(f"Mirroring {APP_BRANCH} → {MIRROR_OWNER}/{MIRROR_NAME}")
-        push_mirror_branch(APP_BRANCH, token)
-        ok(f"Mirrored to {MIRROR_OWNER}/{MIRROR_NAME}")
-    except Exception as e:
-        warn(f"Mirror push failed (origin unaffected): {e}")
 
 
 def step_sync_web(version, is_beta, token, state):
@@ -720,10 +686,10 @@ def step_publish_beta(version, notes):
 
 def step_release(version, token, notes, state):
     """Publishes the GitHub release itself, with no assets — CI attaches
-    those. Publishing (not drafting) is what fires each repo's
-    build-{windows,mac,linux}.yml `on: release: types: [published]` trigger;
-    every platform builds from this tag in parallel and uploads its own
-    installer + latest*.yml straight to this same release."""
+    those. Publishing (not drafting) is what fires
+    build-{windows,mac,linux}.yml's `on: release: types: [published]`
+    trigger; every platform builds from this tag in parallel and uploads its
+    own installer + latest*.yml straight to this same release."""
     section(9, TOTAL, "GitHub release  (CI builds & attaches installers)")
     tag = f"v{version}"
     state["tag"] = tag
@@ -740,29 +706,13 @@ def step_release(version, token, notes, state):
     _publish_github_release(REPO_OWNER, REPO_NAME, tag, notes, token, state,
                              id_key="release_id", new_key="release_created_new")
 
-    # Best-effort mirror — never rolls back or fails the real release.
-    try:
-        info(f"Mirroring release to {MIRROR_OWNER}/{MIRROR_NAME}…")
-        mstate = {}
-        _publish_github_release(MIRROR_OWNER, MIRROR_NAME, tag, notes, token, mstate,
-                                 id_key="release_id", new_key="release_created_new")
-        state["mirror_release_id"] = mstate.get("release_id")
-        state["mirror_release_created_new"] = mstate.get("release_created_new")
-        state["mirror_tag"] = tag
-        state["token"] = token
-    except Exception as e:
-        warn(f"Mirror release to {MIRROR_OWNER}/{MIRROR_NAME} failed (origin release unaffected): {e}")
-
     print()
     info("CI is now building Windows/macOS/Linux installers and will attach them to")
-    info("both releases as each platform finishes — nothing left to do here.")
+    info("the release as each platform finishes — nothing left to do here.")
 
 
 def _publish_github_release(owner, repo, tag, notes, token, state, id_key, new_key):
-    """Create/update a published GitHub release on (owner, repo) — no assets.
-    Shared by the real release (leanwrldd/unreleased) and the mirror
-    (Juice-WRLD-API/Unreleased) so both go through identical create/update
-    logic and both end up published (so both fire their own CI builds)."""
+    """Create/update a published GitHub release on (owner, repo) — no assets."""
     info(f"Creating release {_c(tag, WHT, BOLD)} on {owner}/{repo}…")
     try:
         release = api("POST",
@@ -816,16 +766,6 @@ def rollback(state):
             ok(f"Deleted tag {state['tag']}")
         except Exception:
             pass  # tag may not exist yet, or was already cleaned up with the release
-
-    # Mirror release cleanup is best-effort too — it was best-effort to create,
-    # so a failure here is just left for manual cleanup rather than warned twice.
-    if state.get("mirror_release_id") and state.get("mirror_release_created_new") and state.get("token"):
-        try:
-            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/releases/{state['mirror_release_id']}", state["token"])
-            api("DELETE", f"/repos/{MIRROR_OWNER}/{MIRROR_NAME}/git/refs/tags/{state['mirror_tag']}", state["token"])
-            ok(f"Deleted mirror release {state.get('mirror_tag')} on {MIRROR_OWNER}/{MIRROR_NAME}")
-        except Exception:
-            pass
 
     if state.get("web_pushed"):
         warn(f"Web branch already pushed to origin/{WEB_BRANCH} — the live site. Not auto-reverting.")
@@ -885,7 +825,7 @@ def main():
             # a local installer, since it's uploaded straight from here to
             # the gated backend instead of going through a GitHub release.
             step_build()
-        step_push_app(token, state)
+        step_push_app(state)
         step_sync_web(version, is_beta, token, state)
         if is_beta:
             step_publish_beta(version, release_notes)

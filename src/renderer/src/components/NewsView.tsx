@@ -24,6 +24,20 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+// Crude markdown -> plain text for card previews: strips the syntax that
+// would otherwise show up as literal symbols (headings, emphasis, links,
+// code, bullets) and collapses all whitespace to single spaces so it reads
+// as one flowing blurb regardless of the source's line breaks.
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[#>*_~`-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
@@ -103,6 +117,15 @@ function FeaturedCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) 
 }
 
 function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
+  // Cards in the same grid row stretch to match the tallest sibling (h-full),
+  // so a short summary next to a card with more content — or a taller image —
+  // otherwise leaves dead space beneath it. Filling that with a clipped
+  // preview of the full body reads as more content rather than empty air;
+  // overflow-hidden on the text column lets it get cut off naturally at
+  // whatever height the row actually ends up, without measuring anything.
+  const bodyPreview = stripMarkdown(item.body || '')
+  const showBodyPreview = bodyPreview && !bodyPreview.startsWith(item.summary.trim())
+
   return (
     <div className="relative group h-full">
       <button
@@ -119,7 +142,7 @@ function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
             />
           </div>
         )}
-        <div className="min-w-0 flex-1 p-3.5 pr-12">
+        <div className="min-w-0 flex-1 p-3.5 pr-12 overflow-hidden">
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             {item.category && <CategoryTag label={item.category} />}
             <span className="text-xs text-text-muted">{formatDate(item.published_at)}</span>
@@ -129,6 +152,9 @@ function NewsCard({ item, onOpen, canManage, onEdit, onDelete }: CardProps) {
           </div>
           <h3 className="text-text-primary text-sm font-semibold leading-snug mb-1 line-clamp-2">{item.title}</h3>
           <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{item.summary}</p>
+          {showBodyPreview && (
+            <p className="text-xs text-text-muted leading-relaxed mt-1">{bodyPreview}</p>
+          )}
         </div>
       </button>
       {canManage && <ManageActions onEdit={() => onEdit(item)} onDelete={() => onDelete(item)} />}

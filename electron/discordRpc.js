@@ -9,7 +9,7 @@
 // running yet (or may restart) independently of this app, so failures here
 // are expected and silently retried rather than surfaced as errors.
 
-const { Client } = require('@xhayper/discord-rpc')
+const { Client, StatusDisplayType } = require('@xhayper/discord-rpc')
 const { ActivityType } = require('discord-api-types/v10')
 
 const CLIENT_ID = '1521540582558924902'
@@ -121,16 +121,26 @@ function fmtTime(sec) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 }
 
+// Default artist name shown in the "Listening to X" header when a track
+// carries none of its own (radio/local files without matched metadata).
+const DEFAULT_ARTIST = 'Juice WRLD'
+
 /**
  * Build and apply a Rich Presence activity from app-domain "now playing"
  * facts. Keeps Discord's activity shape (timestamps, image keys, ActivityType)
  * out of the renderer — it only needs to report what's playing.
  *
- * @param {{ title: string, artist?: string, isPlaying: boolean, currentTime: number, duration: number, isRadio?: boolean, era?: string, coverUrl?: string | null, linkUrl?: string | null }} info
+ * @param {{ title: string, artist?: string, isPlaying: boolean, currentTime: number, duration: number, isRadio?: boolean, era?: string, coverUrl?: string | null, linkUrl?: string | null, labelMode?: 'app' | 'artist' | 'song' }} info
  */
+// Last "now playing" facts applied, so a mid-track change to the "Show
+// Discord Status" label setting can be reflected immediately (see
+// refreshLabel) instead of waiting for the next natural update.
+let lastInfo = null
+
 function setNowPlaying(info) {
   if (!enabled) return
-  if (!info || !info.title) { clearActivity(); return }
+  if (!info || !info.title) { lastInfo = null; clearActivity(); return }
+  lastInfo = info
 
   const activity = {
     // Discord renders a Spotify-style live time-bar for Listening activities.
@@ -147,6 +157,18 @@ function setNowPlaying(info) {
     // no era data.
     largeImageText: info.era || (info.isRadio ? '999 FM' : 'Unreleased'),
     instance: false,
+  }
+
+  // Header line ("Listening to X"). Defaults to the app's own registered
+  // name ("Unreleased") when `name` is left unset — labelMode overrides that
+  // with the artist or song title instead, per the "Show Discord Status"
+  // setting.
+  if (info.labelMode === 'song') {
+    activity.name = info.title
+    activity.statusDisplayType = StatusDisplayType.NAME
+  } else if (info.labelMode === 'artist') {
+    activity.name = info.artist || DEFAULT_ARTIST
+    activity.statusDisplayType = StatusDisplayType.NAME
   }
 
   // Per-track cover art. Classic RPC's `large_image` (largeImageKey) accepts
@@ -193,4 +215,12 @@ function setNowPlaying(info) {
   setActivity(activity)
 }
 
-module.exports = { setEnabled, setActivity, clearActivity, setNowPlaying }
+// Re-applies the currently playing/paused activity with a new labelMode —
+// called when the "Show Discord Status" setting changes, so the header
+// updates right away instead of waiting for the next track/seek.
+function refreshLabel(labelMode) {
+  if (!lastInfo) return
+  setNowPlaying({ ...lastInfo, labelMode })
+}
+
+module.exports = { setEnabled, setActivity, clearActivity, setNowPlaying, refreshLabel }

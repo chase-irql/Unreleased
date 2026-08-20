@@ -28,8 +28,8 @@ import urllib.parse
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
-REPO_OWNER = "leanwrldd"
-REPO_NAME  = "unreleased"
+REPO_OWNER = "Juice-WRLD-API"
+REPO_NAME  = "Unreleased"
 API_BASE   = "https://api.github.com"
 UPLOAD_BASE = "https://uploads.github.com"
 

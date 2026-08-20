@@ -1,6 +1,6 @@
 {
   "name": "unreleased",
-  "version": "2.0.10",
+  "version": "2.1.0",
   "description": "A music player for Juice WRLD",
   "main": "electron/main.js",
   "scripts": {
@@ -142,8 +142,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "leanwrldd",
-      "repo": "unreleased"
+      "owner": "Juice-WRLD-API",
+      "repo": "Unreleased"
     }
   }
 }

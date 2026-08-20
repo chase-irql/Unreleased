@@ -64,24 +64,24 @@ jobs:
       # repair/reinstall stub) into the packaged installer — electron-builder
       # needs it to exist before packaging starts. It's gitignored (nothing
       # in the checkout provides it), so grab it from whichever recent
-      # leanwrldd/unreleased release still has one. Always sourced from that
-      # repo specifically, never "this repo's latest" — the release this
-      # workflow is building for was JUST published with no assets yet, so on
-      # a fresh mirror repo "latest" could mean itself.
+      # Juice-WRLD-API/Unreleased release still has one. The asset filter
+      # naturally skips the release this workflow is building for (it was
+      # JUST published with no assets yet), so this is safe to source from
+      # the same repo the workflow runs in.
       - name: Fetch bundled installer stub
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p build/bundled
-          tag=$(gh api repos/leanwrldd/unreleased/releases --paginate \
+          tag=$(gh api repos/Juice-WRLD-API/Unreleased/releases --paginate \
             -q '.[] | select(.assets[]?.name=="Unreleased-Setup.exe") | .tag_name' | head -n1)
           if [ -z "$tag" ]; then
-            echo "::error::No leanwrldd/unreleased release has an Unreleased-Setup.exe asset to seed build/bundled/ from"
+            echo "::error::No Juice-WRLD-API/Unreleased release has an Unreleased-Setup.exe asset to seed build/bundled/ from"
             exit 1
           fi
           curl -fL -o build/bundled/Unreleased-Setup.exe \
-            "https://github.com/leanwrldd/unreleased/releases/download/$tag/Unreleased-Setup.exe"
+            "https://github.com/Juice-WRLD-API/Unreleased/releases/download/$tag/Unreleased-Setup.exe"
 
       - name: Package installers (offline + web)
         run: npx electron-builder --win --publish never

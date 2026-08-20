@@ -38,7 +38,7 @@ $BetaApiBase = 'https://juicewrldapi.com/beta'
 
 # ── Stable versions ──────────────────────────────────────────────────────────
 try {
-  $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/leanwrldd/unreleased/releases?per_page=100' `
+  $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/Juice-WRLD-API/Unreleased/releases?per_page=100' `
     -Headers @{ 'User-Agent' = 'Unreleased-Installer'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 15
 } catch {
   exit 1

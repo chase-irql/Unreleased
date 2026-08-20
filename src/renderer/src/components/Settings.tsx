@@ -272,12 +272,12 @@ interface AppSettings {
   minimizeTo: 'taskbar' | 'tray'
   startupView: string
   discordRpcEnabled: boolean
+  discordRpcLabel: 'app' | 'artist' | 'song'
   offlineLibraryPath: string
   miniPlayerHidesWindows: boolean
   confirmCloseWhilePlaying: boolean
   windowTitleNowPlaying: boolean
   rememberWindowSizes: boolean
-  updateSource: 'fork' | 'legacy'
 }
 
 // `floating` — rendered as the sole content of a pop-out BrowserWindow (see
@@ -464,12 +464,12 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
     minimizeTo: 'taskbar',
     startupView: 'api-tracker',
     discordRpcEnabled: true,
+    discordRpcLabel: 'artist',
     offlineLibraryPath: '',
     miniPlayerHidesWindows: false,
     confirmCloseWhilePlaying: true,
     windowTitleNowPlaying: true,
     rememberWindowSizes: true,
-    updateSource: 'fork',
   })
   const [movingOfflinePath, setMovingOfflinePath] = useState(false)
   const [offlinePathError, setOfflinePathError] = useState<string | null>(null)
@@ -2087,6 +2087,30 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                 <Row icon={MessageCircle} iconColor="#5865f2" label="Show Discord Status">
                   <Toggle on={appSettings.discordRpcEnabled} onClick={() => setSetting('discordRpcEnabled', !appSettings.discordRpcEnabled)} />
                 </Row>
+                {appSettings.discordRpcEnabled && (
+                  <Row
+                    icon={MessageCircle}
+                    iconColor="#5865f2"
+                    label="Status header"
+                    sub={
+                      appSettings.discordRpcLabel === 'song'
+                        ? 'Shows "Listening to <song name>"'
+                        : appSettings.discordRpcLabel === 'app'
+                          ? 'Shows "Listening to Unreleased"'
+                          : 'Shows "Listening to Juice WRLD"'
+                    }
+                  >
+                    <select
+                      value={appSettings.discordRpcLabel}
+                      onChange={(e) => setSetting('discordRpcLabel', e.target.value)}
+                      className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
+                    >
+                      <option value="artist">Artist</option>
+                      <option value="song">Song name</option>
+                      <option value="app">Unreleased</option>
+                    </select>
+                  </Row>
+                )}
                 <Row icon={Wrench} iconColor="#6b7280" label="Developer options" sub="Shows a Developer tab with cache & diagnostics tools">
                   <Toggle on={developerMode} onClick={() => setDeveloperMode(!developerMode)} />
                 </Row>
@@ -2124,23 +2148,6 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                     <Trash2 size={13} />
                     {cacheCleared !== null ? `Cleared ${cacheCleared}` : 'Clear cache'}
                   </button>
-                </Row>
-                <Row
-                  icon={Github}
-                  iconColor="#6b7280"
-                  label="Update source"
-                  sub={appSettings.updateSource === 'legacy'
-                    ? 'Checking leanwrldd/unreleased for updates'
-                    : 'Checking Juice-WRLD-API/Unreleased for updates'}
-                >
-                  <select
-                    value={appSettings.updateSource}
-                    onChange={(e) => setSetting('updateSource', e.target.value)}
-                    className="bg-[var(--surface-overlay)] text-text-primary text-xs rounded-lg px-2 py-1.5 border border-[var(--border)]"
-                  >
-                    <option value="fork">Juice-WRLD-API/Unreleased</option>
-                    <option value="legacy">leanwrldd/unreleased</option>
-                  </select>
                 </Row>
                 <Row icon={DownloadCloud} iconColor="#0ea5e9" label="Online installer" sub="Ships with the app — repairs or reinstalls even if the app won't launch">
                   <button
