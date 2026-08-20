@@ -7,6 +7,7 @@ import SongInfoModal from './SongInfoModal'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
 import { ProgressiveCover } from './ProgressiveCover'
 import { useCanEdit } from '../hooks/useChannelRoles'
+import { useLyricsVisible } from '../lib/lyrics'
 
 export default function NowPlaying(): JSX.Element {
   const {
@@ -52,7 +53,7 @@ export default function NowPlaying(): JSX.Element {
   const jwMatch = currentTrack?.id.match(/^jw-(\d+)$/)
   const canEdit = useCanEdit()
   const hasLyricsNatural = !!(currentTrackFull?.lyrics || currentTrackFull?.syncedLyrics)
-  const hasLyrics = hasLyricsNatural !== lyricsOverride
+  const hasLyrics = useLyricsVisible(hasLyricsNatural, lyricsOverride)
 
   return (
     <div
