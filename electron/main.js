@@ -22,7 +22,13 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-features', 'Vulkan')
 }
 
-app.setAppUserModelId('Unreleased')
+// Dev runs (unpackaged, launched via `electron .`) must NOT share the
+// packaged app's AppUserModelID — Windows uses this id to decide whether two
+// processes/shortcuts are "the same app" for taskbar grouping, jump lists,
+// and pinning. Sharing it let a stray dev run poison the shell's cached icon
+// for the real installed app (dev's raw node_modules/electron/dist/electron.exe
+// showing up in place of the installed Unreleased.exe).
+app.setAppUserModelId(app.isPackaged ? 'Unreleased' : 'Unreleased.Dev')
 Menu.setApplicationMenu(null)
 
 // Only one instance may run at a time — launching a second copy (e.g. double-
