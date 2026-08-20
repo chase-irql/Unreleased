@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Download, X, CheckCircle2, AlertCircle, Loader2, RefreshCw, FolderOpen, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 import { useStore, useStorePick, DownloadItem } from '../store/useStore'
 import { formatBytes } from '../lib/format'
-import { cancelCompUpload } from '../lib/compUploads'
+import { cancelCompUpload, cancelAllCompUploads } from '../lib/compUploads'
 
 export default function DownloadManager(): JSX.Element | null {
   const { downloads, showDownloadManager, setShowDownloadManager, addDownload, updateDownload, clearCompletedDownloads, setUpdateStatus, wrldFullscreen } = useStorePick('downloads', 'showDownloadManager', 'setShowDownloadManager', 'addDownload', 'updateDownload', 'clearCompletedDownloads', 'setUpdateStatus', 'wrldFullscreen')
@@ -79,6 +79,7 @@ export default function DownloadManager(): JSX.Element | null {
 
   const active = downloads.filter((d) => d.state === 'downloading').length
   const hasDownloads = downloads.length > 0
+  const activeUploads = downloads.filter((d) => d.type === 'upload' && d.state === 'downloading').length
 
   return (
     <div ref={panelRef} className="fixed top-0 z-[9990]" style={{ right: '144px' }}>
@@ -120,6 +121,11 @@ export default function DownloadManager(): JSX.Element | null {
                 Clear
               </button>
             )}
+            {activeUploads > 1 && ( 
+                <button onClick={cancelAllCompUploads} className="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1 rounded">
+                  Cancel All
+                  </button>
+              )}
             <button onClick={() => setShowDownloadManager(false)} className="p-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
               <X size={13} />
             </button>
