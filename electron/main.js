@@ -219,10 +219,19 @@ let updateCheckInProgress = false
 let updateDownloadedPending = false
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
+// Set for the duration of the app-launch check so 'update-downloaded' can tell
+// a fresh-at-startup download (or a previous session's update that never got
+// installed, e.g. the user declined the restart prompt and later relaunched
+// instead of hitting Restart) apart from one found mid-session. Startup
+// installs silently and relaunches; mid-session still asks before restarting
+// the user's active work.
+let isStartupUpdateCheck = false
+
 function runUpdateCheck(reason) {
   if (isDev || updateCheckInProgress || updateDownloadedPending) return
   log(`Checking for updates (${reason})...`)
   updateCheckInProgress = true
+  if (reason === 'startup') isStartupUpdateCheck = true
   autoUpdater.checkForUpdatesAndNotify()
     .catch(err => log('checkForUpdates error:', err.message))
     .finally(() => { updateCheckInProgress = false })
@@ -289,9 +298,17 @@ const initialBetaCode = readBetaCode()
 applyUpdateFeed(initialBetaCode)
 if (initialBetaCode) log('Beta access marker present — gated beta update feed enabled')
 
+// On Windows, BrowserWindow/Tray icons are loaded by native code that can't
+// read files packed inside app.asar — it silently falls back to Electron's
+// default icon (only the taskbar/alt-tab icon is affected; the .exe's own
+// PE resource icon, used by File Explorer and shortcuts, is unaffected).
+// So when packaged, load icon.ico from the extraResources copy sitting next
+// to app.asar instead of the one bundled inside it.
 const iconPath = process.platform === 'linux'
   ? path.join(__dirname, '..', 'resources', 'icon-512.png')
-  : path.join(__dirname, 'icon.ico')
+  : app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, 'icon.ico')
 const preloadPath = path.join(__dirname, 'preload.js')
 
 let mainWindow = null
@@ -983,6 +1000,10 @@ ipcMain.handle('force-update', async () => {
 ipcMain.handle('check-for-updates', () => {
   log('Manual update check triggered')
   return autoUpdater.checkForUpdatesAndNotify()
+})
+ipcMain.handle('install-update', () => {
+  log('Manual install-update triggered')
+  autoUpdater.quitAndInstall(true, true)
 })
 ipcMain.handle('minimize-window', () => {
   if (appSettings.minimizeTo === 'tray' && tray) {
@@ -3462,6 +3483,7 @@ autoUpdater.on('update-available', (info) => {
 
 autoUpdater.on('update-not-available', (info) => {
   log('Up to date:', info.version)
+  isStartupUpdateCheck = false
   broadcastToWindows('update-status', { type: 'not-available', version: info.version })
 })
 
@@ -3478,6 +3500,19 @@ autoUpdater.on('update-downloaded', (info) => {
   log('Update downloaded:', info.version)
   updateDownloadedPending = true
   broadcastToWindows('update-status', { type: 'downloaded', version: info.version })
+
+  // At launch there's no in-progress work to interrupt — and this is also the
+  // path that catches an update the user downloaded but declined to restart
+  // into last time (checkForUpdatesAndNotify re-validates the cached
+  // installer against latest.yml and fires this same event without
+  // re-downloading). Install it now instead of prompting again.
+  if (isStartupUpdateCheck) {
+    isStartupUpdateCheck = false
+    log('Update ready at launch — installing silently')
+    autoUpdater.quitAndInstall(true, true)
+    return
+  }
+
   dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Update ready',
@@ -3547,5 +3582,6 @@ autoUpdater.on('error', (err) => {
     return
   }
 
+  isStartupUpdateCheck = false
   broadcastToWindows('update-status', { type: 'error', message: msg })
 })

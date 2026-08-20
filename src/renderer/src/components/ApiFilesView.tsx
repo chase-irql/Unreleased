@@ -32,7 +32,6 @@ import { ClampedMenu } from './ClampedMenu'
 import { Track } from '../types'
 import { ProgressiveCover } from './ProgressiveCover'
 import MediaLightbox, { LightboxItem } from './MediaLightbox'
-import SongInfoModal from './SongInfoModal'
 import TextFileViewer, { TextFileSource } from './TextFileViewer'
 
 type ViewMode = 'list' | 'grid'
@@ -204,7 +203,6 @@ export default function ApiFilesView(): JSX.Element {
   const playlistItemRef = useRef<HTMLButtonElement>(null)
   const playlistFlyoutRef = useRef<HTMLDivElement>(null)
   const [playlistFlyoutPos, setPlaylistFlyoutPos] = useState({ top: 0, left: 0 })
-  const [infoSong, setInfoSong] = useState<JWApiSong | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ entry: JWApiFileEntry; x: number; y: number } | null>(null)
   // Whether a right-clicked audio file actually has a matching song in the
   // Tracker — resolved lazily per path on menu-open (not for every row up
@@ -593,10 +591,10 @@ export default function ApiFilesView(): JSX.Element {
     try {
       const data = await apiFetch<JWApiPaginatedResponse>('/songs/', { search: title, page_size: 5 })
       const match = data.results[0] ?? null
-      setInfoSong(match)
-    } catch {
-      setInfoSong(null)
-    }
+      // Global infoSongId (not local state) so the info panel survives
+      // switching to another tab, which unmounts this view.
+      if (match) useStore.getState().setInfoSongId(match.id)
+    } catch { /* no match — leave whatever's already open (if anything) alone */ }
   }
 
   // Resolves (and caches) whether an audio file has a matching Tracker entry,
@@ -1950,17 +1948,6 @@ export default function ApiFilesView(): JSX.Element {
         </>
       )}
 
-      {infoSong && (
-        <SongInfoModal
-          song={infoSong}
-          onClose={() => setInfoSong(null)}
-          onEdit={canEdit ? (songId) => {
-            setInfoSong(null)
-            setPendingEditorSongId(songId)
-            setActiveView('editor')
-          } : undefined}
-        />
-      )}
     </>
   )
 }

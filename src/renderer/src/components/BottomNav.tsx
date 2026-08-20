@@ -6,7 +6,7 @@ import { navTabFor, tabEntryView } from '../lib/navItems'
 import { showStaffProfile, staffProfileView, staffProfileLabel } from '../lib/userApi'
 
 export default function BottomNav(): JSX.Element {
-  const { activeView, setActiveView, openProfile, toggleSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'openProfile', 'toggleSettings', 'account', 'navVisibility')
+  const { activeView, setActiveView, openProfile, openSettings, account, navVisibility } = useStorePick('activeView', 'setActiveView', 'openProfile', 'openSettings', 'account', 'navVisibility')
   const isAdmin = !!account?.is_administrator
   const isEditor = !!account?.is_editor
   const profileView = staffProfileView(account)
@@ -74,7 +74,7 @@ export default function BottomNav(): JSX.Element {
         </button>
       )}
       <button
-        onClick={() => toggleSettings()}
+        onClick={() => openSettings()}
         className="flex-1 flex flex-col items-center justify-center py-2.5 gap-1 text-text-muted transition-colors overflow-hidden"
       >
         <Settings size={24} />
