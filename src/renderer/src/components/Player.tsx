@@ -1347,6 +1347,7 @@ export default function Player(): JSX.Element {
     'loop':        () => { if (!radioFmActive) toggleRepeat() },
     'clear-queue': () => useStore.getState().clearQueue(),
     'like':        () => { if (currentTrack && !radioFmActive) toggleLike(currentTrack.id) },
+    'toggle-lyrics': () => { const s = useStore.getState(); s.setLyricsOverride(!s.lyricsOverride) },
     'song-info':   () => { if (currentTrack || radioFmActive) openSongInfo() },
     'edit-song': () => {
       if (radioFmActive) return
