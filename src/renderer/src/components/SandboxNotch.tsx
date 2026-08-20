@@ -63,10 +63,19 @@ export default function SandboxNotch(): JSX.Element {
           dragged or resized (see useDraggableModal) switches to
           position:fixed, and a clipping ancestor would still clip it even
           though it's positioned relative to the viewport, not this box. Each
-          panel manages its own height/scrolling instead. */}
+          panel manages its own height/scrolling instead.
+
+          invisible, not hidden (display:none), when collapsed: ModalOverlay's
+          center-on-open effect measures its panel's natural size via
+          getBoundingClientRect the moment it mounts, before this component
+          has re-rendered to reflect the new dock — display:none would zero
+          out that measurement (a hidden ancestor collapses layout entirely),
+          while visibility:hidden keeps it laid out and measurable, just
+          unpainted. The panel itself force-overrides back to visible (see
+          Modal.tsx) so it isn't stuck invisible in between. */}
       <div
         ref={slotElRef}
-        className={`pointer-events-auto mt-2 ${showBackdrop ? '' : 'hidden'}`}
+        className={`mt-2 ${showBackdrop ? 'pointer-events-auto' : 'invisible pointer-events-none'}`}
         style={{ width: 'min(94vw, 800px)' }}
       />
     </div>

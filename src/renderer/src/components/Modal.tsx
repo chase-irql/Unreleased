@@ -1,4 +1,4 @@
-import { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useId, useRef, useState } from 'react'
+import { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { create } from 'zustand'
 import { Lock, Unlock } from 'lucide-react'
@@ -245,6 +245,27 @@ export function ModalOverlay({
     return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null
   }
 
+  // Modals dock physically under the sandbox pill (that's where their portal
+  // target lives), but should still *open* centered in the viewport rather
+  // than tucked up there. Runs once per mount, synchronously before the
+  // browser paints (useLayoutEffect, not useEffect) so the panel's default
+  // CSS-driven position under the pill is never actually visible — it
+  // measures its own natural size there, then immediately switches to the
+  // same position:fixed mechanism drag/resize already use, centered.
+  useLayoutEffect(() => {
+    if (floating) return
+    const r = panelRef.current?.getBoundingClientRect()
+    if (!r) return
+    setRect({
+      left: clamp((window.innerWidth - r.width) / 2, 0, window.innerWidth - r.width),
+      top: clamp((window.innerHeight - r.height) / 2, 0, window.innerHeight - r.height),
+      width: r.width, height: r.height,
+    })
+    // Deliberately once-per-mount only — re-centering on every render would
+    // fight the user dragging it away from the middle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Keeps this panel available as a snap target for everyone else, and drops
   // it once it's no longer explicitly positioned (never dragged, or closed).
   useEffect(() => {
@@ -331,7 +352,10 @@ export function ModalOverlay({
           classes (w-full max-w-*, h-[...]) just lose to panelStyle's explicit
           width/height/maxWidth/maxHeight via inline-style specificity, while
           its border/radius/shadow/bg/overflow-hidden keep applying either way. */}
-      <div ref={panelRef} className={`relative overflow-hidden ${panelClassName}`} style={panelStyle}>
+      {/* visible overrides the slot's own invisible-when-collapsed state (see
+          SandboxNotch) — otherwise a panel centering itself on open would
+          inherit invisibility for the one render before the notch catches up. */}
+      <div ref={panelRef} className={`relative visible overflow-hidden ${panelClassName}`} style={panelStyle}>
         {children({ onHandleMouseDown, locked, toggleLock })}
         <ResizeHandle onMouseDown={onResizeHandleMouseDown} />
       </div>
