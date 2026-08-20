@@ -2306,49 +2306,26 @@ export default function ApiTrackerView(): JSX.Element {
     loadingRef.current = true
     setLoading(true); setError(null); setSongs([]); setHasMore(false); setCount(0)
     const t0 = performance.now()
-    const PAGE_SIZE_SORT = 200 // bigger batches to reduce round-trips
-    const CONCURRENCY = 6 // fetch several pages in parallel instead of one at a time
     runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive} fields=${parsedSearch.filters.length}`)
     // Field filters (artists:"...", etc.) can't be sent to the server, so
     // they're checked here alongside category/era.
     const passesAll = (s: JWApiSong): boolean => matchesFilters(s) && matchesFieldFilters(s, parsedSearch.filters)
-    const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
-      searchall: parsedSearch.freeText || undefined,
-      category: categoryParam || undefined,
-      era: eraParam || undefined,
-      page: p,
-      page_size: PAGE_SIZE_SORT,
-    })
+    // `all=true` returns the whole (filtered) catalogue as a plain array in
+    // one request — server-side page_size is capped below what we'd need to
+    // paginate reliably, so this avoids under-counting totalPages against it.
     ;(async () => {
       try {
-        const first = await fetchPage(1)
+        const all = await apiFetch<JWApiSong[]>('/songs/', {
+          searchall: parsedSearch.freeText || undefined,
+          category: categoryParam || undefined,
+          era: eraParam || undefined,
+          all: 'true',
+        })
         if (cancelled) return
-        const all: JWApiSong[] = [...first.results]
-        setSongs(all.filter(passesAll))
-        setCount(first.count)
-        runLog('tracker-sort', `page 1 loaded, accumulated ${all.length}/${first.count}`)
-
-        const totalPages = Math.ceil(first.count / PAGE_SIZE_SORT)
-        let nextPage = 2
-        const worker = async (): Promise<void> => {
-          while (!cancelled) {
-            const p = nextPage++
-            if (p > totalPages) return
-            const data = await fetchPage(p)
-            if (cancelled) return
-            all.push(...data.results)
-            setSongs(all.filter(passesAll)) // progressive display while loading
-            runLog('tracker-sort', `page ${p} loaded, accumulated ${all.length}/${first.count}`)
-          }
-        }
-        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
-        if (!cancelled) {
-          // Once everything is in, the real total is however many actually
-          // pass the (possibly multi-value) filter, not the server's raw
-          // category/era-agnostic-or-partial count.
-          setCount(all.filter(passesAll).length)
-          runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
-        }
+        const filtered = all.filter(passesAll)
+        setSongs(filtered)
+        setCount(filtered.length)
+        runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
       } catch (e) {
         if (!cancelled) { setError((e as Error).message); runLog('tracker-sort', 'ERROR', e as Error) }
       } finally {
@@ -2546,30 +2523,17 @@ export default function ApiTrackerView(): JSX.Element {
     loadingRef.current = true
     setLoading(true)
     try {
-      const PAGE_SIZE_ALL = 200
-      const CONCURRENCY = 6
-      const fetchPage = (p: number): Promise<JWApiPaginatedResponse> => apiFetch<JWApiPaginatedResponse>('/songs/', {
+      // `all=true` returns the whole (filtered) catalogue as a plain array in
+      // one request — server-side page_size is capped below what we'd need to
+      // paginate reliably, so this avoids under-counting totalPages against it.
+      const all = await apiFetch<JWApiSong[]>('/songs/', {
         searchall: debouncedSearch || undefined,
         category: categoryParam || undefined,
         era: eraParam || undefined,
-        page: p,
-        page_size: PAGE_SIZE_ALL,
+        all: 'true',
       })
-      const first = await fetchPage(1)
-      const all: JWApiSong[] = [...first.results]
-      const totalPages = Math.ceil(first.count / PAGE_SIZE_ALL)
-      let nextPage = 2
-      const worker = async (): Promise<void> => {
-        while (true) {
-          const p = nextPage++
-          if (p > totalPages) return
-          const data = await fetchPage(p)
-          all.push(...data.results)
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(totalPages - 1, 0)) }, worker))
       setSongs(all)
-      setCount(first.count)
+      setCount(all.length)
       setHasMore(false)
       hasMoreRef.current = false
       setSelected(new Map(all.map((s) => [s.id, s])))

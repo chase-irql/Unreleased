@@ -1,9 +1,12 @@
 # Relay Log
 
 Tracks cross-branch "relay" merges — where work from one platform branch
-(app/android/ios) is ported into another (most often into `web`). Recorded here
-so the app/web version pairing at each relay point doesn't need to be re-derived
-from git history each time.
+(app/android/ios) is ported into another. Most relays so far have landed on
+`web`, but this file covers relays onto **any** branch, not just web — this
+file lives only on `app` (removed from android/ios/web to avoid duplication),
+but since `app` holds the actual repository that all other branches are
+worktrees of, `git log --all` from here sees every branch's full history
+regardless of which branch this file is checked out on.
 
 Each entry: the relay commit, the branch it landed on, that branch's version at
 the commit, and the `app` branch's version as of the same time.
