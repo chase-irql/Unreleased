@@ -617,11 +617,21 @@ export default function ApiFilesView(): JSX.Element {
 
   // `marker` only drives the confirmation toast — any non-empty string will do.
   const copyTextToClipboard = (text: string, what: 'link' | 'path', marker = text): void => {
-    navigator.clipboard.writeText(text).then(() => {
+    const showConfirmed = (): void => {
       setCopiedPath(marker)
       setCopiedKind(what)
       setTimeout(() => setCopiedPath(null), 1800)
-    })
+    }
+    // Electron: use the native clipboard bridge (main.js's 'copy-text-to-clipboard'
+    // handler) instead of navigator.clipboard — the app's permission handler
+    // denies every web permission request by default, clipboard-write included,
+    // so navigator.clipboard.writeText silently fails here (same pattern
+    // SongContextMenu's "Copy path" already uses correctly).
+    const el = (window as any).electron
+    const write = el?.copyTextToClipboard
+      ? el.copyTextToClipboard(text)
+      : navigator.clipboard.writeText(text)
+    write.then(showConfirmed).catch((e: unknown) => console.error('[copy] failed:', e))
   }
 
   const copyToClipboard = (entry: JWApiFileEntry, text: string, what: 'link' | 'path'): void =>
