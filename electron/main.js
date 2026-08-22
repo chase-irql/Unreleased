@@ -6,21 +6,17 @@ const https = require('https')
 const { pathToFileURL, fileURLToPath } = require('url')
 const { Readable } = require('stream')
 const discordRpc = require('./discordRpc')
+const { configureRuntime } = require('./platform')
 
 // Response() only accepts web ReadableStreams, not Node streams
 const webStreamFromNode = (stream) => Readable.toWeb(stream)
 
-const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
+const isSmokeTest = process.argv.includes('--smoke-test')
+const isDev = (!app.isPackaged || process.env.NODE_ENV === 'development') && !isSmokeTest
 
-// Forcing --ozone-platform=wayland alongside a Vulkan-capable GPU makes
-// Chromium's GPU process crash-loop with exponential backoff before it gives
-// up and falls back — that backoff is what stalls startup for ~45s on some
-// Wayland/Vulkan setups (e.g. Arch + Hyprland). Auto-detecting the platform
-// and skipping Vulkan avoids the incompatible combo entirely.
-if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
-  app.commandLine.appendSwitch('disable-features', 'Vulkan')
-}
+// Must run before ready: Chromium reads Ozone/GPU switches while booting.
+// Explicit --ozone-platform flags are preserved; see platform.js.
+const runtimePlatform = configureRuntime(app)
 
 // Dev runs (unpackaged, launched via `electron .`) must NOT share the
 // packaged app's AppUserModelID — Windows uses this id to decide whether two
@@ -28,7 +24,7 @@ if (process.platform === 'linux') {
 // and pinning. Sharing it let a stray dev run poison the shell's cached icon
 // for the real installed app (dev's raw node_modules/electron/dist/electron.exe
 // showing up in place of the installed Unreleased.exe).
-app.setAppUserModelId(app.isPackaged ? 'Unreleased' : 'Unreleased.Dev')
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'Unreleased' : 'Unreleased.Dev')
 Menu.setApplicationMenu(null)
 
 // Only one instance may run at a time — launching a second copy (e.g. double-
@@ -154,7 +150,7 @@ function memSnapshot() {
   } catch { return '' }
 }
 
-runLog('main', `=== app start === v${app.getVersion?.() || '?'} pid=${process.pid} ${memSnapshot()}`)
+runLog('main', `=== app start === v${app.getVersion?.() || '?'} pid=${process.pid} platform=${runtimePlatform.platform} display=${runtimePlatform.displayServer} ${memSnapshot()}`)
 
 // Main-process crashes: log them (and to updater.log) before the app dies.
 process.on('uncaughtException', (err) => {
@@ -387,7 +383,10 @@ const floatWindows = new Map()
 // actually keeps the mini player visible over one.
 function applyAlwaysOnTop(win, on) {
   if (!win || win.isDestroyed()) return
-  win.setAlwaysOnTop(on, 'screen-saver')
+  // Electron's named z-order levels are implemented on Windows/macOS only.
+  // Linux window managers/compositors own the exact stacking policy.
+  if (process.platform === 'linux') win.setAlwaysOnTop(on)
+  else win.setAlwaysOnTop(on, 'screen-saver')
   // macOS: ride along onto other apps' fullscreen Spaces instead of staying
   // stuck to the desktop the mini player was opened on. skipTransformProcessType
   // avoids the dock-icon flicker the call otherwise causes.
@@ -409,6 +408,10 @@ let miniTopKeeper = null
 
 function startTopKeeper(win) {
   stopTopKeeper()
+  // Re-adding a window to the topmost z-order band is a Windows workaround.
+  // Repeating it on Linux can cause focus/flicker issues and cannot override a
+  // Wayland compositor's security policy anyway.
+  if (process.platform !== 'win32') return
   miniTopKeeper = setInterval(() => {
     if (!win || win.isDestroyed()) { stopTopKeeper(); return }
     if (!win.isAlwaysOnTop() || !win.isVisible() || win.isMinimized() || win.isFocused()) return
@@ -490,7 +493,20 @@ function rememberSize(win, key) {
 // pop-out), falling back to the main window. Also resolves the window's size,
 // since centering depends on it.
 function floatBounds(view) {
-  const base = FLOAT_SIZES[view]
+  const base = runtimePlatform.nativeWayland && view === 'mini-player'
+    // Native Wayland does not permit reliable app-driven resizing after a
+    // surface is mapped. Start the mini player at its panel size instead; the
+    // renderer keeps a panel open in this fixed-height mode.
+    ? { ...FLOAT_SIZES[view], height: MINI_EXPANDED_HEIGHT, minHeight: MINI_EXPANDED_MIN_HEIGHT }
+    : FLOAT_SIZES[view]
+  if (runtimePlatform.nativeWayland) {
+    // Wayland deliberately hides global coordinates and lets the compositor
+    // place new surfaces. Supplying X/Y would be ignored and can trigger GTK
+    // warnings, so only restore a size that fits the primary work area.
+    const { workArea } = screen.getPrimaryDisplay()
+    const { width, height } = { ...base, ...savedWindowSize(view, base, workArea) }
+    return { width, height }
+  }
   const ref = BrowserWindow.getFocusedWindow() || mainWindow
   const { workArea } = ref && !ref.isDestroyed()
     ? screen.getDisplayMatching(ref.getBounds())
@@ -504,7 +520,11 @@ function floatBounds(view) {
 }
 
 function createFloatWindow(view, params) {
-  const query = { float: view, ...sanitizeFloatParams(params) }
+  const query = {
+    float: view,
+    ...sanitizeFloatParams(params),
+    ...(runtimePlatform.nativeWayland && view === 'mini-player' ? { fixedHeight: 'true' } : {}),
+  }
   const existing = floatWindows.get(view)
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
@@ -517,6 +537,7 @@ function createFloatWindow(view, params) {
   const win = new BrowserWindow({
     ...FLOAT_SIZES[view],
     ...floatBounds(view),
+    ...(runtimePlatform.nativeWayland && view === 'mini-player' ? { minHeight: MINI_EXPANDED_MIN_HEIGHT } : {}),
     ...(FLOAT_OPTIONS[view] || {}),
     title: floatTitle(view),
     backgroundColor: '#0a0a0a', icon: iconPath, frame: false,
@@ -752,6 +773,38 @@ function createWindow() {
     },
     show: false,
   })
+
+  if (isSmokeTest) {
+    const timeout = setTimeout(() => {
+      console.error(`[smoke] timed out on ${runtimePlatform.displayServer}`)
+      app.exit(1)
+    }, 20000)
+    mainWindow.webContents.once('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+      if (!isMainFrame) return
+      clearTimeout(timeout)
+      console.error(`[smoke] renderer failed on ${runtimePlatform.displayServer}: ${code} ${description}`)
+      app.exit(1)
+    })
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        // A loaded HTML file is not enough: wait for React to mount a child in
+        // #root so CI also catches renderer bootstrap failures.
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        const mounted = await mainWindow.webContents.executeJavaScript(
+          "Boolean(document.querySelector('#root')?.firstElementChild)",
+          true,
+        )
+        if (!mounted) throw new Error('React did not mount into #root')
+        clearTimeout(timeout)
+        console.log(`[smoke] renderer mounted on ${runtimePlatform.platform}/${runtimePlatform.displayServer}`)
+        app.exit(0)
+      } catch (error) {
+        clearTimeout(timeout)
+        console.error(`[smoke] renderer bootstrap failed on ${runtimePlatform.displayServer}: ${error.message}`)
+        app.exit(1)
+      }
+    })
+  }
 
   // The renderer's <title> would otherwise clobber the now-playing title.
   mainWindow.on('page-title-updated', (e) => e.preventDefault())
@@ -1031,6 +1084,7 @@ ipcMain.handle('relaunch-app', () => {
 ipcMain.handle('is-maximized', () => mainWindow?.isMaximized() ?? false)
 ipcMain.handle('set-fullscreen', (_, value) => mainWindow?.setFullScreen(!!value))
 ipcMain.handle('is-fullscreen', () => mainWindow?.isFullScreen() ?? false)
+ipcMain.handle('get-runtime-platform', () => runtimePlatform)
 // Toggles DevTools on whichever window asked (main or a pop-out), not always
 // mainWindow — lets a float window's own Diagnostics/hotkey inspect itself.
 ipcMain.handle('toggle-devtools', (event) => event.sender.toggleDevTools())
@@ -1130,6 +1184,10 @@ const MINI_EXPANDED_HEIGHT = 540
 ipcMain.handle('mini-player-set-expanded', (event, expanded) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (!win || win.isDestroyed()) return
+  // Programmatic resize APIs are intentionally unavailable on native
+  // Wayland. The fixed-height renderer mode never calls this handler, but
+  // keep the boundary safe if a stale renderer or IPC replay does.
+  if (runtimePlatform.nativeWayland) return
   const { minWidth, height: compactHeight } = FLOAT_SIZES['mini-player']
   const [w, h] = win.getSize()
   if (expanded) {
@@ -3438,6 +3496,7 @@ app.whenReady().then(() => {
   )
 
   createWindow()
+  if (isSmokeTest) return
   createTray()
   discordRpc.setEnabled(appSettings.discordRpcEnabled !== false)
 

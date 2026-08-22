@@ -1,0 +1,63 @@
+name: Test desktop platforms
+
+on:
+  push:
+    branches: [app, main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: "1"
+        run: npm ci
+      - name: Build renderer and test platform selection
+        run: npm run build && npm run test:platform
+      - name: Launch Electron on Windows
+        run: npm run electron:smoke -- --no-sandbox
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install system and project dependencies
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: "1"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y weston xvfb
+          npm ci
+      - name: Build renderer and test platform selection
+        run: npm run build && npm run test:platform
+      - name: Launch Electron on X11
+        run: timeout 30s xvfb-run -a npm run electron:smoke -- --ozone-platform=x11 --no-sandbox
+      - name: Launch Electron on Wayland
+        shell: bash
+        run: |
+          runtime_dir="$(mktemp -d)"
+          chmod 700 "$runtime_dir"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          weston --backend=headless-backend.so --renderer=pixman --socket=wayland-ci --idle-time=0 --log="$RUNNER_TEMP/weston.log" &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true; rm -rf "$runtime_dir"' EXIT
+          for attempt in {1..50}; do
+            [ -S "$runtime_dir/wayland-ci" ] && break
+            sleep 0.1
+          done
+          test -S "$runtime_dir/wayland-ci"
+          timeout 30s env WAYLAND_DISPLAY=wayland-ci XDG_SESSION_TYPE=wayland npm run electron:smoke -- --ozone-platform=wayland --no-sandbox
