@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, memo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal } from 'lucide-react'
+import { Music, Radio, Search, SkipForward, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronLeft, Play, Pause, SkipBack, SkipForward as SkipFwd, Shuffle, Repeat, Repeat1, Volume2, VolumeX, MoreHorizontal, Info, Heart, Maximize2, Minimize2, PictureInPicture2, ListMusic, GripVertical, Trash2, Check, Download, History, SlidersHorizontal, RefreshCw } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
 import { useShallow } from 'zustand/react/shallow'
 import { parseLrc, getCurrentLineIndex, isLrcFormat, downloadSyncedLyrics, splitAdLibs, ADLIB_OPACITY, useLyricsVisible } from '../lib/lyrics'
@@ -1677,7 +1677,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   // 'panel' fills the desktop right column in place of the lyrics view.
   variant: 'inline' | 'sheet' | 'panel'
 }): JSX.Element {
-  const { queue, queueIndex, currentTrack, isPlaying, shuffle, radioMode, playTrack, jumpToTrack, removeFromQueue, clearQueue, reorderQueue, onLightBackdrop } = useStore(useShallow(s => ({
+  const { queue, queueIndex, currentTrack, isPlaying, shuffle, radioMode, playTrack, jumpToTrack, removeFromQueue, clearQueue, reorderQueue, reshuffleQueue, onLightBackdrop } = useStore(useShallow(s => ({
     queue: s.queue,
     queueIndex: s.queueIndex,
     currentTrack: s.currentTrack,
@@ -1689,6 +1689,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
     removeFromQueue: s.removeFromQueue,
     clearQueue: s.clearQueue,
     reorderQueue: s.reorderQueue,
+    reshuffleQueue: s.reshuffleQueue,
     // Every label in here is hardcoded white, which only works over something
     // dark. The art background always is (it's dimmed to 0.22/0.45 brightness),
     // but the theme background is whatever the skin's surface is — so on a
@@ -1852,8 +1853,17 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
 
         {filteredUpcoming.length > 0 ? (
           <div className="px-3 pt-3 pb-6">
-            <p className="text-white/50 text-[10px] uppercase tracking-widest px-1 mb-2 font-semibold">
-              {query ? 'Results' : shuffle ? 'Shuffle' : 'Up Next'} · {filteredUpcoming.length}
+            <p className="text-white/50 text-[10px] uppercase tracking-widest px-1 mb-2 font-semibold flex items-center gap-1.5">
+              <span>{query ? 'Results' : shuffle ? 'Shuffle' : 'Up Next'} · {filteredUpcoming.length}</span>
+              {!query && shuffle && (
+                <button
+                  onClick={reshuffleQueue}
+                  title="Reshuffle"
+                  className="ml-auto p-1 -m-1 rounded text-white/50 hover:text-white/90 transition-colors"
+                >
+                  <RefreshCw size={11} />
+                </button>
+              )}
             </p>
             {filteredUpcoming.map(({ track, i }) => (
               <div

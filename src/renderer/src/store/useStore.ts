@@ -248,6 +248,9 @@ interface AppState {
   // hide a lyrics section that would otherwise show, or reveal the "no
   // lyrics" placeholder for a track that has none.
   lyricsOverride: boolean
+  // Show eras by their full name ("WRLD On Drugs") instead of the API's
+  // abbreviation ("WOD") wherever the Tracker displays one.
+  fullEraNames: boolean
   // Strength of that blur, as a multiplier on each surface's own base radius
   // (the WRLD tab blurs less than the now-playing/mini panels, and a
   // multiplier keeps that relationship intact at every setting). 1 = the
@@ -545,6 +548,7 @@ interface AppActions {
   setLyricsAlign: (align: 'left' | 'center') => void
   setLyricsBlur: (enabled: boolean) => void
   setLyricsOverride: (enabled: boolean) => void
+  setFullEraNames: (enabled: boolean) => void
   setLyricsBlurAmount: (amount: number) => void
   setLyricsColorActive: (color: string | null) => void
   setLyricsColorInactive: (color: string | null) => void
@@ -1292,6 +1296,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   lyricsAlign: ls.get<'left' | 'center'>('lyricsAlign') ?? 'left',
   lyricsBlur: ls.get<boolean>('lyricsBlur') ?? true,
   lyricsOverride: ls.get<boolean>('lyricsOverride') ?? false,
+  fullEraNames: ls.get<boolean>('fullEraNames') ?? false,
   lyricsBlurAmount: ls.get<number>('lyricsBlurAmount') ?? 1,
   lyricsColorActive: ls.get<string>('lyricsColorActive'),
   lyricsColorInactive: ls.get<string>('lyricsColorInactive'),
@@ -1404,6 +1409,7 @@ export const useStore = create<AppStore>((set, get, store) => ({
   setLyricsAlign: (lyricsAlign) => { set({ lyricsAlign }); ls.set('lyricsAlign', lyricsAlign) },
   setLyricsBlur: (lyricsBlur) => { set({ lyricsBlur }); ls.set('lyricsBlur', lyricsBlur) },
   setLyricsOverride: (lyricsOverride) => { set({ lyricsOverride }); ls.set('lyricsOverride', lyricsOverride) },
+  setFullEraNames: (fullEraNames) => { set({ fullEraNames }); ls.set('fullEraNames', fullEraNames) },
   setLyricsBlurAmount: (lyricsBlurAmount) => { set({ lyricsBlurAmount }); ls.set('lyricsBlurAmount', lyricsBlurAmount) },
   setLyricsColorActive: (lyricsColorActive) => { set({ lyricsColorActive }); ls.set('lyricsColorActive', lyricsColorActive) },
   setLyricsColorInactive: (lyricsColorInactive) => { set({ lyricsColorInactive }); ls.set('lyricsColorInactive', lyricsColorInactive) },
