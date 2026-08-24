@@ -1866,7 +1866,14 @@ export const useStore = create<AppStore>((set, get, store) => ({
   playlistsOpenFolderId: null,
   setPlaylistsOpenFolderId: (id) => set({ playlistsOpenFolderId: id }),
 
-  setShowUserAuth: (showUserAuth) => set({ showUserAuth }),
+  setShowUserAuth: (showUserAuth) => {
+    // Backdrop clicks intentionally collapse the sandbox without unmounting
+    // its modals. Re-opening auth while it is still mounted therefore has to
+    // expand the sandbox explicitly; setting an already-true boolean alone
+    // would be a no-op and leave the login modal hidden behind the pill.
+    if (showUserAuth) useSandboxStore.getState().expand()
+    set({ showUserAuth })
+  },
 
   loadAccount: async () => {
     // Overlapping callers (see the flag's comment above) await the same run
