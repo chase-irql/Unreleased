@@ -29,6 +29,7 @@ let loadPromise: Promise<void> | null = null
 // description-based derivation below.
 const MANUAL_FULL_NAMES: Record<string, string> = {
   'HIH 999': 'Heartbroken In Hollywood 999',
+  'UNS: JW': 'Unsurfaced Live Recordings',
 }
 
 function fullName(era: JWApiEra): string | undefined {
@@ -44,6 +45,7 @@ function fullName(era: JWApiEra): string | undefined {
     // "SoundCloud releases grouping") aren't a stylistic era with a real
     // full name — same treatment as no description at all.
     .replace(/\s+releases grouping$/i, '')
+    .replace(/\s+(project|collection)$/i, '')
     .trim()
   // Stripping produced the abbreviation right back (e.g. "KILL'S WRLD era"
   // → "KILL'S WRLD") — nothing was actually expanded, so there's no real

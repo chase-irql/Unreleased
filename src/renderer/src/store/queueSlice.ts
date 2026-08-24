@@ -495,7 +495,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       // wipe this session's history — none of that belongs to "give me a
       // different next song." Bumping _radioSession invalidates any prefetch
       // already in flight so a stale response can't clobber this one.
-      set({ shuffle: true, radioNext: null, _radioWaiting: false })
+      set({ shuffle: true, radioNext: null })
       _radioSession++
       get()._prefetchRadioTrack()
       return

@@ -713,7 +713,7 @@ const SongRow = memo(function SongRow({
               <button
                 onClick={() => onEraClick(song.era!.name)}
                 className="hidden md:block text-text-muted text-xs truncate w-36 shrink-0 text-left hover:text-accent transition-colors"
-                title={`Filter by era: ${song.era.name}`}
+                title={`Filter by era: ${eraLabel(song.era.name, fullEraNames)}`}
               >
                 {eraLabel(song.era.name, fullEraNames)}
               </button>
@@ -867,7 +867,7 @@ const DetailedSongRow = memo(function DetailedSongRow({
             <button
               onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
               className="hidden md:block text-text-muted text-[0.5625rem] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate max-w-[140px] shrink-0 hover:text-accent hover:border-accent/40 transition-colors"
-              title={`Filter by era: ${song.era.name}`}
+              title={`Filter by era: ${eraLabel(song.era.name, fullEraNames)}`}
             >
               {eraLabel(song.era.name, fullEraNames)}
             </button>
@@ -1343,7 +1343,7 @@ const SongCard = memo(function SongCard({
               <button
                 onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
                 className="hover:text-accent transition-colors"
-                title={`Filter by era: ${song.era.name}`}
+                title={`Filter by era: ${eraLabel(song.era.name, fullEraNames)}`}
               >
                 Era: {eraLabel(song.era.name, fullEraNames)}
               </button>
@@ -1705,7 +1705,7 @@ const LyricResultRow = memo(function LyricResultRow({
             <button
               onClick={(e) => { e.stopPropagation(); if (!selectMode) onEraClick(song.era!.name) }}
               className="text-text-muted text-[0.5625rem] uppercase tracking-wide bg-surface px-1.5 py-0.5 rounded border border-[var(--border)] truncate hover:text-accent hover:border-accent/40 transition-colors"
-              title={`Filter by era: ${song.era.name}`}
+              title={`Filter by era: ${eraLabel(song.era.name, fullEraNames)}`}
             >
               {eraLabel(song.era.name, fullEraNames)}
             </button>
