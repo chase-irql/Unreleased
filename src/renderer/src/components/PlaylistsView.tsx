@@ -33,6 +33,7 @@ import { useMultiSelect } from '../hooks/useMultiSelect'
 import { ClampedMenu } from './ClampedMenu'
 import type { PlaylistFolder } from '../lib/playlistFolders'
 import { Folder, FolderPlus, FolderOpen, FolderMinus } from 'lucide-react'
+import { loadEraFullNames, eraLabel } from '../lib/eras'
 
 // One parsed line of an .m3u: a file path, plus the #EXTINF title/duration
 // when the exporter wrote them. Import can either match the path to a local
@@ -414,12 +415,14 @@ export default function PlaylistsView(): JSX.Element {
     // Subscribed purely so the track memo below re-derives when a custom
     // name/cover changes — liteSongToTrack bakes the override in at conversion
     // time, so without this the rows keep the old name until a refetch.
-    songPrefs, openBulkEditor } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playNext', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'playlistsSort', 'setPlaylistsSort', 'playlistsOpenFolderId', 'setPlaylistsOpenFolderId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'followedPlaylists', 'followPlaylist', 'unfollowPlaylist', 'updateFollowedPlaylistMeta', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'songPrefs', 'openBulkEditor')
+    songPrefs, openBulkEditor, fullEraNames } = useStorePick('account', 'playlists', 'refreshPlaylists', 'playTrack', 'playNext', 'playCollection', 'addToQueue', 'setShowUserAuth', 'likedTrackIds', 'toggleLike', 'setActiveView', 'setPendingEditorSongId', 'localPlaylists', 'libraryTracks', 'libraryArt', 'loadLibrary', 'deleteLocalPlaylist', 'renameLocalPlaylist', 'updateLocalPlaylist', 'addToLocalPlaylist', 'importM3uEntriesLocal', 'exportLocalPlaylistM3u', 'pendingPlaylistId', 'setPendingPlaylistId', 'playlistsSelectedId', 'setPlaylistsSelectedId', 'playlistsSelectedLocalId', 'setPlaylistsSelectedLocalId', 'playlistsSort', 'setPlaylistsSort', 'playlistsOpenFolderId', 'setPlaylistsOpenFolderId', 'offlinePlaylists', 'offlineSync', 'offlineTracks', 'downloadPlaylistOffline', 'removePlaylistOffline', 'followedPlaylists', 'followPlaylist', 'unfollowPlaylist', 'updateFollowedPlaylistMeta', 'playlistFolders', 'createFolder', 'renameFolder', 'deleteFolder', 'movePlaylistsToFolder', 'appTextScale', 'songPrefs', 'openBulkEditor', 'fullEraNames')
   // Cast back to the component's own SortField union — the store keeps the
   // field as a plain string so it doesn't have to import this component's type.
   const sort = sortRaw as SortState
   const setSort = setSortRaw as (s: SortState) => void
   const canEdit = useCanEdit()
+
+  useEffect(() => { loadEraFullNames().catch(() => {}) }, [])
 
   const [showLiked, setShowLiked] = useState(false)
   const [detail, setDetail] = useState<PlaylistDetail | null>(null)
@@ -2948,7 +2951,7 @@ export default function PlaylistsView(): JSX.Element {
                       <span className="truncate">{track.artist}{track.album ? ` · ${track.album}` : ''}</span>
                     </p>
                   </div>
-                  <span className="text-text-muted text-xs truncate" title={track.era || undefined}>{track.era || '—'}</span>
+                  <span className="text-text-muted text-xs truncate" title={track.era || undefined}>{track.era ? eraLabel(track.era, fullEraNames) : '—'}</span>
                   <span
                     className={`text-xs px-1.5 py-0.5 rounded border text-center truncate ${CATEGORY_COLORS[track.genre] ?? 'text-text-muted bg-surface border-[var(--border)]'}`}
                   >
@@ -2980,6 +2983,7 @@ export default function PlaylistsView(): JSX.Element {
             canEdit={canEdit}
             onInfo={() => openSongInfo(trackMenu.songId as number)}
             onPlay={() => playTrack(trackMenu.track, displayTracks)}
+            onPlayNext={() => playNext(trackMenu.track)}
             onAddToQueue={() => addToQueue(trackMenu.track)}
             onSelect={() => toggleTrackSelect(trackMenu.track)}
             liked={likedTrackIds.includes(trackMenu.track.id)}
