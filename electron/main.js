@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard, session, powerMonitor } = require('electron')
 const { autoUpdater } = require('electron-updater')
+const { loadOfflineLibraryFile, updateOfflineLibraryFile } = require('./offlineLibrary')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -1978,13 +1979,12 @@ const offlineLibraryDataPath = path.join(app.getPath('userData'), 'offline-libra
 function getOfflineAudioDir() { return appSettings.offlineLibraryPath }
 
 function loadOfflineLibrary() {
-  try {
-    const data = JSON.parse(fs.readFileSync(offlineLibraryDataPath, 'utf-8'))
-    return { tracks: data.tracks || {}, playlists: data.playlists || {} }
-  } catch { return { tracks: {}, playlists: {} } }
+  return loadOfflineLibraryFile(offlineLibraryDataPath)
 }
-function saveOfflineLibrary(data) {
-  try { fs.writeFileSync(offlineLibraryDataPath, JSON.stringify(data)) } catch(e) { log('saveOfflineLibrary error:', e.message) }
+function updateOfflineLibrary(mutate) {
+  return updateOfflineLibraryFile(offlineLibraryDataPath, mutate, (e) => {
+    log('updateOfflineLibrary error:', e instanceof Error ? e.message : String(e))
+  })
 }
 
 ipcMain.handle('offline-get-library', () => loadOfflineLibrary())
@@ -2019,15 +2019,15 @@ function isAllowedLibraryDownloadHost(url) {
 
 ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: songPath, meta }) => {
   if (!isAllowedLibraryDownloadHost(url)) return { error: 'Download blocked: untrusted host' }
-  const lib = loadOfflineLibrary()
-  const existing = lib.tracks[id]
+  const existing = loadOfflineLibrary().tracks[id]
   const localPath = path.join(getOfflineAudioDir(), `${id}.${ext || 'mp3'}`)
 
   // Audio unchanged and still on disk — just refresh the display metadata
   // (title/lyrics/art may have been edited without the file itself moving).
   if (existing && existing.path === songPath && fs.existsSync(existing.localPath)) {
-    lib.tracks[id] = { ...existing, ...meta, path: songPath }
-    saveOfflineLibrary(lib)
+    updateOfflineLibrary((library) => {
+      library.tracks[id] = { ...(library.tracks[id] || existing), ...meta, path: songPath }
+    })
     let size = 0
     try { size = fs.statSync(existing.localPath).size } catch {}
     return { localPath: existing.localPath, skipped: true, size }
@@ -2042,52 +2042,52 @@ ipcMain.handle('offline-download-track', async (event, { id, url, ext, path: son
     return { error: 'Download failed: ' + e.message }
   }
 
-  lib.tracks[id] = { ...meta, path: songPath, localPath, ext: ext || 'mp3', downloadedAt: Date.now() }
-  saveOfflineLibrary(lib)
+  updateOfflineLibrary((library) => {
+    library.tracks[id] = { ...meta, path: songPath, localPath, ext: ext || 'mp3', downloadedAt: Date.now() }
+  })
   let size = 0
   try { size = fs.statSync(localPath).size } catch {}
   return { localPath, size }
 })
 
 ipcMain.handle('offline-remove-track', (_, id) => {
-  const lib = loadOfflineLibrary()
-  const entry = lib.tracks[id]
-  if (entry) {
+  updateOfflineLibrary((library) => {
+    const entry = library.tracks[id]
+    if (!entry) return
     try { fs.unlinkSync(entry.localPath) } catch {}
-    delete lib.tracks[id]
-    saveOfflineLibrary(lib)
-  }
+    delete library.tracks[id]
+  })
   return true
 })
 
 ipcMain.handle('offline-set-playlist', (_, key, songIds, name) => {
-  const lib = loadOfflineLibrary()
-  lib.playlists[key] = { songIds, name, updatedAt: Date.now() }
-  // Prune any previously-offline track that's no longer referenced by ANY
-  // synced playlist (song was removed from the playlist, or the playlist's
-  // song list shrank on resync).
-  const stillReferenced = new Set(Object.values(lib.playlists).flatMap(p => p.songIds))
-  for (const trackId of Object.keys(lib.tracks)) {
-    if (!stillReferenced.has(trackId)) {
-      try { fs.unlinkSync(lib.tracks[trackId].localPath) } catch {}
-      delete lib.tracks[trackId]
+  updateOfflineLibrary((library) => {
+    library.playlists[key] = { songIds, name, updatedAt: Date.now() }
+    // Prune any previously-offline track that's no longer referenced by ANY
+    // synced playlist (song was removed from the playlist, or the playlist's
+    // song list shrank on resync).
+    const stillReferenced = new Set(Object.values(library.playlists).flatMap(p => p.songIds))
+    for (const trackId of Object.keys(library.tracks)) {
+      if (!stillReferenced.has(trackId)) {
+        try { fs.unlinkSync(library.tracks[trackId].localPath) } catch {}
+        delete library.tracks[trackId]
+      }
     }
-  }
-  saveOfflineLibrary(lib)
+  })
   return true
 })
 
 ipcMain.handle('offline-remove-playlist', (_, key) => {
-  const lib = loadOfflineLibrary()
-  delete lib.playlists[key]
-  const stillReferenced = new Set(Object.values(lib.playlists).flatMap(p => p.songIds))
-  for (const trackId of Object.keys(lib.tracks)) {
-    if (!stillReferenced.has(trackId)) {
-      try { fs.unlinkSync(lib.tracks[trackId].localPath) } catch {}
-      delete lib.tracks[trackId]
+  updateOfflineLibrary((library) => {
+    delete library.playlists[key]
+    const stillReferenced = new Set(Object.values(library.playlists).flatMap(p => p.songIds))
+    for (const trackId of Object.keys(library.tracks)) {
+      if (!stillReferenced.has(trackId)) {
+        try { fs.unlinkSync(library.tracks[trackId].localPath) } catch {}
+        delete library.tracks[trackId]
+      }
     }
-  }
-  saveOfflineLibrary(lib)
+  })
   return true
 })
 
@@ -2102,28 +2102,28 @@ ipcMain.handle('offline-set-library-path', async (_, newPath) => {
     return { error: 'Could not create folder: ' + e.message }
   }
 
-  const lib = loadOfflineLibrary()
   const failed = []
-  for (const trackId of Object.keys(lib.tracks)) {
-    const track = lib.tracks[trackId]
-    const oldFile = track.localPath
-    if (!oldFile || !fs.existsSync(oldFile)) continue
-    const newFile = path.join(newPath, path.basename(oldFile))
-    try {
-      fs.renameSync(oldFile, newFile)
-      track.localPath = newFile
-    } catch (e) {
-      // Cross-device moves can fail with EXDEV — fall back to copy + delete.
+  updateOfflineLibrary((library) => {
+    for (const trackId of Object.keys(library.tracks)) {
+      const track = library.tracks[trackId]
+      const oldFile = track.localPath
+      if (!oldFile || !fs.existsSync(oldFile)) continue
+      const newFile = path.join(newPath, path.basename(oldFile))
       try {
-        fs.copyFileSync(oldFile, newFile)
-        fs.unlinkSync(oldFile)
+        fs.renameSync(oldFile, newFile)
         track.localPath = newFile
-      } catch (e2) {
-        failed.push(trackId)
+      } catch (e) {
+        // Cross-device moves can fail with EXDEV — fall back to copy + delete.
+        try {
+          fs.copyFileSync(oldFile, newFile)
+          fs.unlinkSync(oldFile)
+          track.localPath = newFile
+        } catch (e2) {
+          failed.push(trackId)
+        }
       }
     }
-  }
-  saveOfflineLibrary(lib)
+  })
 
   appSettings.offlineLibraryPath = newPath
   saveSettings()
