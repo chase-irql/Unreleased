@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electron', {
     return () => ipcRenderer.removeListener('fullscreen-changed', fn)
   },
   platform: process.platform,
+  getRuntimePlatform: () => ipcRenderer.invoke('get-runtime-platform'),
 
   // Floating pop-out windows (see main.js createFloatWindow). The *Self
   // variants act on whichever window called them — pop-outs must not use

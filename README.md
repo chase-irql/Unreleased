@@ -105,7 +105,7 @@ Both branches' READMEs cover their own install/dev instructions in full detail.
 |----------|------|
 | Windows | `Unreleased-Setup-x.x.x.exe` (full) or `Unreleased-Setup.exe` (web installer) |
 | macOS | `.dmg` — Apple Silicon and Intel |
-| Linux | `.AppImage` |
+| Linux | `.AppImage` — native Wayland and X11/XWayland |
 
 All builds are on the [releases page](https://github.com/leanwrldd/unreleased/releases). Or skip the install entirely and use the [web player](https://player.juicewrldapi.com).
 
@@ -136,12 +136,23 @@ npm run dev
 # Desktop app in dev mode (Vite + Electron)
 npm run electron:dev
 
+# Linux: optionally force a display backend while troubleshooting
+npm run electron:dev:wayland
+npm run electron:dev:x11
+
 # Type-check + production build → dist/
 npm run build
 
 # Package the desktop app → release/
 npm run electron:build
 ```
+
+Linux selects Wayland or X11 automatically. Native Wayland intentionally leaves
+window placement to the compositor, and the mini player uses a stable panel
+height because Wayland does not permit reliable app-driven resizing. Use the
+X11 override above if exact programmatic placement is important. Global
+shortcuts on Wayland use the desktop portal and may show a one-time compositor
+permission prompt.
 
 ### Branches
 

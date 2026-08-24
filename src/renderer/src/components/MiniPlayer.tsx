@@ -242,19 +242,25 @@ export default function MiniPlayer(): JSX.Element {
   } = useStorePick('currentTrack', 'currentTrackFull', 'isPlaying', 'progress', 'currentTime', 'shuffle', 'repeat', 'likedTrackIds', 'volume', 'playbackSpeed', 'radioFmActive', 'radioFmNowPlaying', 'radioFmMatchedSong', 'toggleLike', 'setVolume')
 
   const fm = radioFmActive
+  // Wayland compositors intentionally reject application-driven window
+  // resizing. main.js opens the mini player at a stable panel height there
+  // and marks the URL so this view always keeps useful content below the bar.
+  const fixedHeight = new URLSearchParams(window.location.search).get('fixedHeight') === 'true'
 
   // ── Panel (lyrics / queue) ────────────────────────────────────────────────
   const [panel, setPanel] = useState<PanelKind | null>(() => {
     const saved = localStorage.getItem(PANEL_LS_KEY)
-    return saved === 'lyrics' || saved === 'queue' ? saved : null
+    if (saved === 'lyrics' || saved === 'queue') return saved
+    return fixedHeight ? 'lyrics' : null
   })
   useEffect(() => {
     if (panel) localStorage.setItem(PANEL_LS_KEY, panel)
     else localStorage.removeItem(PANEL_LS_KEY)
-    // Grows/shrinks the OS window; compact mode locks the height (main.js).
-    el?.miniPlayerSetExpanded?.(panel !== null)
-  }, [panel])
-  const togglePanel = (kind: PanelKind): void => setPanel((p) => (p === kind ? null : kind))
+    // X11/Windows can grow and shrink the OS window. Native Wayland starts at
+    // the panel height and stays there because the compositor owns resizing.
+    if (!fixedHeight) el?.miniPlayerSetExpanded?.(panel !== null)
+  }, [fixedHeight, panel])
+  const togglePanel = (kind: PanelKind): void => setPanel((p) => (p === kind ? (fixedHeight ? p : null) : kind))
 
   // ── Always-on-top pin (window is created pinned) ──────────────────────────
   const [pinned, setPinned] = useState(true)
