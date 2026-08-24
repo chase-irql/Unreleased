@@ -13,7 +13,7 @@ import SongContextMenu from './SongContextMenu'
 import { CompactGroupRow, useExpandedGroups } from './CompactGroupRow'
 import {
   apiFetch, apiPeek, songToTrack, parseDuration, buildStreamUrl, CATEGORY_LABELS, CATEGORY_COLORS, JWAPI_BASE,
-  JWApiSong, JWApiPaginatedResponse, JWApiStats, JWApiEra,
+  JWApiSong, JWApiPaginatedResponse, JWApiStats, JWApiEra, loadAllSongs,
 } from '../lib/juicewrldApi'
 import { fisherYates } from '../store/queueSlice'
 import { Track } from '../types'
@@ -335,6 +335,7 @@ function SidebarCheckRow({ label, count, checked, onClick }: {
 // SearchHelpPopover, and only takes up space while actually in use.
 function FilterPopover({
   stats, eras, selectedCategories, selectedEras, onCategory, onEra, onClearCategories, onClearEras, onClearAll, onClose,
+  libraryFilter, onLibraryFilter, hasLibrary,
 }: {
   stats: JWApiStats | null
   eras: JWApiEra[]
@@ -346,6 +347,9 @@ function FilterPopover({
   onClearEras: () => void
   onClearAll: () => void
   onClose: () => void
+  libraryFilter: 'all' | 'have' | 'missing'
+  onLibraryFilter: (f: 'all' | 'have' | 'missing') => void
+  hasLibrary: boolean
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const fullEraNames = useStore((s) => s.fullEraNames)
@@ -369,7 +373,7 @@ function FilterPopover({
     unsurfaced:        stats?.category_stats.unsurfaced,
     recording_session: stats?.category_stats.recording_session,
   }
-  const hasFilters = selectedCategories.size > 0 || selectedEras.size > 0
+  const hasFilters = selectedCategories.size > 0 || selectedEras.size > 0 || libraryFilter !== 'all'
 
   return (
     <div
@@ -419,6 +423,16 @@ function FilterPopover({
             ))}
           </div>
         </>
+      )}
+
+      <p className="text-[0.625rem] font-bold uppercase tracking-widest text-text-muted pt-3 pb-1">Offline downloads</p>
+      <div className="flex flex-col gap-0.5">
+        <SidebarCheckRow label="All songs" checked={libraryFilter === 'all'} onClick={() => onLibraryFilter('all')} />
+        <SidebarCheckRow label="Downloaded offline" checked={libraryFilter === 'have'} onClick={() => onLibraryFilter('have')} />
+        <SidebarCheckRow label="Not downloaded" checked={libraryFilter === 'missing'} onClick={() => onLibraryFilter('missing')} />
+      </div>
+      {!hasLibrary && libraryFilter === 'have' && (
+        <p className="text-[0.6875rem] text-text-muted pt-1.5">Nothing downloaded offline yet — right-click a song and choose "Download offline" first.</p>
       )}
     </div>
   )
@@ -1826,7 +1840,7 @@ export default function ApiTrackerView(): JSX.Element {
     apiTrackerEra, setApiTrackerEra,
     setActiveView, setApiFilesPath, setPendingEditorSongId,
     playlists, refreshPlaylists, setShowUserAuth, likedTrackIds, toggleLike,
-    openBulkEditor, fullEraNames,
+    openBulkEditor, fullEraNames, offlineTracks,
   } = useStore(useShallow(s => ({
     playTrack: s.playTrack, startRadio: s.startRadio, addToQueue: s.addToQueue,
     account: s.account, shuffle: s.shuffle,
@@ -1838,6 +1852,7 @@ export default function ApiTrackerView(): JSX.Element {
     likedTrackIds: s.likedTrackIds, toggleLike: s.toggleLike,
     openBulkEditor: s.openBulkEditor,
     fullEraNames: s.fullEraNames,
+    offlineTracks: s.offlineTracks,
   })))
 
   const canEdit = useCanEdit()
@@ -1967,6 +1982,7 @@ export default function ApiTrackerView(): JSX.Element {
     return c ? (Array.isArray(c) ? c : c.results ?? []) : []
   })
   const [songs, setSongs] = useState<JWApiSong[]>(() => cachedFirstPage?.results ?? [])
+  const [rawAllSongs, setRawAllSongs] = useState<JWApiSong[]>([])
   const [count, setCount] = useState(() => cachedFirstPage?.count ?? 0)
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(() => cachedFirstPage ? cachedFirstPage.next !== null : false)
@@ -2044,7 +2060,10 @@ export default function ApiTrackerView(): JSX.Element {
   // fetchAllMode fetch effect below.
   const [categoryFilter, setCategoryFilter] = useState<Set<Category>>(new Set())
   const [eraFilter, setEraFilter] = useState<Set<string>>(new Set())
+  const [libraryFilter, setLibraryFilter] = useState<'all' | 'have' | 'missing'>('all')
   const multiFilterActive = categoryFilter.size > 1 || eraFilter.size > 1
+
+  const songInLibrary = useCallback((song: JWApiSong): boolean => !!offlineTracks[`jw-${song.id}`], [offlineTracks])
   // Single-value form for the fast (server-side-filtered) path — only
   // meaningful when multiFilterActive is false, which is exactly when each
   // set has at most one member.
@@ -2070,8 +2089,13 @@ export default function ApiTrackerView(): JSX.Element {
   const matchesFilters = useCallback((song: JWApiSong): boolean => {
     if (categoryFilter.size > 0 && !categoryFilter.has(song.category as Category)) return false
     if (eraFilter.size > 0 && !(song.era && eraFilter.has(song.era.name))) return false
+    if (libraryFilter !== 'all') {
+      const has = songInLibrary(song)
+      if (libraryFilter === 'have' && !has) return false
+      if (libraryFilter === 'missing' && has) return false
+    }
     return true
-  }, [categoryFilter, eraFilter])
+  }, [categoryFilter, eraFilter, libraryFilter, songInLibrary])
 
   useEffect(() => {
     if (apiTrackerCategory) { setCategoryFilter(new Set([apiTrackerCategory as Category])); setApiTrackerCategory('') }
@@ -2315,32 +2339,27 @@ export default function ApiTrackerView(): JSX.Element {
   // — switching which column is active only changes how the already-fetched
   // songs are sorted (see the sortedSongs memo below), so it must not
   // re-trigger this fetch.
-  const fetchAllMode = sortModeActive || multiFilterActive || hasFieldFilters
+  const fetchAllMode = sortModeActive || multiFilterActive || hasFieldFilters || libraryFilter !== 'all'
   useEffect(() => {
     if (!fetchAllMode) return
     let cancelled = false
     loadingRef.current = true
-    setLoading(true); setError(null); setSongs([]); setHasMore(false); setCount(0)
+    setLoading(true); setError(null); setSongs([]); setRawAllSongs([]); setHasMore(false); setCount(0)
     const t0 = performance.now()
     runLog('tracker-sort', `start search=${JSON.stringify(debouncedSearch)} category=${categoryParam || '-'} era=${eraParam || '-'} multi=${multiFilterActive} fields=${parsedSearch.filters.length}`)
-    // Field filters (artists:"...", etc.) can't be sent to the server, so
-    // they're checked here alongside category/era.
-    const passesAll = (s: JWApiSong): boolean => matchesFilters(s) && matchesFieldFilters(s, parsedSearch.filters)
-    // `all=true` returns the whole (filtered) catalogue as a plain array in
-    // one request — server-side page_size is capped below what we'd need to
-    // paginate reliably, so this avoids under-counting totalPages against it.
     ;(async () => {
       try {
-        const all = await apiFetch<JWApiSong[]>('/songs/', {
-          searchall: parsedSearch.freeText || undefined,
-          category: categoryParam || undefined,
-          era: eraParam || undefined,
-          all: 'true',
-        })
+        const unfiltered = !parsedSearch.freeText && !categoryParam && !eraParam
+        const all = unfiltered
+          ? await loadAllSongs()
+          : await apiFetch<JWApiSong[]>('/songs/', {
+              searchall: parsedSearch.freeText || undefined,
+              category: categoryParam || undefined,
+              era: eraParam || undefined,
+              all: 'true',
+            })
         if (cancelled) return
-        const filtered = all.filter(passesAll)
-        setSongs(filtered)
-        setCount(filtered.length)
+        setRawAllSongs(all)
         runLog('tracker-sort', `done ${all.length} songs in ${Math.round(performance.now() - t0)}ms`)
       } catch (e) {
         if (!cancelled) { setError((e as Error).message); runLog('tracker-sort', 'ERROR', e as Error) }
@@ -2349,7 +2368,7 @@ export default function ApiTrackerView(): JSX.Element {
       }
     })()
     return () => { cancelled = true }
-  }, [fetchAllMode, debouncedSearch, parsedSearch, categoryParam, eraParam, matchesFilters])
+  }, [fetchAllMode, debouncedSearch, parsedSearch.freeText, categoryParam, eraParam])
 
   // ── SCROLL MODE: infinite scroll, accumulates pages ──────────────────────────
   useEffect(() => {
@@ -2401,10 +2420,18 @@ export default function ApiTrackerView(): JSX.Element {
     return () => obs.disconnect()
   }, [])
 
+  const filteredSongs = useMemo(() => {
+    if (!fetchAllMode) return songs
+    const passesAll = (s: JWApiSong): boolean => matchesFilters(s) && matchesFieldFilters(s, parsedSearch.filters)
+    return rawAllSongs.filter(passesAll)
+  }, [fetchAllMode, songs, rawAllSongs, matchesFilters, parsedSearch.filters])
+
+  const displayCount = fetchAllMode ? filteredSongs.length : count
+
   // Client-side sort applied over accumulated songs (sort mode only)
   const sortedSongs = useMemo(() => {
-    if (!orderField) return songs
-    return [...songs].sort((a, b) => {
+    if (!orderField) return filteredSongs
+    return [...filteredSongs].sort((a, b) => {
       let av: string | number, bv: string | number
       switch (orderField) {
         case 'name':
@@ -2430,7 +2457,7 @@ export default function ApiTrackerView(): JSX.Element {
       const cmp = typeof av === 'number' ? av - (bv as number) : (av as string).localeCompare(bv as string)
       return orderDir === 'desc' ? -cmp : cmp
     })
-  }, [songs, orderField, orderDir])
+  }, [filteredSongs, orderField, orderDir])
 
   // fetchAllCompactGroups is independent of the search box (it has to fetch
   // every group app-wide regardless), so the search query has to be applied
@@ -2458,7 +2485,7 @@ export default function ApiTrackerView(): JSX.Element {
     // whole catalog is always fetched — see fetchAllCompactGroups above), so
     // apply them here instead. A group counts as a match if any of its
     // versions does, same as clicking a member's own category/era badge.
-    if (categoryFilter.size > 0 || eraFilter.size > 0) {
+    if (categoryFilter.size > 0 || eraFilter.size > 0 || libraryFilter !== 'all') {
       filtered = filtered.filter(g => g.members.some(m => matchesFilters(m.item)))
     }
     if (!compactSort.field) return filtered
@@ -2472,7 +2499,7 @@ export default function ApiTrackerView(): JSX.Element {
       sorted.sort((a, b) => (a.members.length - b.members.length) * dir || a.title.localeCompare(b.title))
     }
     return sorted
-  }, [compactGroups, parsedSearch, compactSort, categoryFilter, eraFilter, matchesFilters])
+  }, [compactGroups, parsedSearch, compactSort, categoryFilter, eraFilter, libraryFilter, matchesFilters])
 
   // Multi-select — select mode, the selected-songs Map, Escape-to-exit, and
   // Ctrl/Cmd+A "select all" are all handled by the shared hook (see its docs
@@ -2771,16 +2798,16 @@ export default function ApiTrackerView(): JSX.Element {
                 onClick={() => setShowFilterMenu((v) => !v)}
                 onMouseDown={(e) => e.stopPropagation()}
                 className={`relative flex items-center justify-center p-2.5 md:p-2 rounded-lg transition-colors ${
-                  showFilterMenu || multiFilterActive || categoryFilter.size > 0 || eraFilter.size > 0
+                  showFilterMenu || multiFilterActive || categoryFilter.size > 0 || eraFilter.size > 0 || libraryFilter !== 'all'
                     ? 'bg-accent/15 text-accent'
                     : 'bg-surface-overlay text-text-muted hover:text-text-secondary'
                 }`}
                 title="Filters"
               >
                 <ListFilter size={15} />
-                {(categoryFilter.size + eraFilter.size) > 0 && (
+                {(categoryFilter.size + eraFilter.size + (libraryFilter !== 'all' ? 1 : 0)) > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-[3px] rounded-full bg-accent text-[0.5625rem] leading-[15px] font-bold text-white text-center">
-                    {categoryFilter.size + eraFilter.size}
+                    {categoryFilter.size + eraFilter.size + (libraryFilter !== 'all' ? 1 : 0)}
                   </span>
                 )}
               </button>
@@ -2794,8 +2821,11 @@ export default function ApiTrackerView(): JSX.Element {
                   onEra={(e) => { toggleEraFilter(e); resetSongs() }}
                   onClearCategories={() => { setCategoryFilter(new Set()); resetSongs() }}
                   onClearEras={() => { setEraFilter(new Set()); resetSongs() }}
-                  onClearAll={() => { setCategoryFilter(new Set()); setEraFilter(new Set()); resetSongs() }}
+                  onClearAll={() => { setCategoryFilter(new Set()); setEraFilter(new Set()); setLibraryFilter('all'); resetSongs() }}
                   onClose={() => setShowFilterMenu(false)}
+                  libraryFilter={libraryFilter}
+                  onLibraryFilter={(f) => { setLibraryFilter(f); resetSongs() }}
+                  hasLibrary={Object.keys(offlineTracks).length > 0}
                 />
               )}
             </div>
@@ -2863,7 +2893,7 @@ export default function ApiTrackerView(): JSX.Element {
           {/* Active filter chips — one per selected category/era, each
               individually removable so multi-select filters can be trimmed
               down one at a time instead of all-or-nothing. */}
-          {(categoryFilter.size > 0 || eraFilter.size > 0) && (
+          {(categoryFilter.size > 0 || eraFilter.size > 0 || libraryFilter !== 'all') && (
             <div className="flex gap-1.5 flex-wrap">
               {[...categoryFilter].map((cat) => (
                 <button
@@ -2885,6 +2915,15 @@ export default function ApiTrackerView(): JSX.Element {
                   <X size={10} />
                 </button>
               ))}
+              {libraryFilter !== 'all' && (
+                <button
+                  onClick={() => { setLibraryFilter('all'); resetSongs() }}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs font-medium"
+                >
+                  {libraryFilter === 'have' ? 'Downloaded offline' : 'Not downloaded'}
+                  <X size={10} />
+                </button>
+              )}
             </div>
           )}
         </div>}
@@ -3416,11 +3455,11 @@ export default function ApiTrackerView(): JSX.Element {
             {loading && sortedSongs.length > 0 && (
               <div className="flex items-center justify-center gap-2 py-4 text-text-muted">
                 <Loader2 size={16} className="animate-spin" />
-                {fetchAllMode && <span className="text-xs">{sortedSongs.length.toLocaleString()} / {count.toLocaleString()} loaded</span>}
+                {fetchAllMode && <span className="text-xs">{sortedSongs.length.toLocaleString()} / {displayCount.toLocaleString()} loaded</span>}
               </div>
             )}
             {!loading && !hasMore && sortedSongs.length > 0 && (
-              <p className="text-center text-text-muted text-xs py-4">{count.toLocaleString()} songs total</p>
+              <p className="text-center text-text-muted text-xs py-4">{displayCount.toLocaleString()} songs total</p>
             )}
           </div>
         </div>

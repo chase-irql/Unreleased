@@ -151,6 +151,16 @@ export async function apiFetch<T>(
   })
 }
 
+let allSongsPromise: Promise<JWApiSong[]> | null = null
+
+export function loadAllSongs(): Promise<JWApiSong[]> {
+  if (!allSongsPromise) {
+    allSongsPromise = apiFetch<JWApiSong[]>('/songs/', { all: 'true' })
+    allSongsPromise.catch(() => { allSongsPromise = null })
+  }
+  return allSongsPromise
+}
+
 // Synchronous read of the offline cache for a path+params — returns the last
 // successful apiFetch response for that exact key, or undefined. Lets views do
 // stale-while-revalidate: render the cached copy instantly on mount, then let
@@ -362,7 +372,7 @@ export function discordCoverUrl(
  *  up with the API's song name: drops a file extension (titles that fell back
  *  to the filename) and a leading track number, then flattens
  *  punctuation/spacing to single spaces between lowercase alphanumerics. */
-function normalizeSongTitle(title: string): string {
+export function normalizeSongTitle(title: string): string {
   return stripFileTitleCruft(title)
     .replace(/[^a-z0-9]+/gi, ' ')
     .trim()
