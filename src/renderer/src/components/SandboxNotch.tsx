@@ -72,12 +72,12 @@ export default function SandboxNotch(): JSX.Element {
 
           invisible, not hidden (display:none), when collapsed: ModalOverlay's
           center-on-open effect measures its panel's natural size via
-          getBoundingClientRect the moment it mounts, before this component
-          has re-rendered to reflect the new dock — display:none would zero
+          getBoundingClientRect the moment it mounts — display:none would zero
           out that measurement (a hidden ancestor collapses layout entirely),
           while visibility:hidden keeps it laid out and measurable, just
-          unpainted. The panel itself force-overrides back to visible (see
-          Modal.tsx) so it isn't stuck invisible in between. */}
+          unpainted. ModalOverlay calls dock() from that same synchronous
+          effect, so the slot flips to visible in the same pre-paint flush —
+          no gap where the panel needs to override anything itself. */}
       <div
         ref={slotElRef}
         className={`mt-2 ${showBackdrop ? 'pointer-events-auto' : 'invisible pointer-events-none'}`}

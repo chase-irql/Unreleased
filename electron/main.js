@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, shell, dialog, Menu, Tray, ipcMain, nativeImage, protocol, net, globalShortcut, screen, clipboard, session, powerMonitor } = require('electron')
 const { autoUpdater } = require('electron-updater')
+const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
@@ -1056,7 +1057,7 @@ ipcMain.handle('check-for-updates', () => {
 })
 ipcMain.handle('install-update', () => {
   log('Manual install-update triggered')
-  autoUpdater.quitAndInstall(true, true)
+  quitAndInstallSilently()
 })
 ipcMain.handle('minimize-window', () => {
   if (appSettings.minimizeTo === 'tray' && tray) {
@@ -3555,6 +3556,45 @@ autoUpdater.on('download-progress', (p) => {
   })
 })
 
+// electron-builder's assisted (oneClick: false) NSIS installer only relaunches
+// the app from its interactive Finish-page checkbox — the --force-run flag
+// electron-updater passes on quitAndInstall(silent, forceRunAfter) is never
+// read by the template in silent (/S) mode, so a silent install just quits
+// and never comes back. Work around it ourselves: spawn a detached watcher
+// before quitting that waits for this process to exit and for the installer
+// to finish overwriting our exe (detected by the file becoming unlockable
+// again), then starts the app back up.
+function quitAndInstallSilently() {
+  if (process.platform !== 'win32') {
+    autoUpdater.quitAndInstall(true, true)
+    return
+  }
+  const exePath = process.execPath
+  const watcherPath = path.join(app.getPath('temp'), `unreleased-update-relaunch-${process.pid}.ps1`)
+  const script = [
+    `param([int]$AppPid, [string]$AppExePath, [int]$TimeoutSeconds = 120)`,
+    `try { Wait-Process -Id $AppPid -ErrorAction SilentlyContinue -Timeout $TimeoutSeconds } catch {}`,
+    `$deadline = (Get-Date).AddSeconds($TimeoutSeconds)`,
+    `while ((Get-Date) -lt $deadline) {`,
+    `  try { $s = [System.IO.File]::Open($AppExePath, 'Open', 'ReadWrite', 'None'); $s.Close(); break } catch { Start-Sleep -Milliseconds 400 }`,
+    `}`,
+    `Start-Sleep -Milliseconds 500`,
+    `if (Test-Path $AppExePath) { Start-Process -FilePath $AppExePath }`,
+    `Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue`,
+  ].join('\n')
+  try {
+    fs.writeFileSync(watcherPath, script, 'utf-8')
+    const child = spawn('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+      '-File', watcherPath, '-AppPid', String(process.pid), '-AppExePath', exePath,
+    ], { detached: true, stdio: 'ignore' })
+    child.unref()
+  } catch (e) {
+    log('Failed to spawn update relaunch watcher:', e.message)
+  }
+  autoUpdater.quitAndInstall(true, false)
+}
+
 autoUpdater.on('update-downloaded', (info) => {
   log('Update downloaded:', info.version)
   updateDownloadedPending = true
@@ -3568,7 +3608,7 @@ autoUpdater.on('update-downloaded', (info) => {
   if (isStartupUpdateCheck) {
     isStartupUpdateCheck = false
     log('Update ready at launch — installing silently')
-    autoUpdater.quitAndInstall(true, true)
+    quitAndInstallSilently()
     return
   }
 
@@ -3580,10 +3620,10 @@ autoUpdater.on('update-downloaded', (info) => {
     buttons: ['Restart now', 'Later'],
     defaultId: 0,
   }).then(({ response }) => {
-    // isSilent + isForceRunAfter: install without showing the installer UI and
-    // relaunch. The Windows installer is an assisted (wizard) installer now, so
-    // a non-silent run here would pop the wizard mid-update.
-    if (response === 0) autoUpdater.quitAndInstall(true, true)
+    // Silent install: the Windows installer is an assisted (wizard) installer
+    // now, so a non-silent run here would pop the wizard mid-update. Relaunch
+    // is handled ourselves — see quitAndInstallSilently.
+    if (response === 0) quitAndInstallSilently()
   })
 })
 

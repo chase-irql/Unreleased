@@ -232,13 +232,6 @@ export function ModalOverlay({
   const panelRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ mode: 'move' | 'resize'; startX: number; startY: number; base: Rect } | null>(null)
 
-  useEffect(() => {
-    if (floating) return
-    dock(id)
-    return () => undock(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [floating])
-
   const currentRect = (): Rect | null => {
     if (rect) return rect
     const r = panelRef.current?.getBoundingClientRect()
@@ -252,19 +245,34 @@ export function ModalOverlay({
   // CSS-driven position under the pill is never actually visible — it
   // measures its own natural size there, then immediately switches to the
   // same position:fixed mechanism drag/resize already use, centered.
+  //
+  // dock(id) lives in this same effect (not a separate useEffect) so the
+  // store update — which flips the slot from invisible to visible — commits
+  // synchronously in the same pre-paint flush as the centering. Splitting
+  // them used to leave a window where the panel could paint once before
+  // dock() (a plain useEffect, not guaranteed to run before paint) landed;
+  // the panel used to paper over that by forcing itself permanently
+  // `visible`, which also defeated the notch's collapse-to-hide behavior —
+  // a collapsed sandbox still showed its docked panels, just uninteractive
+  // (pointer-events-none, inherited from the slot, isn't overridden by a
+  // child the way `visible` overrides `invisible`). Doing dock() here
+  // instead removes the need for that override entirely.
   useLayoutEffect(() => {
     if (floating) return
+    dock(id)
     const r = panelRef.current?.getBoundingClientRect()
-    if (!r) return
-    setRect({
-      left: clamp((window.innerWidth - r.width) / 2, 0, window.innerWidth - r.width),
-      top: clamp((window.innerHeight - r.height) / 2, 0, window.innerHeight - r.height),
-      width: r.width, height: r.height,
-    })
+    if (r) {
+      setRect({
+        left: clamp((window.innerWidth - r.width) / 2, 0, window.innerWidth - r.width),
+        top: clamp((window.innerHeight - r.height) / 2, 0, window.innerHeight - r.height),
+        width: r.width, height: r.height,
+      })
+    }
+    return () => undock(id)
     // Deliberately once-per-mount only — re-centering on every render would
     // fight the user dragging it away from the middle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [floating])
 
   // Keeps this panel available as a snap target for everyone else, and drops
   // it once it's no longer explicitly positioned (never dragged, or closed).
@@ -352,10 +360,7 @@ export function ModalOverlay({
           classes (w-full max-w-*, h-[...]) just lose to panelStyle's explicit
           width/height/maxWidth/maxHeight via inline-style specificity, while
           its border/radius/shadow/bg/overflow-hidden keep applying either way. */}
-      {/* visible overrides the slot's own invisible-when-collapsed state (see
-          SandboxNotch) — otherwise a panel centering itself on open would
-          inherit invisibility for the one render before the notch catches up. */}
-      <div ref={panelRef} className={`relative visible overflow-hidden ${panelClassName}`} style={panelStyle}>
+      <div ref={panelRef} className={`relative overflow-hidden ${panelClassName}`} style={panelStyle}>
         {children({ onHandleMouseDown, locked, toggleLock })}
         <ResizeHandle onMouseDown={onResizeHandleMouseDown} />
       </div>
