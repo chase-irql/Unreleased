@@ -151,14 +151,17 @@ export async function apiFetch<T>(
   })
 }
 
-let allSongsPromise: Promise<JWApiSong[]> | null = null
+const ALL_SONGS_TTL = 5 * 60_000
+let allSongsCache: { promise: Promise<JWApiSong[]>; ts: number } | null = null
 
 export function loadAllSongs(): Promise<JWApiSong[]> {
-  if (!allSongsPromise) {
-    allSongsPromise = apiFetch<JWApiSong[]>('/songs/', { all: 'true' })
-    allSongsPromise.catch(() => { allSongsPromise = null })
+  const now = Date.now()
+  if (!allSongsCache || now - allSongsCache.ts > ALL_SONGS_TTL) {
+    allSongsCache = { promise: apiFetch<JWApiSong[]>('/songs/', { all: 'true' }), ts: now }
   }
-  return allSongsPromise
+  const cache = allSongsCache
+  cache.promise.catch(() => { if (allSongsCache === cache) allSongsCache = null })
+  return cache.promise
 }
 
 // Synchronous read of the offline cache for a path+params — returns the last

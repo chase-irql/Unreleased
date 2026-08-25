@@ -554,10 +554,12 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
   )
 }
 
-function ApiCompareDropdown({ value, onChange, disabled }: {
+function ApiCompareDropdown({ value, onChange, disabled, failed, onRetry }: {
   value: 'all' | 'matched' | 'unmatched'
   onChange: (v: 'all' | 'matched' | 'unmatched') => void
   disabled: boolean
+  failed: boolean
+  onRetry: () => void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -580,6 +582,18 @@ function ApiCompareDropdown({ value, onChange, disabled }: {
     { value: 'unmatched', label: 'Not in API' },
   ]
   const currentLabel = options.find(o => o.value === value)?.label ?? 'All songs'
+
+  if (failed) {
+    return (
+      <button
+        onClick={onRetry}
+        title="Couldn't load the API song list — click to retry"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+      >
+        Compare failed — retry
+      </button>
+    )
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -631,9 +645,12 @@ export default function LibraryTab(): JSX.Element {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [apiFilter, setApiFilter] = useState<'all' | 'matched' | 'unmatched'>('all')
   const [apiSongNames, setApiSongNames] = useState<Set<string> | null>(null)
+  const [apiSongNamesFailed, setApiSongNamesFailed] = useState(false)
+  const [apiLoadAttempt, setApiLoadAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
+    setApiSongNamesFailed(false)
     loadAllSongs().then((all) => {
       if (cancelled) return
       const names = new Set<string>()
@@ -646,9 +663,9 @@ export default function LibraryTab(): JSX.Element {
         }
       }
       setApiSongNames(names)
-    }).catch(() => {})
+    }).catch(() => { if (!cancelled) setApiSongNamesFailed(true) })
     return () => { cancelled = true }
-  }, [])
+  }, [apiLoadAttempt])
 
   const trackMatchesApi = (t: LibraryTrack): boolean => !!apiSongNames && apiSongNames.has(normalizeSongTitle(t.title))
 
@@ -790,11 +807,13 @@ export default function LibraryTab(): JSX.Element {
 
   const artistsFiltered = useMemo(() => q ? artists.filter(a => a.name.toLowerCase().includes(q)) : artists, [artists, q])
 
+  const apiFilteredTracks = useMemo(() => {
+    if (apiFilter === 'all' || !apiSongNames || nav.kind !== 'lib' || nav.key !== 'songs') return libraryTracks
+    return libraryTracks.filter(t => apiFilter === 'matched' ? trackMatchesApi(t) : !trackMatchesApi(t))
+  }, [libraryTracks, apiFilter, apiSongNames, nav])
+
   const songs = useMemo(() => {
-    let list = q ? libraryTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : libraryTracks
-    if (apiFilter !== 'all' && apiSongNames && nav.kind === 'lib' && nav.key === 'songs') {
-      list = list.filter(t => apiFilter === 'matched' ? trackMatchesApi(t) : !trackMatchesApi(t))
-    }
+    let list = q ? apiFilteredTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : apiFilteredTracks
     if (sortField) {
       list = [...list].sort((a, b) => {
         let av: string | number, bv: string | number
@@ -805,7 +824,7 @@ export default function LibraryTab(): JSX.Element {
       })
     }
     return list
-  }, [libraryTracks, q, sortField, sortDir, apiFilter, apiSongNames, nav])
+  }, [apiFilteredTracks, q, sortField, sortDir])
 
   const drillArtist = drill?.kind === 'artist' ? artists.find(a => a.name === drill.name) : undefined
   const drillArtistAlbums = drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : []
@@ -851,7 +870,13 @@ export default function LibraryTab(): JSX.Element {
                 </>
               )}
               {nav.kind === 'lib' && nav.key === 'songs' && libraryTracks.length > 0 && (
-                <ApiCompareDropdown value={apiFilter} onChange={setApiFilter} disabled={!apiSongNames} />
+                <ApiCompareDropdown
+                  value={apiFilter}
+                  onChange={setApiFilter}
+                  disabled={!apiSongNames}
+                  failed={apiSongNamesFailed}
+                  onRetry={() => setApiLoadAttempt(n => n + 1)}
+                />
               )}
               <button onClick={() => openUrlImport()}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors"

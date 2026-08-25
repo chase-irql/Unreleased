@@ -2488,6 +2488,11 @@ export default function ApiTrackerView(): JSX.Element {
     if (categoryFilter.size > 0 || eraFilter.size > 0 || libraryFilter !== 'all') {
       filtered = filtered.filter(g => g.members.some(m => matchesFilters(m.item)))
     }
+    if (libraryFilter !== 'all') {
+      filtered = filtered
+        .map(g => ({ ...g, members: g.members.filter(m => libraryFilter === 'have' ? songInLibrary(m.item) : !songInLibrary(m.item)) }))
+        .filter(g => g.members.length > 0)
+    }
     if (!compactSort.field) return filtered
     // Copy before sorting — filterCompactGroups may return the input array.
     const sorted = [...filtered]
@@ -2499,7 +2504,7 @@ export default function ApiTrackerView(): JSX.Element {
       sorted.sort((a, b) => (a.members.length - b.members.length) * dir || a.title.localeCompare(b.title))
     }
     return sorted
-  }, [compactGroups, parsedSearch, compactSort, categoryFilter, eraFilter, libraryFilter, matchesFilters])
+  }, [compactGroups, parsedSearch, compactSort, categoryFilter, eraFilter, libraryFilter, matchesFilters, songInLibrary])
 
   // Multi-select — select mode, the selected-songs Map, Escape-to-exit, and
   // Ctrl/Cmd+A "select all" are all handled by the shared hook (see its docs
