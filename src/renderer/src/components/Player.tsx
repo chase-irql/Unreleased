@@ -24,7 +24,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { useStore, useStorePick } from '../store/useStore'
-import { registerPlayerCommandHandler } from '../lib/windowSync'
+import { registerPlayerCommandHandler, runPlayerCommand } from '../lib/windowSync'
 import { eventToCombo, resolveAction, getAction, effectiveGlobalBinding, comboToAccelerator, registerHotkeyDispatch, HOTKEY_ACTIONS } from '../lib/hotkeys'
 import { formatDuration } from '../lib/format'
 import { apiFetch, smallCoverUrl, JWApiSong } from '../lib/juicewrldApi'
@@ -926,15 +926,15 @@ export default function Player(): JSX.Element {
     if (!mediaSessionActive) return
     navigator.mediaSession.setActionHandler('play',  () => setIsPlaying(true))
     navigator.mediaSession.setActionHandler('pause', () => setIsPlaying(false))
-    navigator.mediaSession.setActionHandler('nexttrack',     () => nextTrack())
-    navigator.mediaSession.setActionHandler('previoustrack', () => prevTrack())
+    navigator.mediaSession.setActionHandler('nexttrack',     () => runPlayerCommand('next'))
+    navigator.mediaSession.setActionHandler('previoustrack', () => runPlayerCommand('previous'))
     return () => {
       navigator.mediaSession.setActionHandler('play',          null)
       navigator.mediaSession.setActionHandler('pause',         null)
       navigator.mediaSession.setActionHandler('nexttrack',     null)
       navigator.mediaSession.setActionHandler('previoustrack', null)
     }
-  }, [setIsPlaying, nextTrack, prevTrack, mediaSessionActive])
+  }, [setIsPlaying, mediaSessionActive])
 
   // Media Session position state — for lock screen seek bar
   useEffect(() => {
@@ -1199,55 +1199,62 @@ export default function Player(): JSX.Element {
     }
   }
 
+  const restartCurrentTrack = (shouldPlay = isPlaying): void => {
+    const audio = getActive()
+    cancelCF()
+    if (audio) {
+      audio.currentTime = 0
+      audio.volume = volumeRef.current
+      if (shouldPlay) audio.play().catch(console.error)
+    }
+    setCurrentTime(0)
+    setProgress(0)
+  }
+
   const handlePrev = (): void => {
     const audio = getActive()
     // In radio mode the user can't go back — always restart current song
     if (radioMode) {
-      cancelCF()
-      if (audio) { audio.currentTime = 0; audio.volume = volumeRef.current }
-      setCurrentTime(0)
-      setProgress(0)
+      restartCurrentTrack()
       return
     }
     // When on repeat-one, skip back = restart the same song (mirrors handleNext)
     if (repeat === 'one') {
-      cancelCF()
-      if (audio) {
-        audio.currentTime = 0
-        audio.volume = volumeRef.current
-        if (isPlaying) audio.play().catch(console.error)
-      }
-      setCurrentTime(0)
-      setProgress(0)
+      restartCurrentTrack()
       return
     }
     if (audio && audio.currentTime > 3) {
-      cancelCF()
-      audio.currentTime = 0
-      audio.volume = volumeRef.current
-      setCurrentTime(0)
-      setProgress(0)
+      restartCurrentTrack()
+      return
+    }
+    // There is no earlier queue entry to load. Restart in place and preserve
+    // pause state instead of asking prevTrack() to select index zero again.
+    if (queueIndex <= 0) {
+      restartCurrentTrack()
       return
     }
     cancelCF()
-    prevTrack()
+    const previousId = currentTrack?.id
+    const previous = prevTrack()
+    // At the start of the queue (or beside a duplicate entry) the queue can
+    // move without changing the track id. The id-keyed load effect will not
+    // run in that case, so restart the physical audio element explicitly.
+    if (!previous || previous.id === previousId) restartCurrentTrack(useStore.getState().isPlaying)
   }
 
   const handleNext = (): void => {
     cancelCF()
-    // When on repeat-one, skip = restart the same song
-    if (repeat === 'one') {
-      const audio = getActive()
-      if (audio) {
-        audio.currentTime = 0
-        audio.volume = volumeRef.current
-        if (isPlaying) audio.play().catch(console.error)
-      }
-      setCurrentTime(0)
-      setProgress(0)
+    // Radio owns its own generated-next-track flow, even if repeat-one was
+    // persisted from a normal queue session.
+    if (repeat === 'one' && !radioMode) {
+      restartCurrentTrack()
       return
     }
-    nextTrack()
+    const previousId = currentTrack?.id
+    const next = nextTrack()
+    // A single-item repeat-all queue (or a duplicate id) also bypasses the
+    // id-keyed load effect and therefore needs an explicit physical restart.
+    if (next?.id === previousId) restartCurrentTrack(useStore.getState().isPlaying)
   }
 
   // Tray — mirror playback state so the tray menu shows now-playing info and
