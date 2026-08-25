@@ -8,6 +8,7 @@ import {
 import { useStore, useStorePick } from '../store/useStore'
 import { LibraryTrack } from '../types'
 import { libraryTrackToTrack as toQueueTrack } from '../lib/fileTypes'
+import { loadAllSongs, normalizeSongTitle } from '../lib/juicewrldApi'
 import { fisherYates } from '../store/queueSlice'
 import * as userApi from '../lib/userApi'
 import SongContextMenu, { SongContextMenuState } from './SongContextMenu'
@@ -195,8 +196,8 @@ function SongRow({ track, index, queue, onContext, showAlbum = true, draggable, 
           <p className={`text-sm truncate ${isCurrent ? 'text-accent font-medium' : 'text-text-primary'}`} title={track.title}>{track.title}</p>
           <p className="text-text-muted text-xs truncate">{track.artist || 'Unknown Artist'}</p>
         </div>
-        {showAlbum && <span className="text-text-muted text-xs truncate max-w-[180px] hidden lg:block">{track.album}</span>}
-        <span className="text-text-muted text-xs shrink-0 tabular-nums">{formatDuration(track.duration, '--:--')}</span>
+        {showAlbum && <span className="text-text-muted text-xs truncate w-[180px] shrink-0 hidden lg:block">{track.album}</span>}
+        <span className="text-text-muted text-xs shrink-0 tabular-nums w-10 text-right">{formatDuration(track.duration, '--:--')}</span>
         <button
           onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(track, queue, r.right, r.bottom) }}
           className="w-7 h-7 shrink-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-all"
@@ -553,6 +554,82 @@ function BrowseRail({ nav, onNav, songCount }: { nav: Nav; onNav: (n: Nav) => vo
   )
 }
 
+function ApiCompareDropdown({ value, onChange, disabled, failed, onRetry }: {
+  value: 'all' | 'matched' | 'unmatched'
+  onChange: (v: 'all' | 'matched' | 'unmatched') => void
+  disabled: boolean
+  failed: boolean
+  onRetry: () => void
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handle = (e: MouseEvent): void => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const handleKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', handle)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handle)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [open])
+
+  const options: { value: 'all' | 'matched' | 'unmatched'; label: string }[] = [
+    { value: 'all', label: 'All songs' },
+    { value: 'matched', label: 'In API' },
+    { value: 'unmatched', label: 'Not in API' },
+  ]
+  const currentLabel = options.find(o => o.value === value)?.label ?? 'All songs'
+
+  if (failed) {
+    return (
+      <button
+        onClick={onRetry}
+        title="Couldn't load the API song list — click to retry"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+      >
+        Compare failed — retry
+      </button>
+    )
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        disabled={disabled}
+        title="Compare your local titles against the API's song list"
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 ${
+          open || value !== 'all' ? 'bg-accent/15 text-accent' : 'bg-surface-overlay text-text-muted hover:text-text-primary'
+        }`}
+      >
+        {currentLabel}
+        <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-40 bg-surface border border-[var(--border)] rounded-xl shadow-2xl z-50 p-1.5">
+          {options.map(o => (
+            <button
+              key={o.value}
+              onClick={() => { onChange(o.value); setOpen(false) }}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm transition-colors text-left ${
+                value === o.value ? 'bg-accent/12 text-accent font-medium' : 'text-text-secondary hover:text-text-primary hover:bg-surface-raised'
+              }`}
+            >
+              {value === o.value
+                ? <CheckSquare2 size={14} className="text-accent shrink-0" />
+                : <Square size={14} className="text-text-muted opacity-40 shrink-0" />}
+              <span className="flex-1 truncate">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 export default function LibraryTab(): JSX.Element {
@@ -566,6 +643,31 @@ export default function LibraryTab(): JSX.Element {
   const [ctx, setCtx] = useState<{ track: LibraryTrack; queue: LibraryTrack[]; x: number; y: number } | null>(null)
   const [sortField, setSortField] = useState<'title' | 'album' | 'duration' | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [apiFilter, setApiFilter] = useState<'all' | 'matched' | 'unmatched'>('all')
+  const [apiSongNames, setApiSongNames] = useState<Set<string> | null>(null)
+  const [apiSongNamesFailed, setApiSongNamesFailed] = useState(false)
+  const [apiLoadAttempt, setApiLoadAttempt] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    setApiSongNamesFailed(false)
+    loadAllSongs().then((all) => {
+      if (cancelled) return
+      const names = new Set<string>()
+      for (const song of all) {
+        const n = normalizeSongTitle(song.name)
+        if (n) names.add(n)
+        for (const alt of song.track_titles ?? []) {
+          const an = normalizeSongTitle(alt)
+          if (an) names.add(an)
+        }
+      }
+      setApiSongNames(names)
+    }).catch(() => { if (!cancelled) setApiSongNamesFailed(true) })
+    return () => { cancelled = true }
+  }, [apiLoadAttempt])
+
+  const trackMatchesApi = (t: LibraryTrack): boolean => !!apiSongNames && apiSongNames.has(normalizeSongTitle(t.title))
 
   // ── multi-select (drives the bulk tag editor) ──
   const [selectMode, setSelectMode] = useState(false)
@@ -705,8 +807,13 @@ export default function LibraryTab(): JSX.Element {
 
   const artistsFiltered = useMemo(() => q ? artists.filter(a => a.name.toLowerCase().includes(q)) : artists, [artists, q])
 
+  const apiFilteredTracks = useMemo(() => {
+    if (apiFilter === 'all' || !apiSongNames || nav.kind !== 'lib' || nav.key !== 'songs') return libraryTracks
+    return libraryTracks.filter(t => apiFilter === 'matched' ? trackMatchesApi(t) : !trackMatchesApi(t))
+  }, [libraryTracks, apiFilter, apiSongNames, nav])
+
   const songs = useMemo(() => {
-    let list = q ? libraryTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : libraryTracks
+    let list = q ? apiFilteredTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q)) : apiFilteredTracks
     if (sortField) {
       list = [...list].sort((a, b) => {
         let av: string | number, bv: string | number
@@ -717,7 +824,7 @@ export default function LibraryTab(): JSX.Element {
       })
     }
     return list
-  }, [libraryTracks, q, sortField, sortDir])
+  }, [apiFilteredTracks, q, sortField, sortDir])
 
   const drillArtist = drill?.kind === 'artist' ? artists.find(a => a.name === drill.name) : undefined
   const drillArtistAlbums = drillArtist ? albums.filter(a => a.artist === drillArtist.name).sort((x, y) => (y.year ?? 0) - (x.year ?? 0)) : []
@@ -761,6 +868,15 @@ export default function LibraryTab(): JSX.Element {
                     <Shuffle size={12} /> Shuffle
                   </button>
                 </>
+              )}
+              {nav.kind === 'lib' && nav.key === 'songs' && libraryTracks.length > 0 && (
+                <ApiCompareDropdown
+                  value={apiFilter}
+                  onChange={setApiFilter}
+                  disabled={!apiSongNames}
+                  failed={apiSongNamesFailed}
+                  onRetry={() => setApiLoadAttempt(n => n + 1)}
+                />
               )}
               <button onClick={() => openUrlImport()}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-overlay border border-[var(--border)] text-text-muted rounded-lg text-xs font-medium hover:text-text-primary transition-colors"
@@ -807,7 +923,7 @@ export default function LibraryTab(): JSX.Element {
                 <button onClick={() => toggleSort('album')} className="hidden lg:flex items-center gap-1 w-[180px] text-[10px] text-text-muted uppercase tracking-wider hover:text-text-primary transition-colors">
                   Album {sortField === 'album' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-                <button onClick={() => toggleSort('duration')} className="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors shrink-0">
+                <button onClick={() => toggleSort('duration')} className="flex items-center justify-end gap-1 text-text-muted hover:text-text-primary transition-colors shrink-0 w-10">
                   <Clock size={11} /> {sortField === 'duration' && (sortDir === 'asc' ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
                 <div className="w-7" />
