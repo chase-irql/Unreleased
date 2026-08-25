@@ -294,6 +294,8 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
   // Re-opening while already docked (sandbox notch collapsed) wouldn't
   // otherwise re-expand it — see the matching comment on setShowSettings.
   const openLegal = (doc: LegalDoc): void => { useSandboxStore.getState().expand(); setLegalDoc(doc) }
+  const sandboxEnabled = useSandboxStore((s) => s.sandboxEnabled)
+  const setSandboxEnabled = useSandboxStore((s) => s.setSandboxEnabled)
   const {
     setShowSettings, setActiveView,
     account,
@@ -2036,6 +2038,14 @@ export default function Settings({ floating = false }: { floating?: boolean }): 
                   sub="Reopen the main window and every pop-out at the size you last left it. Turning this off restores the default sizes."
                 >
                   <Toggle on={appSettings.rememberWindowSizes} onClick={() => setSetting('rememberWindowSizes', !appSettings.rememberWindowSizes)} />
+                </Row>
+                <Row
+                  icon={FlaskConical}
+                  iconColor="#f59e0b"
+                  label="Sandbox"
+                  sub="Dock modals into a collapsible pill at the top of the window instead of a centered popup. Off restores the plain popup for every modal."
+                >
+                  <Toggle on={sandboxEnabled} onClick={() => setSandboxEnabled(!sandboxEnabled)} />
                 </Row>
                 <Row
                   icon={Minus}
