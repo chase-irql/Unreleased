@@ -243,6 +243,12 @@ export default function Player(): JSX.Element {
   const volumeRef = useRef(volume)
   useEffect(() => { volumeRef.current = volume }, [volume])
 
+  // A recovery reload is delayed by backoff and then again by metadata loading.
+  // Keep its resume position live so a seek/restart during either wait cannot be
+  // overwritten by the timestamp captured when recovery was first scheduled.
+  const recoveryResumeAt = useRef(0)
+  const recoveryGeneration = useRef(0)
+
   const getActive = (): HTMLAudioElement | null =>
     activeSlot.current === 'A' ? slotA.current : slotB.current
   const getNext = (): HTMLAudioElement | null =>
@@ -345,10 +351,14 @@ export default function Player(): JSX.Element {
       const audio = getActive()
       if (!audio) return
       cancelCF()
+      const target = Math.max(0, t)
+      // Record intent before touching the media element: assigning currentTime
+      // can throw while its source is in an error/reload state.
+      recoveryResumeAt.current = target
       audio.volume = volumeRef.current
-      audio.currentTime = t
-      setCurrentTime(t)
-      if (audio.duration) setProgress(t / audio.duration)
+      try { audio.currentTime = target } catch { /* recovery will apply it once seekable */ }
+      setCurrentTime(target)
+      if (audio.duration) setProgress(target / audio.duration)
     }
     _getAudioDuration = () => getActive()?.duration ?? 0
     _getAudioCurrentTime = () => getActive()?.currentTime ?? 0
@@ -595,9 +605,16 @@ export default function Player(): JSX.Element {
     unexpectedPauses.current = 0
     lastProgressTime.current = 0
     lastProgressAt.current = Date.now()
+    // A normal source change has already reset the active element to zero;
+    // after a crossfade swap it is already partway through the incoming song.
+    recoveryResumeAt.current = getActive()?.currentTime ?? 0
+    recoveryGeneration.current++
     clearRecoveryTimer()
   }, [currentTrack?.id])
-  useEffect(() => clearRecoveryTimer, [])
+  useEffect(() => () => {
+    recoveryGeneration.current++
+    clearRecoveryTimer()
+  }, [])
 
   // Reloads the active slot and picks up where it stopped. Reads everything
   // from the store/refs so a stale closure (the watchdog interval holds one)
@@ -628,27 +645,42 @@ export default function Player(): JSX.Element {
     }
 
     const attempt = recoveryAttempts.current++
+    const queueIndex = useStore.getState().queueIndex
     lastRecoveryAt.current = Date.now()
-    const resumeAt = audio.currentTime > 0 ? audio.currentTime : lastProgressTime.current
+    // Zero is a meaningful user intent (restart/seek-to-start), so fall back to
+    // the live intent ref rather than an older progress sample.
+    // This ref is authoritative: the element can retain an obsolete non-zero
+    // currentTime when a user seek/restart throws during an error state.
+    const resumeAt = recoveryResumeAt.current
+    recoveryResumeAt.current = resumeAt
+    const generation = ++recoveryGeneration.current
     console.warn(`Playback ${reason} — reloading "${track.title}" at ${resumeAt.toFixed(1)}s (attempt ${attempt + 1}/${MAX_RECOVERY_ATTEMPTS})`)
 
     recoveryTimer.current = window.setTimeout(() => {
       recoveryTimer.current = null
       const a = getActive()
       const s = useStore.getState()
-      // The user may have paused, skipped, or seeked away while we waited.
-      if (!a || !s.isPlaying || s.currentTrack?.id !== track.id) return
+      // The user may have paused or skipped away while we waited, or a newer
+      // recovery may already own this slot.
+      if (!a || !s.isPlaying || s.currentTrack !== track || s.queueIndex !== queueIndex
+        || recoveryGeneration.current !== generation) return
       const onReady = (): void => {
         a.removeEventListener('loadedmetadata', onReady)
+        const latest = useStore.getState()
+        if (latest.currentTrack !== track || latest.queueIndex !== queueIndex
+          || getActive() !== a || recoveryGeneration.current !== generation) return
+        const latestResumeAt = recoveryResumeAt.current
         // Streamed audio reports Infinity duration until the server has sent
         // enough to know the length; seeking then silently no-ops, and the
         // stall detector picks that up as another round.
-        if (resumeAt > 0 && isFinite(a.duration) && resumeAt < a.duration) {
-          try { a.currentTime = resumeAt } catch { /* not seekable yet */ }
+        if (latestResumeAt > 0 && isFinite(a.duration) && latestResumeAt < a.duration) {
+          try { a.currentTime = latestResumeAt } catch { /* not seekable yet */ }
         }
         applyRate(a)
         a.volume = volumeRef.current
-        a.play().catch(() => {})
+        // A pause that lands during metadata loading should suppress autoplay,
+        // not discard the restored position needed by the next manual resume.
+        if (latest.isPlaying) a.play().catch(() => {})
       }
       a.addEventListener('loadedmetadata', onReady)
       a.src = url
@@ -850,7 +882,9 @@ export default function Player(): JSX.Element {
         if (silentTicks.current >= 3) {
           if (silenceJumpStart.current == null) silenceJumpStart.current = audio.currentTime
           const cap = dur > 0 ? dur - endGuard : audio.currentTime + JUMP_S
-          audio.currentTime = Math.min(audio.currentTime + JUMP_S, cap)
+          const nextPosition = Math.min(audio.currentTime + JUMP_S, cap)
+          recoveryResumeAt.current = nextPosition
+          audio.currentTime = nextPosition
         }
       } else {
         if (silenceJumpStart.current != null) {
@@ -860,6 +894,7 @@ export default function Player(): JSX.Element {
           // onset plays from the top.
           const back = audio.currentTime - JUMP_S
           if (back > silenceJumpStart.current) {
+            recoveryResumeAt.current = back
             audio.currentTime = back
             const rate = Math.max(0.25, s.playbackSpeed)
             skipCooldownUntil.current = performance.now() + (JUMP_S / rate) * 1000 + 500
@@ -1001,6 +1036,7 @@ export default function Player(): JSX.Element {
     // every reload still runs out of attempts instead of retrying forever.
     if (audio.currentTime !== lastProgressTime.current) {
       lastProgressTime.current = audio.currentTime
+      recoveryResumeAt.current = audio.currentTime
       lastProgressAt.current = Date.now()
       if (Date.now() - lastRecoveryAt.current > RECOVERY_SETTLE_MS) {
         recoveryAttempts.current = 0
@@ -1033,6 +1069,7 @@ export default function Player(): JSX.Element {
     // looped section can never bleed into the next track.
     const abLooping = abLoopStart != null && abLoopEnd != null
     if (abLooping && audio.currentTime >= abLoopEnd!) {
+      recoveryResumeAt.current = abLoopStart!
       audio.currentTime = abLoopStart!
       setCurrentTime(abLoopStart!)
       if (dur > 0) setProgress(abLoopStart! / dur)
@@ -1138,6 +1175,7 @@ export default function Player(): JSX.Element {
 
       // Swap which slot is "active"
       activeSlot.current = activeSlot.current === 'A' ? 'B' : 'A'
+      recoveryResumeAt.current = na?.currentTime ?? 0
 
       // Tell the load useEffect to skip (audio already playing)
       skipNextLoad.current = true
@@ -1183,7 +1221,8 @@ export default function Player(): JSX.Element {
 
     if (repeat === 'one') {
       const a = getActive()
-      if (a) { a.currentTime = 0; a.volume = volumeRef.current; a.play().catch(console.error) }
+      recoveryResumeAt.current = 0
+      if (a) { try { a.currentTime = 0 } catch {}; a.volume = volumeRef.current; a.play().catch(console.error) }
       return
     }
     const prevId = currentTrack?.id
@@ -1195,15 +1234,17 @@ export default function Player(): JSX.Element {
     if (next.id === prevId) {
       // Same track (single song in queue with repeat-all, or only one option)
       const a = getActive()
-      if (a) { a.currentTime = 0; a.volume = volumeRef.current; a.play().catch(console.error) }
+      recoveryResumeAt.current = 0
+      if (a) { try { a.currentTime = 0 } catch {}; a.volume = volumeRef.current; a.play().catch(console.error) }
     }
   }
 
   const restartCurrentTrack = (shouldPlay = isPlaying): void => {
     const audio = getActive()
     cancelCF()
+    recoveryResumeAt.current = 0
     if (audio) {
-      audio.currentTime = 0
+      try { audio.currentTime = 0 } catch { /* recovery will restart at zero */ }
       audio.volume = volumeRef.current
       if (shouldPlay) audio.play().catch(console.error)
     }
@@ -1526,7 +1567,8 @@ export default function Player(): JSX.Element {
     if (audio && dur > 0) {
       cancelCF()
       const time = seekDrag * dur
-      audio.currentTime = time
+      recoveryResumeAt.current = time
+      try { audio.currentTime = time } catch { /* recovery will apply it once seekable */ }
       audio.volume = volumeRef.current
       applyRate(audio)
       setCurrentTime(time)
