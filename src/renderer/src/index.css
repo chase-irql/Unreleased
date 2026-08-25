@@ -192,6 +192,11 @@ html.surface-gradients .bg-surface-overlay {
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* No default browser focus ring anywhere — keyboard-focus styling (where
+   present) is handled per-component via Tailwind's focus:ring/focus:border
+   utilities instead. */
+:focus { outline: none; }
+
 html, body, #root {
   height: 100dvh;
   width: 100%;

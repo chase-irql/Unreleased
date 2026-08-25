@@ -15,6 +15,7 @@ the commit, and the `app` branch's version as of the same time.
 
 | Date (UTC+3) | Relay commit | Landed on | Branch version | app version | Summary |
 |---|---|---|---|---|---|
+| 2026-08-26 00:41:38 | [`312d487`](https://github.com/Juice-WRLD-API/Unreleased/commit/312d487) | web | 2.0.9 | 2.1.6 | Relay queue reshuffle, full era names, lyrics collapse/toggle, sandbox modal fixes, comp-proposal cancel-all, admin immediate-apply |
 | 2026-08-20 03:33:50 | [`8a39610`](https://github.com/Juice-WRLD-API/Unreleased/commit/8a39610c30a28c29f955b1c18111fdf68427ad44) | web | 2.0.6 | 2.0.10 | Add Channels feature, relay app/android admin+editor+docs+news+stats+settings work, fix mobile Settings full-page render |
 | 2026-08-20 03:32:51 | [`3fc57d9`](https://github.com/Juice-WRLD-API/Unreleased/commit/3fc57d905e4ec03033608242a18b7cc7ae9f9415) | web | 2.0.5 | 2.0.10 | Add era covers, EQ volume boost, queue search; relay from android |
 | 2026-08-19 18:48:51 | [`a4ef317`](https://github.com/Juice-WRLD-API/Unreleased/commit/a4ef317b83185a50f5dc46511721a9aa714a1b0d) | claude/fervent-boyd-70a994 | 2.0.5 | 2.0.7 | Add era covers, EQ volume boost, queue search; relay from android |
