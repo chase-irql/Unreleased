@@ -41,6 +41,11 @@ export default function QueuePanel(): JSX.Element {
   // working correctly after filtering shrinks the array.
   const upcomingIndexed = upcoming.map((track, i) => ({ track, i }))
   const filteredUpcoming = query ? upcomingIndexed.filter(({ track }) => matchesQuery(track)) : upcomingIndexed
+  const shownUpcoming = filteredUpcoming.slice(0, visibleCount)
+
+  useEffect(() => {
+    setVisibleCount(MAX_UPCOMING_SHOWN)
+  }, [query])
 
   // Drag state (upcoming indices only)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -162,7 +167,7 @@ export default function QueuePanel(): JSX.Element {
                 // absolute queue position history.length - 1 - i.
                 const reversedIndexed = [...history].reverse().map((track, i) => ({ track, i }))
                 const filtered = query ? reversedIndexed.filter(({ track }) => matchesQuery(track)) : reversedIndexed
-                const shown = query ? filtered : filtered.slice(0, MAX_HISTORY_SHOWN)
+                const shown = filtered.slice(0, MAX_HISTORY_SHOWN)
                 return (
                   <div className="opacity-50 space-y-0.5">
                     {shown.map(({ track, i }) => (
@@ -261,7 +266,7 @@ export default function QueuePanel(): JSX.Element {
                 </span>
               </p>
 
-              {(query ? filteredUpcoming : filteredUpcoming.slice(0, visibleCount)).map(({ track, i }) => (
+              {shownUpcoming.map(({ track, i }) => (
                 <div
                   key={`up-${track.id}-${queueIndex + 1 + i}`}
                   draggable={!query}
@@ -287,12 +292,12 @@ export default function QueuePanel(): JSX.Element {
                 </div>
               ))}
 
-              {!query && filteredUpcoming.length > visibleCount && (
+              {filteredUpcoming.length > shownUpcoming.length && (
                 <button
                   onClick={showMoreUpcoming}
                   className="w-full text-text-muted hover:text-text-primary text-xs text-center py-2 rounded-lg hover:bg-surface-overlay transition-colors"
                 >
-                  +{filteredUpcoming.length - visibleCount}{hasMore ? '+' : ''} more
+                  +{filteredUpcoming.length - shownUpcoming.length}{hasMore ? '+' : ''} more
                 </button>
               )}
             </div>
