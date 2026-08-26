@@ -646,6 +646,7 @@ export default function Player(): JSX.Element {
 
     const attempt = recoveryAttempts.current++
     const queueIndex = useStore.getState().queueIndex
+    const trackId = track.id
     lastRecoveryAt.current = Date.now()
     // Zero is a meaningful user intent (restart/seek-to-start), so fall back to
     // the live intent ref rather than an older progress sample.
@@ -661,13 +662,17 @@ export default function Player(): JSX.Element {
       const a = getActive()
       const s = useStore.getState()
       // The user may have paused or skipped away while we waited, or a newer
-      // recovery may already own this slot.
-      if (!a || !s.isPlaying || s.currentTrack !== track || s.queueIndex !== queueIndex
+      // recovery may already own this slot. Track objects are also replaced
+      // for artwork and display-preference updates, so compare stable playback
+      // identity rather than object reference.
+      if (!a || a !== audio || !s.isPlaying || s.currentTrack?.id !== trackId
+        || resolvePlaybackUrl(s.currentTrack) !== url || s.queueIndex !== queueIndex
         || recoveryGeneration.current !== generation) return
       const onReady = (): void => {
         a.removeEventListener('loadedmetadata', onReady)
         const latest = useStore.getState()
-        if (latest.currentTrack !== track || latest.queueIndex !== queueIndex
+        if (latest.currentTrack?.id !== trackId || resolvePlaybackUrl(latest.currentTrack) !== url
+          || latest.queueIndex !== queueIndex
           || getActive() !== a || recoveryGeneration.current !== generation) return
         const latestResumeAt = recoveryResumeAt.current
         // Streamed audio reports Infinity duration until the server has sent
