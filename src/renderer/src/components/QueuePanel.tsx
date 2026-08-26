@@ -12,9 +12,10 @@ const MAX_UPCOMING_SHOWN = 60
 export default function QueuePanel(): JSX.Element {
   const {
     queue, queueIndex, currentTrack, isPlaying, shuffle, queueFilter, queueLoadingMore,
+    queueMaterializing, queueMaterializeError,
     radioMode, radioNext,
     setShowQueue, removeFromQueue, clearQueue, reorderQueue, jumpToTrack, _loadMore, reshuffleQueue,
-  } = useStorePick('queue', 'queueIndex', 'currentTrack', 'isPlaying', 'shuffle', 'queueFilter', 'queueLoadingMore', 'radioMode', 'radioNext', 'setShowQueue', 'removeFromQueue', 'clearQueue', 'reorderQueue', 'jumpToTrack', '_loadMore', 'reshuffleQueue')
+  } = useStorePick('queue', 'queueIndex', 'currentTrack', 'isPlaying', 'shuffle', 'queueFilter', 'queueLoadingMore', 'queueMaterializing', 'queueMaterializeError', 'radioMode', 'radioNext', 'setShowQueue', 'removeFromQueue', 'clearQueue', 'reorderQueue', 'jumpToTrack', '_loadMore', 'reshuffleQueue')
 
   const [panelWidth, dragHandle] = useResizablePanel(300, 240, 480)
   const isElectron = navigator.userAgent.includes('Electron')
@@ -143,10 +144,14 @@ export default function QueuePanel(): JSX.Element {
           </div>
         )}
 
+        {queueMaterializeError && (
+          <p className="px-4 pt-2 text-[11px] text-amber-400">{queueMaterializeError}</p>
+        )}
+
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
 
-          {/* ── History ── (collapsible, above now playing) */}
+          {/* ── Earlier queue positions ── (collapsible, above now playing) */}
           {history.length > 0 && (
             <div className="px-4 pt-4 pb-2">
               <button
@@ -155,7 +160,7 @@ export default function QueuePanel(): JSX.Element {
               >
                 <History size={11} />
                 <span className="text-xs uppercase tracking-widest flex-1">
-                  History · {history.length}
+                  Earlier in queue · {history.length}
                 </span>
                 <ChevronDown
                   size={12}
@@ -305,6 +310,11 @@ export default function QueuePanel(): JSX.Element {
             <p className="text-text-muted text-xs text-center py-4 opacity-50">
               No matches
             </p>
+          ) : !radioMode && currentTrack && queueMaterializing ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-text-muted text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              Preparing full shuffle…
+            </div>
           ) : !radioMode && currentTrack ? (
             <p className="text-text-muted text-xs text-center py-4 opacity-50">
               Nothing up next

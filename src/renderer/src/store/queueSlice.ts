@@ -13,7 +13,7 @@
 
 import type { StateCreator } from 'zustand'
 import type { Track } from '../types'
-import { apiFetch, songToTrack } from '../lib/juicewrldApi'
+import { apiFetch, loadAllSongs, songToTrack } from '../lib/juicewrldApi'
 import type { JWApiPaginatedResponse, JWApiSong } from '../lib/juicewrldApi'
 import { getOwnVersionMeta, getVersionGroup } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
@@ -27,6 +27,8 @@ export interface QueueFilter {
   category: string
   era: string
   search: string
+  /** Lyrics-tab query; mutually exclusive with search in current callers. */
+  lyrics?: string
   /** Next page number to fetch. */
   page: number
   hasMore: boolean
@@ -64,6 +66,18 @@ export interface QueueSlice {
   queueFilter: QueueFilter | null
   /** True while a background page fetch is in flight. */
   queueLoadingMore: boolean
+  /** True while Tracker shuffle is fetching its complete filtered pool. */
+  queueMaterializing: boolean
+  /** Next was requested before the complete shuffle pool was ready. */
+  queueAdvanceWaiting: boolean
+  /** User-visible failure from full-pool shuffle preparation. */
+  queueMaterializeError: string | null
+  /** Manual immediate-next occurrences that survive full-pool materialization. */
+  queueManualNextIds: string[]
+  /** Manual tail occurrences that survive full-pool materialization. */
+  queueManualTailIds: string[]
+  /** Natural catalog occurrences explicitly removed before materialization. */
+  queueRemovedCatalogIds: string[]
   /** Where the current queue came from — used to activate radio on shuffle. */
   queueSource: 'tracker' | 'playlist' | null
 
@@ -139,12 +153,13 @@ export interface QueueSlice {
 
   // Internal
   _loadMore: () => void
+  _materializeTrackerShuffle: (excludedRootId?: string) => void
   _prefetchRadioTrack: () => void
   /** Asynchronously swaps `track` for the version the user actually wants —
    *  its group's preferred version, or its linked OG sibling when "prefer OG
    *  version" is on — once it becomes the current track. No-op when neither
    *  applies. */
-  _maybeSwapToPreferredVersion: (track: Track) => void
+  _maybeSwapToPreferredVersion: (track: Track) => Promise<Track | null>
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -169,6 +184,36 @@ function insertRandom<T>(base: T[], items: T[]): T[] {
     result.splice(Math.floor(Math.random() * (result.length + 1)), 0, item)
   }
   return result
+}
+
+/** Remove one source occurrence for every matching timeline occurrence. */
+function withoutOccurrences(source: Track[], consumed: Track[]): Track[] {
+  const counts = new Map<string, number>()
+  for (const track of consumed) counts.set(track.id, (counts.get(track.id) ?? 0) + 1)
+  return source.filter((track) => {
+    const count = counts.get(track.id) ?? 0
+    if (count === 0) return true
+    counts.set(track.id, count - 1)
+    return false
+  })
+}
+
+/** Select queue occurrences represented by an id multiset, preserving order. */
+function matchingOccurrences(source: Track[], ids: string[]): Track[] {
+  const counts = new Map<string, number>()
+  for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1)
+  return source.filter((track) => {
+    const count = counts.get(track.id) ?? 0
+    if (count === 0) return false
+    counts.set(track.id, count - 1)
+    return true
+  })
+}
+
+function removeOneId(ids: string[], id: string): string[] {
+  const index = ids.indexOf(id)
+  if (index < 0) return ids
+  return [...ids.slice(0, index), ...ids.slice(index + 1)]
 }
 
 const RADIO_HISTORY_LIMIT = 30
@@ -268,6 +313,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   queueOriginal: null,
   queueFilter: null,
   queueLoadingMore: false,
+  queueMaterializing: false,
+  queueAdvanceWaiting: false,
+  queueMaterializeError: null,
+  queueManualNextIds: [],
+  queueManualTailIds: [],
+  queueRemovedCatalogIds: [],
   queueSource: null,
   radioMode: false,
   radioNext: null,
@@ -275,7 +326,9 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   radioFilter: null,
 
   // ── Simple setters ─────────────────────────────────────────────────────────
-  setIsPlaying: (isPlaying) => set({ isPlaying }),
+  // Any explicit play/pause command supersedes a deferred Next request that
+  // is waiting for full shuffle materialization.
+  setIsPlaying: (isPlaying) => set({ isPlaying, queueAdvanceWaiting: false, _radioWaiting: false }),
   setProgress: (progress) => set({ progress }),
   setCurrentTime: (currentTime) => set({ currentTime }),
 
@@ -292,12 +345,18 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
     const { shuffle } = get()
     let finalQueue = tracks
-    if (shuffle && source === 'tracker') {
-      // This starts a new session, so nothing in the supplied context is real
-      // playback history yet. Put the selected song first and randomize every
-      // other entry; preserving the source prefix would falsely show it as
-      // already played when the user clicked a row in the middle of Tracker.
-      finalQueue = [track, ...fisherYates([...tracks.slice(0, idx), ...tracks.slice(idx + 1)])]
+    let originalQueue = tracks
+    const needsFullTrackerShuffle = source === 'tracker' && shuffle && !!filter?.hasMore
+    if (source === 'tracker') {
+      // An explicit Tracker row click starts a new timeline. Source rows above
+      // the click were not played and must never appear as fabricated history.
+      // Shuffle still considers the entire supplied context by rotating it
+      // around the selection before randomizing the remaining pool.
+      const selectedFirst = [track, ...tracks.slice(idx + 1), ...tracks.slice(0, idx)]
+      originalQueue = shuffle ? selectedFirst : tracks.slice(idx)
+      finalQueue = shuffle
+        ? needsFullTrackerShuffle ? [track] : [track, ...fisherYates(selectedFirst.slice(1))]
+        : originalQueue
       idx = 0
     } else if (shuffle) {
       // Preserve established playlist/file semantics; this PR changes Tracker
@@ -308,17 +367,24 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     }
 
     _queueLoadSession++
+    const queueSession = _queueLoadSession
     set({
       queue: finalQueue,
       // `tracks` is the context as the view listed it, before the shuffle
       // above — exactly what turning shuffle back off should restore to.
-      queueOriginal: tracks,
+      queueOriginal: originalQueue,
       queueIndex: idx,
       currentTrack: track,
       currentTrackFull: null,
       isPlaying: true,
       queueFilter: filter,
       queueLoadingMore: false,
+      queueMaterializing: needsFullTrackerShuffle,
+      queueAdvanceWaiting: false,
+      queueMaterializeError: null,
+      queueManualNextIds: [],
+      queueManualTailIds: [],
+      queueRemovedCatalogIds: [],
       queueSource: source,
       radioMode: false,
       radioNext: null,
@@ -327,8 +393,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       progress: 0,
       currentTime: 0,
     })
-    if (filter?.hasMore) get()._loadMore()
-    get()._maybeSwapToPreferredVersion(track)
+    const preferenceCheck = get()._maybeSwapToPreferredVersion(track)
+    if (needsFullTrackerShuffle) {
+      preferenceCheck.finally(() => {
+        if (_queueLoadSession === queueSession) get()._materializeTrackerShuffle(track.id)
+      })
+    } else if (filter?.hasMore) get()._loadMore()
   },
 
   // ── playCollection ─────────────────────────────────────────────────────────
@@ -367,6 +437,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       isPlaying: opts?.keepPlayState ? get().isPlaying : true,
       queueFilter: null,
       queueLoadingMore: false,
+      queueMaterializing: false,
+      queueAdvanceWaiting: false,
+      queueMaterializeError: null,
+      queueManualNextIds: [],
+      queueManualTailIds: [],
+      queueRemovedCatalogIds: [],
       radioMode: true,
       radioFilter: filter,
       radioNext: null,
@@ -388,7 +464,10 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
   // ── nextTrack ──────────────────────────────────────────────────────────────
   nextTrack: () => {
-    const { queue, queueIndex, shuffle, repeat, radioMode, radioNext } = get()
+    const {
+      queue, queueIndex, shuffle, repeat, radioMode, radioNext,
+      queueMaterializing, queueManualNextIds, queueManualTailIds,
+    } = get()
 
     // ── Radio mode ──────────────────────────────────────────────────────────
     if (radioMode) {
@@ -426,6 +505,10 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     } else if (shuffle) {
       nextIdx = queueIndex + 1
       if (nextIdx >= queue.length) {
+        if (queueMaterializing) {
+          set({ isPlaying: false, queueAdvanceWaiting: true })
+          return null
+        }
         if (repeat === 'all') {
           const reshuffled = fisherYates(queue)
           const first = reshuffled[0]
@@ -446,7 +529,23 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     }
 
     const track = queue[nextIdx]
-    set({ queueIndex: nextIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    const tailStart = queue.length - queueManualTailIds.length
+    set({
+      queueIndex: nextIdx,
+      currentTrack: track,
+      currentTrackFull: null,
+      isPlaying: true,
+      progress: 0,
+      currentTime: 0,
+      // A Play Next occurrence stops being pending as soon as it is consumed,
+      // regardless of whether full-catalog materialization has started yet.
+      queueManualNextIds: nextIdx > queueIndex && queueManualNextIds.length > 0
+        ? removeOneId(queueManualNextIds, track.id)
+        : queueManualNextIds,
+      queueManualTailIds: queueManualTailIds.length > 0 && nextIdx >= tailStart
+        ? removeOneId(queueManualTailIds, track.id)
+        : queueManualTailIds,
+    })
     get()._loadMore()
     get()._maybeSwapToPreferredVersion(track)
     return track
@@ -459,41 +558,77 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
     const prevIdx = Math.max(0, queueIndex - 1)
     const track = queue[prevIdx]
-    set({ queueIndex: prevIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    set({ queueIndex: prevIdx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0, queueAdvanceWaiting: false, _radioWaiting: false })
     get()._maybeSwapToPreferredVersion(track)
     return track
   },
 
   // ── jumpToTrack ───────────────────────────────────────────────────────────────
   jumpToTrack: (track, absoluteIndex) => {
-    const { queue } = get()
+    const { queue, queueIndex, queueManualNextIds, queueManualTailIds } = get()
     const idx = (absoluteIndex != null && queue[absoluteIndex]?.id === track.id)
       ? absoluteIndex
       : queue.findIndex((t: Track) => t.id === track.id)
     if (idx < 0) return
-    set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    let pendingNext = queueManualNextIds
+    if (idx > queueIndex && pendingNext.length > 0) {
+      pendingNext = [...pendingNext]
+      const consumedThrough = Math.min(idx, queueIndex + queueManualNextIds.length)
+      for (let i = queueIndex + 1; i <= consumedThrough; i++) {
+        pendingNext = removeOneId(pendingNext, queue[i].id)
+      }
+    }
+    let pendingTail = queueManualTailIds
+    if (idx > queueIndex && pendingTail.length > 0) {
+      pendingTail = [...pendingTail]
+      const tailStart = queue.length - queueManualTailIds.length
+      for (let i = Math.max(queueIndex + 1, tailStart); i <= idx; i++) {
+        pendingTail = removeOneId(pendingTail, queue[i].id)
+      }
+    }
+    set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0, queueAdvanceWaiting: false, _radioWaiting: false, queueManualNextIds: pendingNext, queueManualTailIds: pendingTail })
     get()._loadMore()
     get()._maybeSwapToPreferredVersion(track)
   },
 
   // ── toggleShuffle ──────────────────────────────────────────────────────────
   toggleShuffle: () => {
-    const { shuffle, queue, queueIndex, radioMode, currentTrack, queueOriginal } = get()
+    const {
+      shuffle, queue, queueIndex, radioMode, currentTrack, queueOriginal, queueSource,
+      queueFilter, queueManualNextIds, queueManualTailIds, queueAdvanceWaiting,
+    } = get()
     const newShuffle = !shuffle
     // Written once up front so every branch below (including the radio-mode
     // early return) leaves storage agreeing with the resulting state.
     ls.set('shuffle', newShuffle)
 
     if (!newShuffle) {
-      // Turning OFF: exit radio mode if active, resume linear playback.
-      //
-      // The queue goes back to being the source list itself, with the playing
-      // track located in it — so what's up next is whatever follows it in the
-      // playlist, and Previous plays what precedes it there. The shuffled
-      // play history is deliberately dropped: once shuffle is off, "the song
-      // before this one" means the playlist's, not the random one that
-      // happened to play. Radio has no source list to go back to (its queue is
-      // only history), so it just stops.
+      // Preserve the active Tracker timeline verbatim and restore only source
+      // entries that have not already been traversed. Queue-panel labels call
+      // this prefix "Earlier in queue" because an explicit forward jump can
+      // bypass positions without literally playing them.
+      if (!radioMode && queueSource === 'tracker' && queueOriginal && currentTrack) {
+        _queueLoadSession++
+        const timeline = queue.slice(0, queueIndex + 1)
+        const remaining = withoutOccurrences(queueOriginal, timeline)
+        set({
+          shuffle: false,
+          queue: [...timeline, ...remaining],
+          // Keep occurrence indices aligned in linear mode. Queue editing can
+          // then remove the exact duplicate row the user selected.
+          queueOriginal: [...timeline, ...remaining],
+          queueIndex: timeline.length - 1,
+          radioMode: false,
+          radioNext: null,
+          _radioWaiting: false,
+          queueMaterializing: false,
+          queueAdvanceWaiting: false,
+          queueLoadingMore: false,
+        })
+        if (queueAdvanceWaiting && timeline.length + remaining.length > timeline.length) get().nextTrack()
+        return
+      }
+
       const idx = queueOriginal && currentTrack
         ? queueOriginal.findIndex((t: Track) => t.id === currentTrack.id)
         : -1
@@ -506,6 +641,23 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
     if (radioMode) {
       // Already in radio mode — no change needed for toggling ON again
+      return
+    }
+
+    if (queueSource === 'tracker' && queueFilter?.hasMore) {
+      _queueLoadSession++
+      const timeline = queue.slice(0, queueIndex + 1)
+      const upcoming = queue.slice(queueIndex + 1)
+      const pinnedNext = matchingOccurrences(upcoming, queueManualNextIds)
+      set({
+        shuffle: true,
+        queue: [...timeline, ...pinnedNext],
+        queueMaterializing: true,
+        queueAdvanceWaiting: false,
+        queueMaterializeError: null,
+        queueLoadingMore: true,
+      })
+      get()._materializeTrackerShuffle()
       return
     }
 
@@ -523,7 +675,10 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // whether shuffle was already on — unlike toggleShuffle, which only
   // randomizes on the OFF→ON transition and otherwise just flips shuffle off.
   reshuffleQueue: () => {
-    const { currentTrack, queue, queueIndex, radioMode } = get()
+    const {
+      currentTrack, queue, queueIndex, radioMode, queueSource, queueFilter,
+      queueManualNextIds, queueManualTailIds, queueMaterializing,
+    } = get()
     if (!currentTrack) return
     ls.set('shuffle', true)
 
@@ -537,6 +692,26 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       set({ shuffle: true, radioNext: null })
       _radioSession++
       get()._prefetchRadioTrack()
+      return
+    }
+
+
+    if (queueMaterializing) return
+
+    if (queueSource === 'tracker' && queueFilter?.hasMore) {
+      _queueLoadSession++
+      const timeline = queue.slice(0, queueIndex + 1)
+      const upcoming = queue.slice(queueIndex + 1)
+      const pinnedNext = matchingOccurrences(upcoming, queueManualNextIds)
+      set({
+        shuffle: true,
+        queue: [...timeline, ...pinnedNext],
+        queueMaterializing: true,
+        queueAdvanceWaiting: false,
+        queueMaterializeError: null,
+        queueLoadingMore: true,
+      })
+      get()._materializeTrackerShuffle()
       return
     }
 
@@ -561,8 +736,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // pristine playlist the session happened to start from.
   addToQueue: (track) =>
     set((s: QueueSlice) => ({
-      queue: [...s.queue, track],
+      // During full-pool preparation the final tail does not exist yet. Keep
+      // the entry in the source reference/provenance and reveal it only after
+      // the randomized pool so it cannot masquerade as immediate-next.
+      queue: s.queueMaterializing ? s.queue : [...s.queue, track],
       queueOriginal: s.queueOriginal ? [...s.queueOriginal, track] : null,
+      queueManualTailIds: [...s.queueManualTailIds, track.id],
     })),
 
   playNext: (track) =>
@@ -571,14 +750,17 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       // Positioned relative to the current track in *each* list: the shuffled
       // queue and the source order disagree about where that track sits.
       const cur = s.queue[s.queueIndex]
-      const oAfter = s.queueOriginal && cur
-        ? s.queueOriginal.findIndex((t) => t.id === cur.id) + 1
-        : 0
+      const oAfter = !s.shuffle
+        ? after
+        : s.queueOriginal && cur
+          ? s.queueOriginal.findIndex((t) => t.id === cur.id) + 1
+          : 0
       return {
         queue: [...s.queue.slice(0, after), track, ...s.queue.slice(after)],
         queueOriginal: s.queueOriginal && oAfter > 0
           ? [...s.queueOriginal.slice(0, oAfter), track, ...s.queueOriginal.slice(oAfter)]
           : s.queueOriginal,
+        queueManualNextIds: [...s.queueManualNextIds, track.id],
       }
     }),
 
@@ -590,17 +772,41 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       // doesn't carry across. A duplicated track loses its first copy, which
       // is indistinguishable from the removed one anyway.
       const removed = s.queue[index]
-      let dropped = false
+      const nextCount = s.queueManualNextIds.length
+      const tailCount = s.queueManualTailIds.length
+      // Placement is occurrence-sensitive. The same song may have one copy
+      // pinned next and another explicitly appended to the tail; removing the
+      // tail copy must not consume the Play Next marker (or vice versa).
+      let removedNext = !!removed && index > s.queueIndex && index <= s.queueIndex + nextCount
+      let removedTail = !!removed && !s.queueMaterializing && tailCount > 0 && index >= s.queue.length - tailCount
+      if (removedTail) removedNext = false
+      let nextOriginal = s.queueOriginal
+      if (nextOriginal && removed) {
+        if (!s.shuffle && nextOriginal[index]?.id === removed.id) {
+          // In linear mode both lists have identical occurrence order, so the
+          // clicked absolute index is the only correct answer for duplicates.
+          nextOriginal = nextOriginal.filter((_, i) => i !== index)
+        } else {
+          const dropIndex = removedTail
+            ? nextOriginal.map((t) => t.id).lastIndexOf(removed.id)
+            : nextOriginal.findIndex((t) => t.id === removed.id)
+          if (dropIndex >= 0) nextOriginal = nextOriginal.filter((_, i) => i !== dropIndex)
+        }
+      }
       return {
         queue: next,
         queueIndex: newIndex,
-        queueOriginal: s.queueOriginal && removed
-          ? s.queueOriginal.filter((t) => {
-              if (dropped || t.id !== removed.id) return true
-              dropped = true
-              return false
-            })
-          : s.queueOriginal,
+        queueManualNextIds: removed && removedNext
+          ? removeOneId(s.queueManualNextIds, removed.id)
+          : s.queueManualNextIds,
+        queueManualTailIds: removed && removedTail
+          ? removeOneId(s.queueManualTailIds, removed.id)
+          : s.queueManualTailIds,
+        queueRemovedCatalogIds: removed && !removedNext && !removedTail &&
+          s.queueSource === 'tracker' && !!s.queueFilter?.hasMore
+          ? [...s.queueRemovedCatalogIds, removed.id]
+          : s.queueRemovedCatalogIds,
+        queueOriginal: nextOriginal,
       }
     }),
 
@@ -612,6 +818,12 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       queueIndex: 0,
       queueFilter: null,
       queueLoadingMore: false,
+      queueMaterializing: false,
+      queueAdvanceWaiting: false,
+      queueMaterializeError: null,
+      queueManualNextIds: [],
+      queueManualTailIds: [],
+      queueRemovedCatalogIds: [],
       queueSource: null,
       radioMode: false,
       radioNext: null,
@@ -619,7 +831,15 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     }))
   },
 
-  reorderQueue: (fromIdx, toIdx) =>
+  reorderQueue: (fromIdx, toIdx) => {
+    const before = get()
+    // Positional manual entries must keep their Play Next/tail guarantees.
+    // Refuse the ambiguous edge-case drag until those entries are consumed;
+    // ordinary Tracker queues remain reorderable and continue lazy-loading.
+    if (
+      before.queueMaterializing || before.queueManualNextIds.length > 0 ||
+      before.queueManualTailIds.length > 0
+    ) return
     set((s: QueueSlice) => {
       const base = s.queueIndex + 1
       const upcoming = [...s.queue.slice(base)]
@@ -630,8 +850,149 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       // an edit to the source order and has to stick. While shuffled they've
       // diverged and these indices mean nothing in the source list — the drag
       // is just a tweak to this shuffle, discarded when it ends.
-      return { queue: next, queueOriginal: s.shuffle ? s.queueOriginal : next }
-    }),
+      return {
+        queue: next,
+        queueOriginal: s.shuffle ? s.queueOriginal : next,
+      }
+    })
+  },
+
+  // ── Full Tracker shuffle materialization ──────────────────────────────────
+  _materializeTrackerShuffle: (excludedRootId) => {
+    const initial = get()
+    const filter = initial.queueFilter as QueueFilter | null
+    const root = (initial.queueOriginal?.[0] ?? initial.currentTrack) as Track | null
+    if (
+      !root || !filter?.hasMore || !initial.shuffle ||
+      initial.queueSource !== 'tracker'
+    ) return
+
+    const session = _queueLoadSession
+    const fallbackOriginal = [...(initial.queueOriginal ?? [root])]
+    const replacedSourceIds = new Set<string>()
+    if (excludedRootId) replacedSourceIds.add(excludedRootId)
+    set({ queueMaterializing: true, queueLoadingMore: true, queueMaterializeError: null })
+
+    // Version preference lookups and the all-songs request are both async.
+    // Re-check the live current entry before committing so a toggle, a queued
+    // Next, or a media-key advance cannot race materialization and leave both
+    // the original and preferred sibling in the generated queue.
+    const syncLivePreference = async (): Promise<boolean> => {
+      while (session === _queueLoadSession) {
+        if (session !== _queueLoadSession) return false
+        const beforeState = get()
+        const before = beforeState.currentTrack as Track | null
+        const beforeIndex = beforeState.queueIndex
+        if (!before) return true
+        const swapped = await get()._maybeSwapToPreferredVersion(before)
+        if (swapped && swapped.id !== before.id) replacedSourceIds.add(before.id)
+        if (session !== _queueLoadSession) return false
+        const afterState = get()
+        const after = afterState.currentTrack as Track | null
+        if (!after) return true
+        // A concurrent lookup may have performed the swap first, in which
+        // case this call correctly returns null. Inspect the same queue slot:
+        // unlike currentTrack alone, it distinguishes that replacement from
+        // ordinary Previous/Next navigation during the await.
+        if (afterState.queue[beforeIndex]?.id !== before.id) replacedSourceIds.add(before.id)
+        if (after.id === before.id || after.id === swapped?.id) return true
+        // The user advanced while the lookup was in flight. Coordinate the
+        // newly-current entry too before allowing the full queue to commit.
+      }
+      return false
+    }
+
+    const unfiltered = !filter.search && !filter.lyrics && !filter.category && !filter.era
+    const loadPool = () => unfiltered
+      ? loadAllSongs()
+      : apiFetch<JWApiSong[]>('/songs/', {
+          all: 'true',
+          searchall: filter.search || undefined,
+          lyrics: filter.lyrics || undefined,
+          category: filter.category || undefined,
+          era: filter.era || undefined,
+        })
+
+    Promise.resolve()
+      .then(async () => {
+        if (!await syncLivePreference()) return null
+        const songs = await loadPool()
+        if (!await syncLivePreference()) return null
+        return songs
+      })
+      .then((songs) => {
+        if (!songs) return
+        if (session !== _queueLoadSession) return
+        const state = get()
+        if (!state.shuffle || state.queueSource !== 'tracker') return
+
+        const unique = new Map<string, Track>()
+        for (const song of songs) {
+          if (!song.path) continue
+          const candidate = songToTrack(song)
+          if (!unique.has(candidate.id)) unique.set(candidate.id, candidate)
+        }
+        for (const id of replacedSourceIds) unique.delete(id)
+        for (const id of state.queueRemovedCatalogIds) unique.delete(id)
+        const canonical = [...unique.values()]
+
+        // While the full pool was loading, the active queue contained only
+        // real history/current plus explicit manual entries. Preserve those
+        // exact occurrences, then randomize every remaining eligible song.
+        const timeline = state.queue.slice(0, state.queueIndex + 1)
+        const liveUpcoming = state.queue.slice(state.queueIndex + 1)
+        const pinnedNext = matchingOccurrences(liveUpcoming, state.queueManualNextIds)
+        const pinnedTail = matchingOccurrences(state.queueOriginal ?? [], state.queueManualTailIds)
+        // Manual entries are intentional extra occurrences. Only actual
+        // timeline positions consume the catalog's natural occurrence.
+        const remaining = withoutOccurrences(canonical, timeline)
+        const waiting = state.queueAdvanceWaiting
+        set({
+          queue: [...timeline, ...pinnedNext, ...fisherYates(remaining), ...pinnedTail],
+          queueOriginal: [...timeline, ...pinnedNext, ...remaining, ...pinnedTail],
+          queueFilter: null,
+          queueLoadingMore: false,
+          queueMaterializing: false,
+          queueAdvanceWaiting: false,
+          queueMaterializeError: null,
+          queueManualNextIds: [],
+          queueManualTailIds: [],
+          queueRemovedCatalogIds: [],
+        })
+        if (waiting) get().nextTrack()
+      })
+      .catch(() => {
+        if (session !== _queueLoadSession) return
+        const state = get()
+        if (state.queueSource !== 'tracker') return
+
+        const timeline = state.queue.slice(0, state.queueIndex + 1)
+        const liveUpcoming = state.queue.slice(state.queueIndex + 1)
+        const pinnedNext = matchingOccurrences(liveUpcoming, state.queueManualNextIds)
+        const pinnedTail = matchingOccurrences(state.queueOriginal ?? [], state.queueManualTailIds)
+        // Unlike a freshly fetched canonical catalog, fallbackOriginal already
+        // contains the manual entries. Consume them before explicitly placing
+        // them or an API failure would duplicate every pinned occurrence.
+        const remaining = withoutOccurrences(
+          state.queueOriginal ?? fallbackOriginal,
+          [...timeline, ...pinnedNext, ...pinnedTail],
+        )
+        const waiting = state.queueAdvanceWaiting
+        const linear = [...timeline, ...pinnedNext, ...remaining, ...pinnedTail]
+        ls.set('shuffle', false)
+        set({
+          shuffle: false,
+          queue: linear,
+          queueOriginal: linear,
+          queueIndex: timeline.length - 1,
+          queueLoadingMore: false,
+          queueMaterializing: false,
+          queueAdvanceWaiting: false,
+          queueMaterializeError: 'Could not prepare the complete shuffle. Continuing in order.',
+        })
+        if (waiting && linear.length > timeline.length) get().nextTrack()
+      })
+  },
 
   // ── Lazy loading (non-radio) ───────────────────────────────────────────────
   _loadMore: () => {
@@ -646,6 +1007,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     set({ queueLoadingMore: true })
     apiFetch<JWApiPaginatedResponse>('/songs/', {
       searchall: queueFilter.search || undefined,
+      lyrics: queueFilter.lyrics || undefined,
       category: queueFilter.category || undefined,
       era: queueFilter.era || undefined,
       page: queueFilter.page,
@@ -653,7 +1015,10 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     })
       .then((data) => {
         if (session !== _queueLoadSession) return
-        const { queue: q, queueIndex: qi, shuffle: isShuffle, queueFilter: qf, queueOriginal: qo } = get()
+        const {
+          queue: q, queueIndex: qi, shuffle: isShuffle, queueFilter: qf,
+          queueOriginal: qo, queueManualTailIds: tailIds,
+        } = get()
         if (!qf) { set({ queueLoadingMore: false }); return }
         const existingIds = new Set([...q, ...(qo ?? [])].map((track) => track.id))
         const newTracks = data.results
@@ -662,26 +1027,32 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
           .filter((track) => !existingIds.has(track.id))
 
         let nextQueue: Track[]
+        const tailCount = tailIds.length
+        const queueTail = tailCount > 0 ? q.slice(-tailCount) : []
+        const queueBodyEnd = tailCount > 0 ? q.length - tailCount : q.length
         if (isShuffle) {
           const played = q.slice(0, qi + 1)
-          const existingUpcoming = q.slice(qi + 1)
+          const existingUpcoming = q.slice(qi + 1, queueBodyEnd)
           // Once a next song is visible (or explicitly inserted with Play
           // Next), a background page must not overtake it. Randomize new rows
           // only behind that stable immediate-next entry.
           const upcoming = existingUpcoming.length > 0
             ? [existingUpcoming[0], ...insertRandom(existingUpcoming.slice(1), newTracks)]
             : fisherYates(newTracks)
-          nextQueue = [...played, ...upcoming]
+          nextQueue = [...played, ...upcoming, ...queueTail]
         } else {
-          nextQueue = [...q, ...newTracks]
+          nextQueue = [...q.slice(0, queueBodyEnd), ...newTracks, ...queueTail]
         }
+
+        const originalTail = qo && tailCount > 0 ? qo.slice(-tailCount) : []
+        const originalBodyEnd = qo && tailCount > 0 ? qo.length - tailCount : (qo?.length ?? 0)
 
         set({
           queue: nextQueue,
           // A page arrives in source order, so it extends the reference order
           // as-is even when the copies going into `queue` were scattered
           // randomly through the upcoming tracks above.
-          queueOriginal: qo ? [...qo, ...newTracks] : null,
+          queueOriginal: qo ? [...qo.slice(0, originalBodyEnd), ...newTracks, ...originalTail] : null,
           queueLoadingMore: false,
           queueFilter: { ...qf, page: qf.page + 1, hasMore: data.next !== null },
         })
@@ -743,13 +1114,13 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     // Nothing could possibly swap — no per-song default anywhere and the
     // global toggle off — so skip the version lookup rather than pay a
     // /versions/ round trip on every track change for the common case.
-    if (!preferOg && !hasAnyDefaultVersion()) return
-    resolveVersionSwap(track, preferOg)
+    if (!preferOg && !hasAnyDefaultVersion()) return Promise.resolve(null)
+    return resolveVersionSwap(track, preferOg)
       .then((swapped) => {
-        if (!swapped) return
+        if (!swapped) return null
         const state = get()
         // Bail if the user has since moved on to a different track.
-        if (state.currentTrack?.id !== track.id) return
+        if (state.currentTrack?.id !== track.id) return null
         set({
           currentTrack: swapped,
           currentTrackFull: null,
@@ -759,7 +1130,8 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
           // queue shuffled.
           queueOriginal: state.queueOriginal?.map((t: Track) => (t.id === track.id ? swapped : t)) ?? null,
         })
+        return swapped
       })
-      .catch(() => {})
+      .catch(() => null)
   },
 })
