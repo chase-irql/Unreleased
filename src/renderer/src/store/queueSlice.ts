@@ -179,6 +179,11 @@ const RADIO_HISTORY_LIMIT = 30
 // retry loop alive alongside the new one, both racing to set radioNext.
 let _radioSession = 0
 
+// Bumped whenever the active queue context is replaced or cleared. Lazy page
+// responses capture this value and may only append while it still matches;
+// otherwise an old Tracker query can leak rows into a newer queue.
+let _queueLoadSession = 0
+
 /** Matches version labels like "OG", "OG File", "OG Quality" (not "Original Key",
  *  which is an unrelated field) — the community convention for the raw/leaked
  *  file as opposed to a snippet, CDQ rip, TV mix, etc. */
@@ -276,18 +281,35 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
 
   // ── playTrack ──────────────────────────────────────────────────────────────
   playTrack: (track, context?, filter = null, source = null) => {
-    const tracks: Track[] = context ?? (get().queue as Track[])
+    let tracks: Track[] = context ?? (get().queue as Track[])
     let idx = tracks.findIndex((t: Track) => t.id === track.id)
-    if (idx < 0) idx = 0
+    if (idx < 0) {
+      // Several Tracker surfaces (lyrics, calendar, producers, compact
+      // groups) play independently fetched results while the Songs tab owns
+      // the visible context. Keep the requested song in both the shuffled
+      // queue and queueOriginal even when those datasets do not overlap.
+      if (source === 'tracker') tracks = [track, ...tracks]
+      idx = 0
+    }
 
     const { shuffle } = get()
     let finalQueue = tracks
-    if (shuffle && source !== 'tracker') {
+    if (shuffle && source === 'tracker') {
+      // This starts a new session, so nothing in the supplied context is real
+      // playback history yet. Put the selected song first and randomize every
+      // other entry; preserving the source prefix would falsely show it as
+      // already played when the user clicked a row in the middle of Tracker.
+      finalQueue = [track, ...fisherYates([...tracks.slice(0, idx), ...tracks.slice(idx + 1)])]
+      idx = 0
+    } else if (shuffle) {
+      // Preserve established playlist/file semantics; this PR changes Tracker
+      // shuffle only.
       const played = tracks.slice(0, idx + 1)
       const upcoming = fisherYates(tracks.slice(idx + 1))
       finalQueue = [...played, ...upcoming]
     }
 
+    _queueLoadSession++
     set({
       queue: finalQueue,
       // `tracks` is the context as the view listed it, before the shuffle
@@ -298,6 +320,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       currentTrackFull: null,
       isPlaying: true,
       queueFilter: filter,
+      queueLoadingMore: false,
       queueSource: source,
       radioMode: false,
       radioNext: null,
@@ -313,13 +336,16 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // ── playCollection ─────────────────────────────────────────────────────────
   playCollection: (tracks, filter = null, source = null) => {
     if (tracks.length === 0) return
-    if (get().shuffle && source !== 'tracker') {
+    if (get().shuffle) {
       const shuffled = fisherYates(tracks)
-      get().playTrack(shuffled[0], shuffled, filter, source)
-      // playTrack only ever sees the pre-shuffled list, so hand it the real
-      // source order — otherwise switching shuffle off would "restore" to this
-      // shuffle.
-      set({ queueOriginal: tracks })
+      if (source === 'tracker') {
+        // Pick a random start, but pass the source list itself so playTrack can
+        // preserve queueOriginal and build one canonical shuffled queue.
+        get().playTrack(shuffled[0], tracks, filter, source)
+      } else {
+        get().playTrack(shuffled[0], shuffled, filter, source)
+        set({ queueOriginal: tracks })
+      }
     } else {
       get().playTrack(tracks[0], tracks, filter, source)
     }
@@ -333,6 +359,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // ── startRadio ─────────────────────────────────────────────────────────────
   startRadio: (track, filter = null, opts) => {
     _radioSession++
+    _queueLoadSession++
     set({
       queue: [track],
       queueOriginal: null,
@@ -458,12 +485,13 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       : queue.findIndex((t: Track) => t.id === track.id)
     if (idx < 0) return
     set({ queueIndex: idx, currentTrack: track, currentTrackFull: null, isPlaying: true, progress: 0, currentTime: 0 })
+    get()._loadMore()
     get()._maybeSwapToPreferredVersion(track)
   },
 
   // ── toggleShuffle ──────────────────────────────────────────────────────────
   toggleShuffle: () => {
-    const { shuffle, queue, queueIndex, queueFilter, radioMode, currentTrack, queueSource, queueOriginal } = get()
+    const { shuffle, queue, queueIndex, radioMode, currentTrack, queueOriginal } = get()
     const newShuffle = !shuffle
     // Written once up front so every branch below (including the radio-mode
     // early return) leaves storage agreeing with the resulting state.
@@ -494,20 +522,13 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       return
     }
 
-    // Turning ON: tracker context → radio mode; otherwise shuffle the queue
-    if (queueSource === 'tracker' && currentTrack) {
-      set({ shuffle: true })
-      const rf = queueFilter
-        ? { category: queueFilter.category, era: queueFilter.era, search: queueFilter.search, total: queueFilter.total }
-        : null
-      get().startRadio(currentTrack, rf, { keepPlayState: true })
-      return
-    }
-
-    // Turning ON (playlist/files/non-tracker): shuffle the upcoming portion
+    // Turning ON: preserve actual playback history/current and randomize only
+    // the future. Tracker now uses this same materialized queue as every other
+    // source instead of switching to one-song-lookahead radio mode.
     const played = queue.slice(0, queueIndex + 1)
     const upcoming = fisherYates(queue.slice(queueIndex + 1))
     set({ shuffle: true, queue: [...played, ...upcoming] })
+    get()._loadMore()
   },
 
   // ── reshuffleQueue ─────────────────────────────────────────────────────────
@@ -515,7 +536,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
   // whether shuffle was already on — unlike toggleShuffle, which only
   // randomizes on the OFF→ON transition and otherwise just flips shuffle off.
   reshuffleQueue: () => {
-    const { currentTrack, queue, queueIndex, queueFilter, radioMode, queueSource } = get()
+    const { currentTrack, queue, queueIndex, radioMode } = get()
     if (!currentTrack) return
     ls.set('shuffle', true)
 
@@ -532,20 +553,10 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       return
     }
 
-    if (queueSource === 'tracker' && currentTrack) {
-      // Not in radio mode yet — same as toggleShuffle's tracker branch,
-      // starting a fresh radio session from the current track.
-      set({ shuffle: true })
-      const rf = queueFilter
-        ? { category: queueFilter.category, era: queueFilter.era, search: queueFilter.search, total: queueFilter.total }
-        : null
-      get().startRadio(currentTrack, rf, { keepPlayState: true })
-      return
-    }
-
     const played = queue.slice(0, queueIndex + 1)
     const upcoming = fisherYates(queue.slice(queueIndex + 1))
     set({ shuffle: true, queue: [...played, ...upcoming] })
+    get()._loadMore()
   },
 
   // ── toggleRepeat ───────────────────────────────────────────────────────────
@@ -606,15 +617,20 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       }
     }),
 
-  clearQueue: () =>
+  clearQueue: () => {
+    _queueLoadSession++
     set((s: QueueSlice) => ({
       queue: s.currentTrack ? [s.currentTrack] : [],
       queueOriginal: s.currentTrack ? [s.currentTrack] : null,
       queueIndex: 0,
+      queueFilter: null,
+      queueLoadingMore: false,
+      queueSource: null,
       radioMode: false,
       radioNext: null,
       _radioWaiting: false,
-    })),
+    }))
+  },
 
   reorderQueue: (fromIdx, toIdx) =>
     set((s: QueueSlice) => {
@@ -639,6 +655,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     const threshold = shuffle ? 40 : 15
     if (upcomingCount >= threshold) return
 
+    const session = _queueLoadSession
     set({ queueLoadingMore: true })
     apiFetch<JWApiPaginatedResponse>('/songs/', {
       searchall: queueFilter.search || undefined,
@@ -648,14 +665,25 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
       page_size: 50,
     })
       .then((data) => {
-        const newTracks = data.results.filter((s) => !!s.path).map(songToTrack)
+        if (session !== _queueLoadSession) return
         const { queue: q, queueIndex: qi, shuffle: isShuffle, queueFilter: qf, queueOriginal: qo } = get()
-        if (!qf) return
+        if (!qf) { set({ queueLoadingMore: false }); return }
+        const existingIds = new Set([...q, ...(qo ?? [])].map((track) => track.id))
+        const newTracks = data.results
+          .filter((song) => !!song.path)
+          .map(songToTrack)
+          .filter((track) => !existingIds.has(track.id))
 
         let nextQueue: Track[]
         if (isShuffle) {
           const played = q.slice(0, qi + 1)
-          const upcoming = insertRandom(q.slice(qi + 1), newTracks)
+          const existingUpcoming = q.slice(qi + 1)
+          // Once a next song is visible (or explicitly inserted with Play
+          // Next), a background page must not overtake it. Randomize new rows
+          // only behind that stable immediate-next entry.
+          const upcoming = existingUpcoming.length > 0
+            ? [existingUpcoming[0], ...insertRandom(existingUpcoming.slice(1), newTracks)]
+            : fisherYates(newTracks)
           nextQueue = [...played, ...upcoming]
         } else {
           nextQueue = [...q, ...newTracks]
@@ -671,7 +699,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
           queueFilter: { ...qf, page: qf.page + 1, hasMore: data.next !== null },
         })
       })
-      .catch(() => set({ queueLoadingMore: false }))
+      .catch(() => { if (session === _queueLoadSession) set({ queueLoadingMore: false }) })
   },
 
   // ── Radio pre-fetch ────────────────────────────────────────────────────────────
