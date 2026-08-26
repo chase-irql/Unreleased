@@ -19,6 +19,7 @@ import { getOwnVersionMeta, getVersionGroup } from '../lib/versionsApi'
 import type { SongVersionMeta } from '../lib/versionsApi'
 import { peekSongPref, hasAnyDefaultVersion } from '../lib/songPrefs'
 import { ls } from '../lib/persist'
+import { resolveQueueContext } from './queueContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,10 @@ export interface QueueSlice {
    * Start playing `track` with a known context list.
    * `filter` enables lazy loading beyond the initial context.
    * Does NOT activate radio mode — use `startRadio` for that.
+   */
+  /**
+   * Start playback. Omitting `context` means standalone playback; callers
+   * representing a collection must pass its tracks explicitly.
    */
   playTrack: (track: Track, context?: Track[], filter?: QueueFilter | null, source?: 'tracker' | 'playlist' | null) => void
 
@@ -280,10 +285,7 @@ export const createQueueSlice: StateCreator<any, [], [], QueueSlice> = (set, get
     // request to graft the song onto whatever queue happened to be active.
     // Always keep currentTrack aligned with queue[queueIndex], including when
     // a malformed/partial context does not contain the requested track.
-    const requested: Track[] = context ?? [track]
-    const requestedIdx = requested.findIndex((t: Track) => t.id === track.id)
-    const tracks = requestedIdx >= 0 ? requested : [track, ...requested]
-    const idx = requestedIdx >= 0 ? requestedIdx : 0
+    const { tracks, index: idx } = resolveQueueContext(track, context)
 
     const { shuffle } = get()
     let finalQueue = tracks
