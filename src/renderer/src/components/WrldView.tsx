@@ -1669,6 +1669,7 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
 // light theme (which App.tsx suppresses while this page is active, mirroring
 // how it already suppresses the standalone NowPlaying panel here).
 const WRLD_MAX_HISTORY_SHOWN = 10 // matches QueuePanel's MAX_HISTORY_SHOWN
+const WRLD_UPCOMING_PAGE_SIZE = 60
 const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   onClose: () => void
   // 'inline' pops up directly under the interface column on desktop (the
@@ -1702,6 +1703,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [search, setSearch] = useState('')
+  const [visibleUpcoming, setVisibleUpcoming] = useState(WRLD_UPCOMING_PAGE_SIZE)
 
   const query = search.trim().toLowerCase()
   const matchesQuery = (track: Track): boolean =>
@@ -1710,6 +1712,11 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   // working correctly after filtering shrinks the array.
   const upcomingIndexed = upcoming.map((track, i) => ({ track, i }))
   const filteredUpcoming = query ? upcomingIndexed.filter(({ track }) => matchesQuery(track)) : upcomingIndexed
+  const shownUpcoming = filteredUpcoming.slice(0, visibleUpcoming)
+
+  useEffect(() => {
+    setVisibleUpcoming(WRLD_UPCOMING_PAGE_SIZE)
+  }, [query])
 
   const handleDrop = (idx: number): void => {
     if (dragIdx !== null && dragIdx !== idx) reorderQueue(dragIdx, idx)
@@ -1807,7 +1814,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
               // absolute queue position history.length - 1 - i.
               const reversedIndexed = [...history].reverse().map((track, i) => ({ track, i }))
               const filtered = query ? reversedIndexed.filter(({ track }) => matchesQuery(track)) : reversedIndexed
-              const shown = query ? filtered : filtered.slice(0, WRLD_MAX_HISTORY_SHOWN)
+              const shown = filtered.slice(0, WRLD_MAX_HISTORY_SHOWN)
               return (
                 <div className="opacity-60">
                   {shown.map(({ track, i }) => (
@@ -1863,7 +1870,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
                 </button>
               )}
             </p>
-            {filteredUpcoming.map(({ track, i }) => (
+            {shownUpcoming.map(({ track, i }) => (
               <div
                 key={`${track.id}-${queueIndex + 1 + i}`}
                 draggable={!query}
@@ -1883,6 +1890,14 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
                 />
               </div>
             ))}
+            {filteredUpcoming.length > shownUpcoming.length && (
+              <button
+                onClick={() => setVisibleUpcoming((count) => count + WRLD_UPCOMING_PAGE_SIZE)}
+                className="w-full py-2 text-center text-[10px] font-medium text-white/45 hover:text-white/80 transition-colors"
+              >
+                +{filteredUpcoming.length - shownUpcoming.length} more
+              </button>
+            )}
           </div>
         ) : query ? (
           <p className="text-white/50 text-xs text-center py-4">No matches</p>

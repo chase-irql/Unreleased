@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Play,
@@ -218,7 +218,10 @@ export default function Player(): JSX.Element {
 
   // Crossfade state (all refs — no re-renders needed)
   const cfActive     = useRef(false)
+  const cfSourceIdx  = useRef(-1)
+  const cfSourceUrl  = useRef<string | null>(null)
   const cfTargetIdx  = useRef(-1)
+  const cfTargetUrl  = useRef<string | null>(null)
   const cfIsRadio    = useRef(false)
   const cfOutRaf     = useRef<number | null>(null)
   const cfInRaf      = useRef<number | null>(null)
@@ -267,13 +270,38 @@ export default function Player(): JSX.Element {
       const na = getNext()
       if (na) { na.pause(); na.src = ''; na.volume = 0 }
       cfActive.current = false
+      cfSourceIdx.current = -1
+      cfSourceUrl.current = null
       cfTargetIdx.current = -1
+      cfTargetUrl.current = null
       cfIsRadio.current = false
     }
     // Restore current audio to proper volume
     const a = getActive()
     if (a) a.volume = volumeRef.current
   }
+
+  // A crossfade preloads audio for a particular source/target pair. Queue
+  // appends and lazy insertion behind that pair are harmless, but a jump or
+  // reorder that changes either position must cancel synchronously so the
+  // audible track and displayed metadata cannot diverge.
+  useLayoutEffect(() => {
+    if (!cfActive.current || cfIsRadio.current) return
+    const source = queue[cfSourceIdx.current]
+    const target = queue[cfTargetIdx.current]
+    const sequentialNext = queueIndex + 1
+    const expectedTargetIdx = repeat === 'one'
+      ? queueIndex
+      : sequentialNext < queue.length
+        ? sequentialNext
+        : repeat === 'all' ? 0 : -1
+    const pairChanged =
+      queueIndex !== cfSourceIdx.current ||
+      cfTargetIdx.current !== expectedTargetIdx ||
+      !source || resolvePlaybackUrl(source) !== cfSourceUrl.current ||
+      !target || resolvePlaybackUrl(target) !== cfTargetUrl.current
+    if (pairChanged) cancelCF()
+  }, [queue, queueIndex, repeat])
 
   // Compute what the next queue index would be (mirrors store's nextTrack logic,
   // without advancing). Shuffle included: the store pre-shuffles the upcoming
@@ -1101,9 +1129,12 @@ export default function Player(): JSX.Element {
         if (na && nextTrackData) {
           cfActive.current = true
           cfIsRadio.current = isRadio
+          cfSourceIdx.current = useStore.getState().queueIndex
+          cfSourceUrl.current = currentTrack ? resolvePlaybackUrl(currentTrack) : null
           cfTargetIdx.current = nextIdx
 
           const url = resolvePlaybackUrl(nextTrackData)
+          cfTargetUrl.current = url
           // Only reassign src if not already preloaded
           if (na.src !== url) na.src = url
           na.volume = 0
@@ -1166,7 +1197,10 @@ export default function Player(): JSX.Element {
 
       const targetIdx = cfTargetIdx.current
       const wasRadio  = cfIsRadio.current
+      cfSourceIdx.current = -1
+      cfSourceUrl.current = null
       cfTargetIdx.current = -1
+      cfTargetUrl.current = null
       cfIsRadio.current   = false
 
       // Ensure incoming track is at full volume
