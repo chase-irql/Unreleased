@@ -1563,13 +1563,14 @@ const FmLikeButton = memo(function FmLikeButton({ light }: { light: boolean }): 
 // (like LyricsPanel/FmProgressBar) so it reads the store directly instead of
 // drilling props from WrldView.
 const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Element {
-  const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike } = useStore(useShallow(s => ({
+  const { currentTrack, radioFmActive, radioFmNowPlaying, radioFmMatchedSong, likedTrackIds, toggleLike, playNext } = useStore(useShallow(s => ({
     currentTrack: s.currentTrack,
     radioFmActive: s.radioFmActive,
     radioFmNowPlaying: s.radioFmNowPlaying,
     radioFmMatchedSong: s.radioFmMatchedSong,
     likedTrackIds: s.likedTrackIds,
     toggleLike: s.toggleLike,
+    playNext: s.playNext,
   })))
   const canEdit = useCanEdit()
 
@@ -1654,6 +1655,7 @@ const SongMenu = memo(function SongMenu({ light }: { light: boolean }): JSX.Elem
           onClose={() => setOpen(false)}
           canEdit={canEdit}
           onInfo={() => currentSongId != null && openInfo(currentSongId)}
+          onPlayNext={() => playNext(currentTrack)}
           liked={likedTrackIds.includes(currentTrack.id)}
           onToggleLike={() => toggleLike(currentTrack.id)}
         />,
@@ -1678,12 +1680,14 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
   // 'panel' fills the desktop right column in place of the lyrics view.
   variant: 'inline' | 'sheet' | 'panel'
 }): JSX.Element {
-  const { queue, queueIndex, currentTrack, isPlaying, shuffle, jumpToTrack, removeFromQueue, clearQueue, reorderQueue, reshuffleQueue, onLightBackdrop } = useStore(useShallow(s => ({
+  const { queue, queueIndex, currentTrack, isPlaying, shuffle, queueMaterializing, queueMaterializeError, jumpToTrack, removeFromQueue, clearQueue, reorderQueue, reshuffleQueue, onLightBackdrop } = useStore(useShallow(s => ({
     queue: s.queue,
     queueIndex: s.queueIndex,
     currentTrack: s.currentTrack,
     isPlaying: s.isPlaying,
     shuffle: s.shuffle,
+    queueMaterializing: s.queueMaterializing,
+    queueMaterializeError: s.queueMaterializeError,
     jumpToTrack: s.jumpToTrack,
     removeFromQueue: s.removeFromQueue,
     clearQueue: s.clearQueue,
@@ -1786,6 +1790,10 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
         </div>
       )}
 
+      {queueMaterializeError && (
+        <p className="relative z-10 px-4 pt-2 text-[11px] text-amber-300">{queueMaterializeError}</p>
+      )}
+
       <div className="relative z-10 flex-1 overflow-y-auto wrld-queue-scroll" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
         <style>{`
           .wrld-queue-scroll::-webkit-scrollbar { width: 6px; }
@@ -1793,8 +1801,8 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
           .wrld-queue-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
           .wrld-queue-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
         `}</style>
-        {/* ── History ── (collapsible, above now playing — same behavior as
-            the app-wide QueuePanel's history section, restyled for this
+        {/* ── Earlier queue positions ── (collapsible, above now playing — same behavior as
+            the app-wide QueuePanel's earlier section, restyled for this
             panel's glass theme). During radio the queue holds *only* played
             history, so without this the panel looked empty in radio mode. */}
         {history.length > 0 && (
@@ -1805,7 +1813,7 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
             >
               <History size={11} />
               <span className="text-[10px] uppercase tracking-widest flex-1 font-semibold">
-                History · {history.length}
+                Earlier in queue · {history.length}
               </span>
               <ChevronDown size={12} className={`transition-transform ${historyOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -1901,6 +1909,11 @@ const WrldQueuePanel = memo(function WrldQueuePanel({ onClose, variant }: {
           </div>
         ) : query ? (
           <p className="text-white/50 text-xs text-center py-4">No matches</p>
+        ) : currentTrack && queueMaterializing ? (
+          <div className="flex items-center justify-center gap-2 py-4 text-white/50 text-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
+            Preparing full shuffle…
+          </div>
         ) : currentTrack ? (
           <p className="text-white/50 text-xs text-center py-4">Nothing up next</p>
         ) : null}
